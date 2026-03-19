@@ -1,9 +1,8 @@
 "use client";
 
 import { use } from "react";
-import { notFound } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { StatusBadge } from "@/components/prowl/status-badge";
@@ -19,9 +18,11 @@ import {
   Trash2,
   CheckCircle2,
   XCircle,
+  Loader2,
 } from "lucide-react";
 import Link from "next/link";
-import { mockMonitors, mockResults } from "@/lib/mock-data";
+import { useMonitor, useMonitorResults } from "@/hooks/use-monitors";
+import type { Id } from "@/convex/_generated/dataModel";
 
 function timeAgo(timestamp?: number): string {
   if (!timestamp) return "Never";
@@ -42,10 +43,27 @@ export default function MonitorDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = use(params);
-  const monitor = mockMonitors.find((m) => m._id === id);
-  if (!monitor) return notFound();
+  const monitor = useMonitor(id as Id<"monitors">);
+  const results = useMonitorResults(id as Id<"monitors">);
 
-  const results = mockResults.filter((r) => r.monitorId === id);
+  if (monitor === undefined) {
+    return (
+      <div className="flex items-center justify-center py-32">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  if (monitor === null) {
+    return (
+      <div className="flex flex-col items-center justify-center py-32">
+        <p className="text-lg font-semibold mb-2">Monitor not found</p>
+        <Link href="/dashboard">
+          <Button variant="outline">Back to dashboard</Button>
+        </Link>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-10">
@@ -181,7 +199,7 @@ export default function MonitorDetailPage({
                     <>
                       <Separator className="my-4" />
                       <div className="space-y-2">
-                        {result.matches.map((match, i) => (
+                        {result.matches.map((match: Record<string, unknown>, i: number) => (
                           <div
                             key={i}
                             className="rounded-lg bg-background/50 p-4 text-sm font-mono shadow-sm shadow-black/5"

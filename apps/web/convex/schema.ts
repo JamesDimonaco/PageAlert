@@ -2,19 +2,8 @@ import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 
 export default defineSchema({
-  users: defineTable({
-    email: v.string(),
-    name: v.optional(v.string()),
-    image: v.optional(v.string()),
-    betterAuthId: v.string(),
-    tier: v.union(v.literal("free"), v.literal("pro"), v.literal("business")),
-    createdAt: v.number(),
-  })
-    .index("by_email", ["email"])
-    .index("by_betterAuthId", ["betterAuthId"]),
-
   monitors: defineTable({
-    userId: v.id("users"),
+    userId: v.string(), // Better Auth user subject ID from ctx.auth
     name: v.string(),
     url: v.string(),
     prompt: v.string(),
@@ -54,7 +43,7 @@ export default defineSchema({
   }).index("by_monitorId", ["monitorId"]),
 
   notifications: defineTable({
-    userId: v.id("users"),
+    userId: v.string(),
     monitorId: v.id("monitors"),
     channel: v.union(
       v.literal("email"),
@@ -70,7 +59,7 @@ export default defineSchema({
     .index("by_monitorId", ["monitorId"]),
 
   notificationSettings: defineTable({
-    userId: v.id("users"),
+    userId: v.string(),
     channel: v.union(
       v.literal("email"),
       v.literal("telegram"),

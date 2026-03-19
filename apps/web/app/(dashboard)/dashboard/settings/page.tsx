@@ -9,12 +9,13 @@ import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { User, Bell, CreditCard, Mail, MessageCircle, Hash } from "lucide-react";
-import { mockUser } from "@/lib/mock-data";
+import { useAuth } from "@/hooks/use-auth";
 import { toast } from "sonner";
 
 export default function SettingsPage() {
-  const [name, setName] = useState(mockUser.name);
-  const [email, setEmail] = useState(mockUser.email);
+  const { user } = useAuth();
+  const [name, setName] = useState(user?.name ?? "");
+  const [email, setEmail] = useState(user?.email ?? "");
 
   const [emailNotifs, setEmailNotifs] = useState(true);
   const [telegramChatId, setTelegramChatId] = useState("");

@@ -1,6 +1,6 @@
 "use client";
 
-import { Radar, Bell, User, LogOut, Settings } from "lucide-react";
+import { Radar, Bell, LogOut, Settings } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -10,12 +10,15 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { mockUser } from "@/lib/mock-data";
+import { useAuth } from "@/hooks/use-auth";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 export function Navbar() {
   const router = useRouter();
+  const { user, signOut } = useAuth();
+
+  const initials = user?.name?.charAt(0)?.toUpperCase() ?? user?.email?.charAt(0)?.toUpperCase() ?? "?";
 
   return (
     <header className="sticky top-0 z-50 border-b border-border/30 bg-background/80 backdrop-blur-xl">
@@ -40,9 +43,6 @@ export function Navbar() {
         <div className="flex items-center gap-3">
           <Button variant="ghost" size="icon" className="relative">
             <Bell className="h-5 w-5" />
-            <span className="absolute -right-0.5 -top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-primary text-[10px] font-bold text-primary-foreground">
-              2
-            </span>
           </Button>
 
           <DropdownMenu>
@@ -50,7 +50,7 @@ export function Navbar() {
               <Button variant="ghost" className="relative h-9 w-9 rounded-full">
                 <Avatar className="h-9 w-9">
                   <AvatarFallback className="bg-primary/10 text-primary text-sm font-semibold">
-                    {mockUser.name.charAt(0).toUpperCase()}
+                    {initials}
                   </AvatarFallback>
                 </Avatar>
               </Button>
@@ -58,8 +58,8 @@ export function Navbar() {
             <DropdownMenuContent className="w-56" align="end">
               <div className="flex items-center gap-2 p-2">
                 <div className="flex flex-col space-y-0.5">
-                  <p className="text-sm font-medium">{mockUser.name}</p>
-                  <p className="text-xs text-muted-foreground">{mockUser.email}</p>
+                  <p className="text-sm font-medium">{user?.name ?? "User"}</p>
+                  <p className="text-xs text-muted-foreground">{user?.email}</p>
                 </div>
               </div>
               <DropdownMenuSeparator />
@@ -68,7 +68,7 @@ export function Navbar() {
                 Settings
               </DropdownMenuItem>
               <DropdownMenuSeparator />
-              <DropdownMenuItem className="text-destructive" onClick={() => router.push("/login")}>
+              <DropdownMenuItem className="text-destructive" onClick={() => signOut()}>
                 <LogOut className="mr-2 h-4 w-4" />
                 Sign out
               </DropdownMenuItem>

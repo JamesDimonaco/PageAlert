@@ -21,7 +21,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Radar, Loader2 } from "lucide-react";
-import type { MockMonitor } from "@/lib/mock-data";
+import type { Doc } from "@/convex/_generated/dataModel";
 
 interface CreateMonitorDialogProps {
   open: boolean;
@@ -30,9 +30,9 @@ interface CreateMonitorDialogProps {
     name: string;
     url: string;
     prompt: string;
-    checkInterval: MockMonitor["checkInterval"];
+    checkInterval: Doc<"monitors">["checkInterval"];
   }) => void;
-  editMonitor?: MockMonitor | null;
+  editMonitor?: Doc<"monitors"> | null;
 }
 
 export function CreateMonitorDialog({
@@ -44,7 +44,7 @@ export function CreateMonitorDialog({
   const [name, setName] = useState(editMonitor?.name ?? "");
   const [url, setUrl] = useState(editMonitor?.url ?? "");
   const [prompt, setPrompt] = useState(editMonitor?.prompt ?? "");
-  const [checkInterval, setCheckInterval] = useState<MockMonitor["checkInterval"]>(
+  const [checkInterval, setCheckInterval] = useState<Doc<"monitors">["checkInterval"]>(
     editMonitor?.checkInterval ?? "1h"
   );
   const [loading, setLoading] = useState(false);
@@ -144,7 +144,7 @@ export function CreateMonitorDialog({
 
           <div className="space-y-2">
             <Label className="text-sm font-medium">Check frequency</Label>
-            <Select value={checkInterval} onValueChange={(v) => setCheckInterval(v as MockMonitor["checkInterval"])}>
+            <Select value={checkInterval} onValueChange={(v) => setCheckInterval(v as Doc<"monitors">["checkInterval"])}>
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>

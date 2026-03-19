@@ -21,7 +21,7 @@ import {
   Globe,
   Zap,
 } from "lucide-react";
-import type { MockMonitor } from "@/lib/mock-data";
+import type { Doc, Id } from "@/convex/_generated/dataModel";
 import Link from "next/link";
 
 function timeAgo(timestamp?: number): string {
@@ -34,10 +34,10 @@ function timeAgo(timestamp?: number): string {
 }
 
 interface MonitorCardProps {
-  monitor: MockMonitor;
-  onTogglePause: (id: string) => void;
-  onDelete: (id: string) => void;
-  onEdit: (monitor: MockMonitor) => void;
+  monitor: Doc<"monitors">;
+  onTogglePause: (id: Id<"monitors">) => void;
+  onDelete: (id: Id<"monitors">) => void;
+  onEdit: (monitor: Doc<"monitors">) => void;
 }
 
 export function MonitorCard({ monitor, onTogglePause, onDelete, onEdit }: MonitorCardProps) {

@@ -2,9 +2,9 @@
 
 import { Card, CardContent } from "@/components/ui/card";
 import { Activity, Eye, Zap, AlertTriangle } from "lucide-react";
-import type { MockMonitor } from "@/lib/mock-data";
+import type { Doc } from "@/convex/_generated/dataModel";
 
-export function StatsCards({ monitors }: { monitors: MockMonitor[] }) {
+export function StatsCards({ monitors }: { monitors: Doc<"monitors">[] }) {
   const active = monitors.filter((m) => m.status === "active").length;
   const matched = monitors.filter((m) => m.status === "matched").length;
   const totalMatches = monitors.reduce((sum, m) => sum + m.matchCount, 0);

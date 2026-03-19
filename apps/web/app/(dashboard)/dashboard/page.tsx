@@ -10,7 +10,7 @@ import { CreateMonitorDialog } from "@/components/prowl/create-monitor-dialog";
 import { DeleteDialog } from "@/components/prowl/delete-dialog";
 import { useMonitors } from "@/hooks/use-monitors";
 import { toast } from "sonner";
-import type { MockMonitor } from "@/lib/mock-data";
+import type { Doc, Id } from "@/convex/_generated/dataModel";
 import {
   Select,
   SelectContent,
@@ -24,8 +24,8 @@ export default function DashboardPage() {
     useMonitors();
 
   const [createOpen, setCreateOpen] = useState(false);
-  const [editMonitor, setEditMonitor] = useState<MockMonitor | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<MockMonitor | null>(null);
+  const [editMonitor, setEditMonitor] = useState<Doc<"monitors"> | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Doc<"monitors"> | null>(null);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
 

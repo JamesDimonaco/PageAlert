@@ -10,7 +10,6 @@
 
 import type * as http from "../http.js";
 import type * as monitors from "../monitors.js";
-import type * as users from "../users.js";
 
 import type {
   ApiFromModules,
@@ -21,7 +20,6 @@ import type {
 declare const fullApi: ApiFromModules<{
   http: typeof http;
   monitors: typeof monitors;
-  users: typeof users;
 }>;
 
 /**
