@@ -17,7 +17,7 @@ export async function scrapeUrl(
   url: string,
   options?: { timeout?: number; waitFor?: string }
 ): Promise<ScrapeResponse> {
-  const timeout = options?.timeout ?? 30000;
+  const timeout = options?.timeout ?? 60000;
   const b = await getBrowser();
   const context = await b.newContext({
     userAgent: getRandomUserAgent(),
@@ -26,15 +26,28 @@ export async function scrapeUrl(
 
   const page = await context.newPage();
 
+  // Block heavy resources that slow things down and aren't needed for content
+  await page.route("**/*.{png,jpg,jpeg,gif,webp,svg,ico,woff,woff2,ttf,mp4,webm}", (route) =>
+    route.abort()
+  );
+
   try {
-    await page.goto(url, { waitUntil: "networkidle", timeout });
+    // Use domcontentloaded instead of networkidle - much more reliable
+    // networkidle waits for zero network connections which many sites never reach
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout });
+
+    // Wait for the body to have meaningful content
+    await page.waitForFunction(
+      () => (document.body?.innerText?.length ?? 0) > 100,
+      { timeout: 15000 }
+    ).catch(() => {});
 
     if (options?.waitFor) {
       await page.waitForSelector(options.waitFor, { timeout: 10000 }).catch(() => {});
     }
 
-    // Small delay to let any remaining JS settle
-    await page.waitForTimeout(1000);
+    // Let JS frameworks render
+    await page.waitForTimeout(3000);
 
     const title = await page.title();
     const html = await getCleanHtml(page);
