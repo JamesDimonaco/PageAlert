@@ -49,7 +49,7 @@ export function MonitorCard({ monitor, onTogglePause, onDelete, onEdit }: Monito
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-3 mb-2">
               <Link
-                href={`/monitors/${monitor._id}`}
+                href={`/dashboard/monitors/${monitor._id}`}
                 className="text-base font-semibold truncate hover:text-primary transition-colors"
               >
                 {monitor.name}
