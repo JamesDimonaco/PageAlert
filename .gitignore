@@ -2,8 +2,18 @@ node_modules/
 .next/
 dist/
 .turbo/
-.env
-.env.local
-.env*.local
 *.tsbuildinfo
 .DS_Store
+
+# Secrets - never commit real environment files
+.env
+.env.local
+.env.development
+.env.production
+.env*.local
+# Catch .env files in all subdirectories
+**/.env
+**/.env.local
+**/.env.development
+**/.env.production
+**/.env*.local

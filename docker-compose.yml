@@ -9,4 +9,11 @@ services:
       - PORT=3001
       - SCRAPER_API_KEY=${SCRAPER_API_KEY}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-}
     restart: unless-stopped
+    # Resource limits to prevent container from consuming all host resources
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+          cpus: "2.0"

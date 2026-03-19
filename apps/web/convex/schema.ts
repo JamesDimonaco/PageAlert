@@ -40,7 +40,10 @@ export default defineSchema({
     hasNewMatches: v.boolean(),
     scrapedAt: v.number(),
     error: v.optional(v.string()),
-  }).index("by_monitorId", ["monitorId"]),
+  })
+    .index("by_monitorId", ["monitorId"])
+    // Enables efficient time-ordered queries per monitor (e.g. "latest result for monitor X")
+    .index("by_monitorId_scrapedAt", ["monitorId", "scrapedAt"]),
 
   notifications: defineTable({
     userId: v.string(),
@@ -56,7 +59,9 @@ export default defineSchema({
     read: v.boolean(),
   })
     .index("by_userId", ["userId"])
-    .index("by_monitorId", ["monitorId"]),
+    .index("by_monitorId", ["monitorId"])
+    // Enables efficient "unread notifications for user" queries
+    .index("by_userId_read", ["userId", "read"]),
 
   notificationSettings: defineTable({
     userId: v.string(),

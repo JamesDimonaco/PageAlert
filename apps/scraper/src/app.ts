@@ -9,7 +9,23 @@ import { authMiddleware } from "./middleware/auth.js";
 export const app = new Hono();
 
 app.use("*", logger());
-app.use("*", cors());
+
+// CORS: restrict to known origins. The scraper API is a backend service
+// and should only be called from the Convex backend, not from browsers.
+// In production, no browser origin should be allowed.
+const allowedOrigins = process.env.ALLOWED_ORIGINS
+  ? process.env.ALLOWED_ORIGINS.split(",").map((s) => s.trim())
+  : [];
+
+app.use(
+  "*",
+  cors({
+    origin: allowedOrigins.length > 0 ? allowedOrigins : [],
+    allowMethods: ["GET", "POST"],
+    allowHeaders: ["Content-Type", "x-api-key"],
+    maxAge: 3600,
+  })
+);
 
 app.get("/health", (c) => {
   return c.json({ status: "ok", service: "prowl-scraper", timestamp: new Date().toISOString() });

@@ -3,23 +3,30 @@ import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { scrapeUrl } from "../services/scraper.js";
 import { extractWithAI, applyMatchConditions } from "../services/extractor.js";
+import { MAX_URL_LENGTH } from "../utils/url-validation.js";
+
+const MAX_ITEMS = 500;
+const MAX_STRING_ARRAY_ITEMS = 20;
+const MAX_KEYWORD_LENGTH = 200;
 
 const checkSchema = z.object({
-  url: z.string().url(),
+  url: z.string().url().max(MAX_URL_LENGTH),
   schema: z.object({
-    fields: z.record(z.string()),
-    items: z.array(z.record(z.any())),
+    fields: z.record(z.string().max(500)).refine((r) => Object.keys(r).length <= 50, {
+      message: "Too many fields (max 50)",
+    }),
+    items: z.array(z.record(z.any())).max(MAX_ITEMS),
     matchConditions: z.object({
-      titleContains: z.array(z.string()).optional(),
-      titleExcludes: z.array(z.string()).optional(),
-      priceMax: z.number().optional(),
-      priceMin: z.number().optional(),
-      mustInclude: z.array(z.string()).optional(),
-      mustExclude: z.array(z.string()).optional(),
+      titleContains: z.array(z.string().max(MAX_KEYWORD_LENGTH)).max(MAX_STRING_ARRAY_ITEMS).optional(),
+      titleExcludes: z.array(z.string().max(MAX_KEYWORD_LENGTH)).max(MAX_STRING_ARRAY_ITEMS).optional(),
+      priceMax: z.number().min(0).max(1_000_000_000).optional(),
+      priceMin: z.number().min(0).max(1_000_000_000).optional(),
+      mustInclude: z.array(z.string().max(MAX_KEYWORD_LENGTH)).max(MAX_STRING_ARRAY_ITEMS).optional(),
+      mustExclude: z.array(z.string().max(MAX_KEYWORD_LENGTH)).max(MAX_STRING_ARRAY_ITEMS).optional(),
     }),
   }),
-  prompt: z.string().optional(),
-  timeout: z.number().optional(),
+  prompt: z.string().max(2000).optional(),
+  timeout: z.number().int().min(1000).max(60000).optional(),
 });
 
 export const checkRoutes = new Hono();
@@ -50,7 +57,7 @@ checkRoutes.post("/", zValidator("json", checkSchema), async (c) => {
       scrapedAt: scraped.scrapedAt,
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Check failed";
-    return c.json({ error: "check_failed", message, statusCode: 500 }, 500);
+    // Do not leak internal error details
+    return c.json({ error: "check_failed", message: "Check failed" }, 500);
   }
 });
