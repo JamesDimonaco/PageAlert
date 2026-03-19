@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { Toaster } from "@/components/ui/sonner";
+import { ConvexClientProvider } from "@/components/convex-provider";
+import { getToken } from "@/lib/auth-server";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -18,18 +20,22 @@ export const metadata: Metadata = {
   description: "Monitor any website with natural language. Get notified when things change.",
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const token = await getToken();
+
   return (
     <html
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased dark`}
     >
       <body className="min-h-full flex flex-col">
-        {children}
+        <ConvexClientProvider initialToken={token}>
+          {children}
+        </ConvexClientProvider>
         <Toaster />
       </body>
     </html>
