@@ -8,15 +8,25 @@ import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { User, Bell, CreditCard, Mail, MessageCircle, Hash } from "lucide-react";
+import { User, Bell, CreditCard, Mail, MessageCircle, Hash, Trash2 } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import { useAuth } from "@/hooks/use-auth";
 import { useMonitors } from "@/hooks/use-monitors";
+import { useMutation } from "convex/react";
+import { api } from "@/convex/_generated/api";
 import { toast } from "sonner";
 
 const FREE_MONITOR_LIMIT = 3;
 
 export default function SettingsPage() {
-  const { user } = useAuth();
+  const { user, signOut } = useAuth();
   const { monitors } = useMonitors();
   const [name, setName] = useState(user?.name ?? "");
   const [email, setEmail] = useState(user?.email ?? "");
@@ -24,6 +34,8 @@ export default function SettingsPage() {
   const [emailNotifs, setEmailNotifs] = useState(true);
   const [telegramChatId, setTelegramChatId] = useState("");
   const [discordWebhook, setDiscordWebhook] = useState("");
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const deleteAccountMutation = useMutation(api.account.deleteAccount);
 
   return (
     <div className="space-y-10">
@@ -83,10 +95,47 @@ export default function SettingsPage() {
           <Card className="border-destructive/20 bg-card/50 shadow-sm shadow-black/5">
             <CardHeader className="pb-4">
               <CardTitle className="text-lg font-semibold text-destructive">Danger Zone</CardTitle>
-              <CardDescription className="text-sm">Irreversible actions</CardDescription>
+              <CardDescription className="text-sm">
+                Permanently delete your account and all data including monitors, scrape history, and notification settings.
+              </CardDescription>
             </CardHeader>
             <CardContent>
-              <Button variant="destructive">Delete account</Button>
+              <Button variant="destructive" onClick={() => setDeleteOpen(true)}>Delete account</Button>
+              <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+                <DialogContent className="sm:max-w-md">
+                  <DialogHeader>
+                    <DialogTitle className="flex items-center gap-2">
+                      <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-destructive/10">
+                        <Trash2 className="h-4 w-4 text-destructive" />
+                      </div>
+                      Delete Account
+                    </DialogTitle>
+                    <DialogDescription>
+                      This will permanently delete your account and all associated data including
+                      all monitors, scrape results, and notification settings. This cannot be undone.
+                    </DialogDescription>
+                  </DialogHeader>
+                  <DialogFooter>
+                    <Button variant="ghost" onClick={() => setDeleteOpen(false)}>
+                      Cancel
+                    </Button>
+                    <Button
+                      variant="destructive"
+                      onClick={async () => {
+                        try {
+                          await deleteAccountMutation();
+                          toast.success("Account deleted");
+                          signOut();
+                        } catch {
+                          toast.error("Failed to delete account");
+                        }
+                      }}
+                    >
+                      Delete everything
+                    </Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
             </CardContent>
           </Card>
         </TabsContent>
