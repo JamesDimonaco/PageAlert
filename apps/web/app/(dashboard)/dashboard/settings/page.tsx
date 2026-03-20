@@ -10,10 +10,14 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { User, Bell, CreditCard, Mail, MessageCircle, Hash } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
+import { useMonitors } from "@/hooks/use-monitors";
 import { toast } from "sonner";
+
+const FREE_MONITOR_LIMIT = 3;
 
 export default function SettingsPage() {
   const { user } = useAuth();
+  const { monitors } = useMonitors();
   const [name, setName] = useState(user?.name ?? "");
   const [email, setEmail] = useState(user?.email ?? "");
 
@@ -213,19 +217,19 @@ export default function SettingsPage() {
                 <div>
                   <div className="flex justify-between text-sm mb-2">
                     <span className="font-medium">Monitors</span>
-                    <span className="text-muted-foreground tabular-nums">4 / 3</span>
+                    <span className="text-muted-foreground tabular-nums">{monitors.length} / {FREE_MONITOR_LIMIT}</span>
                   </div>
                   <div className="h-2 rounded-full bg-muted overflow-hidden">
-                    <div className="h-full w-full rounded-full bg-amber-500" />
+                    <div
+                      className={`h-full rounded-full transition-all ${monitors.length > FREE_MONITOR_LIMIT ? "bg-amber-500" : "bg-primary"}`}
+                      style={{ width: `${Math.min((monitors.length / FREE_MONITOR_LIMIT) * 100, 100)}%` }}
+                    />
                   </div>
-                  <p className="text-xs text-amber-400 mt-2 font-medium">Over limit - upgrade to add more</p>
-                </div>
-                <Separator />
-                <div>
-                  <div className="flex justify-between text-sm">
-                    <span className="font-medium">Checks today</span>
-                    <span className="text-muted-foreground tabular-nums">18</span>
-                  </div>
+                  {monitors.length >= FREE_MONITOR_LIMIT && (
+                    <p className="text-xs text-amber-400 mt-2 font-medium">
+                      {monitors.length > FREE_MONITOR_LIMIT ? "Over limit - upgrade to add more" : "At limit - upgrade for more monitors"}
+                    </p>
+                  )}
                 </div>
               </div>
             </CardContent>
