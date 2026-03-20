@@ -31,11 +31,12 @@ Respond with ONLY valid JSON in this exact format:
 }
 
 Rules:
-- Extract ALL items on the page, not just matches
+- Extract up to 50 items maximum. If there are more, extract the most relevant ones first
+- Keep item data concise - only include title, price, and 1-2 other key fields
 - Prices should be numbers (no currency symbols)
-- Include all fields that seem relevant for the item type
 - matchConditions should reflect the user's stated criteria
-- If you can't determine a field value, use null`;
+- If you can't determine a field value, use null
+- Do NOT wrap your response in markdown code fences - output raw JSON only`;
 
 export async function extractWithAI(
   pageText: string,
@@ -48,7 +49,7 @@ export async function extractWithAI(
 
   const message = await client.messages.create({
     model: "claude-sonnet-4-20250514",
-    max_tokens: 4096,
+    max_tokens: 16384,
     messages: [
       {
         role: "user",
@@ -73,10 +74,26 @@ export async function extractWithAI(
   let raw: Record<string, unknown>;
   try {
     raw = JSON.parse(jsonString);
-  } catch (e) {
-    console.error("[extractor] JSON parse failed:", (e as Error).message);
-    console.error("[extractor] Attempted to parse:", jsonString.slice(0, 500));
-    throw new Error("AI returned invalid JSON");
+  } catch {
+    // The response was likely truncated by max_tokens - try to repair it
+    console.warn("[extractor] JSON parse failed, attempting truncation repair...");
+    const repaired = repairTruncatedJson(jsonString);
+    if (repaired) {
+      try {
+        raw = JSON.parse(repaired);
+        console.log("[extractor] Truncation repair succeeded");
+      } catch (e2) {
+        console.error("[extractor] Repair also failed:", (e2 as Error).message);
+        console.error("[extractor] First 500 chars:", jsonString.slice(0, 500));
+        console.error("[extractor] Last 200 chars:", jsonString.slice(-200));
+        throw new Error("AI returned invalid JSON");
+      }
+    } else {
+      console.error("[extractor] Could not repair truncated JSON");
+      console.error("[extractor] First 500 chars:", jsonString.slice(0, 500));
+      console.error("[extractor] Last 200 chars:", jsonString.slice(-200));
+      throw new Error("AI returned invalid JSON");
+    }
   }
 
   // Normalise into our expected schema shape - be lenient about what AI returns
@@ -99,6 +116,46 @@ export async function extractWithAI(
   console.log("[extractor] Found %d matches out of %d items", matches.length, parsed.items.length);
 
   return { schema: parsed, matches };
+}
+
+/**
+ * Attempt to repair JSON that was truncated mid-output (e.g. by max_tokens).
+ * Finds the last valid item boundary and closes all open brackets.
+ */
+function repairTruncatedJson(json: string): string | null {
+  // Find the last complete object in an array (ends with })
+  // Then close any open arrays and objects
+  const lastCompleteObject = json.lastIndexOf("},");
+  const lastCompleteObjectAlt = json.lastIndexOf("}");
+
+  // Use whichever gives us a valid-looking cutoff
+  let cutPoint = lastCompleteObject > 0 ? lastCompleteObject + 1 : lastCompleteObjectAlt;
+  if (cutPoint <= 0) return null;
+
+  let attempt = json.slice(0, cutPoint);
+
+  // Count unclosed brackets
+  let openBraces = 0;
+  let openBrackets = 0;
+  let inString = false;
+  let escape = false;
+
+  for (const ch of attempt) {
+    if (escape) { escape = false; continue; }
+    if (ch === "\\") { escape = true; continue; }
+    if (ch === '"') { inString = !inString; continue; }
+    if (inString) continue;
+    if (ch === "{") openBraces++;
+    if (ch === "}") openBraces--;
+    if (ch === "[") openBrackets++;
+    if (ch === "]") openBrackets--;
+  }
+
+  // Close any open brackets/braces
+  for (let i = 0; i < openBrackets; i++) attempt += "]";
+  for (let i = 0; i < openBraces; i++) attempt += "}";
+
+  return attempt;
 }
 
 /** Try multiple strategies to extract a JSON string from AI response text */
