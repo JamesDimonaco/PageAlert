@@ -57,7 +57,18 @@ checkRoutes.post("/", zValidator("json", checkSchema), async (c) => {
       scrapedAt: scraped.scrapedAt,
     });
   } catch (error) {
-    // Do not leak internal error details
-    return c.json({ error: "check_failed", message: "Check failed" }, 500);
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[check] Failed for ${url}:`, message);
+
+    let clientMessage = "Check failed";
+    if (message.includes("URL") || message.includes("hostname") || message.includes("not allowed")) {
+      clientMessage = message;
+    } else if (message.includes("authentication") || message.includes("api_key")) {
+      clientMessage = "AI service authentication error";
+    } else if (message.includes("timeout") || message.includes("Timeout")) {
+      clientMessage = "Page took too long to load";
+    }
+
+    return c.json({ error: "check_failed", message: clientMessage }, 500);
   }
 });
