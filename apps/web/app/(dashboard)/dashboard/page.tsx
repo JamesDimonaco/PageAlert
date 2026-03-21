@@ -22,7 +22,7 @@ import {
 } from "@/components/ui/select";
 
 export default function DashboardPage() {
-  const { monitors, togglePause, deleteMonitor } = useMonitors();
+  const { monitors, togglePause, deleteMonitor, updateMonitor } = useMonitors();
   const { open: openCreate } = useCreateMonitor();
   const saveScanResult = useMutation(api.monitors.saveScanResult);
   const saveScanError = useMutation(api.monitors.saveScanError);
@@ -32,7 +32,8 @@ export default function DashboardPage() {
     const monitor = monitors.find((m) => m._id === monitorId);
     if (!monitor) return;
 
-    toast.info("Rescanning...", { description: monitor.url });
+    // Set status to scanning so the badge updates immediately
+    await updateMonitor(monitorId, { status: "scanning" });
     const startTime = Date.now();
 
     try {
