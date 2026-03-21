@@ -93,7 +93,7 @@ export function CreateMonitorProvider({ children }: { children: ReactNode }) {
         const res = await fetch("/api/scraper/extract", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ url: data.url, prompt: data.prompt }),
+          body: JSON.stringify({ url: data.url, prompt: data.prompt, name: data.name }),
           signal: controller.signal,
         });
 
