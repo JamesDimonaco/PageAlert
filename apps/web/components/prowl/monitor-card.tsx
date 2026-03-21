@@ -19,6 +19,7 @@ import {
   Globe,
   Zap,
   ArrowRight,
+  RefreshCw,
 } from "lucide-react";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
 import Link from "next/link";
@@ -33,13 +34,16 @@ function timeAgo(timestamp?: number): string {
   return `${Math.floor(seconds / 86400)}d ago`;
 }
 
+const isDev = process.env.NODE_ENV === "development";
+
 interface MonitorCardProps {
   monitor: Doc<"monitors">;
   onTogglePause: (id: Id<"monitors">) => void;
   onDelete: (id: Id<"monitors">) => void;
+  onRescan?: (id: Id<"monitors">) => void;
 }
 
-export function MonitorCard({ monitor, onTogglePause, onDelete }: MonitorCardProps) {
+export function MonitorCard({ monitor, onTogglePause, onDelete, onRescan }: MonitorCardProps) {
   const router = useRouter();
 
   const statusBorderColor =
@@ -113,6 +117,12 @@ export function MonitorCard({ monitor, onTogglePause, onDelete }: MonitorCardPro
                   <><Pause className="mr-2 h-4 w-4" /> Pause</>
                 )}
               </DropdownMenuItem>
+              {isDev && onRescan && (
+                <DropdownMenuItem onClick={() => onRescan(monitor._id)}>
+                  <RefreshCw className="mr-2 h-4 w-4" />
+                  Rescan (dev)
+                </DropdownMenuItem>
+              )}
               <DropdownMenuSeparator />
               <DropdownMenuItem className="text-destructive" onClick={() => onDelete(monitor._id)}>
                 <Trash2 className="mr-2 h-4 w-4" />

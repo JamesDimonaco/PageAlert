@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { StatusBadge } from "@/components/prowl/status-badge";
 import { MatchConditionsEditor } from "@/components/prowl/match-conditions-editor";
+import { AiInsightsCard } from "@/components/prowl/ai-insights";
 import {
   ArrowLeft,
   ExternalLink,
@@ -71,12 +72,12 @@ export default function MonitorDetailPage({
   const allItems = (schema?.items ?? []) as ExtractedItem[];
   const blacklist = ((monitor as Record<string, unknown>)?.blacklistedItems ?? []) as string[];
   const conditions = editedConditions ?? schema?.matchConditions ?? {};
-  const matchesBeforeBlacklist = allItems.length > 0 ? applyMatchConditions(allItems, conditions) : [];
-
   function getItemKey(item: ExtractedItem): string {
-    return String(item.title ?? item.name ?? "");
+    if (item.url) return String(item.url);
+    return `${String(item.title ?? "")}-${String(item.price ?? "")}`;
   }
 
+  const matchesBeforeBlacklist = allItems.length > 0 ? applyMatchConditions(allItems, conditions) : [];
   const matches = matchesBeforeBlacklist.filter(
     (item) => !blacklist.includes(getItemKey(item))
   );
@@ -141,13 +142,21 @@ export default function MonitorDetailPage({
   }
 
   async function blacklistItem(title: string) {
-    await updateBlacklist({ id: monitorId, blacklistedItems: [...blacklist, title] });
-    toast.success("Item dismissed");
+    try {
+      await updateBlacklist({ id: monitorId, blacklistedItems: [...blacklist, title] });
+      toast.success("Item dismissed");
+    } catch {
+      toast.error("Failed to dismiss item");
+    }
   }
 
   async function unblacklistItem(title: string) {
-    await updateBlacklist({ id: monitorId, blacklistedItems: blacklist.filter((t) => t !== title) });
-    toast.success("Item restored");
+    try {
+      await updateBlacklist({ id: monitorId, blacklistedItems: blacklist.filter((t) => t !== title) });
+      toast.success("Item restored");
+    } catch {
+      toast.error("Failed to restore item");
+    }
   }
 
   return (
@@ -226,6 +235,9 @@ export default function MonitorDetailPage({
           </CardContent>
         </Card>
       </div>
+
+      {/* AI Insights */}
+      {schema?.insights && <AiInsightsCard insights={schema.insights} />}
 
       {/* Match Filters */}
       {schema && (

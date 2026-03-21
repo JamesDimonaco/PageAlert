@@ -15,15 +15,10 @@ import { CreateMonitorSheet } from "@/components/prowl/create-monitor-sheet";
 import { toast } from "sonner";
 
 interface CreateMonitorContextValue {
-  /** Open the create monitor sheet */
   open: () => void;
-  /** Resume viewing a scanning/completed monitor */
   resume: (monitorId: Id<"monitors">) => void;
-  /** The monitor ID currently being created/scanned */
   activeMonitorId: Id<"monitors"> | null;
-  /** Whether a scan is in progress */
   isScanning: boolean;
-  /** Whether the sheet is open */
   isOpen: boolean;
 }
 
@@ -51,9 +46,9 @@ export function CreateMonitorProvider({ children }: { children: ReactNode }) {
   const saveScanResult = useMutation(api.monitors.saveScanResult);
   const saveScanError = useMutation(api.monitors.saveScanError);
   const removeMutation = useMutation(api.monitors.remove);
+  const createLog = useMutation(api.logs.create);
 
   const open = useCallback(() => {
-    // Only open fresh if not already scanning
     if (!isScanning) {
       setActiveMonitorId(null);
     }
@@ -65,7 +60,6 @@ export function CreateMonitorProvider({ children }: { children: ReactNode }) {
     setSheetOpen(true);
   }, []);
 
-  /** Called by the sheet when user submits the form. Creates monitor and starts scan. */
   const startScan = useCallback(
     async (data: {
       name: string;
@@ -78,7 +72,6 @@ export function CreateMonitorProvider({ children }: { children: ReactNode }) {
 
       let monitorId: Id<"monitors">;
       try {
-        // 1. Create monitor in DB immediately with status "scanning"
         monitorId = await createMutation(data);
       } catch (e) {
         isSubmittingRef.current = false;
@@ -90,65 +83,138 @@ export function CreateMonitorProvider({ children }: { children: ReactNode }) {
       setActiveMonitorId(monitorId);
       setIsScanning(true);
 
-      // 2. Fire off the scan in the background
       abortRef.current?.abort();
       const controller = new AbortController();
       abortRef.current = controller;
 
+      const startTime = Date.now();
+
+      let alreadyLogged = false;
       try {
         const res = await fetch("/api/scraper/extract", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ url: data.url, prompt: data.prompt }),
+          body: JSON.stringify({ url: data.url, prompt: data.prompt, name: data.name }),
           signal: controller.signal,
         });
 
         const json = await res.json();
+        const durationMs = Date.now() - startTime;
 
         if (!res.ok) {
-          throw new Error(json.error || json.message || "Extraction failed");
+          const errorMsg = json.error || json.message || "Extraction failed";
+
+          await createLog({
+            monitorId,
+            monitorName: data.name,
+            url: data.url,
+            prompt: data.prompt,
+            status: res.status === 502 || res.status === 504 ? "timeout" : "error",
+            durationMs,
+            error: errorMsg,
+            rawResponse: JSON.stringify(json).slice(0, 10000),
+          });
+          alreadyLogged = true;
+
+          throw new Error(errorMsg);
         }
 
-        // 3. Save results to DB
         const matchCount = json.matches?.length ?? 0;
+        const totalItems = json.totalItems ?? json.schema?.items?.length ?? 0;
+        const insights = json.schema?.insights;
+        const confidence = insights?.confidence ?? 100;
+
+        // If the AI reports 0% confidence or found no items, the page is likely
+        // inaccessible (blocked, access denied, CAPTCHA, etc.)
+        if (confidence <= 10 && totalItems === 0) {
+          const reason = insights?.notices?.[0] ?? "Page appears inaccessible - no data could be extracted";
+
+          await saveScanError({ id: monitorId, error: reason });
+
+          await createLog({
+            monitorId,
+            monitorName: data.name,
+            url: data.url,
+            prompt: data.prompt,
+            status: "error",
+            durationMs,
+            error: reason,
+            rawResponse: JSON.stringify(json).slice(0, 50000),
+            aiConfidence: confidence,
+            aiUnderstanding: insights?.understanding,
+            aiNotices: insights?.notices,
+          });
+
+          toast.error("Page inaccessible", { description: reason });
+          return;
+        }
+
         await saveScanResult({
           id: monitorId,
           schema: json.schema,
           matchCount,
         });
 
+        await createLog({
+          monitorId,
+          monitorName: data.name,
+          url: data.url,
+          prompt: data.prompt,
+          status: "success",
+          durationMs,
+          itemCount: totalItems,
+          matchCount,
+          rawResponse: JSON.stringify(json).slice(0, 50000),
+          aiConfidence: insights?.confidence,
+          aiUnderstanding: insights?.understanding,
+          aiMatchSignal: insights?.matchSignal,
+          aiNoMatchSignal: insights?.noMatchSignal,
+          aiNotices: insights?.notices,
+          matchConditions: json.schema?.matchConditions,
+        }).catch(() => {});
+
         toast.success("Scan complete", {
-          description: `${json.totalItems} items found, ${matchCount} match${matchCount !== 1 ? "es" : ""}`,
+          description: `${totalItems} items found, ${matchCount} match${matchCount !== 1 ? "es" : ""}`,
         });
       } catch (e) {
         if (e instanceof Error && e.name === "AbortError") return;
         const msg = e instanceof Error ? e.message : "Scan failed";
-        await saveScanError({ id: monitorId, error: msg });
+        const durationMs = Date.now() - startTime;
+
+        await saveScanError({ id: monitorId, error: msg }).catch(() => {});
+
+        if (!alreadyLogged) {
+          await createLog({
+            monitorId,
+            url: data.url,
+            prompt: data.prompt,
+            status: msg.includes("timed out") || msg.includes("Timeout") || msg.includes("Failed to reach") ? "timeout" : "error",
+            durationMs,
+            error: msg,
+          }).catch(() => {});
+        }
+
         toast.error("Scan failed", { description: msg });
       } finally {
         setIsScanning(false);
         isSubmittingRef.current = false;
       }
     },
-    [createMutation, saveScanResult, saveScanError]
+    [createMutation, saveScanResult, saveScanError, createLog]
   );
 
-  /** Cancel the active scan and delete the monitor */
   const cancelScan = useCallback(async () => {
     abortRef.current?.abort();
     if (activeMonitorId) {
       try {
         await removeMutation({ id: activeMonitorId });
-      } catch {
-        // Monitor might already be gone
-      }
+      } catch { /* */ }
     }
     setActiveMonitorId(null);
     setIsScanning(false);
     setSheetOpen(false);
   }, [activeMonitorId, removeMutation]);
 
-  /** User confirmed the monitor (after reviewing results). Just close the sheet. */
   const confirmMonitor = useCallback(() => {
     setActiveMonitorId(null);
     setSheetOpen(false);

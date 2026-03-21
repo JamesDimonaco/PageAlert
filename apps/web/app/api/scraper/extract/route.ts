@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { isAuthenticated } from "@/lib/auth-server";
 
-export const maxDuration = 60;
+export const maxDuration = 120;
 
 export async function POST(request: Request) {
   // Verify the caller has a valid session before proxying to the scraper
@@ -20,9 +20,13 @@ export async function POST(request: Request) {
     );
   }
 
-  let body: { url: string; prompt: string };
+  let body: { url: string; prompt: string; name?: string };
   try {
-    body = await request.json();
+    const parsed: unknown = await request.json();
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      return NextResponse.json({ error: "Invalid JSON: expected an object" }, { status: 400 });
+    }
+    body = parsed as { url: string; prompt: string; name?: string };
   } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
@@ -41,16 +45,16 @@ export async function POST(request: Request) {
         "Content-Type": "application/json",
         "x-api-key": scraperKey,
       },
-      body: JSON.stringify({ url: body.url, prompt: body.prompt }),
-      signal: AbortSignal.timeout(55000),
+      body: JSON.stringify({ url: body.url, prompt: body.prompt, name: body.name }),
+      signal: AbortSignal.timeout(110000),
     });
 
+    const text = await res.text();
     let data: unknown;
     try {
-      data = await res.json();
+      data = JSON.parse(text);
     } catch {
-      const text = await res.text();
-      return new NextResponse(text, { status: res.status, headers: { "Content-Type": "text/plain" } });
+      return NextResponse.json({ error: text }, { status: res.status });
     }
 
     if (!res.ok) {

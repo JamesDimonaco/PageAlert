@@ -9,8 +9,10 @@ import { StatsCards } from "@/components/prowl/stats-cards";
 import { DeleteDialog } from "@/components/prowl/delete-dialog";
 import { useMonitors } from "@/hooks/use-monitors";
 import { useCreateMonitor } from "@/hooks/use-create-monitor";
+import { useMutation } from "convex/react";
+import { api } from "@/convex/_generated/api";
 import { toast } from "sonner";
-import type { Doc } from "@/convex/_generated/dataModel";
+import type { Doc, Id } from "@/convex/_generated/dataModel";
 import {
   Select,
   SelectContent,
@@ -20,8 +22,79 @@ import {
 } from "@/components/ui/select";
 
 export default function DashboardPage() {
-  const { monitors, togglePause, deleteMonitor } = useMonitors();
+  const { monitors, togglePause, deleteMonitor, updateMonitor } = useMonitors();
   const { open: openCreate } = useCreateMonitor();
+  const saveScanResult = useMutation(api.monitors.saveScanResult);
+  const saveScanError = useMutation(api.monitors.saveScanError);
+  const createLog = useMutation(api.logs.create);
+
+  async function handleRescan(monitorId: Id<"monitors">) {
+    const monitor = monitors.find((m) => m._id === monitorId);
+    if (!monitor) return;
+
+    const startTime = Date.now();
+
+    try {
+      // Set status to scanning so the badge updates immediately
+      await updateMonitor(monitorId, { status: "scanning" as "active" }); // "scanning" in Convex schema, types regenerate with npx convex dev
+
+      const res = await fetch("/api/scraper/extract", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: monitor.url, prompt: monitor.prompt, name: monitor.name }),
+      });
+      const json = await res.json();
+      const durationMs = Date.now() - startTime;
+
+      if (!res.ok) throw new Error(json.error || json.message || "Failed");
+
+      const matchCount = json.matches?.length ?? 0;
+      const totalItems = json.totalItems ?? 0;
+      const insights = json.schema?.insights;
+      const confidence = insights?.confidence ?? 100;
+
+      // Page inaccessible check
+      if (confidence <= 10 && totalItems === 0) {
+        const reason = insights?.notices?.[0] ?? "Page appears inaccessible";
+        await saveScanError({ id: monitorId, error: reason });
+        await createLog({
+          monitorId, monitorName: monitor.name, url: monitor.url, prompt: monitor.prompt,
+          status: "error" as const, durationMs, error: reason,
+          rawResponse: JSON.stringify(json).slice(0, 50000),
+          aiConfidence: confidence, aiUnderstanding: insights?.understanding, aiNotices: insights?.notices,
+        });
+        toast.error("Page inaccessible", { description: reason });
+        return;
+      }
+
+      await saveScanResult({ id: monitorId, schema: json.schema, matchCount });
+      await createLog({
+        monitorId, monitorName: monitor.name, url: monitor.url, prompt: monitor.prompt,
+        status: "success" as const, durationMs, itemCount: totalItems, matchCount,
+        rawResponse: JSON.stringify(json).slice(0, 50000),
+        aiConfidence: insights?.confidence, aiUnderstanding: insights?.understanding,
+        aiMatchSignal: insights?.matchSignal, aiNoMatchSignal: insights?.noMatchSignal,
+        aiNotices: insights?.notices, matchConditions: json.schema?.matchConditions,
+      }).catch(() => {});
+      toast.success("Rescan complete", {
+        description: `${totalItems} items, ${matchCount} matches`,
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Rescan failed";
+      const durationMs = Date.now() - startTime;
+      await saveScanError({ id: monitorId, error: msg }).catch(() => {});
+      await createLog({
+        monitorId,
+        monitorName: monitor.name,
+        url: monitor.url,
+        prompt: monitor.prompt,
+        status: "error" as const,
+        durationMs,
+        error: msg,
+      }).catch(() => {});
+      toast.error("Rescan failed", { description: msg });
+    }
+  }
 
   const [deleteTarget, setDeleteTarget] = useState<Doc<"monitors"> | null>(null);
   const [search, setSearch] = useState("");
@@ -115,6 +188,7 @@ export default function DashboardPage() {
                   m?.status === "paused" ? "Monitor resumed" : "Monitor paused"
                 );
               }}
+              onRescan={handleRescan}
               onDelete={(id) => {
                 const m = monitors.find((x) => x._id === id);
                 if (m) setDeleteTarget(m);
