@@ -27,7 +27,7 @@ Respond with ONLY valid JSON in this exact format:
 
 Rules:
 - Extract up to 50 items maximum
-- ALWAYS include a "url" field for each item - the direct link to that item's page. Construct it from the base URL and any href you can find. If no link exists, use null.
+- ALWAYS include a "url" field for each item. Links appear in the text as [text](url) format. Extract the URL from these. If no link exists, use null.
 - Keep item data concise: title, price, url, and 1-2 other relevant fields
 - Prices should be numbers (no currency symbols)
 - matchConditions.mustInclude: keywords that must appear ANYWHERE in the item (title, description, etc.)
@@ -39,7 +39,8 @@ Rules:
 
 export async function extractWithAI(
   pageText: string,
-  prompt: string
+  prompt: string,
+  baseUrl?: string
 ): Promise<{ schema: ExtractionSchema; matches: ExtractedItem[] }> {
   const client = getClient();
 
@@ -52,7 +53,7 @@ export async function extractWithAI(
     messages: [
       {
         role: "user",
-        content: `Page content:\n\n${truncatedText}\n\nUser is looking for: ${prompt}`,
+        content: `Page URL: ${baseUrl ?? "unknown"}\n\nPage content:\n\n${truncatedText}\n\nUser is looking for: ${prompt}`,
       },
     ],
     system: EXTRACTION_PROMPT,

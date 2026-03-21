@@ -18,7 +18,7 @@ extractRoutes.post("/", zValidator("json", extractSchema), async (c) => {
 
   try {
     const scraped = await scrapeUrl(url, { timeout });
-    const { schema, matches } = await extractWithAI(scraped.text, prompt);
+    const { schema, matches } = await extractWithAI(scraped.text, prompt, url);
 
     return c.json({
       url,

@@ -6,7 +6,6 @@ import { Plus, Search, Radar } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { MonitorCard } from "@/components/prowl/monitor-card";
 import { StatsCards } from "@/components/prowl/stats-cards";
-import { CreateMonitorDialog } from "@/components/prowl/create-monitor-dialog";
 import { DeleteDialog } from "@/components/prowl/delete-dialog";
 import { useMonitors } from "@/hooks/use-monitors";
 import { useCreateMonitor } from "@/hooks/use-create-monitor";
@@ -21,10 +20,9 @@ import {
 } from "@/components/ui/select";
 
 export default function DashboardPage() {
-  const { monitors, updateMonitor, deleteMonitor, togglePause } = useMonitors();
+  const { monitors, togglePause, deleteMonitor } = useMonitors();
   const { open: openCreate } = useCreateMonitor();
 
-  const [editMonitor, setEditMonitor] = useState<Doc<"monitors"> | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Doc<"monitors"> | null>(null);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
@@ -73,7 +71,7 @@ export default function DashboardPage() {
           <SelectContent>
             <SelectItem value="all">All statuses</SelectItem>
             <SelectItem value="active">Active</SelectItem>
-            <SelectItem value="matched">Matched</SelectItem>
+            <SelectItem value="scanning">Scanning</SelectItem>
             <SelectItem value="paused">Paused</SelectItem>
             <SelectItem value="error">Error</SelectItem>
           </SelectContent>
@@ -121,24 +119,10 @@ export default function DashboardPage() {
                 const m = monitors.find((x) => x._id === id);
                 if (m) setDeleteTarget(m);
               }}
-              onEdit={(m) => setEditMonitor(m)}
             />
           ))
         )}
       </div>
-
-      <CreateMonitorDialog
-        open={!!editMonitor}
-        onOpenChange={(open) => !open && setEditMonitor(null)}
-        editMonitor={editMonitor}
-        onSubmit={(data) => {
-          if (editMonitor) {
-            updateMonitor(editMonitor._id, data);
-            toast.success("Monitor updated");
-            setEditMonitor(null);
-          }
-        }}
-      />
 
       <DeleteDialog
         open={!!deleteTarget}

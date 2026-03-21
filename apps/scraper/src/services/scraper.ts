@@ -100,7 +100,7 @@ export async function scrapeUrl(
 
     const title = (await page.title()).slice(0, 500);
     const html = await getCleanHtml(page);
-    const text = await getCleanText(page);
+    const text = await getTextWithLinks(page);
 
     // Enforce max response size
     if (html.length > MAX_RESPONSE_SIZE || text.length > MAX_RESPONSE_SIZE) {
@@ -145,6 +145,45 @@ async function getCleanHtml(page: Page): Promise<string> {
     });
 
     return clone.innerHTML;
+  });
+}
+
+/** Extract text but convert <a> tags to [text](href) format so AI can extract URLs */
+async function getTextWithLinks(page: Page): Promise<string> {
+  return page.evaluate(() => {
+    const selectorsToRemove = [
+      "script",
+      "style",
+      "noscript",
+      "nav",
+      "footer",
+      "header",
+      "iframe",
+      '[role="navigation"]',
+      '[role="banner"]',
+      '[role="contentinfo"]',
+    ];
+
+    const clone = document.body.cloneNode(true) as HTMLElement;
+    selectorsToRemove.forEach((selector) => {
+      clone.querySelectorAll(selector).forEach((el) => el.remove());
+    });
+
+    // Convert <a> tags to markdown-style links before extracting text
+    clone.querySelectorAll("a[href]").forEach((a) => {
+      const href = a.getAttribute("href");
+      const text = a.textContent?.trim();
+      if (href && text) {
+        // Make absolute URL
+        let fullUrl = href;
+        try {
+          fullUrl = new URL(href, document.location.href).href;
+        } catch { /* keep relative */ }
+        a.textContent = `[${text}](${fullUrl})`;
+      }
+    });
+
+    return clone.innerText.replace(/\n{3,}/g, "\n\n").trim();
   });
 }
 
