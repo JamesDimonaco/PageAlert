@@ -103,9 +103,10 @@ export function CreateMonitorProvider({ children }: { children: ReactNode }) {
         if (!res.ok) {
           const errorMsg = json.error || json.message || "Extraction failed";
 
-          // Log the error
+          // Log the error with whatever data we got
           await createLog({
             monitorId,
+            monitorName: data.name,
             url: data.url,
             prompt: data.prompt,
             status: res.status === 502 || res.status === 504 ? "timeout" : "error",
@@ -117,9 +118,10 @@ export function CreateMonitorProvider({ children }: { children: ReactNode }) {
           throw new Error(errorMsg);
         }
 
-        // Success - save results and log
+        // Success - save results and log everything
         const matchCount = json.matches?.length ?? 0;
         const totalItems = json.totalItems ?? json.schema?.items?.length ?? 0;
+        const insights = json.schema?.insights;
 
         await saveScanResult({
           id: monitorId,
@@ -129,6 +131,7 @@ export function CreateMonitorProvider({ children }: { children: ReactNode }) {
 
         await createLog({
           monitorId,
+          monitorName: data.name,
           url: data.url,
           prompt: data.prompt,
           status: "success",
@@ -136,6 +139,12 @@ export function CreateMonitorProvider({ children }: { children: ReactNode }) {
           itemCount: totalItems,
           matchCount,
           rawResponse: JSON.stringify(json).slice(0, 50000),
+          aiConfidence: insights?.confidence,
+          aiUnderstanding: insights?.understanding,
+          aiMatchSignal: insights?.matchSignal,
+          aiNoMatchSignal: insights?.noMatchSignal,
+          aiNotices: insights?.notices,
+          matchConditions: json.schema?.matchConditions,
         });
 
         toast.success("Scan complete", {
