@@ -121,16 +121,16 @@ export const create = mutation({
       v.literal("6h"),
       v.literal("24h")
     ),
+    schema: v.optional(v.any()),
+    initialMatchCount: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const userId = await getAuthUserId(ctx);
 
-    // Validate all inputs server-side
     validateName(args.name);
     validateMonitorUrl(args.url);
     validatePrompt(args.prompt);
 
-    // Enforce per-user monitor limit to prevent abuse
     const existingMonitors = await ctx.db
       .query("monitors")
       .withIndex("by_userId", (q) => q.eq("userId", userId))
@@ -145,9 +145,11 @@ export const create = mutation({
       url: args.url.trim(),
       prompt: args.prompt.trim(),
       checkInterval: args.checkInterval,
+      schema: args.schema,
       userId,
-      status: "active",
-      matchCount: 0,
+      status: args.initialMatchCount ? "matched" : "active",
+      matchCount: args.initialMatchCount ?? 0,
+      lastCheckedAt: args.schema ? now : undefined,
       createdAt: now,
       updatedAt: now,
     });

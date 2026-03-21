@@ -6,6 +6,7 @@ import { Plus, Search, Radar } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { MonitorCard } from "@/components/prowl/monitor-card";
 import { StatsCards } from "@/components/prowl/stats-cards";
+import { CreateMonitorSheet } from "@/components/prowl/create-monitor-sheet";
 import { CreateMonitorDialog } from "@/components/prowl/create-monitor-dialog";
 import { DeleteDialog } from "@/components/prowl/delete-dialog";
 import { useMonitors } from "@/hooks/use-monitors";
@@ -127,10 +128,10 @@ export default function DashboardPage() {
         )}
       </div>
 
-      <CreateMonitorDialog
+      <CreateMonitorSheet
         open={createOpen}
         onOpenChange={setCreateOpen}
-        onSubmit={(data) => {
+        onCreated={(data) => {
           createMonitor(data);
           toast.success("Monitor created", {
             description: `Now watching ${new URL(data.url).hostname}`,

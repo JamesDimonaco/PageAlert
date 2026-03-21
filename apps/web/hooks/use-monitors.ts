@@ -16,6 +16,8 @@ export function useMonitors() {
     url: string;
     prompt: string;
     checkInterval: "5m" | "15m" | "30m" | "1h" | "6h" | "24h";
+    schema?: unknown;
+    initialMatchCount?: number;
   }) => createMutation(data);
 
   const updateMonitor = (
