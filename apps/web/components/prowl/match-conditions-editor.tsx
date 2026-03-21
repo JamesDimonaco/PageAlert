@@ -41,6 +41,7 @@ function TagInput({
               type="button"
               onClick={() => onChange(tags.filter((t) => t !== tag))}
               className="ml-0.5 rounded-full hover:bg-muted p-0.5"
+              aria-label={`Remove ${tag}`}
             >
               <X className="h-3 w-3" />
             </button>

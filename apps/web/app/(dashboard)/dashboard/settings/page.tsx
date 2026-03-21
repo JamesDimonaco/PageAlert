@@ -128,7 +128,7 @@ export default function SettingsPage() {
                         try {
                           await deleteAccountMutation();
                           toast.success("Account deleted");
-                          signOut();
+                          await signOut();
                         } catch {
                           toast.error("Failed to delete account");
                         } finally {

@@ -72,6 +72,11 @@ export default function MonitorDetailPage({
   const allItems = (schema?.items ?? []) as ExtractedItem[];
   const blacklist = ((monitor as Record<string, unknown>)?.blacklistedItems ?? []) as string[];
   const conditions = editedConditions ?? schema?.matchConditions ?? {};
+  function getItemKey(item: ExtractedItem): string {
+    if (item.url) return String(item.url);
+    return `${String(item.title ?? "")}-${String(item.price ?? "")}`;
+  }
+
   const matchesBeforeBlacklist = allItems.length > 0 ? applyMatchConditions(allItems, conditions) : [];
 
   function getItemKey(item: ExtractedItem): string {
@@ -142,13 +147,21 @@ export default function MonitorDetailPage({
   }
 
   async function blacklistItem(title: string) {
-    await updateBlacklist({ id: monitorId, blacklistedItems: [...blacklist, title] });
-    toast.success("Item dismissed");
+    try {
+      await updateBlacklist({ id: monitorId, blacklistedItems: [...blacklist, title] });
+      toast.success("Item dismissed");
+    } catch {
+      toast.error("Failed to dismiss item");
+    }
   }
 
   async function unblacklistItem(title: string) {
-    await updateBlacklist({ id: monitorId, blacklistedItems: blacklist.filter((t) => t !== title) });
-    toast.success("Item restored");
+    try {
+      await updateBlacklist({ id: monitorId, blacklistedItems: blacklist.filter((t) => t !== title) });
+      toast.success("Item restored");
+    } catch {
+      toast.error("Failed to restore item");
+    }
   }
 
   return (
