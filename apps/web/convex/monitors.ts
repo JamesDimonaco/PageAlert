@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
+import { intervalToMs, MAX_RETRIES } from "./shared";
 
 // ---- Resource Limits ----
 const MAX_MONITORS_PER_USER = 50;
@@ -7,8 +8,6 @@ const MAX_URL_LENGTH = 2048;
 const MAX_NAME_LENGTH = 200;
 const MAX_PROMPT_LENGTH = 2000;
 const MAX_RESULTS_LIMIT = 100;
-
-// ---- Helpers ----
 
 async function getAuthUserId(ctx: { auth: { getUserIdentity: () => Promise<{ subject: string } | null> } }) {
   const identity = await ctx.auth.getUserIdentity();
@@ -136,6 +135,9 @@ export const create = mutation({
       userId,
       status: "scanning",
       matchCount: 0,
+      checkCount: 0,
+      retryCount: 0,
+      nextCheckAt: now + intervalToMs(args.checkInterval),
       createdAt: now,
       updatedAt: now,
     });
@@ -160,8 +162,11 @@ export const saveScanResult = mutation({
       schema,
       status: "active",
       matchCount,
+      checkCount: (monitor.checkCount ?? 0) + 1,
+      retryCount: 0,
       lastCheckedAt: now,
       lastMatchAt: matchCount > 0 ? now : undefined,
+      nextCheckAt: now + intervalToMs(monitor.checkInterval),
       updatedAt: now,
     });
   },
@@ -179,11 +184,28 @@ export const saveScanError = mutation({
     if (!monitor || monitor.userId !== userId) throw new Error("Monitor not found");
     if (monitor.status !== "scanning") return;
 
-    await ctx.db.patch(id, {
-      status: "error",
-      lastError: error,
-      updatedAt: Date.now(),
-    });
+    const retryCount = (monitor.retryCount ?? 0) + 1;
+    const now = Date.now();
+
+    if (retryCount >= MAX_RETRIES) {
+      // Max retries exhausted — mark as error, stop scheduling
+      await ctx.db.patch(id, {
+        status: "error",
+        lastError: error,
+        retryCount,
+        nextCheckAt: undefined,
+        updatedAt: now,
+      });
+    } else {
+      // Retry with exponential backoff: 2min, 8min, 32min
+      const backoffMs = Math.pow(4, retryCount) * 30_000;
+      await ctx.db.patch(id, {
+        lastError: error,
+        retryCount,
+        nextCheckAt: now + backoffMs,
+        updatedAt: now,
+      });
+    }
   },
 });
 

@@ -28,12 +28,16 @@ export default defineSchema({
     lastMatchAt: v.optional(v.number()),
     lastError: v.optional(v.string()),
     matchCount: v.number(),
+    checkCount: v.optional(v.number()),
+    retryCount: v.optional(v.number()),
+    nextCheckAt: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
     .index("by_userId", ["userId"])
     .index("by_status", ["status"])
-    .index("by_userId_status", ["userId", "status"]),
+    .index("by_userId_status", ["userId", "status"])
+    .index("by_nextCheckAt", ["nextCheckAt"]),
 
   scrapeResults: defineTable({
     monitorId: v.id("monitors"),
