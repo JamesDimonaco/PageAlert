@@ -1,8 +1,15 @@
 import { NextResponse } from "next/server";
+import { isAuthenticated } from "@/lib/auth-server";
 
 export const maxDuration = 60;
 
 export async function POST(request: Request) {
+  // Verify the caller has a valid session before proxying to the scraper
+  const authed = await isAuthenticated();
+  if (!authed) {
+    return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+  }
+
   const scraperUrl = process.env.SCRAPER_URL;
   const scraperKey = process.env.SCRAPER_API_KEY;
 
