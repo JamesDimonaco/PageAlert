@@ -27,7 +27,9 @@ import {
   CheckCircle2,
   XCircle,
   AlertTriangle,
+  ArrowRight,
 } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { MatchConditionsEditor } from "./match-conditions-editor";
 import { applyMatchConditions } from "@prowl/shared";
 import { useMonitor } from "@/hooks/use-monitors";
@@ -63,6 +65,7 @@ export function CreateMonitorSheet({
   onConfirm,
 }: CreateMonitorSheetProps) {
   // Form state (only used before scan starts)
+  const router = useRouter();
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
   const [prompt, setPrompt] = useState("");
@@ -368,10 +371,22 @@ export function CreateMonitorSheet({
                   </div>
                 </div>
 
-                <div className="flex justify-end pt-4">
-                  <Button onClick={handleConfirm} className="gap-2 shadow-sm shadow-primary/15">
+                <div className="flex justify-end gap-3 pt-4">
+                  <Button variant="outline" onClick={handleConfirm} className="gap-2">
                     <CheckCircle2 className="h-4 w-4" />
                     Looks Good
+                  </Button>
+                  <Button
+                    onClick={() => {
+                      handleConfirm();
+                      if (activeMonitorId) {
+                        router.push(`/dashboard/monitors/${activeMonitorId}`);
+                      }
+                    }}
+                    className="gap-2 shadow-sm shadow-primary/15"
+                  >
+                    View Details
+                    <ArrowRight className="h-4 w-4" />
                   </Button>
                 </div>
               </div>
