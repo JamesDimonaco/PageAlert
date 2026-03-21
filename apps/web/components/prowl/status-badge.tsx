@@ -1,7 +1,12 @@
 import { Badge } from "@/components/ui/badge";
-import { Activity, Pause, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { Activity, Pause, AlertTriangle, CheckCircle2, Loader2 } from "lucide-react";
 
 const statusConfig = {
+  scanning: {
+    label: "Scanning",
+    icon: Loader2,
+    className: "bg-blue-500/10 text-blue-400 border-blue-500/20 hover:bg-blue-500/15 [&_svg]:animate-spin",
+  },
   active: {
     label: "Active",
     icon: Activity,

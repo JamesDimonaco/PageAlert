@@ -8,6 +8,7 @@ export default defineSchema({
     url: v.string(),
     prompt: v.string(),
     status: v.union(
+      v.literal("scanning"),
       v.literal("active"),
       v.literal("paused"),
       v.literal("error"),

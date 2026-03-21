@@ -42,13 +42,15 @@ interface MonitorCardProps {
 
 export function MonitorCard({ monitor, onTogglePause, onDelete, onEdit }: MonitorCardProps) {
   const statusBorderColor =
-    monitor.status === "active"
-      ? "group-hover:border-l-emerald-500/50"
-      : monitor.status === "matched"
-        ? "group-hover:border-l-primary/50"
-        : monitor.status === "error"
-          ? "group-hover:border-l-red-500/50"
-          : "group-hover:border-l-amber-500/50";
+    monitor.status === "scanning"
+      ? "group-hover:border-l-blue-500/50"
+      : monitor.status === "active"
+        ? "group-hover:border-l-emerald-500/50"
+        : monitor.status === "matched"
+          ? "group-hover:border-l-primary/50"
+          : monitor.status === "error"
+            ? "group-hover:border-l-red-500/50"
+            : "group-hover:border-l-amber-500/50";
 
   return (
     <Card className={`group relative overflow-hidden border-border/30 border-l-2 border-l-transparent bg-card/50 shadow-sm shadow-black/5 backdrop-blur transition-all hover:shadow-md hover:shadow-black/10 hover:bg-card/80 ${statusBorderColor}`}>

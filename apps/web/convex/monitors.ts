@@ -16,30 +16,20 @@ async function getAuthUserId(ctx: { auth: { getUserIdentity: () => Promise<{ sub
   return identity.subject;
 }
 
-/**
- * Server-side URL validation for monitor URLs.
- * This runs in Convex mutations to ensure only safe URLs are stored,
- * independent of the scraper's own SSRF checks.
- */
 function validateMonitorUrl(url: string): void {
   if (url.length > MAX_URL_LENGTH) {
     throw new Error(`URL exceeds maximum length of ${MAX_URL_LENGTH} characters`);
   }
-
   let parsed: URL;
   try {
     parsed = new URL(url);
   } catch {
     throw new Error("Invalid URL format");
   }
-
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     throw new Error("Only http and https URLs are allowed");
   }
-
   const hostname = parsed.hostname.toLowerCase();
-
-  // Block localhost and private IPs
   const blockedHosts = [
     "localhost", "127.0.0.1", "0.0.0.0", "[::1]",
     "metadata.google.internal", "169.254.169.254",
@@ -47,24 +37,13 @@ function validateMonitorUrl(url: string): void {
   if (blockedHosts.includes(hostname)) {
     throw new Error("This hostname is not allowed");
   }
-
-  // Block obvious private IP ranges
   const ipMatch = hostname.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
   if (ipMatch) {
     const [, a, b] = ipMatch.map(Number);
-    if (
-      a === 10 ||
-      (a === 172 && b >= 16 && b <= 31) ||
-      (a === 192 && b === 168) ||
-      a === 127 ||
-      (a === 169 && b === 254) ||
-      a === 0
-    ) {
+    if (a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || a === 127 || (a === 169 && b === 254) || a === 0) {
       throw new Error("URLs pointing to private/internal IP addresses are not allowed");
     }
   }
-
-  // Must have a hostname with at least one dot (no bare hostnames like "intranet")
   if (!hostname.includes(".")) {
     throw new Error("URL must use a fully qualified domain name");
   }
@@ -79,6 +58,23 @@ function validatePrompt(prompt: string): void {
   if (prompt.length === 0) throw new Error("Prompt is required");
   if (prompt.length > MAX_PROMPT_LENGTH) throw new Error(`Prompt exceeds maximum length of ${MAX_PROMPT_LENGTH} characters`);
 }
+
+const statusValidator = v.union(
+  v.literal("scanning"),
+  v.literal("active"),
+  v.literal("paused"),
+  v.literal("error"),
+  v.literal("matched")
+);
+
+const intervalValidator = v.union(
+  v.literal("5m"),
+  v.literal("15m"),
+  v.literal("30m"),
+  v.literal("1h"),
+  v.literal("6h"),
+  v.literal("24h")
+);
 
 // ---- Queries ----
 
@@ -108,21 +104,13 @@ export const get = query({
 
 // ---- Mutations ----
 
+/** Create a monitor in "scanning" state. The scan runs client-side, then saveScanResult is called. */
 export const create = mutation({
   args: {
     name: v.string(),
     url: v.string(),
     prompt: v.string(),
-    checkInterval: v.union(
-      v.literal("5m"),
-      v.literal("15m"),
-      v.literal("30m"),
-      v.literal("1h"),
-      v.literal("6h"),
-      v.literal("24h")
-    ),
-    schema: v.optional(v.any()),
-    initialMatchCount: v.optional(v.number()),
+    checkInterval: intervalValidator,
   },
   handler: async (ctx, args) => {
     const userId = await getAuthUserId(ctx);
@@ -145,13 +133,54 @@ export const create = mutation({
       url: args.url.trim(),
       prompt: args.prompt.trim(),
       checkInterval: args.checkInterval,
-      schema: args.schema,
       userId,
-      status: args.initialMatchCount ? "matched" : "active",
-      matchCount: args.initialMatchCount ?? 0,
-      lastCheckedAt: args.schema ? now : undefined,
+      status: "scanning",
+      matchCount: 0,
       createdAt: now,
       updatedAt: now,
+    });
+  },
+});
+
+/** Save scan results to a monitor. Transitions from "scanning" to "active"/"matched". */
+export const saveScanResult = mutation({
+  args: {
+    id: v.id("monitors"),
+    schema: v.any(),
+    matchCount: v.number(),
+  },
+  handler: async (ctx, { id, schema, matchCount }) => {
+    const userId = await getAuthUserId(ctx);
+    const monitor = await ctx.db.get(id);
+    if (!monitor || monitor.userId !== userId) throw new Error("Monitor not found");
+
+    const now = Date.now();
+    await ctx.db.patch(id, {
+      schema,
+      status: matchCount > 0 ? "matched" : "active",
+      matchCount,
+      lastCheckedAt: now,
+      lastMatchAt: matchCount > 0 ? now : undefined,
+      updatedAt: now,
+    });
+  },
+});
+
+/** Mark a scan as failed. */
+export const saveScanError = mutation({
+  args: {
+    id: v.id("monitors"),
+    error: v.string(),
+  },
+  handler: async (ctx, { id, error }) => {
+    const userId = await getAuthUserId(ctx);
+    const monitor = await ctx.db.get(id);
+    if (!monitor || monitor.userId !== userId) throw new Error("Monitor not found");
+
+    await ctx.db.patch(id, {
+      status: "error",
+      lastError: error,
+      updatedAt: Date.now(),
     });
   },
 });
@@ -162,31 +191,15 @@ export const update = mutation({
     name: v.optional(v.string()),
     url: v.optional(v.string()),
     prompt: v.optional(v.string()),
-    status: v.optional(
-      v.union(
-        v.literal("active"),
-        v.literal("paused"),
-        v.literal("error"),
-        v.literal("matched")
-      )
-    ),
-    checkInterval: v.optional(
-      v.union(
-        v.literal("5m"),
-        v.literal("15m"),
-        v.literal("30m"),
-        v.literal("1h"),
-        v.literal("6h"),
-        v.literal("24h")
-      )
-    ),
+    status: v.optional(statusValidator),
+    checkInterval: v.optional(intervalValidator),
+    schema: v.optional(v.any()),
   },
   handler: async (ctx, { id, ...fields }) => {
     const userId = await getAuthUserId(ctx);
     const existing = await ctx.db.get(id);
     if (!existing || existing.userId !== userId) throw new Error("Monitor not found");
 
-    // Validate updated fields server-side
     if (fields.name !== undefined) validateName(fields.name);
     if (fields.url !== undefined) validateMonitorUrl(fields.url);
     if (fields.prompt !== undefined) validatePrompt(fields.prompt);
@@ -210,7 +223,6 @@ export const remove = mutation({
     const existing = await ctx.db.get(id);
     if (!existing || existing.userId !== userId) throw new Error("Monitor not found");
 
-    // Cascading delete: remove related scrape results
     const results = await ctx.db
       .query("scrapeResults")
       .withIndex("by_monitorId", (q) => q.eq("monitorId", id))
@@ -219,7 +231,6 @@ export const remove = mutation({
       await ctx.db.delete(result._id);
     }
 
-    // Cascading delete: remove related notifications
     const notifs = await ctx.db
       .query("notifications")
       .withIndex("by_monitorId", (q) => q.eq("monitorId", id))
@@ -240,7 +251,6 @@ export const getResults = query({
     const monitor = await ctx.db.get(monitorId);
     if (!monitor || monitor.userId !== identity.subject) return [];
 
-    // Cap the limit to prevent excessive data retrieval
     const safeLimit = Math.min(Math.max(limit ?? 20, 1), MAX_RESULTS_LIMIT);
     return ctx.db
       .query("scrapeResults")

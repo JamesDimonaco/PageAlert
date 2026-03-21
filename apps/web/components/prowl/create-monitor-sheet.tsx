@@ -24,56 +24,70 @@ import {
 import {
   Radar,
   Loader2,
-  ArrowLeft,
   CheckCircle2,
   XCircle,
   AlertTriangle,
 } from "lucide-react";
-import type { useScraper } from "@/hooks/use-scraper";
 import { MatchConditionsEditor } from "./match-conditions-editor";
 import { applyMatchConditions } from "@prowl/shared";
+import { useMonitor } from "@/hooks/use-monitors";
+import { useMutation } from "convex/react";
+import { api } from "@/convex/_generated/api";
+import type { Id } from "@/convex/_generated/dataModel";
 import type { MatchConditions, ExtractedItem, ExtractionSchema } from "@prowl/shared";
 
-type Step = "form" | "scanning" | "preview";
 type CheckInterval = "5m" | "15m" | "30m" | "1h" | "6h" | "24h";
 
 interface CreateMonitorSheetProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onCreated: (data: {
+  activeMonitorId: Id<"monitors"> | null;
+  isScanning: boolean;
+  onStartScan: (data: {
     name: string;
     url: string;
     prompt: string;
     checkInterval: CheckInterval;
-    schema: ExtractionSchema;
-    initialMatchCount: number;
   }) => void;
-  scraper: ReturnType<typeof useScraper>;
+  onCancelScan: () => void;
+  onConfirm: () => void;
 }
 
 export function CreateMonitorSheet({
   open,
   onOpenChange,
-  onCreated,
-  scraper,
+  activeMonitorId,
+  isScanning,
+  onStartScan,
+  onCancelScan,
+  onConfirm,
 }: CreateMonitorSheetProps) {
-  const [step, setStep] = useState<Step>("form");
+  // Form state (only used before scan starts)
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
   const [prompt, setPrompt] = useState("");
   const [checkInterval, setCheckInterval] = useState<CheckInterval>("1h");
 
-  const [conditions, setConditions] = useState<MatchConditions>({});
-  const [allItems, setAllItems] = useState<ExtractedItem[]>([]);
-  const [matches, setMatches] = useState<ExtractedItem[]>([]);
-  const [schema, setSchema] = useState<ExtractionSchema | null>(null);
+  // Match conditions editing
+  const [editedConditions, setEditedConditions] = useState<MatchConditions | null>(null);
 
+  // Timer
   const [elapsed, setElapsed] = useState(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // Read the monitor from Convex (reactive - updates when scan completes)
+  const monitor = useMonitor(activeMonitorId!);
+
+  // Determine step from state
+  const step = !activeMonitorId
+    ? "form"
+    : isScanning || monitor?.status === "scanning"
+      ? "scanning"
+      : "preview";
+
   // Elapsed timer during scanning
   useEffect(() => {
-    if (step === "scanning" && scraper.isLoading) {
+    if (step === "scanning") {
       setElapsed(0);
       timerRef.current = setInterval(() => setElapsed((e) => e + 1), 1000);
     } else {
@@ -82,82 +96,48 @@ export function CreateMonitorSheet({
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
     };
-  }, [step, scraper.isLoading]);
+  }, [step]);
 
-  // When scraper finishes while sheet is closed (or open), transition to preview
+  // When monitor loads with schema, init edited conditions
   useEffect(() => {
-    if (scraper.data && step === "scanning") {
-      setSchema(scraper.data.schema);
-      setAllItems(scraper.data.schema.items);
-      setConditions(scraper.data.schema.matchConditions);
-      setMatches(scraper.data.matches);
-      setStep("preview");
+    if (monitor?.schema?.matchConditions && !editedConditions) {
+      setEditedConditions(monitor.schema.matchConditions);
     }
-  }, [scraper.data, step]);
+  }, [monitor?.schema, editedConditions]);
 
-  // Re-apply match conditions when user edits them
-  useEffect(() => {
-    if (allItems.length > 0) {
-      setMatches(applyMatchConditions(allItems, conditions));
-    }
-  }, [conditions, allItems]);
+  const schema = monitor?.schema as ExtractionSchema | undefined;
+  const allItems = (schema?.items ?? []) as ExtractedItem[];
+  const conditions = editedConditions ?? schema?.matchConditions ?? {};
+  const matches = allItems.length > 0 ? applyMatchConditions(allItems, conditions) : [];
 
-  function fullReset() {
-    setStep("form");
+  const updateMutation = useMutation(api.monitors.update);
+
+  function resetForm() {
     setName("");
     setUrl("");
     setPrompt("");
     setCheckInterval("1h");
-    setConditions({});
-    setAllItems([]);
-    setMatches([]);
-    setSchema(null);
-    scraper.cancel();
-    scraper.reset();
+    setEditedConditions(null);
   }
 
-  function handleOpenChange(newOpen: boolean) {
-    // Closing the sheet does NOT cancel the scan - it keeps running
-    // Only explicit cancel or successful creation resets
-    onOpenChange(newOpen);
+  async function handleConfirm() {
+    // Save edited conditions back to the monitor if changed
+    if (activeMonitorId && editedConditions && schema) {
+      await updateMutation({
+        id: activeMonitorId,
+        schema: { ...schema, matchConditions: editedConditions },
+      });
+    }
+    resetForm();
+    onConfirm();
   }
 
-  async function handleScan() {
-    setStep("scanning");
-    scraper.extract(url, prompt);
-    // Don't await - the useEffect above handles the transition when data arrives
-  }
-
-  function handleConfirm() {
-    if (!schema) return;
-    const finalSchema: ExtractionSchema = {
-      ...schema,
-      matchConditions: conditions,
-    };
-    onCreated({
-      name: name || `Monitor ${new URL(url).hostname}`,
-      url,
-      prompt,
-      checkInterval,
-      schema: finalSchema,
-      initialMatchCount: matches.length,
-    });
-    fullReset();
-    onOpenChange(false);
-  }
-
-  function handleCancel() {
-    fullReset();
-    onOpenChange(false);
-  }
-
-  // Show a scanning indicator even when the sheet is closed
-  const isScanningInBackground = !open && scraper.isLoading;
+  // Floating indicator when scanning in background
+  const showFloatingIndicator = !open && (isScanning || monitor?.status === "scanning");
 
   return (
     <>
-      {/* Floating indicator when scan is running in background */}
-      {isScanningInBackground && (
+      {showFloatingIndicator && (
         <button
           onClick={() => onOpenChange(true)}
           className="fixed bottom-6 right-6 z-50 flex items-center gap-3 rounded-lg bg-primary px-4 py-3 text-sm font-medium text-primary-foreground shadow-lg shadow-primary/25 hover:bg-primary/90 transition-colors animate-in slide-in-from-bottom-4"
@@ -167,7 +147,7 @@ export function CreateMonitorSheet({
         </button>
       )}
 
-      <Sheet open={open} onOpenChange={handleOpenChange}>
+      <Sheet open={open} onOpenChange={onOpenChange}>
         <SheetContent className="sm:max-w-2xl overflow-y-auto">
           <SheetHeader>
             <SheetTitle className="flex items-center gap-2">
@@ -179,12 +159,9 @@ export function CreateMonitorSheet({
               {step === "preview" && "Review Results"}
             </SheetTitle>
             <SheetDescription>
-              {step === "form" &&
-                "Paste a URL and describe what you're looking for."}
-              {step === "scanning" &&
-                "AI is scanning the page and extracting data..."}
-              {step === "preview" &&
-                "Review the extracted data and adjust your filters."}
+              {step === "form" && "Paste a URL and describe what you're looking for."}
+              {step === "scanning" && "AI is scanning the page and extracting data..."}
+              {step === "preview" && "Review the extracted data and adjust your filters."}
             </SheetDescription>
           </SheetHeader>
 
@@ -194,14 +171,17 @@ export function CreateMonitorSheet({
               <form
                 onSubmit={(e) => {
                   e.preventDefault();
-                  handleScan();
+                  onStartScan({
+                    name: name || `Monitor ${new URL(url).hostname}`,
+                    url,
+                    prompt,
+                    checkInterval,
+                  });
                 }}
                 className="space-y-6"
               >
                 <div className="space-y-2">
-                  <Label htmlFor="create-name" className="text-sm font-medium">
-                    Name
-                  </Label>
+                  <Label htmlFor="create-name" className="text-sm font-medium">Name</Label>
                   <Input
                     id="create-name"
                     placeholder="e.g. MacBook Pro Refurbished"
@@ -209,11 +189,8 @@ export function CreateMonitorSheet({
                     onChange={(e) => setName(e.target.value)}
                   />
                 </div>
-
                 <div className="space-y-2">
-                  <Label htmlFor="create-url" className="text-sm font-medium">
-                    URL to monitor
-                  </Label>
+                  <Label htmlFor="create-url" className="text-sm font-medium">URL to monitor</Label>
                   <Input
                     id="create-url"
                     type="url"
@@ -223,11 +200,8 @@ export function CreateMonitorSheet({
                     required
                   />
                 </div>
-
                 <div className="space-y-2">
-                  <Label htmlFor="create-prompt" className="text-sm font-medium">
-                    What are you looking for?
-                  </Label>
+                  <Label htmlFor="create-prompt" className="text-sm font-medium">What are you looking for?</Label>
                   <Textarea
                     id="create-prompt"
                     placeholder="e.g. MacBook Pro 14 inch M3 gray under $1500"
@@ -240,18 +214,13 @@ export function CreateMonitorSheet({
                     Describe in plain English. Be as specific as you want.
                   </p>
                 </div>
-
                 <div className="space-y-2">
                   <Label className="text-sm font-medium">Check frequency</Label>
                   <Select
                     value={checkInterval}
-                    onValueChange={(v) =>
-                      v && setCheckInterval(v as CheckInterval)
-                    }
+                    onValueChange={(v) => v && setCheckInterval(v as CheckInterval)}
                   >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="5m">Every 5 minutes</SelectItem>
                       <SelectItem value="15m">Every 15 minutes</SelectItem>
@@ -262,15 +231,11 @@ export function CreateMonitorSheet({
                     </SelectContent>
                   </Select>
                 </div>
-
                 <div className="flex justify-end gap-3 pt-4">
-                  <Button type="button" variant="ghost" onClick={handleCancel}>
+                  <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
                     Cancel
                   </Button>
-                  <Button
-                    type="submit"
-                    className="gap-2 shadow-sm shadow-primary/15"
-                  >
+                  <Button type="submit" className="gap-2 shadow-sm shadow-primary/15">
                     <Radar className="h-4 w-4" />
                     Scan Page
                   </Button>
@@ -281,53 +246,31 @@ export function CreateMonitorSheet({
             {/* ---- STEP 2: SCANNING ---- */}
             {step === "scanning" && (
               <div className="flex flex-col items-center justify-center py-16">
-                {scraper.error ? (
+                {monitor?.status === "error" ? (
                   <>
                     <div className="flex h-16 w-16 items-center justify-center rounded-full bg-destructive/10 mb-6">
                       <AlertTriangle className="h-7 w-7 text-destructive" />
                     </div>
                     <p className="text-lg font-semibold mb-2">Scan failed</p>
                     <p className="text-sm text-muted-foreground text-center max-w-sm mb-6">
-                      {scraper.error}
+                      {monitor.lastError ?? "Unknown error"}
                     </p>
-                    <div className="flex gap-3">
-                      <Button
-                        variant="outline"
-                        onClick={() => {
-                          scraper.reset();
-                          setStep("form");
-                        }}
-                      >
-                        <ArrowLeft className="mr-2 h-4 w-4" />
-                        Back
-                      </Button>
-                      <Button onClick={handleScan}>Try again</Button>
-                    </div>
+                    <Button variant="destructive" onClick={onCancelScan}>
+                      Delete & try again
+                    </Button>
                   </>
                 ) : (
                   <>
                     <Loader2 className="h-12 w-12 animate-spin text-primary mb-6" />
-                    <p className="text-lg font-semibold mb-1">
-                      Scanning page...
-                    </p>
-                    <p className="text-sm text-muted-foreground mb-1">
-                      {elapsed}s elapsed
-                    </p>
+                    <p className="text-lg font-semibold mb-1">Scanning page...</p>
+                    <p className="text-sm text-muted-foreground mb-1">{elapsed}s elapsed</p>
                     <p className="text-xs text-muted-foreground font-mono truncate max-w-sm">
-                      {url}
+                      {monitor?.url}
                     </p>
                     <p className="text-xs text-muted-foreground mt-4">
-                      You can close this panel - the scan will continue in the background.
+                      You can close this panel — the scan will continue.
                     </p>
-                    <Button
-                      variant="ghost"
-                      className="mt-4"
-                      onClick={() => {
-                        scraper.cancel();
-                        scraper.reset();
-                        setStep("form");
-                      }}
-                    >
+                    <Button variant="ghost" className="mt-4 text-destructive" onClick={onCancelScan}>
                       Cancel scan
                     </Button>
                   </>
@@ -336,7 +279,7 @@ export function CreateMonitorSheet({
             )}
 
             {/* ---- STEP 3: PREVIEW ---- */}
-            {step === "preview" && (
+            {step === "preview" && monitor && (
               <div className="space-y-6">
                 <div className="flex items-center gap-4 rounded-lg bg-card/80 p-4 border border-border/30">
                   <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 shrink-0">
@@ -362,12 +305,11 @@ export function CreateMonitorSheet({
                 <div>
                   <h3 className="text-sm font-semibold mb-3">Match Filters</h3>
                   <p className="text-xs text-muted-foreground mb-4">
-                    AI generated these from your prompt. Edit them to fine-tune
-                    what you&apos;re looking for.
+                    AI generated these from your prompt. Edit them to fine-tune what you&apos;re looking for.
                   </p>
                   <MatchConditionsEditor
                     conditions={conditions}
-                    onChange={setConditions}
+                    onChange={setEditedConditions}
                   />
                 </div>
 
@@ -376,9 +318,7 @@ export function CreateMonitorSheet({
                 <div>
                   <h3 className="text-sm font-semibold mb-3">
                     Extracted Items
-                    <Badge variant="outline" className="ml-2 text-xs">
-                      {allItems.length}
-                    </Badge>
+                    <Badge variant="outline" className="ml-2 text-xs">{allItems.length}</Badge>
                   </h3>
                   <div className="max-h-[300px] overflow-y-auto space-y-2 rounded-lg border border-border/30 p-3">
                     {allItems.length === 0 ? (
@@ -402,21 +342,14 @@ export function CreateMonitorSheet({
                             <div className="flex items-start justify-between gap-3">
                               <div className="flex-1 min-w-0">
                                 <p className="font-medium truncate">
-                                  {String(
-                                    item.title ??
-                                      item.name ??
-                                      `Item ${i + 1}`
-                                  )}
+                                  {String(item.title ?? item.name ?? `Item ${i + 1}`)}
                                 </p>
                                 {item.price != null && (
                                   <p className="text-xs text-muted-foreground mt-0.5">
                                     ${Number(item.price).toLocaleString()}
                                     {item.originalPrice != null && (
                                       <span className="line-through ml-2">
-                                        $
-                                        {Number(
-                                          item.originalPrice
-                                        ).toLocaleString()}
+                                        ${Number(item.originalPrice).toLocaleString()}
                                       </span>
                                     )}
                                   </p>
@@ -435,23 +368,10 @@ export function CreateMonitorSheet({
                   </div>
                 </div>
 
-                <div className="flex justify-between pt-4">
-                  <Button
-                    variant="ghost"
-                    onClick={() => {
-                      scraper.reset();
-                      setStep("form");
-                    }}
-                  >
-                    <ArrowLeft className="mr-2 h-4 w-4" />
-                    Back
-                  </Button>
-                  <Button
-                    onClick={handleConfirm}
-                    className="gap-2 shadow-sm shadow-primary/15"
-                  >
+                <div className="flex justify-end pt-4">
+                  <Button onClick={handleConfirm} className="gap-2 shadow-sm shadow-primary/15">
                     <CheckCircle2 className="h-4 w-4" />
-                    Create Monitor
+                    Looks Good
                   </Button>
                 </div>
               </div>
