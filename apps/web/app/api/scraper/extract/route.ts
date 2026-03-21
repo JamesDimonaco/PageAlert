@@ -20,7 +20,7 @@ export async function POST(request: Request) {
     );
   }
 
-  let body: { url: string; prompt: string };
+  let body: { url: string; prompt: string; name?: string };
   try {
     body = await request.json();
   } catch {
@@ -41,7 +41,7 @@ export async function POST(request: Request) {
         "Content-Type": "application/json",
         "x-api-key": scraperKey,
       },
-      body: JSON.stringify({ url: body.url, prompt: body.prompt }),
+      body: JSON.stringify({ url: body.url, prompt: body.prompt, name: body.name }),
       signal: AbortSignal.timeout(110000),
     });
 

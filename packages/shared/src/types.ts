@@ -20,10 +20,24 @@ export interface ExtractRequest {
   timeout?: number;
 }
 
+export interface AiInsights {
+  /** Plain English: what the AI thinks the user wants */
+  understanding: string;
+  /** 0-100 confidence that the AI understood the request and can extract the right data */
+  confidence: number;
+  /** What a successful match would look like on this page */
+  matchSignal: string;
+  /** What "no match" / "out of stock" looks like on this page */
+  noMatchSignal: string;
+  /** Warnings about data limitations (e.g. "RAM not shown on listing page") */
+  notices: string[];
+}
+
 export interface ExtractionSchema {
   fields: Record<string, string>;
   items: ExtractedItem[];
   matchConditions: MatchConditions;
+  insights?: AiInsights;
 }
 
 export interface ExtractedItem {

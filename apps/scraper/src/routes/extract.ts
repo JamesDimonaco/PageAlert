@@ -8,17 +8,18 @@ import { MAX_URL_LENGTH } from "../utils/url-validation.js";
 const extractSchema = z.object({
   url: z.string().url().max(MAX_URL_LENGTH),
   prompt: z.string().min(1).max(2000),
+  name: z.string().max(200).optional(),
   timeout: z.number().int().min(1000).max(60000).optional(),
 });
 
 export const extractRoutes = new Hono();
 
 extractRoutes.post("/", zValidator("json", extractSchema), async (c) => {
-  const { url, prompt, timeout } = c.req.valid("json");
+  const { url, prompt, name, timeout } = c.req.valid("json");
 
   try {
     const scraped = await scrapeUrl(url, { timeout });
-    const { schema, matches } = await extractWithAI(scraped.text, prompt, url);
+    const { schema, matches } = await extractWithAI(scraped.text, prompt, url, name);
 
     return c.json({
       url,

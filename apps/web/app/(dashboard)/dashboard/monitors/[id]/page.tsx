@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { StatusBadge } from "@/components/prowl/status-badge";
 import { MatchConditionsEditor } from "@/components/prowl/match-conditions-editor";
+import { AiInsightsCard } from "@/components/prowl/ai-insights";
 import {
   ArrowLeft,
   ExternalLink,
@@ -221,6 +222,9 @@ export default function MonitorDetailPage({
           </CardContent>
         </Card>
       </div>
+
+      {/* AI Insights */}
+      {schema?.insights && <AiInsightsCard insights={schema.insights} />}
 
       {/* Match Filters */}
       {schema && (

@@ -31,6 +31,7 @@ import {
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { MatchConditionsEditor } from "./match-conditions-editor";
+import { AiInsightsCard } from "./ai-insights";
 import { applyMatchConditions } from "@prowl/shared";
 import { useMonitor } from "@/hooks/use-monitors";
 import { useMutation } from "convex/react";
@@ -284,6 +285,10 @@ export function CreateMonitorSheet({
             {/* ---- STEP 3: PREVIEW ---- */}
             {step === "preview" && monitor && (
               <div className="space-y-6">
+                {/* AI Insights */}
+                {schema?.insights && <AiInsightsCard insights={schema.insights} />}
+
+                {/* Summary */}
                 <div className="flex items-center gap-4 rounded-lg bg-card/80 p-4 border border-border/30">
                   <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 shrink-0">
                     {matches.length > 0 ? (

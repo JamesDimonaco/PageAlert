@@ -40,7 +40,7 @@ export default function DashboardPage() {
       const res = await fetch("/api/scraper/extract", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: monitor.url, prompt: monitor.prompt }),
+        body: JSON.stringify({ url: monitor.url, prompt: monitor.prompt, name: monitor.name }),
       });
       const json = await res.json();
       const durationMs = Date.now() - startTime;

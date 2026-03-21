@@ -4,10 +4,25 @@ import { applyMatchConditions } from "@prowl/shared";
 
 const getClient = () => new Anthropic();
 
-const EXTRACTION_PROMPT = `You are a web data extraction assistant. Given the text content of a web page and a user's description of what they're looking for, extract structured data.
+const EXTRACTION_PROMPT = `You are a web data extraction assistant. Given:
+- The text content of a web page (with links as [text](url))
+- A monitor name (context about what the user named this search)
+- A user prompt describing what they're looking for
+
+Your job is to extract structured data AND help the user understand what you found.
 
 Respond with ONLY valid JSON in this exact format:
 {
+  "insights": {
+    "understanding": "Plain English summary of what you think the user wants. Be specific.",
+    "confidence": 85,
+    "matchSignal": "What a successful match looks like on THIS page (e.g. 'Item appears in listing with size 8 shown as available')",
+    "noMatchSignal": "What no-match / out-of-stock looks like on THIS page (e.g. 'Size 8 not listed in available sizes')",
+    "notices": [
+      "Any limitations, e.g. 'RAM specs not shown on listing page - only visible on individual product pages'",
+      "Another notice if needed"
+    ]
+  },
   "fields": {
     "title": "description",
     "price": "description",
@@ -25,22 +40,34 @@ Respond with ONLY valid JSON in this exact format:
   }
 }
 
-Rules:
+Rules for insights:
+- "understanding": Restate what the user wants in your own words. Be specific about product, specs, conditions.
+- "confidence": 0-100. Lower if the page doesn't contain the data needed to match (e.g. specs only on product pages, not listings). Lower if the page structure is unusual.
+- "matchSignal": Describe concretely what would need to appear/change on this page for the user's criteria to be met.
+- "noMatchSignal": Describe what the current "no match" state looks like.
+- "notices": IMPORTANT - list anything the user should know. Examples:
+  - Data that's missing from this page but would be on sub-pages (RAM, sizes, colors)
+  - If the page is a listing and detailed specs require clicking through
+  - If stock/availability isn't shown on this page
+  - If prices might change or are regional
+  - Keep each notice concise and actionable
+
+Rules for extraction:
 - Extract up to 50 items maximum
-- ALWAYS include a "url" field for each item. Links appear in the text as [text](url) format. Extract the URL from these. If no link exists, use null.
+- ALWAYS include a "url" field for each item. Links appear as [text](url). If no link exists, use null.
 - Keep item data concise: title, price, url, and 1-2 other relevant fields
 - Prices should be numbers (no currency symbols)
-- matchConditions.mustInclude: keywords that must appear ANYWHERE in the item (title, description, etc.)
+- matchConditions.mustInclude: keywords that must appear ANYWHERE in the item
 - matchConditions.mustExclude: keywords that must NOT appear anywhere
 - priceMin/priceMax: price range filter
-- Do NOT use titleContains or titleExcludes - only use mustInclude and mustExclude
 - If you can't determine a field value, use null
 - Do NOT wrap your response in markdown code fences - output raw JSON only`;
 
 export async function extractWithAI(
   pageText: string,
   prompt: string,
-  baseUrl?: string
+  baseUrl?: string,
+  monitorName?: string
 ): Promise<{ schema: ExtractionSchema; matches: ExtractedItem[] }> {
   const client = getClient();
 
@@ -53,7 +80,7 @@ export async function extractWithAI(
     messages: [
       {
         role: "user",
-        content: `Page URL: ${baseUrl ?? "unknown"}\n\nPage content:\n\n${truncatedText}\n\nUser is looking for: ${prompt}`,
+        content: `Page URL: ${baseUrl ?? "unknown"}${monitorName ? `\nMonitor name: ${monitorName}` : ""}\n\nPage content:\n\n${truncatedText}\n\nUser is looking for: ${prompt}`,
       },
     ],
     system: EXTRACTION_PROMPT,
@@ -96,21 +123,38 @@ export async function extractWithAI(
     }
   }
 
+  // Normalise insights
+  const rawInsights = raw.insights as Record<string, unknown> | undefined;
+  const insights = rawInsights
+    ? {
+        understanding: String(rawInsights.understanding ?? ""),
+        confidence: typeof rawInsights.confidence === "number" ? rawInsights.confidence : 50,
+        matchSignal: String(rawInsights.matchSignal ?? ""),
+        noMatchSignal: String(rawInsights.noMatchSignal ?? ""),
+        notices: Array.isArray(rawInsights.notices)
+          ? rawInsights.notices.filter((n): n is string => typeof n === "string")
+          : [],
+      }
+    : undefined;
+
   // Normalise into our expected schema shape - be lenient about what AI returns
   const parsed: ExtractionSchema = {
     fields: (raw.fields as Record<string, string>) ?? {},
     items: Array.isArray(raw.items) ? raw.items : [],
     matchConditions: {
-      titleContains: getStringArray(raw.matchConditions, "titleContains"),
-      titleExcludes: getStringArray(raw.matchConditions, "titleExcludes"),
       priceMax: getNumber(raw.matchConditions, "priceMax"),
       priceMin: getNumber(raw.matchConditions, "priceMin"),
       mustInclude: getStringArray(raw.matchConditions, "mustInclude"),
       mustExclude: getStringArray(raw.matchConditions, "mustExclude"),
     },
+    insights,
   };
 
-  console.log("[extractor] Parsed %d items, %d fields", parsed.items.length, Object.keys(parsed.fields).length);
+  console.log("[extractor] Parsed %d items, %d fields, confidence: %d%",
+    parsed.items.length, Object.keys(parsed.fields).length, insights?.confidence ?? 0);
+  if (insights?.notices?.length) {
+    console.log("[extractor] Notices:", insights.notices);
+  }
 
   const matches = applyMatchConditions(parsed.items, parsed.matchConditions);
   console.log("[extractor] Found %d matches out of %d items", matches.length, parsed.items.length);
