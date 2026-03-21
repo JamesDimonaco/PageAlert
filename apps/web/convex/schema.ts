@@ -68,6 +68,7 @@ export default defineSchema({
   scrapeLogs: defineTable({
     userId: v.string(),
     monitorId: v.optional(v.id("monitors")),
+    monitorName: v.optional(v.string()),
     url: v.string(),
     prompt: v.string(),
     status: v.union(v.literal("success"), v.literal("error"), v.literal("timeout")),
@@ -76,6 +77,14 @@ export default defineSchema({
     rawResponse: v.optional(v.string()),
     itemCount: v.optional(v.number()),
     matchCount: v.optional(v.number()),
+    // AI insights
+    aiConfidence: v.optional(v.number()),
+    aiUnderstanding: v.optional(v.string()),
+    aiMatchSignal: v.optional(v.string()),
+    aiNoMatchSignal: v.optional(v.string()),
+    aiNotices: v.optional(v.array(v.string())),
+    // Match conditions the AI generated
+    matchConditions: v.optional(v.any()),
     createdAt: v.number(),
   })
     .index("by_userId", ["userId"])

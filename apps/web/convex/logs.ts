@@ -4,6 +4,7 @@ import { mutation, query } from "./_generated/server";
 export const create = mutation({
   args: {
     monitorId: v.optional(v.id("monitors")),
+    monitorName: v.optional(v.string()),
     url: v.string(),
     prompt: v.string(),
     status: v.union(v.literal("success"), v.literal("error"), v.literal("timeout")),
@@ -12,6 +13,12 @@ export const create = mutation({
     rawResponse: v.optional(v.string()),
     itemCount: v.optional(v.number()),
     matchCount: v.optional(v.number()),
+    aiConfidence: v.optional(v.number()),
+    aiUnderstanding: v.optional(v.string()),
+    aiMatchSignal: v.optional(v.string()),
+    aiNoMatchSignal: v.optional(v.string()),
+    aiNotices: v.optional(v.array(v.string())),
+    matchConditions: v.optional(v.any()),
   },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();

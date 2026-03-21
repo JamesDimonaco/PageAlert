@@ -48,9 +48,11 @@ export default function DashboardPage() {
       if (!res.ok) throw new Error(json.error || json.message || "Failed");
 
       const matchCount = json.matches?.length ?? 0;
+      const insights = json.schema?.insights;
       await saveScanResult({ id: monitorId, schema: json.schema, matchCount });
       await createLog({
         monitorId,
+        monitorName: monitor.name,
         url: monitor.url,
         prompt: monitor.prompt,
         status: "success" as const,
@@ -58,6 +60,12 @@ export default function DashboardPage() {
         itemCount: json.totalItems,
         matchCount,
         rawResponse: JSON.stringify(json).slice(0, 50000),
+        aiConfidence: insights?.confidence,
+        aiUnderstanding: insights?.understanding,
+        aiMatchSignal: insights?.matchSignal,
+        aiNoMatchSignal: insights?.noMatchSignal,
+        aiNotices: insights?.notices,
+        matchConditions: json.schema?.matchConditions,
       });
       toast.success("Rescan complete", {
         description: `${json.totalItems} items, ${matchCount} matches`,
