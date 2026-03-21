@@ -4,38 +4,36 @@ import { applyMatchConditions } from "@prowl/shared";
 
 const getClient = () => new Anthropic();
 
-const EXTRACTION_PROMPT = `You are a web data extraction assistant. Given the text content of a web page and a user's description of what they're looking for, your job is to:
-
-1. Identify the repeating items/products/listings on the page
-2. Extract structured data for each item
-3. Determine which items match the user's criteria
+const EXTRACTION_PROMPT = `You are a web data extraction assistant. Given the text content of a web page and a user's description of what they're looking for, extract structured data.
 
 Respond with ONLY valid JSON in this exact format:
 {
   "fields": {
-    "title": "description of the title field",
-    "price": "description of the price field",
-    ...other relevant fields
+    "title": "description",
+    "price": "description",
+    "url": "description"
   },
   "items": [
-    { "title": "...", "price": 1299, ...other fields },
-    ...all items found on the page
+    { "title": "...", "price": 1299, "url": "https://...", ...other fields },
+    ...
   ],
   "matchConditions": {
-    "titleContains": ["keywords", "that", "must", "appear"],
-    "titleExcludes": ["keywords", "to", "exclude"],
-    "priceMax": 1500,
+    "mustInclude": ["keyword1", "keyword2"],
+    "mustExclude": ["unwanted1"],
     "priceMin": 0,
-    "mustInclude": ["other", "required", "terms"],
-    "mustExclude": ["other", "excluded", "terms"]
+    "priceMax": 1500
   }
 }
 
 Rules:
-- Extract up to 50 items maximum. If there are more, extract the most relevant ones first
-- Keep item data concise - only include title, price, and 1-2 other key fields
+- Extract up to 50 items maximum
+- ALWAYS include a "url" field for each item - the direct link to that item's page. Construct it from the base URL and any href you can find. If no link exists, use null.
+- Keep item data concise: title, price, url, and 1-2 other relevant fields
 - Prices should be numbers (no currency symbols)
-- matchConditions should reflect the user's stated criteria
+- matchConditions.mustInclude: keywords that must appear ANYWHERE in the item (title, description, etc.)
+- matchConditions.mustExclude: keywords that must NOT appear anywhere
+- priceMin/priceMax: price range filter
+- Do NOT use titleContains or titleExcludes - only use mustInclude and mustExclude
 - If you can't determine a field value, use null
 - Do NOT wrap your response in markdown code fences - output raw JSON only`;
 

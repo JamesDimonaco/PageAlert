@@ -23,6 +23,7 @@ export default defineSchema({
       v.literal("24h")
     ),
     schema: v.optional(v.any()),
+    blacklistedItems: v.optional(v.array(v.string())),
     lastCheckedAt: v.optional(v.number()),
     lastMatchAt: v.optional(v.number()),
     lastError: v.optional(v.string()),

@@ -243,6 +243,19 @@ export const remove = mutation({
   },
 });
 
+export const updateBlacklist = mutation({
+  args: {
+    id: v.id("monitors"),
+    blacklistedItems: v.array(v.string()),
+  },
+  handler: async (ctx, { id, blacklistedItems }) => {
+    const userId = await getAuthUserId(ctx);
+    const monitor = await ctx.db.get(id);
+    if (!monitor || monitor.userId !== userId) throw new Error("Monitor not found");
+    await ctx.db.patch(id, { blacklistedItems, updatedAt: Date.now() });
+  },
+});
+
 export const getResults = query({
   args: { monitorId: v.id("monitors"), limit: v.optional(v.number()) },
   handler: async (ctx, { monitorId, limit }) => {

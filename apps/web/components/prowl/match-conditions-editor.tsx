@@ -13,12 +13,10 @@ interface MatchConditionsEditorProps {
 }
 
 function TagInput({
-  label,
   tags,
   onChange,
   placeholder,
 }: {
-  label: string;
   tags: string[];
   onChange: (tags: string[]) => void;
   placeholder?: string;
@@ -26,7 +24,7 @@ function TagInput({
   const [input, setInput] = useState("");
 
   function addTag() {
-    const val = input.trim();
+    const val = input.trim().toLowerCase();
     if (val && !tags.includes(val)) {
       onChange([...tags, val]);
     }
@@ -34,15 +32,10 @@ function TagInput({
   }
 
   return (
-    <div className="space-y-2">
-      <Label className="text-xs font-medium text-muted-foreground">{label}</Label>
-      <div className="flex flex-wrap gap-1.5 min-h-[32px]">
+    <div>
+      <div className="flex flex-wrap gap-1.5 mb-2 min-h-[28px]">
         {tags.map((tag) => (
-          <Badge
-            key={tag}
-            variant="outline"
-            className="gap-1 pl-2 pr-1 text-xs"
-          >
+          <Badge key={tag} variant="outline" className="gap-1 pl-2.5 pr-1 text-xs font-normal">
             {tag}
             <button
               type="button"
@@ -66,34 +59,39 @@ function TagInput({
             onChange(tags.slice(0, -1));
           }
         }}
-        placeholder={placeholder ?? "Type and press Enter"}
+        placeholder={placeholder}
         className="h-8 text-sm"
       />
     </div>
   );
 }
 
-export function MatchConditionsEditor({
-  conditions,
-  onChange,
-}: MatchConditionsEditorProps) {
+export function MatchConditionsEditor({ conditions, onChange }: MatchConditionsEditorProps) {
   return (
     <div className="space-y-5">
-      <TagInput
-        label="Title must contain"
-        tags={conditions.titleContains ?? []}
-        onChange={(tags) => onChange({ ...conditions, titleContains: tags })}
-        placeholder="e.g. MacBook Pro"
-      />
-      <TagInput
-        label="Title must NOT contain"
-        tags={conditions.titleExcludes ?? []}
-        onChange={(tags) => onChange({ ...conditions, titleExcludes: tags })}
-        placeholder="e.g. refurbished"
-      />
+      <div className="space-y-2">
+        <Label className="text-sm font-medium">Must include</Label>
+        <p className="text-xs text-muted-foreground">Items must contain ALL of these keywords</p>
+        <TagInput
+          tags={conditions.mustInclude ?? []}
+          onChange={(tags) => onChange({ ...conditions, mustInclude: tags })}
+          placeholder="Type a keyword and press Enter"
+        />
+      </div>
+
+      <div className="space-y-2">
+        <Label className="text-sm font-medium">Must not include</Label>
+        <p className="text-xs text-muted-foreground">Items containing any of these will be excluded</p>
+        <TagInput
+          tags={conditions.mustExclude ?? []}
+          onChange={(tags) => onChange({ ...conditions, mustExclude: tags })}
+          placeholder="Type a keyword and press Enter"
+        />
+      </div>
+
       <div className="grid grid-cols-2 gap-4">
         <div className="space-y-2">
-          <Label className="text-xs font-medium text-muted-foreground">Min price</Label>
+          <Label className="text-sm font-medium">Min price</Label>
           <Input
             type="number"
             value={conditions.priceMin ?? ""}
@@ -108,7 +106,7 @@ export function MatchConditionsEditor({
           />
         </div>
         <div className="space-y-2">
-          <Label className="text-xs font-medium text-muted-foreground">Max price</Label>
+          <Label className="text-sm font-medium">Max price</Label>
           <Input
             type="number"
             value={conditions.priceMax ?? ""}
@@ -123,18 +121,6 @@ export function MatchConditionsEditor({
           />
         </div>
       </div>
-      <TagInput
-        label="Must include (anywhere)"
-        tags={conditions.mustInclude ?? []}
-        onChange={(tags) => onChange({ ...conditions, mustInclude: tags })}
-        placeholder="e.g. 14-inch"
-      />
-      <TagInput
-        label="Must exclude (anywhere)"
-        tags={conditions.mustExclude ?? []}
-        onChange={(tags) => onChange({ ...conditions, mustExclude: tags })}
-        placeholder="e.g. used"
-      />
     </div>
   );
 }
