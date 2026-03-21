@@ -72,9 +72,14 @@ export default function MonitorDetailPage({
   const allItems = (schema?.items ?? []) as ExtractedItem[];
   const blacklist = ((monitor as Record<string, unknown>)?.blacklistedItems ?? []) as string[];
   const conditions = editedConditions ?? schema?.matchConditions ?? {};
+  function getItemKey(item: ExtractedItem): string {
+    if (item.url) return String(item.url);
+    return `${String(item.title ?? "")}-${String(item.price ?? "")}`;
+  }
+
   const matchesBeforeBlacklist = allItems.length > 0 ? applyMatchConditions(allItems, conditions) : [];
   const matches = matchesBeforeBlacklist.filter(
-    (item) => !blacklist.includes(String(item.title ?? ""))
+    (item) => !blacklist.includes(getItemKey(item))
   );
   const hasEdits = editedConditions !== null;
 
@@ -88,12 +93,12 @@ export default function MonitorDetailPage({
 
   const sortedItems = useMemo(() => {
     return [...filteredItems].sort((a, b) => {
-      const aBlacklisted = blacklist.includes(String(a.title ?? ""));
-      const bBlacklisted = blacklist.includes(String(b.title ?? ""));
+      const aBlacklisted = blacklist.includes(getItemKey(a));
+      const bBlacklisted = blacklist.includes(getItemKey(b));
       if (aBlacklisted !== bBlacklisted) return aBlacklisted ? 1 : -1;
 
-      const aMatch = matches.some((m) => JSON.stringify(m) === JSON.stringify(a));
-      const bMatch = matches.some((m) => JSON.stringify(m) === JSON.stringify(b));
+      const aMatch = matches.some((m) => getItemKey(m) === getItemKey(a));
+      const bMatch = matches.some((m) => getItemKey(m) === getItemKey(b));
       if (aMatch !== bMatch) return aMatch ? -1 : 1;
       return 0;
     });
@@ -137,13 +142,21 @@ export default function MonitorDetailPage({
   }
 
   async function blacklistItem(title: string) {
-    await updateBlacklist({ id: monitorId, blacklistedItems: [...blacklist, title] });
-    toast.success("Item dismissed");
+    try {
+      await updateBlacklist({ id: monitorId, blacklistedItems: [...blacklist, title] });
+      toast.success("Item dismissed");
+    } catch {
+      toast.error("Failed to dismiss item");
+    }
   }
 
   async function unblacklistItem(title: string) {
-    await updateBlacklist({ id: monitorId, blacklistedItems: blacklist.filter((t) => t !== title) });
-    toast.success("Item restored");
+    try {
+      await updateBlacklist({ id: monitorId, blacklistedItems: blacklist.filter((t) => t !== title) });
+      toast.success("Item restored");
+    } catch {
+      toast.error("Failed to restore item");
+    }
   }
 
   return (
@@ -318,14 +331,15 @@ export default function MonitorDetailPage({
 
           <div className="space-y-2 max-h-[600px] overflow-y-auto">
             {sortedItems.map((item, i) => {
-              const title = String(item.title ?? item.name ?? `Item ${i + 1}`);
-              const isMatch = matches.some((m) => JSON.stringify(m) === JSON.stringify(item));
-              const isBlacklisted = blacklist.includes(title);
+              const key = getItemKey(item);
+              const title = key || `Item ${i + 1}`;
+              const isMatch = matches.some((m) => getItemKey(m) === key);
+              const isBlacklisted = blacklist.includes(key);
               const itemUrl = item.url ? String(item.url) : null;
 
               return (
                 <Card
-                  key={i}
+                  key={key || i}
                   className={`border-border/30 shadow-sm shadow-black/5 transition-colors ${
                     isBlacklisted
                       ? "bg-card/20 opacity-40 border-l-2 border-l-muted-foreground/20"
@@ -374,7 +388,7 @@ export default function MonitorDetailPage({
                             variant="ghost"
                             size="sm"
                             className="h-7 text-xs gap-1"
-                            onClick={() => unblacklistItem(title)}
+                            onClick={() => unblacklistItem(key)}
                           >
                             <RotateCcw className="h-3 w-3" /> Restore
                           </Button>
@@ -387,7 +401,7 @@ export default function MonitorDetailPage({
                               variant="ghost"
                               size="sm"
                               className="h-7 text-xs gap-1 text-muted-foreground hover:text-foreground"
-                              onClick={() => blacklistItem(title)}
+                              onClick={() => blacklistItem(key)}
                               title="Dismiss this match"
                             >
                               <Ban className="h-3 w-3" /> Dismiss

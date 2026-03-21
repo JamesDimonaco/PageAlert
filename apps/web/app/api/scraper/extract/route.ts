@@ -22,7 +22,11 @@ export async function POST(request: Request) {
 
   let body: { url: string; prompt: string; name?: string };
   try {
-    body = await request.json();
+    const parsed: unknown = await request.json();
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      return NextResponse.json({ error: "Invalid JSON: expected an object" }, { status: 400 });
+    }
+    body = parsed as { url: string; prompt: string; name?: string };
   } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
@@ -45,7 +49,13 @@ export async function POST(request: Request) {
       signal: AbortSignal.timeout(110000),
     });
 
-    const data = await res.json();
+    const text = await res.text();
+    let data: unknown;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      return new NextResponse(text, { status: res.status, headers: { "Content-Type": "text/plain" } });
+    }
 
     if (!res.ok) {
       return NextResponse.json(data, { status: res.status });

@@ -100,14 +100,23 @@ export async function extractWithAI(
 
   let raw: Record<string, unknown>;
   try {
-    raw = JSON.parse(jsonString);
-  } catch {
+    const parsed: unknown = JSON.parse(jsonString);
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      throw new Error("AI returned invalid JSON: expected a plain object");
+    }
+    raw = parsed as Record<string, unknown>;
+  } catch (e) {
+    if ((e as Error).message.includes("AI returned invalid JSON")) throw e;
     // The response was likely truncated by max_tokens - try to repair it
     console.warn("[extractor] JSON parse failed, attempting truncation repair...");
     const repaired = repairTruncatedJson(jsonString);
     if (repaired) {
       try {
-        raw = JSON.parse(repaired);
+        const parsed: unknown = JSON.parse(repaired);
+        if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+          throw new Error("AI returned invalid JSON: expected a plain object");
+        }
+        raw = parsed as Record<string, unknown>;
         console.log("[extractor] Truncation repair succeeded");
       } catch (e2) {
         console.error("[extractor] Repair also failed:", (e2 as Error).message);
