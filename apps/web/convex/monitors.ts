@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
+import { intervalToMs, MAX_RETRIES } from "./shared";
 
 // ---- Resource Limits ----
 const MAX_MONITORS_PER_USER = 50;
@@ -7,22 +8,6 @@ const MAX_URL_LENGTH = 2048;
 const MAX_NAME_LENGTH = 200;
 const MAX_PROMPT_LENGTH = 2000;
 const MAX_RESULTS_LIMIT = 100;
-
-const MAX_RETRIES = 3;
-
-// ---- Helpers ----
-
-function intervalToMs(interval: string): number {
-  const map: Record<string, number> = {
-    "5m": 5 * 60_000,
-    "15m": 15 * 60_000,
-    "30m": 30 * 60_000,
-    "1h": 60 * 60_000,
-    "6h": 6 * 60 * 60_000,
-    "24h": 24 * 60 * 60_000,
-  };
-  return map[interval] ?? 60 * 60_000;
-}
 
 async function getAuthUserId(ctx: { auth: { getUserIdentity: () => Promise<{ subject: string } | null> } }) {
   const identity = await ctx.auth.getUserIdentity();

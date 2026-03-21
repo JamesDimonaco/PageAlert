@@ -1,10 +1,10 @@
 import { v } from "convex/values";
-import { action, internalAction, internalMutation, internalQuery } from "./_generated/server";
+import { internalAction, internalMutation, internalQuery } from "./_generated/server";
 import { internal } from "./_generated/api";
+import { intervalToMs, MAX_RETRIES } from "./shared";
 
 const MAX_CONCURRENT_CHECKS = 5;
 const FULL_REEXTRACT_EVERY = 100;
-const MIN_TEXT_LENGTH_FOR_REEXTRACT = 500;
 
 /** Query monitors that are due for a check */
 export const getMonitorsDue = internalQuery({
@@ -12,14 +12,14 @@ export const getMonitorsDue = internalQuery({
   handler: async (ctx) => {
     const now = Date.now();
 
-    // Get active monitors where nextCheckAt <= now
-    const allActive = await ctx.db
+    // Use the nextCheckAt index to efficiently find due monitors
+    const due = await ctx.db
       .query("monitors")
-      .withIndex("by_status", (q) => q.eq("status", "active"))
+      .withIndex("by_nextCheckAt")
       .collect();
 
-    return allActive
-      .filter((m) => m.nextCheckAt && m.nextCheckAt <= now)
+    return due
+      .filter((m) => m.status === "active" && m.nextCheckAt != null && m.nextCheckAt <= now)
       .slice(0, MAX_CONCURRENT_CHECKS);
   },
 });
@@ -37,15 +37,13 @@ export const recordCheckResult = internalMutation({
   },
   handler: async (ctx, args) => {
     const monitor = await ctx.db.get(args.monitorId);
-    if (!monitor) return;
-    // Don't update paused or scanning monitors
-    if (monitor.status !== "active") return;
+    if (!monitor || monitor.status !== "active") return;
 
     const now = Date.now();
 
     if (args.error) {
       const retryCount = (monitor.retryCount ?? 0) + 1;
-      if (retryCount >= 3) {
+      if (retryCount >= MAX_RETRIES) {
         await ctx.db.patch(args.monitorId, {
           status: "error",
           lastError: args.error,
@@ -66,14 +64,13 @@ export const recordCheckResult = internalMutation({
     }
 
     // Success
-    const intervalMs = intervalToMs(monitor.checkInterval);
     const updates: Record<string, unknown> = {
       status: "active",
       matchCount: args.matchCount,
       checkCount: (monitor.checkCount ?? 0) + 1,
       retryCount: 0,
       lastCheckedAt: now,
-      nextCheckAt: now + intervalMs,
+      nextCheckAt: now + intervalToMs(monitor.checkInterval),
       updatedAt: now,
       lastError: undefined,
     };
@@ -82,14 +79,12 @@ export const recordCheckResult = internalMutation({
       updates.lastMatchAt = now;
     }
 
-    // If a full re-extract returned a new schema, update it
     if (args.schema) {
       updates.schema = args.schema;
     }
 
     await ctx.db.patch(args.monitorId, updates);
 
-    // Store the scrape result
     await ctx.db.insert("scrapeResults", {
       monitorId: args.monitorId,
       matches: args.matches,
@@ -100,19 +95,7 @@ export const recordCheckResult = internalMutation({
   },
 });
 
-function intervalToMs(interval: string): number {
-  const map: Record<string, number> = {
-    "5m": 5 * 60_000,
-    "15m": 15 * 60_000,
-    "30m": 30 * 60_000,
-    "1h": 60 * 60_000,
-    "6h": 6 * 60 * 60_000,
-    "24h": 24 * 60 * 60_000,
-  };
-  return map[interval] ?? 60 * 60_000;
-}
-
-/** The main scheduler action — called by cron, calls the scraper */
+/** The main scheduler action — called by cron */
 export const runScheduledChecks = internalAction({
   args: {},
   handler: async (ctx) => {
@@ -124,39 +107,43 @@ export const runScheduledChecks = internalAction({
       return;
     }
 
-    // Get monitors due for checking
     const monitors = await ctx.runQuery(internal.scheduler.getMonitorsDue);
-
     if (monitors.length === 0) return;
 
     console.log(`[scheduler] ${monitors.length} monitor(s) due for check`);
 
-    // Process each monitor
-    for (const monitor of monitors) {
-      try {
-        const checkCount = monitor.checkCount ?? 0;
-        const needsReextract = checkCount > 0 && checkCount % FULL_REEXTRACT_EVERY === 0;
+    // Run checks concurrently (up to MAX_CONCURRENT_CHECKS)
+    const results = await Promise.allSettled(
+      monitors.map(async (monitor) => {
+        try {
+          const checkCount = monitor.checkCount ?? 0;
+          const needsReextract = checkCount > 0 && checkCount % FULL_REEXTRACT_EVERY === 0;
 
-        if (needsReextract && monitor.schema) {
-          // Full re-extract: call /api/extract with AI
-          await runFullExtract(ctx, monitor, scraperUrl, scraperKey);
-        } else {
-          // Quick check: scrape + apply stored conditions, no AI
-          await runQuickCheck(ctx, monitor, scraperUrl, scraperKey);
+          if (needsReextract && monitor.schema) {
+            await runFullExtract(ctx, monitor, scraperUrl, scraperKey);
+          } else {
+            await runQuickCheck(ctx, monitor, scraperUrl, scraperKey);
+          }
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : "Unknown error";
+          console.error(`[scheduler] Monitor ${monitor._id} failed:`, msg);
+
+          await ctx.runMutation(internal.scheduler.recordCheckResult, {
+            monitorId: monitor._id,
+            hasNewMatches: false,
+            matchCount: 0,
+            totalItems: 0,
+            matches: [],
+            error: msg,
+          });
         }
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : "Unknown error";
-        console.error(`[scheduler] Monitor ${monitor._id} failed:`, msg);
+      })
+    );
 
-        await ctx.runMutation(internal.scheduler.recordCheckResult, {
-          monitorId: monitor._id,
-          hasNewMatches: false,
-          matchCount: 0,
-          totalItems: 0,
-          matches: [],
-          error: msg,
-        });
-      }
+    const succeeded = results.filter((r) => r.status === "fulfilled").length;
+    const failed = results.filter((r) => r.status === "rejected").length;
+    if (failed > 0) {
+      console.log(`[scheduler] Done: ${succeeded} ok, ${failed} failed`);
     }
   },
 });
@@ -168,7 +155,6 @@ async function runQuickCheck(
   scraperKey: string
 ) {
   const matchConditions = monitor.schema?.matchConditions ?? {};
-  const blacklist: string[] = monitor.blacklistedItems ?? [];
 
   const res = await fetch(`${scraperUrl}/api/quick-check`, {
     method: "POST",
@@ -194,9 +180,7 @@ async function runQuickCheck(
     throw new Error("Page inaccessible");
   }
 
-  // Determine match count considering blacklist
   const hasMatch = result.hasNewMatches;
-  const matchCount = hasMatch ? 1 : 0; // Quick check is binary
 
   await ctx.runMutation(internal.scheduler.recordCheckResult, {
     monitorId: monitor._id,
@@ -208,9 +192,7 @@ async function runQuickCheck(
       : [],
   });
 
-  console.log(
-    `[scheduler] Quick check ${monitor._id}: ${hasMatch ? "MATCH" : "no match"}`
-  );
+  console.log(`[scheduler] Quick check ${monitor._id}: ${hasMatch ? "MATCH" : "no match"}`);
 }
 
 async function runFullExtract(
@@ -219,7 +201,7 @@ async function runFullExtract(
   scraperUrl: string,
   scraperKey: string
 ) {
-  // First do a quick accessibility check
+  // First check page is accessible before burning AI credits
   const quickRes = await fetch(`${scraperUrl}/api/quick-check`, {
     method: "POST",
     headers: {
@@ -236,9 +218,7 @@ async function runFullExtract(
   if (quickRes.ok) {
     const quickResult = await quickRes.json();
     if (!quickResult.accessible) {
-      // Page is inaccessible — skip re-extract, keep existing schema
       console.log(`[scheduler] Skipping re-extract for ${monitor._id}: page inaccessible`);
-
       await ctx.runMutation(internal.scheduler.recordCheckResult, {
         monitorId: monitor._id,
         hasNewMatches: false,
@@ -251,7 +231,7 @@ async function runFullExtract(
     }
   }
 
-  // Page is accessible, do the full AI extraction
+  // Page is accessible — do the full AI extraction
   const res = await fetch(`${scraperUrl}/api/extract`, {
     method: "POST",
     headers: {
@@ -261,7 +241,6 @@ async function runFullExtract(
     body: JSON.stringify({
       url: monitor.url,
       prompt: monitor.prompt,
-      name: monitor.name,
     }),
     signal: AbortSignal.timeout(120_000),
   });
@@ -273,18 +252,17 @@ async function runFullExtract(
 
   const result = await res.json();
 
-  // Check confidence — if too low, skip schema update
+  // If low confidence + no items, keep existing schema
   const confidence = result.schema?.insights?.confidence ?? 100;
   if (confidence <= 10 && (result.totalItems ?? 0) === 0) {
-    console.log(`[scheduler] Re-extract for ${monitor._id}: low confidence (${confidence}%), keeping existing schema`);
-
+    console.log(`[scheduler] Re-extract ${monitor._id}: low confidence (${confidence}%), keeping existing schema`);
     await ctx.runMutation(internal.scheduler.recordCheckResult, {
       monitorId: monitor._id,
       hasNewMatches: false,
       matchCount: monitor.matchCount ?? 0,
       totalItems: 0,
       matches: [],
-      error: `Re-extract returned low confidence (${confidence}%) — kept existing schema`,
+      error: `Re-extract low confidence (${confidence}%) — kept existing schema`,
     });
     return;
   }
@@ -301,7 +279,5 @@ async function runFullExtract(
     schema: result.schema,
   });
 
-  console.log(
-    `[scheduler] Full re-extract ${monitor._id}: ${totalItems} items, ${matchCount} matches, confidence ${confidence}%`
-  );
+  console.log(`[scheduler] Full re-extract ${monitor._id}: ${totalItems} items, ${matchCount} matches`);
 }
