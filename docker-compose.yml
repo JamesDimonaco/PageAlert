@@ -10,6 +10,8 @@ services:
       - SCRAPER_API_KEY=${SCRAPER_API_KEY}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-}
+      - POSTHOG_KEY=${POSTHOG_KEY:-}
+      - POSTHOG_HOST=${POSTHOG_HOST:-}
     restart: unless-stopped
     # Resource limits to prevent container from consuming all host resources
     deploy:

@@ -1,8 +1,30 @@
-import Anthropic from "@anthropic-ai/sdk";
+import AnthropicOriginal from "@anthropic-ai/sdk";
+import { PostHog } from "posthog-node";
+import { Anthropic as PostHogAnthropic } from "@posthog/ai";
 import type { ExtractionSchema, ExtractedItem } from "@prowl/shared";
 import { applyMatchConditions } from "@prowl/shared";
 
-const getClient = () => new Anthropic();
+// PostHog LLM observability — tracks token usage, cost, latency per generation
+const posthogKey = process.env.POSTHOG_KEY;
+const posthogHost = process.env.POSTHOG_HOST ?? "https://us.i.posthog.com";
+const posthog = posthogKey ? new PostHog(posthogKey, { host: posthogHost }) : null;
+
+if (posthog) {
+  process.on("SIGTERM", async () => { await posthog.shutdown(); process.exit(0); });
+  process.on("SIGINT", async () => { await posthog.shutdown(); process.exit(0); });
+}
+
+const getClient = (): AnthropicOriginal => {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (posthog && apiKey) {
+    // Wrapped client — auto-captures $ai_generation events
+    return new PostHogAnthropic({
+      apiKey,
+      posthog,
+    }) as unknown as AnthropicOriginal;
+  }
+  return new AnthropicOriginal();
+};
 
 const EXTRACTION_PROMPT = `You are a web data extraction assistant. Given:
 - The text content of a web page (with links as [text](url))

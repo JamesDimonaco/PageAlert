@@ -2,7 +2,9 @@ import type { Metadata } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import { Toaster } from "@/components/ui/sonner";
 import { ConvexClientProvider } from "@/components/convex-provider";
+import { PostHogProvider } from "@/components/posthog-provider";
 import { getToken } from "@/lib/auth-server";
+import { Suspense } from "react";
 import "./globals.css";
 
 const inter = Inter({
@@ -33,9 +35,13 @@ export default async function RootLayout({
       className={`${inter.variable} ${jetbrainsMono.variable} h-full antialiased dark`}
     >
       <body className="min-h-full flex flex-col">
-        <ConvexClientProvider initialToken={token}>
-          {children}
-        </ConvexClientProvider>
+        <Suspense fallback={null}>
+          <PostHogProvider>
+            <ConvexClientProvider initialToken={token}>
+              {children}
+            </ConvexClientProvider>
+          </PostHogProvider>
+        </Suspense>
         <Toaster />
       </body>
     </html>

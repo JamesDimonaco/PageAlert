@@ -9,7 +9,9 @@
     "SCRAPER_URL",
     "SCRAPER_API_KEY",
     "RESEND_API_KEY",
-    "ANTHROPIC_API_KEY"
+    "ANTHROPIC_API_KEY",
+    "NEXT_PUBLIC_POSTHOG_KEY",
+    "NEXT_PUBLIC_POSTHOG_HOST"
   ],
   "tasks": {
     "dev": {

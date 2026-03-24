@@ -13,6 +13,7 @@ import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { CreateMonitorSheet } from "@/components/prowl/create-monitor-sheet";
 import { toast } from "sonner";
+import { trackMonitorCreated, trackScanStarted, trackScanCompleted, trackScanFailed } from "@/lib/posthog";
 
 interface CreateMonitorContextValue {
   open: () => void;
@@ -73,12 +74,15 @@ export function CreateMonitorProvider({ children }: { children: ReactNode }) {
       let monitorId: Id<"monitors">;
       try {
         monitorId = await createMutation(data);
+        trackMonitorCreated({ url: data.url, prompt: data.prompt, checkInterval: data.checkInterval });
       } catch (e) {
         isSubmittingRef.current = false;
         const msg = e instanceof Error ? e.message : "Failed to create monitor";
         toast.error("Failed to create monitor", { description: msg });
         return;
       }
+
+      trackScanStarted({ url: data.url });
 
       setActiveMonitorId(monitorId);
       setIsScanning(true);
@@ -129,6 +133,8 @@ export function CreateMonitorProvider({ children }: { children: ReactNode }) {
         if (confidence <= 10 && totalItems === 0) {
           const reason = insights?.notices?.[0] ?? "Page appears inaccessible - no data could be extracted";
 
+          trackScanFailed({ url: data.url, error: reason, durationMs });
+
           await saveScanError({ id: monitorId, error: reason });
 
           await createLog({
@@ -173,6 +179,8 @@ export function CreateMonitorProvider({ children }: { children: ReactNode }) {
           matchConditions: json.schema?.matchConditions,
         }).catch(() => {});
 
+        trackScanCompleted({ url: data.url, itemCount: totalItems, matchCount, durationMs, confidence: insights?.confidence });
+
         toast.success("Scan complete", {
           description: `${totalItems} items found, ${matchCount} match${matchCount !== 1 ? "es" : ""}`,
         });
@@ -180,6 +188,8 @@ export function CreateMonitorProvider({ children }: { children: ReactNode }) {
         if (e instanceof Error && e.name === "AbortError") return;
         const msg = e instanceof Error ? e.message : "Scan failed";
         const durationMs = Date.now() - startTime;
+
+        trackScanFailed({ url: data.url, error: msg, durationMs });
 
         await saveScanError({ id: monitorId, error: msg }).catch(() => {});
 

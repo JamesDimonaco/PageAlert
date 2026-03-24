@@ -12,6 +12,7 @@ import { useCreateMonitor } from "@/hooks/use-create-monitor";
 import { useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { toast } from "sonner";
+import { trackMonitorDeleted, trackMonitorPaused, trackMonitorResumed } from "@/lib/posthog";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
 import {
   Select,
@@ -181,12 +182,20 @@ export default function DashboardPage() {
             <MonitorCard
               key={monitor._id}
               monitor={monitor}
-              onTogglePause={(id) => {
-                togglePause(id);
+              onTogglePause={async (id) => {
                 const m = monitors.find((x) => x._id === id);
-                toast.success(
-                  m?.status === "paused" ? "Monitor resumed" : "Monitor paused"
-                );
+                try {
+                  await togglePause(id);
+                  if (m?.status === "paused") {
+                    trackMonitorResumed();
+                    toast.success("Monitor resumed");
+                  } else {
+                    trackMonitorPaused();
+                    toast.success("Monitor paused");
+                  }
+                } catch {
+                  toast.error("Failed to update monitor");
+                }
               }}
               onRescan={handleRescan}
               onDelete={(id) => {
@@ -204,6 +213,7 @@ export default function DashboardPage() {
         onConfirm={() => {
           if (deleteTarget) {
             deleteMonitor(deleteTarget._id);
+            trackMonitorDeleted();
             toast.success("Monitor deleted");
             setDeleteTarget(null);
           }
