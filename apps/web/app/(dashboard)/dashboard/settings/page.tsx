@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { User, Bell, CreditCard, Mail, MessageCircle, Hash, Trash2 } from "lucide-react";
+import { User, Bell, CreditCard, Mail, MessageCircle, Hash, Trash2, Send, CheckCircle2, Loader2 } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -19,7 +19,7 @@ import {
 } from "@/components/ui/dialog";
 import { useAuth } from "@/hooks/use-auth";
 import { useMonitors } from "@/hooks/use-monitors";
-import { useMutation } from "convex/react";
+import { useAction, useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { toast } from "sonner";
 
@@ -36,7 +36,10 @@ export default function SettingsPage() {
   const [discordWebhook, setDiscordWebhook] = useState("");
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [testEmailSending, setTestEmailSending] = useState(false);
+  const [testEmailSent, setTestEmailSent] = useState(false);
   const deleteAccountMutation = useMutation(api.account.deleteAccount);
+  const sendTestEmail = useAction(api.notifications.sendTestEmail);
 
   return (
     <div className="space-y-10">
@@ -150,15 +153,17 @@ export default function SettingsPage() {
             <CardHeader className="pb-4">
               <CardTitle className="flex items-center gap-2 text-lg font-semibold">
                 <Mail className="h-5 w-5 text-muted-foreground" />
-                Email
+                Email Notifications
               </CardTitle>
-              <CardDescription className="text-sm">Get notified at your account email</CardDescription>
+              <CardDescription className="text-sm">
+                Get notified at your account email when monitors find matches or encounter errors
+              </CardDescription>
             </CardHeader>
-            <CardContent>
+            <CardContent className="space-y-5">
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-medium">{email}</p>
-                  <p className="text-xs text-muted-foreground mt-1">Monitor match notifications</p>
+                  <p className="text-xs text-muted-foreground mt-1">Match alerts and error notifications</p>
                 </div>
                 <Button
                   variant={emailNotifs ? "default" : "outline"}
@@ -170,6 +175,53 @@ export default function SettingsPage() {
                 >
                   {emailNotifs ? "Enabled" : "Disabled"}
                 </Button>
+              </div>
+
+              <Separator />
+
+              {/* Test email */}
+              <div>
+                <p className="text-sm font-medium mb-1">Verify your email</p>
+                <p className="text-xs text-muted-foreground mb-3 leading-relaxed">
+                  Send a test email to make sure notifications reach your inbox.
+                  If it lands in spam, mark it as &ldquo;Not Spam&rdquo; and add <strong>alerts@pagealert.io</strong> to your contacts.
+                </p>
+                {testEmailSent ? (
+                  <div className="flex items-center gap-2 text-sm text-emerald-400">
+                    <CheckCircle2 className="h-4 w-4" />
+                    Test email sent to {email} — check your inbox
+                  </div>
+                ) : (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-2"
+                    disabled={testEmailSending}
+                    onClick={async () => {
+                      setTestEmailSending(true);
+                      try {
+                        await sendTestEmail();
+                        setTestEmailSent(true);
+                        toast.success("Test email sent", {
+                          description: `Check ${email} for the verification email`,
+                        });
+                      } catch (e) {
+                        toast.error("Failed to send test email", {
+                          description: e instanceof Error ? e.message : "Please try again",
+                        });
+                      } finally {
+                        setTestEmailSending(false);
+                      }
+                    }}
+                  >
+                    {testEmailSending ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Send className="h-4 w-4" />
+                    )}
+                    Send Test Email
+                  </Button>
+                )}
               </div>
             </CardContent>
           </Card>
