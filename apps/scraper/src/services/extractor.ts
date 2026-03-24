@@ -1,20 +1,23 @@
-import Anthropic from "@anthropic-ai/sdk";
+import AnthropicOriginal from "@anthropic-ai/sdk";
 import { PostHog } from "posthog-node";
-import { withTracing } from "@posthog/ai";
+import { Anthropic as PostHogAnthropic } from "@posthog/ai";
 import type { ExtractionSchema, ExtractedItem } from "@prowl/shared";
 import { applyMatchConditions } from "@prowl/shared";
 
 // PostHog LLM observability — tracks token usage, cost, latency per generation
-const posthogKey = process.env.POSTHOG_KEY ?? process.env.NEXT_PUBLIC_POSTHOG_KEY;
-const posthogHost = process.env.POSTHOG_HOST ?? process.env.NEXT_PUBLIC_POSTHOG_HOST ?? "https://us.i.posthog.com";
+const posthogKey = process.env.POSTHOG_KEY;
+const posthogHost = process.env.POSTHOG_HOST ?? "https://us.i.posthog.com";
 const posthog = posthogKey ? new PostHog(posthogKey, { host: posthogHost }) : null;
 
-const getClient = () => {
-  const client = new Anthropic();
+const getClient = (): AnthropicOriginal => {
   if (posthog) {
-    return withTracing(client, posthog);
+    // Wrapped client — auto-captures $ai_generation events
+    return new PostHogAnthropic({
+      apiKey: process.env.ANTHROPIC_API_KEY!,
+      posthog,
+    }) as unknown as AnthropicOriginal;
   }
-  return client;
+  return new AnthropicOriginal();
 };
 
 const EXTRACTION_PROMPT = `You are a web data extraction assistant. Given:
