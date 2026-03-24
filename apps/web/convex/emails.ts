@@ -1,8 +1,8 @@
 import { v } from "convex/values";
 import { internalAction, internalQuery } from "./_generated/server";
 
-const FROM_EMAIL = "Prowl <alerts@pagealert.io>";
-const APP_URL = process.env.SITE_URL ?? "https://prowl-web-eta.vercel.app";
+const FROM_EMAIL = "PageAlert <alerts@pagealert.io>";
+const APP_URL = process.env.SITE_URL ?? "https://pagealert.io";
 
 /** Get user email from Better Auth's user table (in the component) */
 export const getUserEmail = internalQuery({
@@ -78,7 +78,7 @@ export const sendMatchAlert = internalAction({
             View on site
           </a>
           <a href="${APP_URL}/dashboard/monitors/${args.monitorId}" style="display:inline-block;background:#f4f4f5;color:#333;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:500;font-size:14px">
-            View in Prowl
+            View in PageAlert
           </a>
         </div>
       </div>
@@ -86,7 +86,7 @@ export const sendMatchAlert = internalAction({
       <!-- Footer -->
       <div style="padding:16px 32px;background:#f9fafb;border-top:1px solid #eee">
         <p style="margin:0;color:#999;font-size:12px">
-          You're receiving this because you have an active monitor on Prowl.
+          You're receiving this because you have an active monitor on PageAlert.
           <a href="${APP_URL}/dashboard/settings" style="color:#999">Manage notifications</a>
         </p>
       </div>
@@ -103,7 +103,7 @@ ${args.matches.slice(0, 5).map((m: Record<string, unknown>) => `• ${String(m.t
 ${args.matchCount > 5 ? `+${args.matchCount - 5} more` : ""}
 
 View on site: ${args.url}
-View in Prowl: ${APP_URL}/dashboard/monitors/${args.monitorId}
+View in PageAlert: ${APP_URL}/dashboard/monitors/${args.monitorId}
 
 Manage notifications: ${APP_URL}/dashboard/settings`;
 

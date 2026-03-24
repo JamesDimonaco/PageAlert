@@ -1,8 +1,8 @@
 import { v } from "convex/values";
 import { action } from "./_generated/server";
 
-const FROM_EMAIL = "Prowl <alerts@pagealert.io>";
-const APP_URL = process.env.SITE_URL ?? "https://prowl-web-eta.vercel.app";
+const FROM_EMAIL = "PageAlert <alerts@pagealert.io>";
+const APP_URL = process.env.SITE_URL ?? "https://pagealert.io";
 
 /** Send a test/verification email to the user */
 export const sendTestEmail = action({
@@ -36,16 +36,16 @@ export const sendTestEmail = action({
           <ul style="margin:8px 0 0;padding-left:20px;color:#166534;font-size:14px">
             <li>If this landed in spam, mark it as "Not Spam"</li>
             <li>Add <strong>${FROM_EMAIL.match(/<(.+)>/)?.[1] ?? "alerts@pagealert.io"}</strong> to your contacts</li>
-            <li>Go back to Prowl to confirm your email is verified</li>
+            <li>Go back to PageAlert to confirm your email is verified</li>
           </ul>
         </div>
         <a href="${APP_URL}/dashboard/settings" style="display:inline-block;background:#4f46e5;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:500;font-size:14px">
-          Back to Prowl
+          Back to PageAlert
         </a>
       </div>
       <div style="padding:16px 32px;background:#f9fafb;border-top:1px solid #eee">
         <p style="margin:0;color:#999;font-size:12px">
-          This is a test email from Prowl. <a href="${APP_URL}/dashboard/settings" style="color:#999">Manage notifications</a>
+          This is a test email from PageAlert. <a href="${APP_URL}/dashboard/settings" style="color:#999">Manage notifications</a>
         </p>
       </div>
     </div>
@@ -62,9 +62,9 @@ export const sendTestEmail = action({
       body: JSON.stringify({
         from: FROM_EMAIL,
         to: [email],
-        subject: "Prowl — Email notifications are working!",
+        subject: "PageAlert — Email notifications are working!",
         html,
-        text: `Email notifications are working!\n\nYour monitors will send alerts to ${email}.\n\nIf this landed in spam, mark it as "Not Spam" and add ${FROM_EMAIL} to your contacts.\n\nBack to Prowl: ${APP_URL}/dashboard/settings`,
+        text: `Email notifications are working!\n\nYour monitors will send alerts to ${email}.\n\nIf this landed in spam, mark it as "Not Spam" and add ${FROM_EMAIL} to your contacts.\n\nBack to PageAlert: ${APP_URL}/dashboard/settings`,
       }),
     });
 

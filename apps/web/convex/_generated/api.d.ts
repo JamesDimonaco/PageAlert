@@ -10,9 +10,11 @@
 
 import type * as account from "../account.js";
 import type * as crons from "../crons.js";
+import type * as emails from "../emails.js";
 import type * as http from "../http.js";
 import type * as logs from "../logs.js";
 import type * as monitors from "../monitors.js";
+import type * as notifications from "../notifications.js";
 import type * as scheduler from "../scheduler.js";
 import type * as shared from "../shared.js";
 
@@ -25,9 +27,11 @@ import type {
 declare const fullApi: ApiFromModules<{
   account: typeof account;
   crons: typeof crons;
+  emails: typeof emails;
   http: typeof http;
   logs: typeof logs;
   monitors: typeof monitors;
+  notifications: typeof notifications;
   scheduler: typeof scheduler;
   shared: typeof shared;
 }>;
