@@ -101,7 +101,7 @@ export function HistoryTab({ results }: HistoryTabProps) {
         <div className="absolute left-[18px] top-0 bottom-0 w-px bg-border/50" />
 
         <div className="space-y-3">
-          {filtered.map((result) => {
+          {filtered.map((result, index) => {
             const isExpanded = expandedId === result._id;
             const hasChanges = result.changes && result.changes.summary !== "No changes";
 
@@ -139,24 +139,54 @@ export function HistoryTab({ results }: HistoryTabProps) {
                     >
                       <div className="flex items-center justify-between">
                         <div>
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            {/* Latest badge */}
+                            {index === 0 && (
+                              <Badge variant="outline" className="text-xs bg-primary/10 text-primary border-primary/20">
+                                Latest
+                              </Badge>
+                            )}
                             <p className="text-sm font-medium">
                               {result.error
                                 ? "Check failed"
                                 : result.hasNewMatches
-                                  ? `${result.matches.length} match${result.matches.length !== 1 ? "es" : ""}`
-                                  : "No matches"}
+                                  ? `${result.matches.length} match${result.matches.length !== 1 ? "es" : ""} found`
+                                  : result.totalItems > 0
+                                    ? `${result.totalItems} items scanned`
+                                    : "No data"}
                             </p>
-                            {hasChanges && (
-                              <Badge variant="outline" className="text-xs bg-blue-500/10 text-blue-400 border-blue-500/20">
-                                {result.changes!.summary}
+                            {/* Change badges */}
+                            {hasChanges && result.changes!.added.length > 0 && (
+                              <Badge variant="outline" className="text-xs bg-emerald-500/10 text-emerald-400 border-emerald-500/20 gap-1">
+                                <Plus className="h-3 w-3" />
+                                {result.changes!.added.length} new
+                              </Badge>
+                            )}
+                            {hasChanges && result.changes!.removed.length > 0 && (
+                              <Badge variant="outline" className="text-xs bg-red-500/10 text-red-400 border-red-500/20 gap-1">
+                                <Minus className="h-3 w-3" />
+                                {result.changes!.removed.length} gone
+                              </Badge>
+                            )}
+                            {hasChanges && result.changes!.priceChanges.length > 0 && (
+                              <Badge variant="outline" className="text-xs bg-blue-500/10 text-blue-400 border-blue-500/20 gap-1">
+                                {result.changes!.priceChanges.some((p) => p.change < 0)
+                                  ? <><TrendingDown className="h-3 w-3" /> Price drops</>
+                                  : <><TrendingUp className="h-3 w-3" /> Price changes</>
+                                }
+                              </Badge>
+                            )}
+                            {result.error && (
+                              <Badge variant="outline" className="text-xs bg-red-500/10 text-red-400 border-red-500/20">
+                                Error
                               </Badge>
                             )}
                           </div>
-                          <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
+                          <div className="flex items-center gap-3 mt-1.5 text-xs text-muted-foreground">
                             <span>{timeAgo(result.scrapedAt)}</span>
-                            <span>{formatDate(result.scrapedAt)}</span>
-                            <span>{result.totalItems} items</span>
+                            <span className="hidden sm:inline">{formatDate(result.scrapedAt)}</span>
+                            {result.totalItems > 0 && <span>{result.totalItems} items</span>}
+                            {result.matches.length > 0 && <span className="text-emerald-400">{result.matches.length} matches</span>}
                           </div>
                         </div>
                         {(hasChanges || result.error) && (
