@@ -253,6 +253,7 @@ async function runFullExtract(
   if (quickRes.ok) {
     const quickResult = await quickRes.json();
     if (!quickResult.accessible) {
+      // Soft failure — don't count as retry, just skip the re-extract
       console.log(`[scheduler] Skipping re-extract for ${monitor._id}: page inaccessible`);
       await ctx.runMutation(internal.scheduler.recordCheckResult, {
         monitorId: monitor._id,
@@ -260,7 +261,7 @@ async function runFullExtract(
         matchCount: monitor.matchCount ?? 0,
         totalItems: 0,
         matches: [],
-        error: "Page inaccessible during re-extract — kept existing schema",
+        // No error field — this is informational, not a retry-worthy failure
       });
       return { hasMatch: false, matchCount: 0, matches: [], totalItems: 0 };
     }
@@ -290,6 +291,7 @@ async function runFullExtract(
   // If low confidence + no items, keep existing schema
   const confidence = result.schema?.insights?.confidence ?? 100;
   if (confidence <= 10 && (result.totalItems ?? 0) === 0) {
+    // Soft failure — don't count as retry
     console.log(`[scheduler] Re-extract ${monitor._id}: low confidence (${confidence}%), keeping existing schema`);
     await ctx.runMutation(internal.scheduler.recordCheckResult, {
       monitorId: monitor._id,
@@ -297,7 +299,7 @@ async function runFullExtract(
       matchCount: monitor.matchCount ?? 0,
       totalItems: 0,
       matches: [],
-      error: `Re-extract low confidence (${confidence}%) — kept existing schema`,
+      // No error field — informational, not retry-worthy
     });
     return { hasMatch: false, matchCount: 0, matches: [], totalItems: 0 };
   }

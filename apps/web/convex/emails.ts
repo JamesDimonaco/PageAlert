@@ -54,6 +54,14 @@ export const sendMatchAlert = internalAction({
     const matchList = args.matches
       .slice(0, 5)
       .map((m: Record<string, unknown>) => {
+        // Handle quick check results (keyword/price based) vs full extract results
+        if (m.quickCheck) {
+          const kr = m.keywordResults as Record<string, unknown> | undefined;
+          const pr = m.priceResults as Record<string, unknown> | undefined;
+          const keywords = Array.isArray(kr?.included) ? (kr.included as string[]).join(", ") : "";
+          const price = pr?.lowestInRange != null ? ` — from $${esc(Number(pr.lowestInRange).toLocaleString())}` : "";
+          return `<li style="padding:8px 0;border-bottom:1px solid #eee">Keywords matched: ${esc(keywords || "all")}${price}</li>`;
+        }
         const title = esc(String(m.title ?? m.name ?? "Unknown item"));
         const price = m.price != null ? ` — $${esc(Number(m.price).toLocaleString())}` : "";
         return `<li style="padding:8px 0;border-bottom:1px solid #eee">${title}${price}</li>`;
