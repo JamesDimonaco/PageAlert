@@ -111,7 +111,10 @@ export const create = mutation({
     checkInterval: intervalValidator,
   },
   handler: async (ctx, args) => {
-    const userId = await getAuthUserId(ctx);
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Not authenticated");
+    const userId = identity.subject;
+    const userEmail = identity.email ?? undefined;
 
     validateName(args.name);
     validateMonitorUrl(args.url);
@@ -132,6 +135,7 @@ export const create = mutation({
       prompt: args.prompt.trim(),
       checkInterval: args.checkInterval,
       userId,
+      userEmail,
       status: "scanning",
       matchCount: 0,
       checkCount: 0,

@@ -119,10 +119,25 @@ export const runScheduledChecks = internalAction({
           const checkCount = monitor.checkCount ?? 0;
           const needsReextract = checkCount > 0 && checkCount % FULL_REEXTRACT_EVERY === 0;
 
+          let checkResult: { hasMatch: boolean; matchCount: number; matches: unknown[] };
+
           if (needsReextract && monitor.schema) {
-            await runFullExtract(ctx, monitor, scraperUrl, scraperKey);
+            checkResult = await runFullExtract(ctx, monitor, scraperUrl, scraperKey);
           } else {
-            await runQuickCheck(ctx, monitor, scraperUrl, scraperKey);
+            checkResult = await runQuickCheck(ctx, monitor, scraperUrl, scraperKey);
+          }
+
+          // Send email notification if there are matches and user has an email
+          if (checkResult.hasMatch && monitor.userEmail) {
+            await ctx.runAction(internal.emails.sendMatchAlert, {
+              to: monitor.userEmail,
+              monitorName: monitor.name,
+              monitorId: monitor._id,
+              url: monitor.url,
+              matchCount: checkResult.matchCount,
+              matches: checkResult.matches,
+              totalItems: 0,
+            });
           }
         } catch (e) {
           const msg = e instanceof Error ? e.message : "Unknown error";
@@ -153,7 +168,7 @@ async function runQuickCheck(
   monitor: any,
   scraperUrl: string,
   scraperKey: string
-) {
+): Promise<{ hasMatch: boolean; matchCount: number; matches: unknown[] }> {
   const matchConditions = monitor.schema?.matchConditions ?? {};
 
   const res = await fetch(`${scraperUrl}/api/quick-check`, {
@@ -193,14 +208,19 @@ async function runQuickCheck(
   });
 
   console.log(`[scheduler] Quick check ${monitor._id}: ${hasMatch ? "MATCH" : "no match"}`);
+
+  const matchData = hasMatch
+    ? [{ quickCheck: true, keywordResults: result.keywordResults, priceResults: result.priceResults }]
+    : [];
+  return { hasMatch, matchCount: hasMatch ? 1 : 0, matches: matchData };
 }
 
 async function runFullExtract(
-  ctx: { runMutation: (ref: any, args: any) => Promise<any> },
+  ctx: { runMutation: (ref: any, args: any) => Promise<any>; runAction: (ref: any, args: any) => Promise<any> },
   monitor: any,
   scraperUrl: string,
   scraperKey: string
-) {
+): Promise<{ hasMatch: boolean; matchCount: number; matches: unknown[] }> {
   // First check page is accessible before burning AI credits
   const quickRes = await fetch(`${scraperUrl}/api/quick-check`, {
     method: "POST",
@@ -227,7 +247,7 @@ async function runFullExtract(
         matches: [],
         error: "Page inaccessible during re-extract — kept existing schema",
       });
-      return;
+      return { hasMatch: false, matchCount: 0, matches: [] };
     }
   }
 
@@ -264,7 +284,7 @@ async function runFullExtract(
       matches: [],
       error: `Re-extract low confidence (${confidence}%) — kept existing schema`,
     });
-    return;
+    return { hasMatch: false, matchCount: 0, matches: [] };
   }
 
   const matchCount = result.matches?.length ?? 0;
@@ -280,4 +300,6 @@ async function runFullExtract(
   });
 
   console.log(`[scheduler] Full re-extract ${monitor._id}: ${totalItems} items, ${matchCount} matches`);
+
+  return { hasMatch: matchCount > 0, matchCount, matches: result.matches ?? [] };
 }

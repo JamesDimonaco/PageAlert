@@ -4,6 +4,7 @@ import { v } from "convex/values";
 export default defineSchema({
   monitors: defineTable({
     userId: v.string(), // Better Auth user subject ID from ctx.auth
+    userEmail: v.optional(v.string()),
     name: v.string(),
     url: v.string(),
     prompt: v.string(),
