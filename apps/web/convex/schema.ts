@@ -41,10 +41,24 @@ export default defineSchema({
   scrapeResults: defineTable({
     monitorId: v.id("monitors"),
     matches: v.array(v.any()),
+    items: v.optional(v.array(v.any())),
     totalItems: v.number(),
     hasNewMatches: v.boolean(),
     scrapedAt: v.number(),
     error: v.optional(v.string()),
+    // Change detection from previous check
+    changes: v.optional(v.object({
+      added: v.array(v.any()),
+      removed: v.array(v.any()),
+      priceChanges: v.array(v.object({
+        title: v.string(),
+        oldPrice: v.number(),
+        newPrice: v.number(),
+        change: v.number(),
+        changePercent: v.number(),
+      })),
+      summary: v.string(),
+    })),
   })
     .index("by_monitorId", ["monitorId"])
     // Enables efficient time-ordered queries per monitor (e.g. "latest result for monitor X")

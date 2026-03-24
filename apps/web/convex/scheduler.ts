@@ -3,6 +3,43 @@ import { internalAction, internalMutation, internalQuery } from "./_generated/se
 import { internal } from "./_generated/api";
 import { intervalToMs, MAX_RETRIES } from "./shared";
 
+// Inline change detection for Convex runtime
+function detectChanges(previousItems: Record<string, unknown>[], currentItems: Record<string, unknown>[]) {
+  const getTitle = (item: Record<string, unknown>) => String(item.title ?? item.name ?? "").toLowerCase();
+
+  const prevByTitle = new Map(previousItems.map((i) => [getTitle(i), i]));
+  const currByTitle = new Map(currentItems.map((i) => [getTitle(i), i]));
+
+  const added = currentItems.filter((i) => !prevByTitle.has(getTitle(i)));
+  const removed = previousItems.filter((i) => !currByTitle.has(getTitle(i)));
+
+  const priceChanges: { title: string; oldPrice: number; newPrice: number; change: number; changePercent: number }[] = [];
+  for (const [titleKey, currItem] of currByTitle) {
+    const prevItem = prevByTitle.get(titleKey);
+    if (!prevItem) continue;
+    const cp = typeof currItem.price === "number" ? currItem.price : NaN;
+    const pp = typeof prevItem.price === "number" ? prevItem.price : NaN;
+    if (Number.isFinite(cp) && Number.isFinite(pp) && cp !== pp) {
+      const change = cp - pp;
+      priceChanges.push({
+        title: String(currItem.title ?? ""),
+        oldPrice: pp, newPrice: cp, change,
+        changePercent: pp !== 0 ? Math.round((change / pp) * 1000) / 10 : 0,
+      });
+    }
+  }
+
+  const parts: string[] = [];
+  if (added.length > 0) parts.push(`${added.length} new`);
+  if (removed.length > 0) parts.push(`${removed.length} removed`);
+  const drops = priceChanges.filter((p) => p.change < 0).length;
+  const ups = priceChanges.filter((p) => p.change > 0).length;
+  if (drops > 0) parts.push(`${drops} price drop${drops !== 1 ? "s" : ""}`);
+  if (ups > 0) parts.push(`${ups} price increase${ups !== 1 ? "s" : ""}`);
+
+  return { added, removed, priceChanges, summary: parts.length > 0 ? parts.join(", ") : "No changes" };
+}
+
 const MAX_CONCURRENT_CHECKS = 5;
 const FULL_REEXTRACT_EVERY = 100;
 
@@ -32,6 +69,7 @@ export const recordCheckResult = internalMutation({
     matchCount: v.number(),
     totalItems: v.number(),
     matches: v.array(v.any()),
+    items: v.optional(v.array(v.any())),
     schema: v.optional(v.any()),
     error: v.optional(v.string()),
   },
@@ -85,12 +123,31 @@ export const recordCheckResult = internalMutation({
 
     await ctx.db.patch(args.monitorId, updates);
 
+    // Compute changes from the previous scrape result
+    let changes;
+    if (args.items && args.items.length > 0) {
+      const prevResult = await ctx.db
+        .query("scrapeResults")
+        .withIndex("by_monitorId_scrapedAt", (q) => q.eq("monitorId", args.monitorId))
+        .order("desc")
+        .first();
+
+      if (prevResult?.items && Array.isArray(prevResult.items)) {
+        changes = detectChanges(
+          prevResult.items as Record<string, unknown>[],
+          args.items as Record<string, unknown>[]
+        );
+      }
+    }
+
     await ctx.db.insert("scrapeResults", {
       monitorId: args.monitorId,
       matches: args.matches,
+      items: args.items,
       totalItems: args.totalItems,
       hasNewMatches: args.hasNewMatches,
       scrapedAt: now,
+      changes,
     });
   },
 });
@@ -276,6 +333,7 @@ async function runFullExtract(
     matchCount,
     totalItems,
     matches: result.matches ?? [],
+    items: result.schema?.items ?? [],
     schema: result.schema,
   });
 
