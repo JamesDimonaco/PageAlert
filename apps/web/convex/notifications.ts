@@ -66,6 +66,7 @@ export const sendTestEmail = action({
         html,
         text: `Email notifications are working!\n\nYour monitors will send alerts to ${email}.\n\nIf this landed in spam, mark it as "Not Spam" and add ${FROM_EMAIL} to your contacts.\n\nBack to PageAlert: ${APP_URL}/dashboard/settings`,
       }),
+      signal: AbortSignal.timeout(10_000),
     });
 
     if (!res.ok) {

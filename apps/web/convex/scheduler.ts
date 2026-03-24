@@ -119,7 +119,7 @@ export const runScheduledChecks = internalAction({
           const checkCount = monitor.checkCount ?? 0;
           const needsReextract = checkCount > 0 && checkCount % FULL_REEXTRACT_EVERY === 0;
 
-          let checkResult: { hasMatch: boolean; matchCount: number; matches: unknown[] };
+          let checkResult: { hasMatch: boolean; matchCount: number; matches: unknown[]; totalItems: number };
 
           if (needsReextract && monitor.schema) {
             checkResult = await runFullExtract(ctx, monitor, scraperUrl, scraperKey);
@@ -127,7 +127,7 @@ export const runScheduledChecks = internalAction({
             checkResult = await runQuickCheck(ctx, monitor, scraperUrl, scraperKey);
           }
 
-          // Send email notification if there are matches and user has an email
+          // Send match email
           if (checkResult.hasMatch && monitor.userEmail) {
             await ctx.runAction(internal.emails.sendMatchAlert, {
               to: monitor.userEmail,
@@ -136,12 +136,16 @@ export const runScheduledChecks = internalAction({
               url: monitor.url,
               matchCount: checkResult.matchCount,
               matches: checkResult.matches,
-              totalItems: 0,
+              totalItems: checkResult.totalItems,
             });
           }
         } catch (e) {
           const msg = e instanceof Error ? e.message : "Unknown error";
           console.error(`[scheduler] Monitor ${monitor._id} failed:`, msg);
+
+          // Check if this will max out retries
+          const retryCount = (monitor.retryCount ?? 0) + 1;
+          const willError = retryCount >= MAX_RETRIES;
 
           await ctx.runMutation(internal.scheduler.recordCheckResult, {
             monitorId: monitor._id,
@@ -151,6 +155,17 @@ export const runScheduledChecks = internalAction({
             matches: [],
             error: msg,
           });
+
+          // Send error email when retries exhausted
+          if (willError && monitor.userEmail) {
+            await ctx.runAction(internal.emails.sendErrorAlert, {
+              to: monitor.userEmail,
+              monitorName: monitor.name,
+              monitorId: monitor._id,
+              url: monitor.url,
+              error: msg,
+            }).catch(() => {}); // Don't fail the check if email fails
+          }
         }
       })
     );
@@ -168,7 +183,7 @@ async function runQuickCheck(
   monitor: any,
   scraperUrl: string,
   scraperKey: string
-): Promise<{ hasMatch: boolean; matchCount: number; matches: unknown[] }> {
+): Promise<{ hasMatch: boolean; matchCount: number; matches: unknown[]; totalItems: number }> {
   const matchConditions = monitor.schema?.matchConditions ?? {};
 
   const res = await fetch(`${scraperUrl}/api/quick-check`, {
@@ -212,7 +227,7 @@ async function runQuickCheck(
   const matchData = hasMatch
     ? [{ quickCheck: true, keywordResults: result.keywordResults, priceResults: result.priceResults }]
     : [];
-  return { hasMatch, matchCount: hasMatch ? 1 : 0, matches: matchData };
+  return { hasMatch, matchCount: hasMatch ? 1 : 0, matches: matchData, totalItems: 0 };
 }
 
 async function runFullExtract(
@@ -220,7 +235,7 @@ async function runFullExtract(
   monitor: any,
   scraperUrl: string,
   scraperKey: string
-): Promise<{ hasMatch: boolean; matchCount: number; matches: unknown[] }> {
+): Promise<{ hasMatch: boolean; matchCount: number; matches: unknown[]; totalItems: number }> {
   // First check page is accessible before burning AI credits
   const quickRes = await fetch(`${scraperUrl}/api/quick-check`, {
     method: "POST",
@@ -247,7 +262,7 @@ async function runFullExtract(
         matches: [],
         error: "Page inaccessible during re-extract — kept existing schema",
       });
-      return { hasMatch: false, matchCount: 0, matches: [] };
+      return { hasMatch: false, matchCount: 0, matches: [], totalItems: 0 };
     }
   }
 
@@ -284,7 +299,7 @@ async function runFullExtract(
       matches: [],
       error: `Re-extract low confidence (${confidence}%) — kept existing schema`,
     });
-    return { hasMatch: false, matchCount: 0, matches: [] };
+    return { hasMatch: false, matchCount: 0, matches: [], totalItems: 0 };
   }
 
   const matchCount = result.matches?.length ?? 0;
@@ -301,5 +316,5 @@ async function runFullExtract(
 
   console.log(`[scheduler] Full re-extract ${monitor._id}: ${totalItems} items, ${matchCount} matches`);
 
-  return { hasMatch: matchCount > 0, matchCount, matches: result.matches ?? [] };
+  return { hasMatch: matchCount > 0, matchCount, matches: result.matches ?? [], totalItems };
 }
