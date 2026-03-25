@@ -28,7 +28,7 @@ export function Navbar() {
             <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10">
               <Radar className="h-5 w-5 text-primary" />
             </div>
-            <span className="text-xl font-bold tracking-tight">Prowl</span>
+            <span className="text-xl font-bold tracking-tight">PageAlert</span>
           </Link>
           <nav className="hidden md:flex items-center gap-1">
             <Link href="/dashboard">

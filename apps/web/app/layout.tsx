@@ -18,8 +18,21 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Prowl - AI-Powered Web Monitor",
-  description: "Monitor any website with natural language. Get notified when things change.",
+  metadataBase: new URL("https://pagealert.io"),
+  title: "PageAlert - AI-Powered Web Monitor",
+  description: "Monitor any website with natural language. Get notified the moment anything changes.",
+  openGraph: {
+    title: "PageAlert - AI-Powered Web Monitor",
+    description: "Monitor any website with natural language. Get notified the moment anything changes.",
+    url: "https://pagealert.io",
+    siteName: "PageAlert",
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "PageAlert - AI-Powered Web Monitor",
+    description: "Monitor any website with natural language. Get notified the moment anything changes.",
+  },
 };
 
 export default async function RootLayout({

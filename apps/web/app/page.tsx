@@ -14,7 +14,7 @@ export default function LandingPage() {
             <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10">
               <Radar className="h-5 w-5 text-primary" />
             </div>
-            <span className="text-xl font-bold tracking-tight">Prowl</span>
+            <span className="text-xl font-bold tracking-tight">PageAlert</span>
           </div>
           <div className="flex items-center gap-3">
             <Link href="/login">
@@ -55,7 +55,7 @@ export default function LandingPage() {
               </h1>
 
               <p className="mx-auto mt-8 max-w-xl text-lg leading-relaxed text-muted-foreground font-normal">
-                Paste a URL, tell Prowl what you&apos;re looking for in plain English,
+                Paste a URL, tell PageAlert what you&apos;re looking for in plain English,
                 and get notified when it appears. No CSS selectors. No code. Just results.
               </p>
 
@@ -115,7 +115,7 @@ export default function LandingPage() {
                   icon: Globe,
                   title: "Paste any URL",
                   description:
-                    "Works with any website. Product pages, stock listings, job boards, classified ads - if it's on the web, Prowl can watch it.",
+                    "Works with any website. Product pages, stock listings, job boards, classified ads - if it's on the web, PageAlert can watch it.",
                 },
                 {
                   icon: Zap,
@@ -231,7 +231,7 @@ export default function LandingPage() {
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2 text-sm text-muted-foreground font-medium">
               <Radar className="h-4 w-4" />
-              Prowl
+              PageAlert
             </div>
             <p className="text-xs text-muted-foreground">
               Built with Next.js, Convex, and Claude
