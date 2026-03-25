@@ -14,7 +14,7 @@ export default function LandingPage() {
             <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10">
               <Radar className="h-5 w-5 text-primary" />
             </div>
-            <span className="text-xl font-bold tracking-tight">Prowl</span>
+            <span className="text-xl font-bold tracking-tight">PageAlert</span>
           </div>
           <div className="flex items-center gap-3">
             <Link href="/login">
@@ -55,7 +55,7 @@ export default function LandingPage() {
               </h1>
 
               <p className="mx-auto mt-8 max-w-xl text-lg leading-relaxed text-muted-foreground font-normal">
-                Paste a URL, tell Prowl what you&apos;re looking for in plain English,
+                Paste a URL, tell PageAlert what you&apos;re looking for in plain English,
                 and get notified when it appears. No CSS selectors. No code. Just results.
               </p>
 
@@ -115,7 +115,7 @@ export default function LandingPage() {
                   icon: Globe,
                   title: "Paste any URL",
                   description:
-                    "Works with any website. Product pages, stock listings, job boards, classified ads - if it's on the web, Prowl can watch it.",
+                    "Works with any website. Product pages, stock listings, job boards, classified ads - if it's on the web, PageAlert can watch it.",
                 },
                 {
                   icon: Zap,
@@ -223,6 +223,53 @@ export default function LandingPage() {
             </div>
           </div>
         </section>
+
+        {/* FAQ */}
+        <section className="border-t border-border/30">
+          <div className="mx-auto max-w-3xl px-6 py-28">
+            <div className="text-center mb-16">
+              <h2 className="text-3xl font-bold tracking-tight leading-tight">Frequently asked questions</h2>
+            </div>
+            <div className="space-y-6">
+              {[
+                {
+                  q: "How does PageAlert work?",
+                  a: "Paste a URL, describe what you're looking for in plain English (like 'MacBook Pro under $1500'), and PageAlert uses AI to understand the page, extract products and data, and monitor it automatically. You get notified via email when your conditions are met.",
+                },
+                {
+                  q: "What kind of websites can I monitor?",
+                  a: "Any website — product pages, stock listings, job boards, classified ads, real estate, auction sites, and more. If it's on the web and has data you care about, PageAlert can watch it.",
+                },
+                {
+                  q: "Do I need to know CSS selectors or coding?",
+                  a: "No. Unlike traditional web monitoring tools, PageAlert uses AI to understand pages. Just describe what you want in plain English — no CSS selectors, XPath, or code required.",
+                },
+                {
+                  q: "How often does PageAlert check my pages?",
+                  a: "Check frequency depends on your plan. Free accounts check every 6 hours, Pro every 15 minutes, and Business every 5 minutes. You choose the frequency per monitor.",
+                },
+                {
+                  q: "How will I be notified when something changes?",
+                  a: "Email notifications are included on all plans. Pro and Business plans also support Telegram and Discord notifications. You'll receive detailed alerts with what matched, prices, and direct links.",
+                },
+                {
+                  q: "Is there a free plan?",
+                  a: "Yes! The free plan includes 3 monitors with 6-hour check intervals and email notifications. No credit card required to get started.",
+                },
+              ].map((faq) => (
+                <details key={faq.q} className="group rounded-xl border border-border/30 bg-card/50 shadow-sm">
+                  <summary className="flex cursor-pointer items-center justify-between p-6 text-base font-semibold [&::-webkit-details-marker]:hidden">
+                    {faq.q}
+                    <span className="ml-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-45">+</span>
+                  </summary>
+                  <div className="px-6 pb-6 text-sm text-muted-foreground leading-relaxed">
+                    {faq.a}
+                  </div>
+                </details>
+              ))}
+            </div>
+          </div>
+        </section>
       </main>
 
       {/* Footer */}
@@ -231,7 +278,7 @@ export default function LandingPage() {
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2 text-sm text-muted-foreground font-medium">
               <Radar className="h-4 w-4" />
-              Prowl
+              PageAlert
             </div>
             <p className="text-xs text-muted-foreground">
               Built with Next.js, Convex, and Claude

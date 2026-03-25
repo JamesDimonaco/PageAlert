@@ -246,7 +246,7 @@ export default function SettingsPage() {
                   onChange={(e) => setTelegramChatId(e.target.value)}
                 />
                 <p className="text-xs text-muted-foreground leading-relaxed">
-                  Message @ProwlBot on Telegram to get your chat ID
+                  Message @PageAlertBot on Telegram to get your chat ID
                 </p>
               </div>
               <Button

@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <rect width="512" height="512" rx="108" fill="url(#bg)"/>
+  <!-- Radar/signal icon - represents monitoring/alerting -->
+  <g transform="translate(256,256)" stroke="white" stroke-width="28" stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <!-- Center dot -->
+    <circle cx="0" cy="0" r="12" fill="white" stroke="none"/>
+    <!-- Inner arc -->
+    <path d="M -52 52 A 73 73 0 0 1 52 52"/>
+    <!-- Middle arc -->
+    <path d="M -104 104 A 147 147 0 0 1 104 104"/>
+    <!-- Outer arc -->
+    <path d="M -156 156 A 220 220 0 0 1 156 156"/>
+    <!-- Diagonal line from center -->
+    <line x1="0" y1="0" x2="-80" y2="-80"/>
+  </g>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="512" y2="512">
+      <stop offset="0%" stop-color="#6366f1"/>
+      <stop offset="100%" stop-color="#4f46e5"/>
+    </linearGradient>
+  </defs>
+</svg>
