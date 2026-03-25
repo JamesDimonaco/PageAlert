@@ -140,9 +140,8 @@ export default function MonitorDetailPage({
 
         <TabsContent value="overview" className="mt-6">
           <OverviewTab
-            monitorId={monitorId}
             monitor={monitor}
-            matchCount={matches.length}
+            matches={matches}
             totalItems={allItems.length}
           />
         </TabsContent>
@@ -151,7 +150,7 @@ export default function MonitorDetailPage({
           <ItemsTab
             monitorId={monitorId}
             allItems={allItems}
-            matches={matches}
+            schema={schema}
             blacklist={blacklist}
           />
         </TabsContent>
