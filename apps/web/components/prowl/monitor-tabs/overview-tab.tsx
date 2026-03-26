@@ -73,12 +73,15 @@ export function OverviewTab({ monitorId, monitor, matches, totalItems }: Overvie
   async function saveEdits() {
     setSaving(true);
     try {
-      await updateMutation({
+      const payload: Record<string, unknown> = {
         id: monitorId,
         name: editName.trim(),
         prompt: editPrompt.trim(),
-        checkInterval: editInterval,
-      });
+      };
+      if (editInterval !== monitor.checkInterval) {
+        payload.checkInterval = editInterval;
+      }
+      await updateMutation(payload as Parameters<typeof updateMutation>[0]);
       setEditing(false);
       toast.success("Monitor updated");
     } catch (e) {

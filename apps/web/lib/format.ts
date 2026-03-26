@@ -7,8 +7,6 @@ function getFormatter(currency: string): Intl.NumberFormat {
       formatters.set(key, new Intl.NumberFormat("en-US", {
         style: "currency",
         currency: key,
-        minimumFractionDigits: 0,
-        maximumFractionDigits: 0,
       }));
     } catch {
       // Invalid currency code — fall back to USD

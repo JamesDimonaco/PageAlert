@@ -145,7 +145,7 @@ export const create = mutation({
       matchCount: 0,
       checkCount: 0,
       retryCount: 0,
-      nextCheckAt: now + intervalToMs(args.checkInterval),
+      nextCheckAt: now + intervalToMs(checkInterval),
       createdAt: now,
       updatedAt: now,
     });
@@ -231,11 +231,17 @@ export const update = mutation({
       }
     }
 
-    const updates: Record<string, unknown> = { updatedAt: Date.now() };
+    const now = Date.now();
+    const updates: Record<string, unknown> = { updatedAt: now };
     for (const [key, value] of Object.entries(fields)) {
       if (value !== undefined) {
         updates[key] = typeof value === "string" ? value.trim() : value;
       }
+    }
+
+    // Recompute nextCheckAt when interval changes so it takes effect immediately
+    if (fields.checkInterval !== undefined) {
+      updates.nextCheckAt = now + intervalToMs(fields.checkInterval);
     }
 
     await ctx.db.patch(id, updates);
