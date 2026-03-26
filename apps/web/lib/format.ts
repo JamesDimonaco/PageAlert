@@ -1,9 +1,16 @@
+const priceFormatter = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 0,
+});
+
 /** Safely format a price value. Returns formatted string or null if not a valid number. */
 export function formatPrice(value: unknown): string | null {
   if (value == null) return null;
   const num = typeof value === "number" ? value : parseFloat(String(value));
   if (!Number.isFinite(num)) return null;
-  return `$${num.toLocaleString()}`;
+  return priceFormatter.format(num);
 }
 
 /** Validate a URL is safe for use in href attributes. Returns the URL or null. */
