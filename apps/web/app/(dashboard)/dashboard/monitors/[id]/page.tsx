@@ -140,6 +140,7 @@ export default function MonitorDetailPage({
 
         <TabsContent value="overview" className="mt-6">
           <OverviewTab
+            monitorId={monitorId}
             monitor={monitor}
             matches={matches}
             totalItems={allItems.length}

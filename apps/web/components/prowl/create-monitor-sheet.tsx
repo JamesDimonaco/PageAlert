@@ -14,13 +14,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { IntervalSelector } from "@/components/prowl/interval-selector";
 import {
   Radar,
   Loader2,
@@ -225,20 +219,7 @@ export function CreateMonitorSheet({
                 </div>
                 <div className="space-y-2">
                   <Label className="text-sm font-medium">Check frequency</Label>
-                  <Select
-                    value={checkInterval}
-                    onValueChange={(v) => v && setCheckInterval(v as CheckInterval)}
-                  >
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="5m">Every 5 minutes</SelectItem>
-                      <SelectItem value="15m">Every 15 minutes</SelectItem>
-                      <SelectItem value="30m">Every 30 minutes</SelectItem>
-                      <SelectItem value="1h">Every hour</SelectItem>
-                      <SelectItem value="6h">Every 6 hours</SelectItem>
-                      <SelectItem value="24h">Every 24 hours</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <IntervalSelector value={checkInterval} onValueChange={setCheckInterval} />
                 </div>
                 <div className="flex justify-end gap-3 pt-4">
                   <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>

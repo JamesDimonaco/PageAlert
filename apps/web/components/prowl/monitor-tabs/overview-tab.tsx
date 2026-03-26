@@ -3,7 +3,12 @@
 import { useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
 import { AiInsightsCard } from "@/components/prowl/ai-insights";
+import { IntervalSelector } from "@/components/prowl/interval-selector";
 import {
   ExternalLink,
   Clock,
@@ -12,13 +17,23 @@ import {
   ChevronDown,
   ChevronUp,
   Quote,
+  Pencil,
+  X,
+  Save,
+  Loader2,
 } from "lucide-react";
+import type { Id } from "@/convex/_generated/dataModel";
 import type { ExtractedItem, ExtractionSchema } from "@prowl/shared";
+import { useMutation } from "convex/react";
+import { api } from "@/convex/_generated/api";
 import { timeAgo } from "@/lib/time";
 import { formatPrice, toSafeUrl } from "@/lib/format";
+import { toast } from "sonner";
 
 interface OverviewTabProps {
+  monitorId: Id<"monitors">;
   monitor: {
+    name: string;
     url: string;
     prompt: string;
     checkInterval: string;
@@ -31,22 +46,98 @@ interface OverviewTabProps {
   totalItems: number;
 }
 
-export function OverviewTab({ monitor, matches, totalItems }: OverviewTabProps) {
+export function OverviewTab({ monitorId, monitor, matches, totalItems }: OverviewTabProps) {
   const [insightsOpen, setInsightsOpen] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  // Edit state
+  const [editName, setEditName] = useState(monitor.name);
+  const [editPrompt, setEditPrompt] = useState(monitor.prompt);
+  const [editInterval, setEditInterval] = useState(monitor.checkInterval as "5m" | "15m" | "30m" | "1h" | "6h" | "24h");
+
+  const updateMutation = useMutation(api.monitors.update);
   const schema = monitor.schema as ExtractionSchema | undefined;
+
+  function startEditing() {
+    setEditName(monitor.name);
+    setEditPrompt(monitor.prompt);
+    setEditInterval(monitor.checkInterval as "5m" | "15m" | "30m" | "1h" | "6h" | "24h");
+    setEditing(true);
+  }
+
+  function cancelEditing() {
+    setEditing(false);
+  }
+
+  async function saveEdits() {
+    setSaving(true);
+    try {
+      await updateMutation({
+        id: monitorId,
+        name: editName.trim(),
+        prompt: editPrompt.trim(),
+        checkInterval: editInterval,
+      });
+      setEditing(false);
+      toast.success("Monitor updated");
+    } catch (e) {
+      toast.error("Failed to update", { description: e instanceof Error ? e.message : "" });
+    } finally {
+      setSaving(false);
+    }
+  }
 
   return (
     <div className="space-y-8">
-      {/* Prompt */}
+      {/* Prompt + Edit */}
       <Card className="border-border/30 bg-card/50 shadow-sm shadow-black/5">
         <CardContent className="p-6">
-          <div className="flex items-start gap-3">
-            <Quote className="h-5 w-5 text-primary shrink-0 mt-0.5" />
-            <div>
-              <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-2">Looking for</p>
-              <p className="text-base font-medium leading-relaxed">{monitor.prompt}</p>
+          {editing ? (
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label className="text-sm font-medium">Name</Label>
+                <Input value={editName} onChange={(e) => setEditName(e.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label className="text-sm font-medium">What are you looking for?</Label>
+                <Textarea
+                  value={editPrompt}
+                  onChange={(e) => setEditPrompt(e.target.value)}
+                  rows={3}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Note: changing the prompt won&apos;t rescan automatically. You&apos;ll need to rescan to apply changes.
+                </p>
+              </div>
+              <div className="space-y-2">
+                <Label className="text-sm font-medium">Check frequency</Label>
+                <IntervalSelector value={editInterval} onValueChange={setEditInterval} />
+              </div>
+              <div className="flex items-center gap-2 pt-2">
+                <Button size="sm" className="gap-1.5" onClick={saveEdits} disabled={saving}>
+                  {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                  Save
+                </Button>
+                <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={saving}>
+                  <X className="h-3.5 w-3.5 mr-1" /> Cancel
+                </Button>
+              </div>
             </div>
-          </div>
+          ) : (
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex items-start gap-3 flex-1">
+                <Quote className="h-5 w-5 text-primary shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-2">Looking for</p>
+                  <p className="text-base font-medium leading-relaxed">{monitor.prompt}</p>
+                </div>
+              </div>
+              <Button variant="ghost" size="sm" className="gap-1.5 shrink-0" onClick={startEditing}>
+                <Pencil className="h-3.5 w-3.5" /> Edit
+              </Button>
+            </div>
+          )}
         </CardContent>
       </Card>
 
