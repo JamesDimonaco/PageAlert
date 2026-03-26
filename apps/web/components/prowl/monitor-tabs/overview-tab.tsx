@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import type { ExtractedItem, ExtractionSchema } from "@prowl/shared";
 import { timeAgo } from "@/lib/time";
+import { formatPrice, toSafeUrl } from "@/lib/format";
 
 interface OverviewTabProps {
   monitor: {
@@ -100,26 +101,27 @@ export function OverviewTab({ monitor, matches, totalItems }: OverviewTabProps) 
           <div className="space-y-2">
             {matches.slice(0, 5).map((item, i) => {
               const title = String(item.title ?? item.name ?? `Item ${i + 1}`);
-              const itemUrl = item.url ? String(item.url) : null;
+              const safeUrl = toSafeUrl(item.url);
+              const price = formatPrice(item.price);
               return (
                 <Card key={i} className="border-emerald-500/20 bg-emerald-500/5 shadow-sm shadow-black/5">
                   <CardContent className="p-4">
                     <div className="flex items-center justify-between gap-3">
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
-                          {itemUrl ? (
-                            <a href={itemUrl} target="_blank" rel="noopener noreferrer"
+                          {safeUrl ? (
+                            <a href={safeUrl} target="_blank" rel="noopener noreferrer"
                               className="text-sm font-medium hover:text-primary hover:underline transition-colors truncate">
                               {title}
                             </a>
                           ) : (
                             <p className="text-sm font-medium truncate">{title}</p>
                           )}
-                          {itemUrl && <ExternalLink className="h-3 w-3 text-muted-foreground shrink-0" />}
+                          {safeUrl && <ExternalLink className="h-3 w-3 text-muted-foreground shrink-0" />}
                         </div>
                       </div>
-                      {item.price != null && (
-                        <span className="text-sm font-bold shrink-0">${Number(item.price).toLocaleString()}</span>
+                      {price && (
+                        <span className="text-sm font-bold shrink-0">{price}</span>
                       )}
                     </div>
                   </CardContent>

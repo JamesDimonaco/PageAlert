@@ -75,8 +75,9 @@ Rules for insights:
   - Keep each notice concise and actionable
 
 Rules for extraction:
-- IMPORTANT: Extract ALL items on the page, not just ones that match the user's criteria. Include up to 50 items.
-- The user needs to see all items so they can adjust their filters. Extract everything visible.
+- IMPORTANT: Extract ALL product/listing items on the page, not just ones that match the user's criteria. Include up to 50 items.
+- The user needs to see all items so they can adjust their filters. Extract every product, listing, or result card visible.
+- Do NOT extract page chrome like navigation links, breadcrumbs, filter buttons, ads, or pagination controls — only actual product/listing entries.
 - ALWAYS include a "url" field for each item. Links appear as [text](url). If no link exists, use null.
 - Keep item data concise: title, price, url, and 1-2 other relevant fields
 - Prices should be numbers (no currency symbols)

@@ -24,6 +24,7 @@ import { applyMatchConditions, getItemKey } from "@prowl/shared";
 import { useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { toast } from "sonner";
+import { formatPrice, toSafeUrl } from "@/lib/format";
 
 interface ItemsTabProps {
   monitorId: Id<"monitors">;
@@ -202,7 +203,9 @@ export function ItemsTab({ monitorId, allItems, schema, blacklist }: ItemsTabPro
           const title = String(item.title ?? item.name ?? `Item ${i + 1}`);
           const isMatch = matchKeys.has(key);
           const isBlacklisted = blacklistKeys.has(key);
-          const itemUrl = item.url ? String(item.url) : null;
+          const safeUrl = toSafeUrl(item.url);
+          const price = formatPrice(item.price);
+          const origPrice = formatPrice(item.originalPrice);
 
           return (
             <div
@@ -217,23 +220,23 @@ export function ItemsTab({ monitorId, allItems, schema, blacklist }: ItemsTabPro
             >
               <div className="flex-1 min-w-0 flex items-center gap-2">
                 {isMatch && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400 shrink-0" />}
-                {itemUrl ? (
-                  <a href={itemUrl} target="_blank" rel="noopener noreferrer"
+                {safeUrl ? (
+                  <a href={safeUrl} target="_blank" rel="noopener noreferrer"
                     className="font-medium hover:text-primary hover:underline transition-colors truncate">
                     {title}
                   </a>
                 ) : (
                   <span className="font-medium truncate">{title}</span>
                 )}
-                {itemUrl && <ExternalLink className="h-3 w-3 text-muted-foreground shrink-0" />}
+                {safeUrl && <ExternalLink className="h-3 w-3 text-muted-foreground shrink-0" />}
               </div>
               <div className="flex items-center gap-3 shrink-0">
-                {item.price != null && (
-                  <span className="font-semibold tabular-nums">${Number(item.price).toLocaleString()}</span>
+                {price && (
+                  <span className="font-semibold tabular-nums">{price}</span>
                 )}
-                {item.originalPrice != null && Number(item.originalPrice) !== Number(item.price) && (
+                {origPrice && origPrice !== price && (
                   <span className="text-xs text-muted-foreground line-through tabular-nums">
-                    ${Number(item.originalPrice).toLocaleString()}
+                    {origPrice}
                   </span>
                 )}
                 {isBlacklisted ? (
