@@ -204,8 +204,8 @@ export function ItemsTab({ monitorId, allItems, schema, blacklist }: ItemsTabPro
           const isMatch = matchKeys.has(key);
           const isBlacklisted = blacklistKeys.has(key);
           const safeUrl = toSafeUrl(item.url);
-          const price = formatPrice(item.price);
-          const origPrice = formatPrice(item.originalPrice);
+          const price = formatPrice(item.price, item.currency);
+          const origPrice = formatPrice(item.originalPrice, item.currency);
 
           return (
             <div

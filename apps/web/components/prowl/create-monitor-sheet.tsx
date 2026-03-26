@@ -65,7 +65,7 @@ export function CreateMonitorSheet({
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
   const [prompt, setPrompt] = useState("");
-  const [checkInterval, setCheckInterval] = useState<CheckInterval>("1h");
+  const [checkInterval, setCheckInterval] = useState<CheckInterval>("6h");
 
   // Match conditions editing
   const [editedConditions, setEditedConditions] = useState<MatchConditions | null>(null);
@@ -115,7 +115,7 @@ export function CreateMonitorSheet({
     setName("");
     setUrl("");
     setPrompt("");
-    setCheckInterval("1h");
+    setCheckInterval("6h");
     setEditedConditions(null);
   }
 

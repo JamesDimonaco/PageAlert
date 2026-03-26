@@ -79,8 +79,9 @@ Rules for extraction:
 - The user needs to see all items so they can adjust their filters. Extract every product, listing, or result card visible.
 - Do NOT extract page chrome like navigation links, breadcrumbs, filter buttons, ads, or pagination controls — only actual product/listing entries.
 - ALWAYS include a "url" field for each item. Links appear as [text](url). If no link exists, use null.
-- Keep item data concise: title, price, url, and 1-2 other relevant fields
-- Prices should be numbers (no currency symbols)
+- Keep item data concise: title, price, url, currency, and 1-2 other relevant fields
+- Prices MUST be the actual price shown for that specific item. Be very careful with sites like Amazon where prices are split across HTML elements.
+- Price should be a number (no currency symbols). Include a separate "currency" field (e.g. "USD", "GBP", "EUR") if the page shows a non-USD currency.
 - matchConditions should reflect ONLY the user's stated criteria — these are used to highlight which items match
 - matchConditions.mustInclude: keywords that must appear ANYWHERE in the item
 - matchConditions.mustExclude: keywords that must NOT appear anywhere

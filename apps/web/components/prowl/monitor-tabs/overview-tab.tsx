@@ -193,7 +193,7 @@ export function OverviewTab({ monitorId, monitor, matches, totalItems }: Overvie
             {matches.slice(0, 5).map((item, i) => {
               const title = String(item.title ?? item.name ?? `Item ${i + 1}`);
               const safeUrl = toSafeUrl(item.url);
-              const price = formatPrice(item.price);
+              const price = formatPrice(item.price, item.currency);
               return (
                 <Card key={i} className="border-emerald-500/20 bg-emerald-500/5 shadow-sm shadow-black/5">
                   <CardContent className="p-4">
