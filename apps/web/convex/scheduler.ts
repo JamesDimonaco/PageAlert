@@ -3,6 +3,18 @@ import { internalAction, internalMutation, internalQuery } from "./_generated/se
 import { internal } from "./_generated/api";
 import { intervalToMs, MAX_RETRIES } from "./shared";
 
+/** Filter out blacklisted items from a matches array based on item title/url keys */
+function filterBlacklisted(matches: Record<string, unknown>[], blacklist: string[]): Record<string, unknown>[] {
+  if (!blacklist || blacklist.length === 0) return matches;
+  const blacklistSet = new Set(blacklist);
+  return matches.filter((m) => {
+    // Match the same key logic as getItemKey in @prowl/shared
+    const url = m.url ? String(m.url) : null;
+    const key = url ?? `${String(m.title ?? "")}-${String(m.price ?? "")}`;
+    return !blacklistSet.has(key);
+  });
+}
+
 // Inline change detection for Convex runtime
 function detectChanges(previousItems: Record<string, unknown>[], currentItems: Record<string, unknown>[]) {
   const getTitle = (item: Record<string, unknown>) => String(item.title ?? item.name ?? "").toLowerCase();
@@ -184,8 +196,11 @@ export const runScheduledChecks = internalAction({
             checkResult = await runQuickCheck(ctx, monitor, scraperUrl, scraperKey);
           }
 
-          // Send match email
-          if (checkResult.hasMatch && monitor.userEmail) {
+          // Only email on NEW matches (not when the same match persists across checks)
+          const previouslyHadMatches = (monitor.matchCount ?? 0) > 0;
+          const isNewMatch = checkResult.hasMatch && !previouslyHadMatches;
+
+          if (isNewMatch && monitor.userEmail) {
             await ctx.runAction(internal.emails.sendMatchAlert, {
               to: monitor.userEmail,
               monitorName: monitor.name,
@@ -194,7 +209,7 @@ export const runScheduledChecks = internalAction({
               matchCount: checkResult.matchCount,
               matches: checkResult.matches,
               totalItems: checkResult.totalItems,
-            });
+            }).catch(() => {});
           }
         } catch (e) {
           const msg = e instanceof Error ? e.message : "Unknown error";
@@ -236,7 +251,9 @@ export const runScheduledChecks = internalAction({
 });
 
 async function runQuickCheck(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ctx: { runMutation: (ref: any, args: any) => Promise<any> },
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   monitor: any,
   scraperUrl: string,
   scraperKey: string
@@ -272,7 +289,7 @@ async function runQuickCheck(
   await ctx.runMutation(internal.scheduler.recordCheckResult, {
     monitorId: monitor._id,
     hasNewMatches: hasMatch,
-    matchCount: hasMatch ? (monitor.matchCount ?? 0) + 1 : monitor.matchCount ?? 0,
+    matchCount: hasMatch ? (monitor.matchCount ?? 0) + 1 : 0,
     totalItems: 0,
     matches: hasMatch
       ? [{ quickCheck: true, keywordResults: result.keywordResults, priceResults: result.priceResults }]
@@ -288,7 +305,9 @@ async function runQuickCheck(
 }
 
 async function runFullExtract(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ctx: { runMutation: (ref: any, args: any) => Promise<any> },
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   monitor: any,
   scraperUrl: string,
   scraperKey: string
@@ -361,20 +380,25 @@ async function runFullExtract(
     return { hasMatch: false, matchCount: 0, matches: [], totalItems: 0 };
   }
 
-  const matchCount = result.matches?.length ?? 0;
+  const allMatches = result.matches ?? [];
   const totalItems = result.totalItems ?? 0;
+
+  // Filter out blacklisted items so they don't count as matches or trigger emails
+  const blacklist = monitor.blacklistedItems ?? [];
+  const filteredMatches = filterBlacklisted(allMatches as Record<string, unknown>[], blacklist);
+  const matchCount = filteredMatches.length;
 
   await ctx.runMutation(internal.scheduler.recordCheckResult, {
     monitorId: monitor._id,
     hasNewMatches: matchCount > 0,
     matchCount,
     totalItems,
-    matches: result.matches ?? [],
+    matches: filteredMatches,
     items: result.schema?.items ?? [],
     schema: result.schema,
   });
 
-  console.log(`[scheduler] Full re-extract ${monitor._id}: ${totalItems} items, ${matchCount} matches`);
+  console.log(`[scheduler] Full re-extract ${monitor._id}: ${totalItems} items, ${matchCount} matches (${allMatches.length - matchCount} blacklisted)`);
 
-  return { hasMatch: matchCount > 0, matchCount, matches: result.matches ?? [], totalItems };
+  return { hasMatch: matchCount > 0, matchCount, matches: filteredMatches, totalItems };
 }

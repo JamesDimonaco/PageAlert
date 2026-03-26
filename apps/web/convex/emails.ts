@@ -51,25 +51,41 @@ export const sendMatchAlert = internalAction({
     const safeName = esc(args.monitorName);
     const safeHost = esc(safeHostname(args.url));
 
-    const matchList = args.matches
-      .slice(0, 5)
-      .map((m: Record<string, unknown>) => {
-        // Handle quick check results (keyword/price based) vs full extract results
-        if (m.quickCheck) {
-          const kr = m.keywordResults as Record<string, unknown> | undefined;
-          const pr = m.priceResults as Record<string, unknown> | undefined;
-          const keywords = Array.isArray(kr?.included) ? (kr.included as string[]).join(", ") : "";
-          const price = pr?.lowestInRange != null ? ` — from $${esc(Number(pr.lowestInRange).toLocaleString())}` : "";
-          return `<li style="padding:8px 0;border-bottom:1px solid #eee">Keywords matched: ${esc(keywords || "all")}${price}</li>`;
-        }
-        const title = esc(String(m.title ?? m.name ?? "Unknown item"));
-        const price = m.price != null ? ` — $${esc(Number(m.price).toLocaleString())}` : "";
-        return `<li style="padding:8px 0;border-bottom:1px solid #eee">${title}${price}</li>`;
-      })
-      .join("");
+    // Determine if this is a quick check (keyword-based) or full extraction
+    const isQuickCheck = args.matches.length > 0 && (args.matches[0] as Record<string, unknown>)?.quickCheck === true;
 
-    const moreText = args.matchCount > 5 ? `<p style="color:#666;font-size:14px">+${args.matchCount - 5} more matches</p>` : "";
-    const itemsText = args.totalItems > 0 ? ` out of ${args.totalItems} items` : "";
+    // Use the first matched item's URL if available, otherwise fall back to the monitor URL
+    const firstItemUrl = !isQuickCheck
+      ? args.matches.find((m: Record<string, unknown>) => typeof m.url === "string" && m.url.length > 0)?.url as string | undefined
+      : undefined;
+    const viewOnSiteUrl = firstItemUrl ?? args.url;
+
+    let matchList = "";
+    let summaryText = "";
+
+    if (isQuickCheck) {
+      // Quick check: just say keywords were found on the page
+      const kr = (args.matches[0] as Record<string, unknown>)?.keywordResults as Record<string, unknown> | undefined;
+      const pr = (args.matches[0] as Record<string, unknown>)?.priceResults as Record<string, unknown> | undefined;
+      const keywords = Array.isArray(kr?.included) ? (kr.included as string[]).join(", ") : "your keywords";
+      const lowestPrice = pr?.lowestInRange != null ? Number(pr.lowestInRange) : NaN;
+      const priceInfo = Number.isFinite(lowestPrice) ? ` Prices from $${esc(lowestPrice.toLocaleString("en-US"))}.` : "";
+      summaryText = `Your monitor detected <strong>${esc(keywords)}</strong> on the page.${priceInfo}`;
+    } else {
+      // Full extraction: show matched items
+      matchList = args.matches
+        .slice(0, 5)
+        .map((m: Record<string, unknown>) => {
+          const title = esc(String(m.title ?? m.name ?? "Item"));
+          const price = m.price != null ? ` — $${esc(Number(m.price).toLocaleString())}` : "";
+          return `<li style="padding:8px 0;border-bottom:1px solid #eee">${title}${price}</li>`;
+        })
+        .join("");
+      const itemsText = args.totalItems > 0 ? ` out of ${args.totalItems} items` : "";
+      summaryText = `Your monitor found <strong>${args.matchCount} match${args.matchCount !== 1 ? "es" : ""}</strong>${itemsText} on <a href="${safeHref(args.url)}" style="color:#4f46e5;text-decoration:none">${safeHost}</a>.`;
+    }
+
+    const moreText = !isQuickCheck && args.matchCount > 5 ? `<p style="color:#666;font-size:14px">+${args.matchCount - 5} more matches</p>` : "";
 
     const html = `
 <!DOCTYPE html>
@@ -84,13 +100,12 @@ export const sendMatchAlert = internalAction({
       </div>
       <div style="padding:32px">
         <p style="margin:0 0 16px;color:#333;font-size:16px">
-          Your monitor found <strong>${args.matchCount} match${args.matchCount !== 1 ? "es" : ""}</strong>${itemsText} on
-          <a href="${safeHref(args.url)}" style="color:#4f46e5;text-decoration:none">${safeHost}</a>.
+          ${summaryText}
         </p>
-        <ul style="list-style:none;padding:0;margin:0 0 16px">${matchList}</ul>
+        ${matchList ? `<ul style="list-style:none;padding:0;margin:0 0 16px">${matchList}</ul>` : ""}
         ${moreText}
         <div style="margin-top:24px">
-          <a href="${safeHref(args.url)}" style="display:inline-block;background:#4f46e5;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:500;font-size:14px;margin-right:8px">View on site</a>
+          <a href="${safeHref(viewOnSiteUrl)}" style="display:inline-block;background:#4f46e5;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:500;font-size:14px;margin-right:8px">View on site</a>
           <a href="${APP_URL}/dashboard/monitors/${args.monitorId}" style="display:inline-block;background:#f4f4f5;color:#333;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:500;font-size:14px">View in PageAlert</a>
         </div>
       </div>
@@ -105,7 +120,10 @@ export const sendMatchAlert = internalAction({
 </body>
 </html>`;
 
-    const text = `Match Found — ${args.monitorName}\n\nYour monitor found ${args.matchCount} match${args.matchCount !== 1 ? "es" : ""}${itemsText} on ${safeHostname(args.url)}.\n\n${args.matches.slice(0, 5).map((m: Record<string, unknown>) => `• ${String(m.title ?? m.name ?? "Unknown")}${m.price != null ? ` — $${Number(m.price)}` : ""}`).join("\n")}\n${args.matchCount > 5 ? `+${args.matchCount - 5} more` : ""}\n\nView on site: ${args.url}\nView in PageAlert: ${APP_URL}/dashboard/monitors/${args.monitorId}`;
+    const plainItemsText = args.totalItems > 0 ? ` out of ${args.totalItems} items` : "";
+    const text = isQuickCheck
+      ? `Match Found — ${args.monitorName}\n\nYour monitor detected matching keywords on ${safeHostname(args.url)}.\n\nView on site: ${viewOnSiteUrl}\nView in PageAlert: ${APP_URL}/dashboard/monitors/${args.monitorId}`
+      : `Match Found — ${args.monitorName}\n\nYour monitor found ${args.matchCount} match${args.matchCount !== 1 ? "es" : ""}${plainItemsText} on ${safeHostname(args.url)}.\n\n${args.matches.slice(0, 5).map((m: Record<string, unknown>) => `• ${String(m.title ?? m.name ?? "Item")}${m.price != null ? ` — $${Number(m.price)}` : ""}`).join("\n")}\n${args.matchCount > 5 ? `+${args.matchCount - 5} more` : ""}\n\nView on site: ${viewOnSiteUrl}\nView in PageAlert: ${APP_URL}/dashboard/monitors/${args.monitorId}`;
 
     try {
       const res = await fetch("https://api.resend.com/emails", {
