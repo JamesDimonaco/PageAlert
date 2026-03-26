@@ -9,10 +9,11 @@ import {
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Lock } from "lucide-react";
+import { useTier, type Tier } from "@/hooks/use-tier";
 
 type CheckInterval = "5m" | "15m" | "30m" | "1h" | "6h" | "24h";
 
-const INTERVALS: { value: CheckInterval; label: string; tier: "free" | "pro" | "business" }[] = [
+const INTERVALS: { value: CheckInterval; label: string; tier: Tier }[] = [
   { value: "5m", label: "Every 5 minutes", tier: "business" },
   { value: "15m", label: "Every 15 minutes", tier: "pro" },
   { value: "30m", label: "Every 30 minutes", tier: "pro" },
@@ -21,13 +22,9 @@ const INTERVALS: { value: CheckInterval; label: string; tier: "free" | "pro" | "
   { value: "24h", label: "Every 24 hours", tier: "free" },
 ];
 
-// For now all users are free tier. Will be dynamic when billing is added.
-const CURRENT_TIER: "free" | "pro" | "business" = "free";
-
-function isAvailable(intervalTier: string): boolean {
-  const tier = CURRENT_TIER;
-  if (tier === "business") return true;
-  if (tier === "pro") return intervalTier !== "business";
+function isAvailable(intervalTier: string, currentTier: Tier): boolean {
+  if (currentTier === "business") return true;
+  if (currentTier === "pro") return intervalTier !== "business";
   return intervalTier === "free";
 }
 
@@ -38,22 +35,24 @@ interface IntervalSelectorProps {
 }
 
 export function IntervalSelector({ value, onValueChange, disabled }: IntervalSelectorProps) {
+  const { tier, isLoading } = useTier();
+
   return (
     <Select
       value={value}
       onValueChange={(v) => {
-        if (v && isAvailable(INTERVALS.find((i) => i.value === v)?.tier ?? "business")) {
+        if (v && isAvailable(INTERVALS.find((i) => i.value === v)?.tier ?? "business", tier)) {
           onValueChange(v as CheckInterval);
         }
       }}
-      disabled={disabled}
+      disabled={disabled || isLoading}
     >
       <SelectTrigger>
         <SelectValue />
       </SelectTrigger>
       <SelectContent>
         {INTERVALS.map((interval) => {
-          const available = isAvailable(interval.tier);
+          const available = isAvailable(interval.tier, tier);
           return (
             <SelectItem
               key={interval.value}

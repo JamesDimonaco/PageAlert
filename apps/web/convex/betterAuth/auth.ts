@@ -3,6 +3,8 @@ import { convex } from "@convex-dev/better-auth/plugins";
 import type { GenericCtx } from "@convex-dev/better-auth/utils";
 import type { BetterAuthOptions } from "better-auth";
 import { betterAuth } from "better-auth";
+import { polar, checkout, portal, webhooks } from "@polar-sh/better-auth";
+import { Polar } from "@polar-sh/sdk";
 import { components } from "../_generated/api";
 import type { DataModel } from "../_generated/dataModel";
 import authConfig from "../auth.config";
@@ -16,7 +18,61 @@ export const authComponent = createClient<DataModel, typeof schema>(
   },
 );
 
+// Polar billing client
+const polarEnv = process.env.POLAR_ENVIRONMENT;
+const polarServer: "sandbox" | "production" = (() => {
+  if (!polarEnv || polarEnv === "sandbox") return "sandbox";
+  if (polarEnv === "production") return "production";
+  throw new Error(`Invalid POLAR_ENVIRONMENT: "${polarEnv}". Must be "sandbox" or "production".`);
+})();
+
+const polarClient = process.env.POLAR_ACCESS_TOKEN
+  ? new Polar({
+      accessToken: process.env.POLAR_ACCESS_TOKEN,
+      server: polarServer,
+    })
+  : null;
+
 export const createAuthOptions = (ctx: GenericCtx<DataModel>) => {
+  const plugins: BetterAuthOptions["plugins"] = [convex({ authConfig })];
+
+  // Add Polar billing plugin if configured
+  if (polarClient) {
+    plugins.push(
+      polar({
+        client: polarClient,
+        createCustomerOnSignUp: true,
+        use: [
+          checkout({
+            products: [
+              ...(process.env.POLAR_PRO_PRODUCT_ID
+                ? [{ productId: process.env.POLAR_PRO_PRODUCT_ID, slug: "pro" }]
+                : []),
+              ...(process.env.POLAR_BUSINESS_PRODUCT_ID
+                ? [{ productId: process.env.POLAR_BUSINESS_PRODUCT_ID, slug: "business" }]
+                : []),
+            ],
+            successUrl: "/dashboard/settings?upgraded=true",
+            authenticatedUsersOnly: true,
+          }),
+          portal(),
+          ...(process.env.POLAR_WEBHOOK_SECRET ? [webhooks({
+            secret: process.env.POLAR_WEBHOOK_SECRET,
+            onOrderPaid: async (payload) => {
+              console.log("[polar] Order paid:", payload.data.id);
+            },
+            onSubscriptionCreated: async (payload) => {
+              console.log("[polar] Subscription created:", payload.data.id);
+            },
+            onSubscriptionCanceled: async (payload) => {
+              console.log("[polar] Subscription canceled:", payload.data.id);
+            },
+          })] : []),
+        ],
+      })
+    );
+  }
+
   return {
     appName: "PageAlert",
     baseURL: process.env.SITE_URL,
@@ -35,7 +91,7 @@ export const createAuthOptions = (ctx: GenericCtx<DataModel>) => {
         clientSecret: process.env.GITHUB_CLIENT_SECRET!,
       },
     },
-    plugins: [convex({ authConfig })],
+    plugins,
   } satisfies BetterAuthOptions;
 };
 

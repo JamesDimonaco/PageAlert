@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { User, Bell, CreditCard, Mail, MessageCircle, Hash, Trash2, Send, CheckCircle2, Loader2 } from "lucide-react";
+import { User, Bell, CreditCard, Mail, MessageCircle, Hash, Trash2, Send, CheckCircle2, Loader2, ExternalLink, Sparkles } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -19,16 +19,25 @@ import {
 } from "@/components/ui/dialog";
 import { useAuth } from "@/hooks/use-auth";
 import { useMonitors } from "@/hooks/use-monitors";
+import { useTier } from "@/hooks/use-tier";
 import { useAction, useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
+import { authClient } from "@/lib/auth-client";
 import { toast } from "sonner";
-
-const FREE_MONITOR_LIMIT = 3;
 
 export default function SettingsPage() {
   const { user, signOut } = useAuth();
   const { monitors } = useMonitors();
+  const { tier, maxMonitors, description: tierDescription, isLoading: tierLoading } = useTier();
   const [name, setName] = useState(user?.name ?? "");
+
+  async function handleCheckout(slug: "pro" | "business") {
+    try {
+      await authClient.checkout({ slug });
+    } catch {
+      toast.error("Checkout unavailable", { description: "Billing is not configured yet" });
+    }
+  }
   const [email, setEmail] = useState(user?.email ?? "");
 
   const [emailNotifs, setEmailNotifs] = useState(true);
@@ -294,6 +303,12 @@ export default function SettingsPage() {
         </TabsContent>
 
         <TabsContent value="billing" className="mt-8 space-y-8">
+          {tierLoading ? (
+            <div className="flex items-center justify-center py-16">
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            </div>
+          ) : (<>
+          {/* Current Plan */}
           <Card className="border-border/30 bg-card/50 shadow-sm shadow-black/5">
             <CardHeader className="pb-4">
               <CardTitle className="text-lg font-semibold">Current Plan</CardTitle>
@@ -302,18 +317,93 @@ export default function SettingsPage() {
               <div className="flex items-center justify-between">
                 <div>
                   <div className="flex items-center gap-3">
-                    <p className="text-xl font-bold">Free</p>
+                    <p className="text-xl font-bold capitalize">{tier}</p>
                     <Badge variant="outline" className="text-xs">Current plan</Badge>
                   </div>
                   <p className="text-sm text-muted-foreground mt-2 leading-relaxed">
-                    3 monitors, 6 hour check interval, email only
+                    {tierDescription}
                   </p>
                 </div>
-                <Button className="shadow-md shadow-primary/15">Upgrade to Pro</Button>
+                <div className="flex items-center gap-2">
+                  {tier === "free" && (
+                    <Button
+                      className="gap-1.5 shadow-md shadow-primary/15"
+                      onClick={() => handleCheckout("pro")}
+                    >
+                      <Sparkles className="h-4 w-4" />
+                      Upgrade to Pro
+                    </Button>
+                  )}
+                  {tier !== "free" && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="gap-1.5"
+                      onClick={async () => {
+                        try {
+                          await authClient.customer.portal();
+                        } catch {
+                          toast.error("Portal unavailable");
+                        }
+                      }}
+                    >
+                      <ExternalLink className="h-3.5 w-3.5" />
+                      Manage Subscription
+                    </Button>
+                  )}
+                </div>
               </div>
             </CardContent>
           </Card>
 
+          {/* Upgrade Options */}
+          {tier === "free" && (
+            <div className="grid gap-4 md:grid-cols-2">
+              <Card className="border-primary/30 bg-primary/5 shadow-sm">
+                <CardContent className="p-6">
+                  <div className="flex items-center gap-2 mb-3">
+                    <h3 className="text-lg font-bold">Pro</h3>
+                    <Badge className="bg-primary/10 text-primary border-primary/20 text-xs">Popular</Badge>
+                  </div>
+                  <p className="text-3xl font-bold">$9<span className="text-sm font-normal text-muted-foreground">/mo</span></p>
+                  <ul className="mt-4 space-y-2 text-sm text-muted-foreground">
+                    <li>25 monitors</li>
+                    <li>15 minute checks</li>
+                    <li>All notification channels</li>
+                  </ul>
+                  <Button
+                    className="w-full mt-4 gap-1.5"
+                    onClick={() => handleCheckout("pro")}
+                  >
+                    <Sparkles className="h-4 w-4" />
+                    Upgrade to Pro
+                  </Button>
+                </CardContent>
+              </Card>
+              <Card className="border-border/30 bg-card/50 shadow-sm">
+                <CardContent className="p-6">
+                  <h3 className="text-lg font-bold mb-3">Business</h3>
+                  <p className="text-3xl font-bold">$29<span className="text-sm font-normal text-muted-foreground">/mo</span></p>
+                  <ul className="mt-4 space-y-2 text-sm text-muted-foreground">
+                    <li>Unlimited monitors</li>
+                    <li>5 minute checks</li>
+                    <li>API access + webhooks</li>
+                  </ul>
+                  <Button
+                    variant="outline"
+                    className="w-full mt-4 gap-1.5"
+                    onClick={async () => {
+                      handleCheckout("business");
+                    }}
+                  >
+                    Upgrade to Business
+                  </Button>
+                </CardContent>
+              </Card>
+            </div>
+          )}
+
+          {/* Usage */}
           <Card className="border-border/30 bg-card/50 shadow-sm shadow-black/5">
             <CardHeader className="pb-4">
               <CardTitle className="text-lg font-semibold">Usage</CardTitle>
@@ -323,23 +413,24 @@ export default function SettingsPage() {
                 <div>
                   <div className="flex justify-between text-sm mb-2">
                     <span className="font-medium">Monitors</span>
-                    <span className="text-muted-foreground tabular-nums">{monitors.length} / {FREE_MONITOR_LIMIT}</span>
+                    <span className="text-muted-foreground tabular-nums">{monitors.length} / {maxMonitors}</span>
                   </div>
                   <div className="h-2 rounded-full bg-muted overflow-hidden">
                     <div
-                      className={`h-full rounded-full transition-all ${monitors.length > FREE_MONITOR_LIMIT ? "bg-amber-500" : "bg-primary"}`}
-                      style={{ width: `${Math.min((monitors.length / FREE_MONITOR_LIMIT) * 100, 100)}%` }}
+                      className={`h-full rounded-full transition-all ${monitors.length > maxMonitors ? "bg-amber-500" : "bg-primary"}`}
+                      style={{ width: `${Math.min((monitors.length / maxMonitors) * 100, 100)}%` }}
                     />
                   </div>
-                  {monitors.length >= FREE_MONITOR_LIMIT && (
+                  {monitors.length >= maxMonitors && (
                     <p className="text-xs text-amber-400 mt-2 font-medium">
-                      {monitors.length > FREE_MONITOR_LIMIT ? "Over limit - upgrade to add more" : "At limit - upgrade for more monitors"}
+                      {monitors.length > maxMonitors ? "Over limit — upgrade to add more" : "At limit — upgrade for more monitors"}
                     </p>
                   )}
                 </div>
               </div>
             </CardContent>
           </Card>
+          </>)}
         </TabsContent>
       </Tabs>
     </div>
