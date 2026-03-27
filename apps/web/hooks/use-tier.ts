@@ -3,7 +3,8 @@
 import { authClient } from "@/lib/auth-client";
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { setUserProperties } from "@/lib/posthog";
 
 export type Tier = "free" | "pro" | "business";
 
@@ -126,6 +127,17 @@ export function useTier(): TierInfo {
       return () => clearTimeout(timer);
     }
   }, [fetchAndSync]);
+
+  // Sync tier to PostHog user properties whenever it changes
+  const prevTierRef = useRef(tier);
+  useEffect(() => {
+    if (tier !== prevTierRef.current) {
+      prevTierRef.current = tier;
+    }
+    if (!isLoading) {
+      setUserProperties({ tier, plan: tier });
+    }
+  }, [tier, isLoading]);
 
   return {
     tier,

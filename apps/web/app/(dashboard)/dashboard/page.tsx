@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Plus, Search, Radar } from "lucide-react";
 import { Input } from "@/components/ui/input";
@@ -12,7 +12,7 @@ import { useCreateMonitor } from "@/hooks/use-create-monitor";
 import { useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { toast } from "sonner";
-import { trackMonitorDeleted, trackMonitorPaused, trackMonitorResumed } from "@/lib/posthog";
+import { trackMonitorDeleted, trackMonitorPaused, trackMonitorResumed, setUserProperties } from "@/lib/posthog";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
 import {
   Select,
@@ -28,6 +28,16 @@ export default function DashboardPage() {
   const saveScanResult = useMutation(api.monitors.saveScanResult);
   const saveScanError = useMutation(api.monitors.saveScanError);
   const createLog = useMutation(api.logs.create);
+
+  // Sync monitor count to PostHog for cohort analysis
+  useEffect(() => {
+    if (monitors.length >= 0) {
+      setUserProperties({
+        monitor_count: monitors.length,
+        active_monitors: monitors.filter((m) => m.status === "active").length,
+      });
+    }
+  }, [monitors.length]);
 
   async function handleRescan(monitorId: Id<"monitors">) {
     const monitor = monitors.find((m) => m._id === monitorId);

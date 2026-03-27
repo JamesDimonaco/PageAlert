@@ -10,27 +10,36 @@ export function initPostHog() {
   if (!POSTHOG_KEY) return;
 
   posthog.init(POSTHOG_KEY, {
-    api_host: "/ingest", // Reverse proxy to avoid ad blockers
+    api_host: "/ingest",
     ui_host: POSTHOG_HOST,
-    capture_pageview: false, // We capture manually for SPA route changes
+    capture_pageview: false,
     capture_pageleave: true,
     autocapture: true,
-    capture_exceptions: true, // Error tracking — auto-captures unhandled exceptions
+    capture_exceptions: true,
     persistence: "localStorage+cookie",
     person_profiles: "identified_only",
     session_recording: {
-      maskAllInputs: true, // PII protection
-      maskTextSelector: "[data-ph-mask]", // Custom masking
+      maskAllInputs: true,
+      maskTextSelector: "[data-ph-mask]",
     },
   });
   initialized = true;
 }
 
-// ---- Typed event helpers ----
+export function getPostHog() {
+  return initialized ? posthog : null;
+}
+
+// ---- Core helpers ----
 
 export function identifyUser(userId: string, properties?: Record<string, unknown>) {
   if (!initialized) return;
   posthog.identify(userId, properties);
+}
+
+export function setUserProperties(properties: Record<string, unknown>) {
+  if (!initialized) return;
+  posthog.people.set(properties);
 }
 
 export function resetUser() {
@@ -43,7 +52,62 @@ export function trackEvent(event: string, properties?: Record<string, unknown>) 
   posthog.capture(event, properties);
 }
 
-// ---- Specific events ----
+export function trackPageView(url: string) {
+  if (!initialized) return;
+  posthog.capture("$pageview", { $current_url: url });
+}
+
+// ---- Feature flags ----
+
+export function isFeatureEnabled(flag: string): boolean {
+  if (!initialized) return false;
+  return posthog.isFeatureEnabled(flag) ?? false;
+}
+
+export function getFeatureFlag(flag: string): string | boolean | undefined {
+  if (!initialized) return undefined;
+  return posthog.getFeatureFlag(flag);
+}
+
+// ---- Revenue / Billing events ----
+
+export function trackCheckoutStarted(props: { plan: string; price: number }) {
+  trackEvent("checkout_started", {
+    plan: props.plan,
+    price_usd: props.price,
+  });
+}
+
+export function trackCheckoutCompleted(props: { plan: string; price: number }) {
+  trackEvent("checkout_completed", {
+    plan: props.plan,
+    price_usd: props.price,
+    $set: { tier: props.plan }, // Update user property
+  });
+}
+
+export function trackUpgradePromptShown(props: { reason: string; currentTier: string }) {
+  trackEvent("upgrade_prompt_shown", {
+    reason: props.reason,
+    current_tier: props.currentTier,
+  });
+}
+
+export function trackUpgradePromptClicked(props: { plan: string; currentTier: string }) {
+  trackEvent("upgrade_prompt_clicked", {
+    target_plan: props.plan,
+    current_tier: props.currentTier,
+  });
+}
+
+export function trackSubscriptionChanged(props: { from: string; to: string }) {
+  trackEvent("subscription_changed", {
+    from_tier: props.from,
+    to_tier: props.to,
+  });
+}
+
+// ---- Monitor lifecycle ----
 
 export function trackMonitorCreated(props: { url: string; prompt: string; checkInterval: string }) {
   trackEvent("monitor_created", {
@@ -65,11 +129,19 @@ export function trackMonitorResumed() {
   trackEvent("monitor_resumed");
 }
 
+// ---- Scan events ----
+
 export function trackScanStarted(props: { url: string }) {
   trackEvent("scan_started", { url_domain: safeDomain(props.url) });
 }
 
-export function trackScanCompleted(props: { url: string; itemCount: number; matchCount: number; durationMs: number; confidence?: number }) {
+export function trackScanCompleted(props: {
+  url: string;
+  itemCount: number;
+  matchCount: number;
+  durationMs: number;
+  confidence?: number;
+}) {
   trackEvent("scan_completed", {
     url_domain: safeDomain(props.url),
     item_count: props.itemCount,
@@ -87,6 +159,8 @@ export function trackScanFailed(props: { url: string; error: string; durationMs:
   });
 }
 
+// ---- Match events ----
+
 export function trackMatchFound(props: { monitorId: string; matchCount: number }) {
   trackEvent("match_found", {
     monitor_id: props.monitorId,
@@ -94,17 +168,52 @@ export function trackMatchFound(props: { monitorId: string; matchCount: number }
   });
 }
 
+// ---- User interaction events ----
+
 export function trackFilterEdited() {
   trackEvent("filter_edited");
+}
+
+export function trackFilterSaved() {
+  trackEvent("filter_saved");
 }
 
 export function trackItemDismissed() {
   trackEvent("item_dismissed");
 }
 
-export function trackPageView(url: string) {
-  posthog.capture("$pageview", { $current_url: url });
+export function trackItemRestored() {
+  trackEvent("item_restored");
 }
+
+// ---- Notification events ----
+
+export function trackTestEmailSent() {
+  trackEvent("test_email_sent");
+}
+
+export function trackNotificationChannelToggled(props: { channel: string; enabled: boolean }) {
+  trackEvent("notification_channel_toggled", {
+    channel: props.channel,
+    enabled: props.enabled,
+  });
+}
+
+// ---- Auth events ----
+
+export function trackSignUp(props: { method: string }) {
+  trackEvent("sign_up", { method: props.method });
+}
+
+export function trackSignIn(props: { method: string }) {
+  trackEvent("sign_in", { method: props.method });
+}
+
+export function trackSignOut() {
+  trackEvent("sign_out");
+}
+
+// ---- Helpers ----
 
 function safeDomain(url: string): string {
   try { return new URL(url).hostname; } catch { return "unknown"; }
