@@ -18,10 +18,17 @@ export default function LandingPage() {
           </div>
           <div className="flex items-center gap-2 sm:gap-3">
             <Link href="/login">
+<<<<<<< HEAD
               <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-foreground">Sign in</Button>
             </Link>
             <Link href="/login">
               <Button size="sm" className="gap-2">
+=======
+              <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-foreground sm:size-default">Sign in</Button>
+            </Link>
+            <Link href="/login">
+              <Button size="sm" className="gap-2 sm:size-default">
+>>>>>>> 636630722e2ca2164b628ed3c7d775767a204079
                 Get Started
                 <ArrowRight className="h-4 w-4 hidden sm:inline" />
               </Button>
@@ -66,11 +73,17 @@ export default function LandingPage() {
                     <ArrowRight className="h-5 w-5" />
                   </Button>
                 </Link>
+<<<<<<< HEAD
                 <a href="#how-it-works" className="w-full sm:w-auto">
                   <Button variant="outline" size="lg" className="h-12 px-8 text-base font-medium w-full sm:w-auto">
                     See how it works
                   </Button>
                 </a>
+=======
+                <Button variant="outline" size="lg" className="h-12 px-8 text-base font-medium w-full sm:w-auto">
+                  See how it works
+                </Button>
+>>>>>>> 636630722e2ca2164b628ed3c7d775767a204079
               </div>
             </div>
 
@@ -102,7 +115,11 @@ export default function LandingPage() {
         </section>
 
         {/* Features */}
+<<<<<<< HEAD
         <section id="how-it-works" className="border-t border-border/30 bg-card/20 scroll-mt-20">
+=======
+        <section className="border-t border-border/30 bg-card/20">
+>>>>>>> 636630722e2ca2164b628ed3c7d775767a204079
           <div className="mx-auto max-w-7xl px-4 sm:px-6 py-16 sm:py-28">
             <div className="mx-auto max-w-2xl text-center mb-16">
               <h2 className="text-3xl font-bold tracking-tight leading-tight">How it works</h2>

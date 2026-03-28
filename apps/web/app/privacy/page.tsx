@@ -53,7 +53,11 @@ export default function PrivacyPage() {
           </ul>
 
           <h2>Cookies</h2>
+<<<<<<< HEAD
           <p>We use essential cookies for authentication (keeping you signed in). We also use PostHog analytics cookies to understand product usage. You can opt out of analytics by using a browser ad blocker or disabling cookies.</p>
+=======
+          <p>We use essential cookies for authentication (keeping you signed in). We also use PostHog analytics cookies to understand product usage. PostHog is configured to respect Do Not Track headers.</p>
+>>>>>>> 636630722e2ca2164b628ed3c7d775767a204079
 
           <h2>Data retention</h2>
           <p>Your monitor data and scrape results are retained as long as your account is active. If you delete your account, all associated data (monitors, results, notifications) is permanently removed.</p>

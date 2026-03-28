@@ -36,7 +36,7 @@ PageAlert monitors any website using AI. Paste a URL, describe what you're looki
 
 ## Project Structure
 
-```text
+```
 prowl/
 ├── apps/
 │   ├── web/              # Next.js app (frontend + Convex backend)
