@@ -124,7 +124,7 @@ export function ItemsTab({ monitorId, allItems, schema, blacklist }: ItemsTabPro
   return (
     <div className="space-y-4">
       {/* Header */}
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="flex items-center gap-3">
           <Badge variant="outline" className="text-xs">{filteredItems.length} items</Badge>
           <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-xs">
@@ -132,7 +132,7 @@ export function ItemsTab({ monitorId, allItems, schema, blacklist }: ItemsTabPro
           </Badge>
         </div>
         <div className="flex items-center gap-2">
-          <div className="relative w-56">
+          <div className="relative flex-1 sm:w-56 sm:flex-none">
             <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
             <Input
               placeholder="Search items..."
@@ -144,7 +144,7 @@ export function ItemsTab({ monitorId, allItems, schema, blacklist }: ItemsTabPro
           <Button
             variant={showFilters ? "default" : "outline"}
             size="sm"
-            className="gap-1.5 h-8"
+            className="gap-1.5 h-8 shrink-0"
             onClick={() => setShowFilters(!showFilters)}
           >
             <Filter className="h-3.5 w-3.5" />
@@ -214,7 +214,7 @@ export function ItemsTab({ monitorId, allItems, schema, blacklist }: ItemsTabPro
           return (
             <div
               key={`${key}-${i}`}
-              className={`rounded-lg px-4 py-3 text-sm transition-colors flex items-center justify-between gap-3 ${
+              className={`rounded-lg px-3 sm:px-4 py-3 text-sm transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-2 sm:gap-3 ${
                 isBlacklisted
                   ? "bg-card/10 opacity-30"
                   : isMatch
@@ -226,15 +226,15 @@ export function ItemsTab({ monitorId, allItems, schema, blacklist }: ItemsTabPro
                 {isMatch && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400 shrink-0" />}
                 {safeUrl ? (
                   <a href={safeUrl} target="_blank" rel="noopener noreferrer"
-                    className="font-medium hover:text-primary hover:underline transition-colors truncate">
+                    className="font-medium hover:text-primary hover:underline transition-colors break-words sm:truncate">
                     {title}
                   </a>
                 ) : (
-                  <span className="font-medium truncate">{title}</span>
+                  <span className="font-medium break-words sm:truncate">{title}</span>
                 )}
                 {safeUrl && <ExternalLink className="h-3 w-3 text-muted-foreground shrink-0" />}
               </div>
-              <div className="flex items-center gap-3 shrink-0">
+              <div className="flex items-center gap-3 shrink-0 self-end sm:self-auto">
                 {price && (
                   <span className="font-semibold tabular-nums">{price}</span>
                 )}

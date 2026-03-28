@@ -9,21 +9,21 @@ export default function LandingPage() {
     <div className="flex min-h-screen flex-col">
       {/* Nav */}
       <header className="sticky top-0 z-50 border-b border-border/40 bg-background/80 backdrop-blur-xl">
-        <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-6">
+        <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6">
           <div className="flex items-center gap-3">
             <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10">
               <Radar className="h-5 w-5 text-primary" />
             </div>
             <span className="text-xl font-bold tracking-tight">PageAlert</span>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3">
             <Link href="/login">
-              <Button variant="ghost" className="text-muted-foreground hover:text-foreground">Sign in</Button>
+              <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-foreground sm:size-default">Sign in</Button>
             </Link>
             <Link href="/login">
-              <Button className="gap-2">
+              <Button size="sm" className="gap-2 sm:size-default">
                 Get Started
-                <ArrowRight className="h-4 w-4" />
+                <ArrowRight className="h-4 w-4 hidden sm:inline" />
               </Button>
             </Link>
           </div>
@@ -39,14 +39,14 @@ export default function LandingPage() {
             <div className="absolute left-1/4 top-32 h-[400px] w-[400px] rounded-full bg-primary/3 blur-3xl" />
           </div>
 
-          <div className="mx-auto max-w-7xl px-6 py-32 lg:py-40">
+          <div className="mx-auto max-w-7xl px-4 sm:px-6 py-20 sm:py-32 lg:py-40">
             <div className="mx-auto max-w-3xl text-center">
               <div className="mb-8 inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/5 px-4 py-1.5 text-sm font-medium text-primary">
                 <Zap className="h-3.5 w-3.5" />
                 AI-powered web monitoring
               </div>
 
-              <h1 className="text-5xl font-bold tracking-tight leading-[1.1] lg:text-7xl lg:tracking-tighter">
+              <h1 className="text-3xl font-bold tracking-tight leading-[1.1] sm:text-5xl lg:text-7xl lg:tracking-tighter">
                 Monitor any website.
                 <br />
                 <span className="bg-gradient-to-r from-primary via-blue-400 to-primary bg-clip-text text-transparent">
@@ -59,14 +59,14 @@ export default function LandingPage() {
                 and get notified when it appears. No CSS selectors. No code. Just results.
               </p>
 
-              <div className="mt-12 flex items-center justify-center gap-4">
-                <Link href="/login">
-                  <Button size="lg" className="gap-2 h-12 px-8 text-base font-semibold shadow-lg shadow-primary/20">
+              <div className="mt-12 flex flex-col sm:flex-row items-center justify-center gap-4">
+                <Link href="/login" className="w-full sm:w-auto">
+                  <Button size="lg" className="gap-2 h-12 px-8 text-base font-semibold shadow-lg shadow-primary/20 w-full sm:w-auto">
                     Start Monitoring
                     <ArrowRight className="h-5 w-5" />
                   </Button>
                 </Link>
-                <Button variant="outline" size="lg" className="h-12 px-8 text-base font-medium">
+                <Button variant="outline" size="lg" className="h-12 px-8 text-base font-medium w-full sm:w-auto">
                   See how it works
                 </Button>
               </div>
@@ -74,7 +74,7 @@ export default function LandingPage() {
 
             {/* Demo preview */}
             <div className="mx-auto mt-24 max-w-4xl">
-              <div className="rounded-xl border-t-2 border-t-primary/40 border border-border/30 bg-card/60 p-8 shadow-xl shadow-black/10 backdrop-blur">
+              <div className="rounded-xl border-t-2 border-t-primary/40 border border-border/30 bg-card/60 p-4 sm:p-8 shadow-xl shadow-black/10 backdrop-blur">
                 <div className="flex items-center gap-2 mb-6">
                   <div className="h-3 w-3 rounded-full bg-red-500/50" />
                   <div className="h-3 w-3 rounded-full bg-yellow-500/50" />
@@ -83,7 +83,7 @@ export default function LandingPage() {
                 <div className="space-y-4">
                   <div className="rounded-lg bg-background/80 p-5 shadow-sm shadow-black/5">
                     <p className="text-xs font-medium text-muted-foreground mb-2">URL</p>
-                    <p className="text-sm font-mono text-foreground/90">https://apple.com/shop/refurbished/mac</p>
+                    <p className="text-sm font-mono text-foreground/90 break-all">https://apple.com/shop/refurbished/mac</p>
                   </div>
                   <div className="rounded-lg bg-background/80 p-5 shadow-sm shadow-black/5">
                     <p className="text-xs font-medium text-muted-foreground mb-2">What are you looking for?</p>
@@ -101,7 +101,7 @@ export default function LandingPage() {
 
         {/* Features */}
         <section className="border-t border-border/30 bg-card/20">
-          <div className="mx-auto max-w-7xl px-6 py-28">
+          <div className="mx-auto max-w-7xl px-4 sm:px-6 py-16 sm:py-28">
             <div className="mx-auto max-w-2xl text-center mb-16">
               <h2 className="text-3xl font-bold tracking-tight leading-tight">How it works</h2>
               <p className="mt-4 text-muted-foreground leading-relaxed">
@@ -149,9 +149,9 @@ export default function LandingPage() {
 
         {/* Pricing preview */}
         <section className="border-t border-border/30">
-          <div className="mx-auto max-w-7xl px-6 py-28">
+          <div className="mx-auto max-w-7xl px-4 sm:px-6 py-16 sm:py-28">
             <div className="mx-auto max-w-2xl text-center mb-16">
-              <h2 className="text-3xl font-bold tracking-tight leading-tight">Simple pricing</h2>
+              <h2 className="text-2xl sm:text-3xl font-bold tracking-tight leading-tight">Simple pricing</h2>
               <p className="mt-4 text-muted-foreground leading-relaxed">Start free, upgrade when you need more</p>
             </div>
 
@@ -226,9 +226,9 @@ export default function LandingPage() {
 
         {/* FAQ */}
         <section className="border-t border-border/30">
-          <div className="mx-auto max-w-3xl px-6 py-28">
-            <div className="text-center mb-16">
-              <h2 className="text-3xl font-bold tracking-tight leading-tight">Frequently asked questions</h2>
+          <div className="mx-auto max-w-3xl px-4 sm:px-6 py-16 sm:py-28">
+            <div className="text-center mb-12 sm:mb-16">
+              <h2 className="text-2xl sm:text-3xl font-bold tracking-tight leading-tight">Frequently asked questions</h2>
             </div>
             <div className="space-y-6">
               {[
@@ -258,11 +258,11 @@ export default function LandingPage() {
                 },
               ].map((faq) => (
                 <details key={faq.q} className="group rounded-xl border border-border/30 bg-card/50 shadow-sm">
-                  <summary className="flex cursor-pointer items-center justify-between p-6 text-base font-semibold [&::-webkit-details-marker]:hidden">
+                  <summary className="flex cursor-pointer items-center justify-between p-4 sm:p-6 text-sm sm:text-base font-semibold [&::-webkit-details-marker]:hidden">
                     {faq.q}
                     <span className="ml-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-45">+</span>
                   </summary>
-                  <div className="px-6 pb-6 text-sm text-muted-foreground leading-relaxed">
+                  <div className="px-4 sm:px-6 pb-4 sm:pb-6 text-sm text-muted-foreground leading-relaxed">
                     {faq.a}
                   </div>
                 </details>
@@ -274,15 +274,21 @@ export default function LandingPage() {
 
       {/* Footer */}
       <footer className="border-t border-border/30 bg-card/20">
-        <div className="mx-auto max-w-7xl px-6 py-10">
-          <div className="flex items-center justify-between">
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 py-12">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-6">
             <div className="flex items-center gap-2 text-sm text-muted-foreground font-medium">
               <Radar className="h-4 w-4" />
               PageAlert
             </div>
-            <p className="text-xs text-muted-foreground">
-              Built with Next.js, Convex, and Claude
-            </p>
+            <nav className="flex flex-wrap items-center gap-6 text-xs text-muted-foreground">
+              <Link href="/privacy" className="hover:text-foreground transition-colors">Privacy Policy</Link>
+              <Link href="/terms" className="hover:text-foreground transition-colors">Terms of Service</Link>
+              <a href="https://github.com/JamesDimonaco/prowl" target="_blank" rel="noopener noreferrer" className="hover:text-foreground transition-colors">GitHub</a>
+              <a href="https://james.dimonaco.co.uk" target="_blank" rel="noopener noreferrer" className="hover:text-foreground transition-colors">Made by James DiMonaco</a>
+            </nav>
+          </div>
+          <div className="mt-6 pt-6 border-t border-border/20">
+            <p className="text-xs text-muted-foreground/60">&copy; {new Date().getFullYear()} PageAlert. All rights reserved.</p>
           </div>
         </div>
       </footer>

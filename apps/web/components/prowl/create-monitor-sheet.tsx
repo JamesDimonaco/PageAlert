@@ -151,7 +151,7 @@ export function CreateMonitorSheet({
       )}
 
       <Sheet open={open} onOpenChange={onOpenChange}>
-        <SheetContent className="sm:max-w-2xl overflow-y-auto">
+        <SheetContent className="w-full sm:max-w-2xl overflow-y-auto">
           <SheetHeader>
             <SheetTitle className="flex items-center gap-2">
               <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10">
@@ -362,8 +362,8 @@ export function CreateMonitorSheet({
                   </div>
                 </div>
 
-                <div className="flex justify-end gap-3 pt-4">
-                  <Button variant="outline" onClick={handleConfirm} className="gap-2">
+                <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-3 pt-4">
+                  <Button variant="outline" onClick={handleConfirm} className="gap-2 w-full sm:w-auto">
                     <CheckCircle2 className="h-4 w-4" />
                     Looks Good
                   </Button>
@@ -374,7 +374,7 @@ export function CreateMonitorSheet({
                         router.push(`/dashboard/monitors/${activeMonitorId}`);
                       }
                     }}
-                    className="gap-2 shadow-sm shadow-primary/15"
+                    className="gap-2 shadow-sm shadow-primary/15 w-full sm:w-auto"
                   >
                     View Details
                     <ArrowRight className="h-4 w-4" />

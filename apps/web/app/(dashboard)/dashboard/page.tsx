@@ -123,14 +123,14 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-10">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
-          <p className="text-muted-foreground mt-2 text-sm leading-relaxed">
+          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Dashboard</h1>
+          <p className="text-muted-foreground mt-1 sm:mt-2 text-sm leading-relaxed">
             Monitor any website with natural language
           </p>
         </div>
-        <Button onClick={openCreate} size="lg" className="gap-2 shadow-md shadow-primary/15">
+        <Button onClick={openCreate} size="lg" className="gap-2 shadow-md shadow-primary/15 w-full sm:w-auto">
           <Plus className="h-5 w-5" />
           New Monitor
         </Button>
@@ -138,8 +138,8 @@ export default function DashboardPage() {
 
       <StatsCards monitors={monitors} />
 
-      <div className="flex items-center gap-3">
-        <div className="relative flex-1 max-w-sm">
+      <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+        <div className="relative flex-1 sm:max-w-sm">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             placeholder="Search monitors..."
@@ -149,7 +149,7 @@ export default function DashboardPage() {
           />
         </div>
         <Select value={statusFilter} onValueChange={(v) => v && setStatusFilter(v)}>
-          <SelectTrigger className="w-[150px]">
+          <SelectTrigger className="w-full sm:w-[150px]">
             <SelectValue placeholder="Status" />
           </SelectTrigger>
           <SelectContent>
@@ -164,29 +164,49 @@ export default function DashboardPage() {
 
       <div className="space-y-4">
         {filtered.length === 0 ? (
-          <div className="flex flex-col items-center justify-center rounded-xl bg-card/30 shadow-sm shadow-black/5 py-20 px-8">
-            <div className="flex h-16 w-16 items-center justify-center rounded-full bg-primary/5 mb-6">
-              {monitors.length === 0 ? (
-                <Radar className="h-7 w-7 text-primary/60" />
-              ) : (
-                <Search className="h-7 w-7 text-muted-foreground/60" />
-              )}
+          monitors.length === 0 ? (
+            <div className="rounded-xl bg-card/30 shadow-sm shadow-black/5 py-16 px-8">
+              <div className="max-w-lg mx-auto text-center">
+                <div className="flex h-16 w-16 items-center justify-center rounded-full bg-primary/5 mx-auto mb-6">
+                  <Radar className="h-7 w-7 text-primary/60" />
+                </div>
+                <h2 className="text-xl font-bold mb-2">Welcome to PageAlert</h2>
+                <p className="text-sm text-muted-foreground mb-8 leading-relaxed">
+                  Monitor any website with AI. Just paste a URL and describe what you&apos;re looking for.
+                </p>
+
+                <Button onClick={openCreate} size="lg" className="gap-2 shadow-md shadow-primary/15 mb-10">
+                  <Plus className="h-5 w-5" />
+                  Create Your First Monitor
+                </Button>
+
+                <div className="text-left space-y-4">
+                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Ideas to get started</p>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    {[
+                      { title: "Track a price drop", desc: "\"MacBook Pro under $1500\"" },
+                      { title: "Restock alert", desc: "\"PS5 console in stock\"" },
+                      { title: "New listings", desc: "\"3 bed house under 400k in Bristol\"" },
+                      { title: "Job monitoring", desc: "\"Senior React developer remote\"" },
+                    ].map((example) => (
+                      <div key={example.title} className="rounded-lg bg-background/50 border border-border/20 p-3 text-left">
+                        <p className="text-sm font-medium">{example.title}</p>
+                        <p className="text-xs text-muted-foreground mt-0.5 italic">{example.desc}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
             </div>
-            <p className="text-lg font-semibold mb-2">
-              {monitors.length === 0 ? "Start monitoring the web" : "No monitors found"}
-            </p>
-            <p className="text-sm text-muted-foreground mb-6 max-w-sm text-center leading-relaxed">
-              {monitors.length === 0
-                ? "Create your first monitor to track changes on any website using natural language."
-                : "Try adjusting your search or filters to find what you're looking for."}
-            </p>
-            {monitors.length === 0 && (
-              <Button onClick={openCreate} className="gap-2 shadow-md shadow-primary/15">
-                <Plus className="h-4 w-4" />
-                Create Your First Monitor
-              </Button>
-            )}
-          </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center rounded-xl bg-card/30 shadow-sm shadow-black/5 py-20 px-8">
+              <Search className="h-7 w-7 text-muted-foreground/60 mb-4" />
+              <p className="text-lg font-semibold mb-2">No monitors found</p>
+              <p className="text-sm text-muted-foreground max-w-sm text-center leading-relaxed">
+                Try adjusting your search or filters.
+              </p>
+            </div>
+          )
         ) : (
           filtered.map((monitor) => (
             <MonitorCard

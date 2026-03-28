@@ -256,8 +256,8 @@ export function HistoryTab({ results }: HistoryTabProps) {
                                 </div>
                                 <div className="space-y-1">
                                   {result.changes.priceChanges.map((pc, i) => (
-                                    <div key={i} className="rounded bg-background/50 border border-border/30 px-3 py-2 text-xs flex items-center justify-between">
-                                      <span className="font-medium truncate max-w-xs">{pc.title}</span>
+                                    <div key={i} className="rounded bg-background/50 border border-border/30 px-3 py-2 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-1 sm:gap-2">
+                                      <span className="font-medium break-words sm:truncate sm:max-w-xs">{pc.title}</span>
                                       <div className="flex items-center gap-2 shrink-0">
                                         <span className="text-muted-foreground line-through">${pc.oldPrice.toLocaleString()}</span>
                                         <span className="font-semibold">${pc.newPrice.toLocaleString()}</span>

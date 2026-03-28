@@ -76,21 +76,22 @@ export default function SettingsPage() {
   return (
     <div className="space-y-10">
       <div>
-        <h1 className="text-3xl font-bold tracking-tight">Settings</h1>
+        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Settings</h1>
         <p className="text-muted-foreground mt-2 text-sm leading-relaxed">Manage your account and preferences</p>
       </div>
 
       <Tabs defaultValue="profile">
-        <TabsList>
-          <TabsTrigger value="profile">
+        <TabsList className="w-full sm:w-auto">
+          <TabsTrigger value="profile" className="flex-1 sm:flex-none">
             <User className="mr-2 h-4 w-4" />
             Profile
           </TabsTrigger>
-          <TabsTrigger value="notifications">
+          <TabsTrigger value="notifications" className="flex-1 sm:flex-none">
             <Bell className="mr-2 h-4 w-4" />
-            Notifications
+            <span className="hidden sm:inline">Notifications</span>
+            <span className="sm:hidden">Notifs</span>
           </TabsTrigger>
-          <TabsTrigger value="billing">
+          <TabsTrigger value="billing" className="flex-1 sm:flex-none">
             <CreditCard className="mr-2 h-4 w-4" />
             Billing
           </TabsTrigger>
@@ -192,9 +193,9 @@ export default function SettingsPage() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-5">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
-                  <p className="text-sm font-medium">{email}</p>
+                  <p className="text-sm font-medium break-all">{email}</p>
                   <p className="text-xs text-muted-foreground mt-1">Match alerts and error notifications</p>
                 </div>
                 <Button
@@ -340,7 +341,7 @@ export default function SettingsPage() {
               <CardTitle className="text-lg font-semibold">Current Plan</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="flex items-center justify-between">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
                   <div className="flex items-center gap-3">
                     <p className="text-xl font-bold capitalize">{tier}</p>
@@ -353,7 +354,7 @@ export default function SettingsPage() {
                 <div className="flex items-center gap-2">
                   {tier === "free" && (
                     <Button
-                      className="gap-1.5 shadow-md shadow-primary/15"
+                      className="gap-1.5 shadow-md shadow-primary/15 w-full sm:w-auto"
                       onClick={() => handleCheckout("pro")}
                     >
                       <Sparkles className="h-4 w-4" />
@@ -364,7 +365,7 @@ export default function SettingsPage() {
                     <Button
                       variant="outline"
                       size="sm"
-                      className="gap-1.5"
+                      className="gap-1.5 w-full sm:w-auto"
                       onClick={async () => {
                         try {
                           await authClient.customer.portal();

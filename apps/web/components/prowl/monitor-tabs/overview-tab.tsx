@@ -147,7 +147,7 @@ export function OverviewTab({ monitorId, monitor, matches, totalItems }: Overvie
       {/* Stats row */}
       <div className="grid gap-4 grid-cols-2 md:grid-cols-4">
         <Card className="border-border/30 bg-card/50 shadow-sm shadow-black/5">
-          <CardContent className="p-5">
+          <CardContent className="p-4 sm:p-5">
             <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-1.5">URL</p>
             <a href={monitor.url} target="_blank" rel="noopener noreferrer"
               className="text-sm font-medium text-primary hover:underline flex items-center gap-1.5 break-all">
@@ -157,7 +157,7 @@ export function OverviewTab({ monitorId, monitor, matches, totalItems }: Overvie
           </CardContent>
         </Card>
         <Card className="border-border/30 bg-card/50 shadow-sm shadow-black/5">
-          <CardContent className="p-5">
+          <CardContent className="p-4 sm:p-5">
             <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-1.5">Interval</p>
             <p className="text-sm font-semibold flex items-center gap-1.5">
               <Clock className="h-3.5 w-3.5 text-muted-foreground" />
@@ -166,7 +166,7 @@ export function OverviewTab({ monitorId, monitor, matches, totalItems }: Overvie
           </CardContent>
         </Card>
         <Card className="border-border/30 bg-card/50 shadow-sm shadow-black/5">
-          <CardContent className="p-5">
+          <CardContent className="p-4 sm:p-5">
             <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-1.5">Matches</p>
             <p className="text-sm font-semibold flex items-center gap-1.5">
               <Zap className="h-3.5 w-3.5 text-primary" />
@@ -175,7 +175,7 @@ export function OverviewTab({ monitorId, monitor, matches, totalItems }: Overvie
           </CardContent>
         </Card>
         <Card className="border-border/30 bg-card/50 shadow-sm shadow-black/5">
-          <CardContent className="p-5">
+          <CardContent className="p-4 sm:p-5">
             <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-1.5">Checks</p>
             <p className="text-sm font-semibold">{monitor.checkCount ?? 0} total · {timeAgo(monitor.lastCheckedAt)}</p>
           </CardContent>
@@ -200,16 +200,16 @@ export function OverviewTab({ monitorId, monitor, matches, totalItems }: Overvie
               return (
                 <Card key={i} className="border-emerald-500/20 bg-emerald-500/5 shadow-sm shadow-black/5">
                   <CardContent className="p-4">
-                    <div className="flex items-center justify-between gap-3">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 sm:gap-3">
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
                           {safeUrl ? (
                             <a href={safeUrl} target="_blank" rel="noopener noreferrer"
-                              className="text-sm font-medium hover:text-primary hover:underline transition-colors truncate">
+                              className="text-sm font-medium hover:text-primary hover:underline transition-colors break-words">
                               {title}
                             </a>
                           ) : (
-                            <p className="text-sm font-medium truncate">{title}</p>
+                            <p className="text-sm font-medium break-words">{title}</p>
                           )}
                           {safeUrl && <ExternalLink className="h-3 w-3 text-muted-foreground shrink-0" />}
                         </div>
