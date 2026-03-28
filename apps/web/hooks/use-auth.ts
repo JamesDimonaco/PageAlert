@@ -2,16 +2,20 @@
 
 import { useEffect } from "react";
 import { authClient } from "@/lib/auth-client";
-import { identifyUser, resetUser } from "@/lib/posthog";
+import { identifyUser, setUserProperties, resetUser, trackSignOut } from "@/lib/posthog";
 
 export function useAuth() {
   const session = authClient.useSession();
   const user = session.data?.user ?? null;
 
-  // Identify user in PostHog when they log in (no PII sent)
+  // Identify user in PostHog and set properties
   useEffect(() => {
     if (user) {
       identifyUser(user.id);
+      setUserProperties({
+        created_at: user.createdAt,
+        has_image: !!user.image,
+      });
     }
   }, [user?.id]);
 
@@ -21,6 +25,7 @@ export function useAuth() {
     isLoading: session.isPending,
     isAuthenticated: !!user,
     signOut: async () => {
+      trackSignOut();
       try {
         await authClient.signOut();
       } catch {

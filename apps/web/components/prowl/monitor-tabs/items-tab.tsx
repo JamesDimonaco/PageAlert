@@ -24,6 +24,7 @@ import { applyMatchConditions, getItemKey } from "@prowl/shared";
 import { useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { toast } from "sonner";
+import { trackFilterSaved, trackItemDismissed, trackItemRestored } from "@/lib/posthog";
 import { formatPrice, toSafeUrl } from "@/lib/format";
 
 interface ItemsTabProps {
@@ -85,6 +86,7 @@ export function ItemsTab({ monitorId, allItems, schema, blacklist }: ItemsTabPro
         schema: { ...schema, matchConditions: editedConditions },
       });
       setEditedConditions(null);
+      trackFilterSaved();
       toast.success("Filters saved");
     } catch {
       toast.error("Failed to save");
@@ -96,6 +98,7 @@ export function ItemsTab({ monitorId, allItems, schema, blacklist }: ItemsTabPro
   async function blacklistItem(key: string) {
     try {
       await updateBlacklist({ id: monitorId, blacklistedItems: [...blacklist, key] });
+      trackItemDismissed();
       toast.success("Item dismissed");
     } catch { toast.error("Failed to dismiss"); }
   }
@@ -103,6 +106,7 @@ export function ItemsTab({ monitorId, allItems, schema, blacklist }: ItemsTabPro
   async function unblacklistItem(key: string) {
     try {
       await updateBlacklist({ id: monitorId, blacklistedItems: blacklist.filter((t) => t !== key) });
+      trackItemRestored();
       toast.success("Item restored");
     } catch { toast.error("Failed to restore"); }
   }

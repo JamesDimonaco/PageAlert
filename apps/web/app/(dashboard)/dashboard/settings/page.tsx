@@ -24,6 +24,11 @@ import { useAction, useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { authClient } from "@/lib/auth-client";
 import { toast } from "sonner";
+import {
+  trackUpgradePromptClicked,
+  trackTestEmailSent,
+  trackNotificationChannelToggled,
+} from "@/lib/posthog";
 
 export default function SettingsPage() {
   const { user, signOut } = useAuth();
@@ -37,7 +42,6 @@ export default function SettingsPage() {
     if (typeof window !== "undefined" && window.location.search.includes("upgraded=true")) {
       toast.success("Welcome to your new plan!", { description: "Your subscription is now active." });
       refetchTier();
-      // Delay URL cleanup to let the tier refetch complete
       const timer = setTimeout(() => {
         window.history.replaceState({}, "", "/dashboard/settings");
       }, 3000);
@@ -46,6 +50,7 @@ export default function SettingsPage() {
   }, [refetchTier]);
 
   async function handleCheckout(slug: "pro" | "business") {
+    trackUpgradePromptClicked({ plan: slug, currentTier: tier });
     try {
       await authClient.checkout({ slug });
     } catch {
@@ -191,8 +196,10 @@ export default function SettingsPage() {
                   variant={emailNotifs ? "default" : "outline"}
                   size="sm"
                   onClick={() => {
-                    setEmailNotifs(!emailNotifs);
-                    toast.success(emailNotifs ? "Email notifications disabled" : "Email notifications enabled");
+                    const newState = !emailNotifs;
+                    setEmailNotifs(newState);
+                    trackNotificationChannelToggled({ channel: "email", enabled: newState });
+                    toast.success(newState ? "Email notifications enabled" : "Email notifications disabled");
                   }}
                 >
                   {emailNotifs ? "Enabled" : "Disabled"}
@@ -224,6 +231,7 @@ export default function SettingsPage() {
                       try {
                         await sendTestEmail();
                         setTestEmailSent(true);
+                        trackTestEmailSent();
                         toast.success("Test email sent", {
                           description: `Check ${email} for the verification email`,
                         });

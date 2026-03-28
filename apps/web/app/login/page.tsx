@@ -11,6 +11,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
 import { toast } from "sonner";
+import { trackSignUp, trackSignIn } from "@/lib/posthog";
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
@@ -31,11 +32,13 @@ export default function LoginPage() {
           password,
           name,
         });
+        trackSignUp({ method: "email" });
       } else {
         await authClient.signIn.email({
           email,
           password,
         });
+        trackSignIn({ method: "email" });
       }
       router.push("/dashboard");
     } catch {
