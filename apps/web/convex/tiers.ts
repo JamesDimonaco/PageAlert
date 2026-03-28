@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { internalMutation, query } from "./_generated/server";
 
-const tierValidator = v.union(v.literal("free"), v.literal("pro"), v.literal("business"));
+const tierValidator = v.union(v.literal("free"), v.literal("pro"), v.literal("max"));
 
 /** Get the current user's tier */
 export const get = query({
@@ -15,7 +15,7 @@ export const get = query({
       .withIndex("by_userId", (q) => q.eq("userId", identity.subject))
       .unique();
 
-    return { tier: (record?.tier ?? "free") as "free" | "pro" | "business" };
+    return { tier: (record?.tier ?? "free") as "free" | "pro" | "max" };
   },
 });
 

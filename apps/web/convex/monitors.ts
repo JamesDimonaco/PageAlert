@@ -8,12 +8,12 @@ const MAX_NAME_LENGTH = 200;
 const MAX_PROMPT_LENGTH = 2000;
 const MAX_RESULTS_LIMIT = 100;
 
-type Tier = "free" | "pro" | "business";
+type Tier = "free" | "pro" | "max";
 
 const TIER_LIMITS: Record<Tier, { maxMonitors: number; allowedIntervals: string[] }> = {
   free: { maxMonitors: 3, allowedIntervals: ["6h", "24h"] },
   pro: { maxMonitors: 25, allowedIntervals: ["15m", "30m", "1h", "6h", "24h"] },
-  business: { maxMonitors: 9999, allowedIntervals: ["5m", "15m", "30m", "1h", "6h", "24h"] },
+  max: { maxMonitors: 9999, allowedIntervals: ["5m", "15m", "30m", "1h", "6h", "24h"] },
 };
 
 async function getUserTier(ctx: { db: any }, userId: string): Promise<Tier> {

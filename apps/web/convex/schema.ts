@@ -124,7 +124,7 @@ export default defineSchema({
 
   userTiers: defineTable({
     userId: v.string(),
-    tier: v.union(v.literal("free"), v.literal("pro"), v.literal("business")),
+    tier: v.union(v.literal("free"), v.literal("pro"), v.literal("max")),
     polarCustomerId: v.optional(v.string()),
     polarSubscriptionId: v.optional(v.string()),
     updatedAt: v.number(),

@@ -34,10 +34,10 @@ const polarClient = process.env.POLAR_ACCESS_TOKEN
   : null;
 
 const PRO_PRODUCT_ID = process.env.POLAR_PRO_PRODUCT_ID;
-const BUSINESS_PRODUCT_ID = process.env.POLAR_BUSINESS_PRODUCT_ID;
+const MAX_PRODUCT_ID = process.env.POLAR_MAX_PRODUCT_ID;
 
-function productIdToTier(productId: string): "pro" | "business" | null {
-  if (productId === BUSINESS_PRODUCT_ID) return "business";
+function productIdToTier(productId: string): "pro" | "max" | null {
+  if (productId === MAX_PRODUCT_ID) return "max";
   if (productId === PRO_PRODUCT_ID) return "pro";
   return null;
 }
@@ -54,7 +54,7 @@ export const createAuthOptions = (ctx: GenericCtx<DataModel>) => {
           checkout({
             products: [
               ...(PRO_PRODUCT_ID ? [{ productId: PRO_PRODUCT_ID, slug: "pro" }] : []),
-              ...(BUSINESS_PRODUCT_ID ? [{ productId: BUSINESS_PRODUCT_ID, slug: "business" }] : []),
+              ...(MAX_PRODUCT_ID ? [{ productId: MAX_PRODUCT_ID, slug: "max" }] : []),
             ],
             successUrl: `${process.env.SITE_URL ?? "https://pagealert.io"}/dashboard/settings?upgraded=true`,
             authenticatedUsersOnly: true,

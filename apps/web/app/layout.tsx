@@ -121,7 +121,7 @@ const jsonLd = {
     },
     {
       "@type": "Offer",
-      name: "Business",
+      name: "Max",
       price: "29",
       priceCurrency: "USD",
       description: "Unlimited monitors, 5 minute checks, API access, webhooks",
@@ -172,7 +172,7 @@ const faqJsonLd = {
       name: "How often does PageAlert check my pages?",
       acceptedAnswer: {
         "@type": "Answer",
-        text: "Check frequency depends on your plan. Free accounts check every 6 hours, Pro every 15 minutes, and Business every 5 minutes.",
+        text: "Check frequency depends on your plan. Free accounts check every 6 hours, Pro every 15 minutes, and Max every 5 minutes.",
       },
     },
     {

@@ -49,7 +49,7 @@ export default function SettingsPage() {
     }
   }, [refetchTier]);
 
-  async function handleCheckout(slug: "pro" | "business") {
+  async function handleCheckout(slug: "pro" | "max") {
     trackUpgradePromptClicked({ plan: slug, currentTier: tier });
     try {
       await authClient.checkout({ slug });
@@ -71,21 +71,22 @@ export default function SettingsPage() {
   return (
     <div className="space-y-10">
       <div>
-        <h1 className="text-3xl font-bold tracking-tight">Settings</h1>
+        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Settings</h1>
         <p className="text-muted-foreground mt-2 text-sm leading-relaxed">Manage your account and preferences</p>
       </div>
 
       <Tabs defaultValue="profile">
-        <TabsList>
-          <TabsTrigger value="profile">
+        <TabsList className="w-full sm:w-auto">
+          <TabsTrigger value="profile" className="flex-1 sm:flex-none">
             <User className="mr-2 h-4 w-4" />
             Profile
           </TabsTrigger>
-          <TabsTrigger value="notifications">
+          <TabsTrigger value="notifications" className="flex-1 sm:flex-none">
             <Bell className="mr-2 h-4 w-4" />
-            Notifications
+            <span className="hidden sm:inline">Notifications</span>
+            <span className="sm:hidden">Notifs</span>
           </TabsTrigger>
-          <TabsTrigger value="billing">
+          <TabsTrigger value="billing" className="flex-1 sm:flex-none">
             <CreditCard className="mr-2 h-4 w-4" />
             Billing
           </TabsTrigger>
@@ -187,9 +188,9 @@ export default function SettingsPage() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-5">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
-                  <p className="text-sm font-medium">{email}</p>
+                  <p className="text-sm font-medium break-all">{email}</p>
                   <p className="text-xs text-muted-foreground mt-1">Match alerts and error notifications</p>
                 </div>
                 <Button
@@ -335,7 +336,7 @@ export default function SettingsPage() {
               <CardTitle className="text-lg font-semibold">Current Plan</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="flex items-center justify-between">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
                   <div className="flex items-center gap-3">
                     <p className="text-xl font-bold capitalize">{tier}</p>
@@ -348,7 +349,7 @@ export default function SettingsPage() {
                 <div className="flex items-center gap-2">
                   {tier === "free" && (
                     <Button
-                      className="gap-1.5 shadow-md shadow-primary/15"
+                      className="gap-1.5 shadow-md shadow-primary/15 w-full sm:w-auto"
                       onClick={() => handleCheckout("pro")}
                     >
                       <Sparkles className="h-4 w-4" />
@@ -359,7 +360,7 @@ export default function SettingsPage() {
                     <Button
                       variant="outline"
                       size="sm"
-                      className="gap-1.5"
+                      className="gap-1.5 w-full sm:w-auto"
                       onClick={async () => {
                         try {
                           await authClient.customer.portal();
@@ -403,7 +404,7 @@ export default function SettingsPage() {
               </Card>
               <Card className="border-border/30 bg-card/50 shadow-sm">
                 <CardContent className="p-6">
-                  <h3 className="text-lg font-bold mb-3">Business</h3>
+                  <h3 className="text-lg font-bold mb-3">Max</h3>
                   <p className="text-3xl font-bold">$29<span className="text-sm font-normal text-muted-foreground">/mo</span></p>
                   <ul className="mt-4 space-y-2 text-sm text-muted-foreground">
                     <li>Unlimited monitors</li>
@@ -414,10 +415,10 @@ export default function SettingsPage() {
                     variant="outline"
                     className="w-full mt-4 gap-1.5"
                     onClick={async () => {
-                      handleCheckout("business");
+                      handleCheckout("max");
                     }}
                   >
-                    Upgrade to Business
+                    Upgrade to Max
                   </Button>
                 </CardContent>
               </Card>

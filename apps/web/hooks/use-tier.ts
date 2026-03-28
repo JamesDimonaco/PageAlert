@@ -6,7 +6,7 @@ import { api } from "@/convex/_generated/api";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { setUserProperties } from "@/lib/posthog";
 
-export type Tier = "free" | "pro" | "business";
+export type Tier = "free" | "pro" | "max";
 
 export const TIER_LIMITS: Record<Tier, {
   maxMonitors: number;
@@ -29,7 +29,7 @@ export const TIER_LIMITS: Record<Tier, {
     description: "25 monitors, 15 min checks, all channels",
     allowedIntervals: ["15m", "30m", "1h", "6h", "24h"],
   },
-  business: {
+  max: {
     maxMonitors: 9999,
     minInterval: "5m",
     channels: ["email", "telegram", "discord", "webhook"],
@@ -43,7 +43,7 @@ function detectTier(subscriptions: Array<Record<string, unknown>>): Tier {
   for (const sub of subscriptions) {
     const slug = String(sub.slug ?? sub.productSlug ?? "").toLowerCase();
     const name = String(sub.productName ?? sub.name ?? "").toLowerCase();
-    if (slug === "business" || name.includes("business")) return "business"; // can't go higher
+    if (slug === "max" || name.includes("max")) return "max"; // can't go higher
     if (slug === "pro" || name.includes("pro")) best = "pro";
   }
   return best;
@@ -61,7 +61,7 @@ interface TierInfo {
 }
 
 // Pick the higher-privilege tier between two sources
-const TIER_RANK: Record<Tier, number> = { free: 0, pro: 1, business: 2 };
+const TIER_RANK: Record<Tier, number> = { free: 0, pro: 1, max: 2 };
 function higherTier(a: Tier, b: Tier): Tier {
   return TIER_RANK[a] >= TIER_RANK[b] ? a : b;
 }

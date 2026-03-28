@@ -88,15 +88,15 @@ export default function LogDetailPage({
 
   return (
     <div className="space-y-8">
-      <div className="flex items-center gap-4">
+      <div className="flex items-start sm:items-center gap-3 sm:gap-4">
         <Link href="/dashboard/logs">
-          <Button variant="ghost" size="icon">
+          <Button variant="ghost" size="icon" className="shrink-0">
             <ArrowLeft className="h-5 w-5" />
           </Button>
         </Link>
-        <div className="flex-1">
-          <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold tracking-tight">Scrape Log</h1>
+        <div className="flex-1 min-w-0">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+            <h1 className="text-xl sm:text-2xl font-bold tracking-tight">Scrape Log</h1>
             <Badge
               variant="outline"
               className={`${
@@ -116,11 +116,11 @@ export default function LogDetailPage({
       </div>
 
       {/* Summary */}
-      <div className="grid gap-4 md:grid-cols-4">
+      <div className="grid gap-4 grid-cols-2 md:grid-cols-4">
         <Card className="border-border/30 bg-card/50 shadow-sm shadow-black/5">
           <CardContent className="p-5">
             <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-1.5">URL</p>
-            <p className="text-sm font-medium truncate">{log.url}</p>
+            <p className="text-sm font-medium break-all">{log.url}</p>
           </CardContent>
         </Card>
         <Card className="border-border/30 bg-card/50 shadow-sm shadow-black/5">
@@ -240,7 +240,7 @@ export default function LogDetailPage({
       {/* Error */}
       {log.error && (
         <div>
-          <div className="flex items-center justify-between mb-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
             <h2 className="text-lg font-bold tracking-tight text-red-400">Error</h2>
             <Button
               size="sm"
@@ -278,7 +278,7 @@ export default function LogDetailPage({
       {/* Raw Response */}
       {log.rawResponse && (
         <div>
-          <div className="flex items-center justify-between mb-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
             <h2 className="text-lg font-bold tracking-tight">Raw AI Response</h2>
             <div className="flex gap-2">
               <Button

@@ -31,7 +31,7 @@ export default function LogsPage() {
   return (
     <div className="space-y-8">
       <div>
-        <h1 className="text-3xl font-bold tracking-tight">Scrape Logs</h1>
+        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Scrape Logs</h1>
         <p className="text-muted-foreground mt-2 text-sm leading-relaxed">
           Debug log of all scrape attempts with raw AI responses
         </p>
@@ -54,15 +54,15 @@ export default function LogsPage() {
             return (
               <Link key={log._id} href={`/dashboard/logs/${log._id}`}>
                 <Card className="border-border/30 bg-card/50 shadow-sm shadow-black/5 hover:bg-card/80 transition-colors cursor-pointer">
-                  <CardContent className="p-5">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-4">
+                  <CardContent className="p-4 sm:p-5">
+                    <div className="flex items-start sm:items-center justify-between gap-3">
+                      <div className="flex items-start sm:items-center gap-3 sm:gap-4 min-w-0">
                         <div className={`flex h-9 w-9 items-center justify-center rounded-full ${config.bg} shrink-0`}>
                           <Icon className={`h-4 w-4 ${config.color}`} />
                         </div>
                         <div className="min-w-0">
-                          <div className="flex items-center gap-2">
-                            <p className="text-sm font-medium truncate max-w-md">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="text-sm font-medium truncate max-w-[200px] sm:max-w-md">
                               {log.url}
                             </p>
                             <Badge
@@ -78,7 +78,7 @@ export default function LogsPage() {
                               {config.label}
                             </Badge>
                           </div>
-                          <div className="flex items-center gap-4 mt-1 text-xs text-muted-foreground">
+                          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-1 text-xs text-muted-foreground">
                             <span>{new Date(log.createdAt).toLocaleString()}</span>
                             <span>{formatDuration(log.durationMs)}</span>
                             {log.itemCount != null && <span>{log.itemCount} items</span>}
