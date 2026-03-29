@@ -1,7 +1,8 @@
 "use client";
 
-import { Radar, Bell, LogOut, Settings } from "lucide-react";
+import { Radar, LogOut, Settings } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { NotificationBell } from "@/components/prowl/notification-bell";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -57,9 +58,7 @@ export function Navbar() {
             {tier === "max" ? "Max" : tier === "pro" ? "Pro" : "Free"}
           </Badge>
 
-          <Button variant="ghost" size="icon" className="relative">
-            <Bell className="h-5 w-5" />
-          </Button>
+          <NotificationBell />
 
           <DropdownMenu>
             <DropdownMenuTrigger className="relative h-9 w-9 rounded-full hover:opacity-80 transition-opacity outline-none focus-visible:ring-2 focus-visible:ring-ring">

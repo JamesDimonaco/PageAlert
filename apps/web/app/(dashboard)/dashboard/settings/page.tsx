@@ -20,7 +20,7 @@ import {
 import { useAuth } from "@/hooks/use-auth";
 import { useMonitors } from "@/hooks/use-monitors";
 import { useTier } from "@/hooks/use-tier";
-import { useAction, useMutation } from "convex/react";
+import { useAction, useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { authClient } from "@/lib/auth-client";
 import { toast } from "sonner";
@@ -65,8 +65,25 @@ export default function SettingsPage() {
   const [isDeleting, setIsDeleting] = useState(false);
   const [testEmailSending, setTestEmailSending] = useState(false);
   const [testEmailSent, setTestEmailSent] = useState(false);
+  const [telegramSaving, setTelegramSaving] = useState(false);
+  const [discordSaving, setDiscordSaving] = useState(false);
   const deleteAccountMutation = useMutation(api.account.deleteAccount);
   const sendTestEmail = useAction(api.notifications.sendTestEmail);
+  const upsertSetting = useMutation(api.notificationSettings.upsert);
+  const removeSetting = useMutation(api.notificationSettings.remove);
+  const sendTelegramTest = useAction(api.telegram.sendTestMessage);
+  const sendDiscordTest = useAction(api.discord.sendTestMessage);
+  const notifSettings = useQuery(api.notificationSettings.list);
+
+  // Sync settings from DB to local state on load
+  useEffect(() => {
+    if (notifSettings) {
+      const tg = notifSettings.find((s) => s.channel === "telegram");
+      if (tg && !telegramChatId) setTelegramChatId(tg.target);
+      const dc = notifSettings.find((s) => s.channel === "discord");
+      if (dc && !discordWebhook) setDiscordWebhook(dc.target);
+    }
+  }, [notifSettings]);
 
   return (
     <div className="space-y-10">
@@ -279,14 +296,47 @@ export default function SettingsPage() {
                   Message @PageAlertBot on Telegram to get your chat ID
                 </p>
               </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => toast.success("Telegram connected")}
-                disabled={!telegramChatId}
-              >
-                Connect
-              </Button>
+              {notifSettings?.find((s) => s.channel === "telegram")?.enabled ? (
+                <div className="flex items-center gap-2">
+                  <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-xs">Connected</Badge>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={async () => {
+                      await removeSetting({ channel: "telegram" });
+                      setTelegramChatId("");
+                      trackNotificationChannelToggled({ channel: "telegram", enabled: false });
+                      toast.success("Telegram disconnected");
+                    }}
+                  >
+                    Disconnect
+                  </Button>
+                </div>
+              ) : (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={!telegramChatId || telegramSaving}
+                  onClick={async () => {
+                    setTelegramSaving(true);
+                    try {
+                      await sendTelegramTest({ chatId: telegramChatId });
+                      await upsertSetting({ channel: "telegram", enabled: true, target: telegramChatId });
+                      trackNotificationChannelToggled({ channel: "telegram", enabled: true });
+                      toast.success("Telegram connected", { description: "Test message sent" });
+                    } catch (e) {
+                      toast.error("Failed to connect", {
+                        description: e instanceof Error ? e.message : "Check your Chat ID and try again",
+                      });
+                    } finally {
+                      setTelegramSaving(false);
+                    }
+                  }}
+                >
+                  {telegramSaving ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null}
+                  Connect & Test
+                </Button>
+              )}
             </CardContent>
           </Card>
 
@@ -311,14 +361,47 @@ export default function SettingsPage() {
                   onChange={(e) => setDiscordWebhook(e.target.value)}
                 />
               </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => toast.success("Discord connected")}
-                disabled={!discordWebhook}
-              >
-                Connect
-              </Button>
+              {notifSettings?.find((s) => s.channel === "discord")?.enabled ? (
+                <div className="flex items-center gap-2">
+                  <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-xs">Connected</Badge>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={async () => {
+                      await removeSetting({ channel: "discord" });
+                      setDiscordWebhook("");
+                      trackNotificationChannelToggled({ channel: "discord", enabled: false });
+                      toast.success("Discord disconnected");
+                    }}
+                  >
+                    Disconnect
+                  </Button>
+                </div>
+              ) : (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={!discordWebhook || discordSaving}
+                  onClick={async () => {
+                    setDiscordSaving(true);
+                    try {
+                      await sendDiscordTest({ webhookUrl: discordWebhook });
+                      await upsertSetting({ channel: "discord", enabled: true, target: discordWebhook });
+                      trackNotificationChannelToggled({ channel: "discord", enabled: true });
+                      toast.success("Discord connected", { description: "Test message sent" });
+                    } catch (e) {
+                      toast.error("Failed to connect", {
+                        description: e instanceof Error ? e.message : "Check your webhook URL and try again",
+                      });
+                    } finally {
+                      setDiscordSaving(false);
+                    }
+                  }}
+                >
+                  {discordSaving ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null}
+                  Connect & Test
+                </Button>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
