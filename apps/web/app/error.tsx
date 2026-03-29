@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect } from "react";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Radar } from "lucide-react";
+import Link from "next/link";
 import { captureException } from "@/lib/posthog";
 
 export default function Error({
@@ -30,7 +31,12 @@ export default function Error({
         <p className="text-muted-foreground mb-8 max-w-sm mx-auto">
           An unexpected error occurred. This has been reported automatically.
         </p>
-        <Button onClick={reset}>Try again</Button>
+        <div className="flex items-center gap-3">
+          <Button onClick={reset}>Try again</Button>
+          <Link href="/" className={buttonVariants({ variant: "outline" })}>
+            Go home
+          </Link>
+        </div>
       </div>
     </div>
   );

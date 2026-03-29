@@ -1,15 +1,9 @@
-import type { Metadata } from "next";
+"use client";
+
 import { buttonVariants } from "@/components/ui/button";
 import { Radar, Check, ArrowRight } from "lucide-react";
 import Link from "next/link";
 import { PLANS, buildOffersJsonLd } from "@/lib/plans";
-
-export const metadata: Metadata = {
-  title: "Pricing",
-  description:
-    "Simple, transparent pricing for AI-powered website monitoring. Start free with 3 monitors. Upgrade to Pro or Max for faster checks and more monitors.",
-  alternates: { canonical: "https://pagealert.io/pricing" },
-};
 
 const pricingJsonLd = {
   "@context": "https://schema.org",
