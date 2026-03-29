@@ -91,7 +91,7 @@ Copy `.env.example` and fill in your values. See the [infrastructure doc](https:
 
 ## License
 
-Private — All rights reserved.
+MIT — see [LICENSE](LICENSE) for details.
 
 ## Author
 
