@@ -2,13 +2,15 @@
 
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
-import { Plus, Search, Radar } from "lucide-react";
+import { Plus, Search, Radar, Sparkles } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { MonitorCard } from "@/components/prowl/monitor-card";
 import { StatsCards } from "@/components/prowl/stats-cards";
 import { DeleteDialog } from "@/components/prowl/delete-dialog";
 import { useMonitors } from "@/hooks/use-monitors";
 import { useCreateMonitor } from "@/hooks/use-create-monitor";
+import { useTier } from "@/hooks/use-tier";
+import Link from "next/link";
 import { useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { toast } from "sonner";
@@ -25,6 +27,8 @@ import {
 export default function DashboardPage() {
   const { monitors, togglePause, deleteMonitor, updateMonitor } = useMonitors();
   const { open: openCreate } = useCreateMonitor();
+  const { tier, maxMonitors } = useTier();
+  const atLimit = monitors.length >= maxMonitors;
   const saveScanResult = useMutation(api.monitors.saveScanResult);
   const saveScanError = useMutation(api.monitors.saveScanError);
   const createLog = useMutation(api.logs.create);
@@ -128,10 +132,24 @@ export default function DashboardPage() {
             Monitor any website with natural language
           </p>
         </div>
-        <Button onClick={openCreate} size="lg" className="gap-2 shadow-md shadow-primary/15 w-full sm:w-auto">
-          <Plus className="h-5 w-5" />
-          New Monitor
-        </Button>
+        {atLimit ? (
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto">
+            <p className="text-xs text-muted-foreground text-center sm:text-right">
+              {monitors.length}/{maxMonitors} monitors used
+            </p>
+            <Link href="/dashboard/settings?tab=billing">
+              <Button size="lg" className="gap-2 shadow-md shadow-primary/15 w-full sm:w-auto">
+                <Sparkles className="h-5 w-5" />
+                Upgrade to add more
+              </Button>
+            </Link>
+          </div>
+        ) : (
+          <Button onClick={openCreate} size="lg" className="gap-2 shadow-md shadow-primary/15 w-full sm:w-auto">
+            <Plus className="h-5 w-5" />
+            New Monitor
+          </Button>
+        )}
       </div>
 
       <StatsCards monitors={monitors} />

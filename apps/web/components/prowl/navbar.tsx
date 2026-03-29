@@ -47,6 +47,16 @@ export function Navbar() {
         </div>
 
         <div className="flex items-center gap-3">
+          <Badge className={`text-[10px] px-1.5 py-0 hidden sm:inline-flex ${
+            tier === "max"
+              ? "bg-amber-500/10 text-amber-400 border-amber-500/20"
+              : tier === "pro"
+                ? "bg-primary/10 text-primary border-primary/20"
+                : "bg-muted text-muted-foreground border-border/50"
+          }`}>
+            {tier === "max" ? "Max" : tier === "pro" ? "Pro" : "Free"}
+          </Badge>
+
           <Button variant="ghost" size="icon" className="relative">
             <Bell className="h-5 w-5" />
           </Button>
