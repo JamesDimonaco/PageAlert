@@ -69,6 +69,7 @@ export default defineSchema({
     userId: v.string(),
     monitorId: v.id("monitors"),
     channel: v.union(
+      v.literal("in_app"),
       v.literal("email"),
       v.literal("telegram"),
       v.literal("discord")

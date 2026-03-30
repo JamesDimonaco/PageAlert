@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -75,13 +75,15 @@ export default function SettingsPage() {
   const sendDiscordTest = useAction(api.discord.sendTestMessage);
   const notifSettings = useQuery(api.notificationSettings.list);
 
-  // Sync settings from DB to local state on load
+  // Sync settings from DB to local state on first load only
+  const settingsSyncedRef = useRef(false);
   useEffect(() => {
-    if (notifSettings) {
-      const tg = notifSettings.find((s) => s.channel === "telegram");
-      if (tg && !telegramChatId) setTelegramChatId(tg.target);
-      const dc = notifSettings.find((s) => s.channel === "discord");
-      if (dc && !discordWebhook) setDiscordWebhook(dc.target);
+    if (notifSettings && !settingsSyncedRef.current) {
+      settingsSyncedRef.current = true;
+      const tg = notifSettings.find((s: { channel: string }) => s.channel === "telegram");
+      if (tg) setTelegramChatId(tg.target);
+      const dc = notifSettings.find((s: { channel: string }) => s.channel === "discord");
+      if (dc) setDiscordWebhook(dc.target);
     }
   }, [notifSettings]);
 
@@ -325,10 +327,14 @@ export default function SettingsPage() {
                     variant="ghost"
                     size="sm"
                     onClick={async () => {
-                      await removeSetting({ channel: "telegram" });
-                      setTelegramChatId("");
-                      trackNotificationChannelToggled({ channel: "telegram", enabled: false });
-                      toast.success("Telegram disconnected");
+                      try {
+                        await removeSetting({ channel: "telegram" });
+                        setTelegramChatId("");
+                        trackNotificationChannelToggled({ channel: "telegram", enabled: false });
+                        toast.success("Telegram disconnected");
+                      } catch {
+                        toast.error("Failed to disconnect Telegram");
+                      }
                     }}
                   >
                     Disconnect
@@ -404,10 +410,14 @@ export default function SettingsPage() {
                     variant="ghost"
                     size="sm"
                     onClick={async () => {
-                      await removeSetting({ channel: "discord" });
-                      setDiscordWebhook("");
-                      trackNotificationChannelToggled({ channel: "discord", enabled: false });
-                      toast.success("Discord disconnected");
+                      try {
+                        await removeSetting({ channel: "discord" });
+                        setDiscordWebhook("");
+                        trackNotificationChannelToggled({ channel: "discord", enabled: false });
+                        toast.success("Discord disconnected");
+                      } catch {
+                        toast.error("Failed to disconnect Discord");
+                      }
                     }}
                   >
                     Disconnect

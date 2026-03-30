@@ -23,7 +23,7 @@ export const sendMatchAlert = internalAction({
           color: 0x3b82f6,
           fields: [
             { name: "Website", value: `[Open](${args.url})`, inline: true },
-            { name: "Dashboard", value: `[View](${APP_URL}/dashboard)`, inline: true },
+            { name: "Dashboard", value: `[View](${APP_URL}/dashboard/monitors/${args.monitorId})`, inline: true },
           ],
           footer: { text: "PageAlert" },
           timestamp: new Date().toISOString(),
@@ -50,7 +50,7 @@ export const sendErrorAlert = internalAction({
           description: args.error,
           color: 0xef4444,
           fields: [
-            { name: "Dashboard", value: `[Check monitor](${APP_URL}/dashboard)`, inline: true },
+            { name: "Dashboard", value: `[Check monitor](${APP_URL}/dashboard/monitors/${args.monitorId})`, inline: true },
           ],
           footer: { text: "Monitor paused after 3 failed attempts" },
           timestamp: new Date().toISOString(),

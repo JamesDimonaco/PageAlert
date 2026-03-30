@@ -1,6 +1,6 @@
 "use client";
 
-import { Bell, Check } from "lucide-react";
+import { Bell, Check, Loader2 } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -40,7 +40,11 @@ export function NotificationBell() {
           )}
         </div>
         <div className="max-h-80 overflow-y-auto">
-          {!notifications || notifications.length === 0 ? (
+          {notifications === undefined ? (
+            <div className="px-3 py-8 flex justify-center">
+              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+            </div>
+          ) : notifications.length === 0 ? (
             <div className="px-3 py-8 text-center">
               <Bell className="h-5 w-5 text-muted-foreground/40 mx-auto mb-2" />
               <p className="text-sm text-muted-foreground">No notifications yet</p>

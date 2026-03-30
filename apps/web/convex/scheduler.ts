@@ -205,7 +205,7 @@ export const runScheduledChecks = internalAction({
             await ctx.runMutation(internal.userNotifications.create, {
               userId: monitor.userId,
               monitorId: monitor._id,
-              channel: "email",
+              channel: "in_app",
               title: `${monitor.name} — ${checkResult.matchCount} match${checkResult.matchCount !== 1 ? "es" : ""}`,
               message: `Found ${checkResult.matchCount} match${checkResult.matchCount !== 1 ? "es" : ""} out of ${checkResult.totalItems} items on ${monitor.url}`,
             }).catch(() => {});
@@ -278,7 +278,7 @@ export const runScheduledChecks = internalAction({
             await ctx.runMutation(internal.userNotifications.create, {
               userId: monitor.userId,
               monitorId: monitor._id,
-              channel: "email",
+              channel: "in_app",
               title: `${monitor.name} — Error`,
               message: msg,
             }).catch(() => {});

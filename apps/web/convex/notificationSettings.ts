@@ -11,7 +11,7 @@ type Tier = "free" | "pro" | "max";
 const TIER_CHANNELS: Record<Tier, string[]> = {
   free: ["email"],
   pro: ["email", "telegram", "discord"],
-  max: ["email", "telegram", "discord", "webhook"],
+  max: ["email", "telegram", "discord"],
 };
 
 async function getUserTier(ctx: { db: any }, userId: string): Promise<Tier> {

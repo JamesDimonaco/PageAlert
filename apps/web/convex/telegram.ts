@@ -28,8 +28,8 @@ export const sendMatchAlert = internalAction({
       ``,
       `${args.matchCount} match${args.matchCount !== 1 ? "es" : ""} found out of ${args.totalItems} items`,
       ``,
-      `🔗 [View on site](${args.url})`,
-      `📊 [View in PageAlert](${APP_URL}/dashboard)`,
+      `🔗 [View on site](${escUrl(args.url)})`,
+      `📊 [View in PageAlert](${escUrl(APP_URL + "/dashboard")})`,
     ].join("\n");
 
     await sendMessage(token, args.chatId, text);
@@ -55,7 +55,7 @@ export const sendErrorAlert = internalAction({
       ``,
       `The monitor has been paused after 3 failed attempts\\.`,
       ``,
-      `🔗 [Check monitor](${APP_URL}/dashboard)`,
+      `🔗 [Check monitor](${escUrl(APP_URL + "/dashboard")})`,
     ].join("\n");
 
     await sendMessage(token, args.chatId, text);
@@ -75,7 +75,7 @@ export const sendTestMessage = action({
       `✅ *PageAlert connected\\!*`,
       ``,
       `You'll receive monitor alerts here\\.`,
-      `[Open PageAlert](${APP_URL}/dashboard/settings)`,
+      `[Open PageAlert](${escUrl(APP_URL + "/dashboard/settings")})`,
     ].join("\n");
 
     await sendMessage(token, args.chatId.trim(), text);
@@ -113,6 +113,7 @@ function escMd(str: string): string {
   return str.replace(/[_*[\]()~`>#+\-=|{}.!\\]/g, "\\$&");
 }
 
-function chatId(id: string): string {
-  return id.trim();
+/** Escape URL for MarkdownV2 link syntax — only escape parens */
+function escUrl(url: string): string {
+  return url.replace(/[()\\]/g, "\\$&");
 }

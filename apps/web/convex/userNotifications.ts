@@ -8,11 +8,12 @@ export const list = query({
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) return [];
 
+    const safeLimit = Math.min(Math.max(Math.floor(args.limit ?? 20), 1), 50);
     return ctx.db
       .query("notifications")
       .withIndex("by_userId", (q) => q.eq("userId", identity.subject))
       .order("desc")
-      .take(Math.min(args.limit ?? 20, 50));
+      .take(safeLimit);
   },
 });
 
@@ -48,23 +49,26 @@ export const markRead = mutation({
   },
 });
 
-/** Mark all notifications as read */
+/** Mark all notifications as read (batched to avoid mutation limits) */
 export const markAllRead = mutation({
   args: {},
   handler: async (ctx) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Not authenticated");
 
+    const BATCH_SIZE = 50;
     const unread = await ctx.db
       .query("notifications")
       .withIndex("by_userId_read", (q) =>
         q.eq("userId", identity.subject).eq("read", false)
       )
-      .collect();
+      .take(BATCH_SIZE);
 
     for (const notif of unread) {
       await ctx.db.patch(notif._id, { read: true });
     }
+
+    return { marked: unread.length, hasMore: unread.length === BATCH_SIZE };
   },
 });
 
@@ -73,7 +77,7 @@ export const create = internalMutation({
   args: {
     userId: v.string(),
     monitorId: v.id("monitors"),
-    channel: v.union(v.literal("email"), v.literal("telegram"), v.literal("discord")),
+    channel: v.union(v.literal("in_app"), v.literal("email"), v.literal("telegram"), v.literal("discord")),
     title: v.string(),
     message: v.string(),
   },
