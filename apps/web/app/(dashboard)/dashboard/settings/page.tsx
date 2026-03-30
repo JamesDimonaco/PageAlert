@@ -311,9 +311,14 @@ export default function SettingsPage() {
                   onChange={(e) => setTelegramChatId(e.target.value)}
                   disabled={tier === "free"}
                 />
-                <p className="text-xs text-muted-foreground leading-relaxed">
-                  Message @PageAlertBot on Telegram to get your chat ID
-                </p>
+                <div className="text-xs text-muted-foreground leading-relaxed space-y-1">
+                  <p className="font-medium text-foreground/70">How to get your Chat ID:</p>
+                  <ol className="list-decimal pl-4 space-y-0.5">
+                    <li>Open Telegram and search for <strong>@PageAlertBot</strong></li>
+                    <li>Press <strong>Start</strong> to begin a conversation</li>
+                    <li>The bot will reply with your Chat ID — paste it above</li>
+                  </ol>
+                </div>
               </div>
               {tier === "free" ? (
                 <Button size="sm" className="gap-1.5" onClick={() => handleCheckout("pro")}>
@@ -397,6 +402,14 @@ export default function SettingsPage() {
                   onChange={(e) => setDiscordWebhook(e.target.value)}
                   disabled={tier === "free"}
                 />
+                <div className="text-xs text-muted-foreground leading-relaxed space-y-1">
+                  <p className="font-medium text-foreground/70">How to get a webhook URL:</p>
+                  <ol className="list-decimal pl-4 space-y-0.5">
+                    <li>Open your Discord server and go to <strong>Server Settings</strong></li>
+                    <li>Click <strong>Integrations</strong> &rarr; <strong>Webhooks</strong> &rarr; <strong>New Webhook</strong></li>
+                    <li>Choose the channel, then click <strong>Copy Webhook URL</strong></li>
+                  </ol>
+                </div>
               </div>
               {tier === "free" ? (
                 <Button size="sm" className="gap-1.5" onClick={() => handleCheckout("pro")}>
@@ -449,6 +462,21 @@ export default function SettingsPage() {
                 </Button>
               )}
             </CardContent>
+          </Card>
+
+          <Card className="border-border/30 bg-card/50 shadow-sm shadow-black/5 opacity-60">
+            <CardHeader className="pb-4">
+              <CardTitle className="flex items-center gap-2 text-lg font-semibold">
+                <Hash className="h-5 w-5 text-muted-foreground" />
+                Slack
+                <Badge variant="outline" className="text-[10px] gap-1 px-1.5 py-0 ml-1">
+                  Coming soon
+                </Badge>
+              </CardTitle>
+              <CardDescription className="text-sm">
+                Send notifications directly to a Slack channel. Coming in a future update.
+              </CardDescription>
+            </CardHeader>
           </Card>
         </TabsContent>
 
