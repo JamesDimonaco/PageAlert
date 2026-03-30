@@ -9,9 +9,13 @@ import { polar, checkout, portal, webhooks } from "@polar-sh/better-auth";
 // Buffer.from() for webhook signature verification which isn't available
 // in Convex's V8 isolate.
 if (typeof globalThis.Buffer === "undefined") {
-  // Minimal Buffer.from shim that covers the usage in @polar-sh/sdk
+  // Minimal Buffer.from shim — only supports UTF-8 input to base64 output,
+  // which is the specific pattern used by @polar-sh/sdk webhook verification.
   globalThis.Buffer = {
     from(input: string, encoding?: string): { toString(enc: string): string } {
+      if (encoding && !/^utf-?8$/i.test(encoding)) {
+        throw new Error(`Buffer.from shim: unsupported encoding "${encoding}" (only UTF-8 is supported)`);
+      }
       const bytes = new TextEncoder().encode(input);
       return {
         toString(enc: string) {
@@ -22,7 +26,7 @@ if (typeof globalThis.Buffer === "undefined") {
             }
             return btoa(binary);
           }
-          return input;
+          throw new Error(`Buffer.toString shim: unsupported encoding "${enc}" (only base64 is supported)`);
         },
       };
     },
