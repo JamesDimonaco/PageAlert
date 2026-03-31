@@ -21,6 +21,8 @@ import {
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMonitor, useMonitorResults, useMonitors } from "@/hooks/use-monitors";
+import { useMutation } from "convex/react";
+import { api } from "@/convex/_generated/api";
 import { applyMatchConditions, getItemKey } from "@prowl/shared";
 import type { Id } from "@/convex/_generated/dataModel";
 import type { ExtractedItem, ExtractionSchema } from "@prowl/shared";
@@ -35,10 +37,34 @@ export default function MonitorDetailPage({
   const monitorId = id as Id<"monitors">;
   const monitor = useMonitor(monitorId);
   const results = useMonitorResults(monitorId);
-  const { togglePause, deleteMonitor } = useMonitors();
+  const { togglePause, deleteMonitor, updateMonitor } = useMonitors();
+  const saveScanResult = useMutation(api.monitors.saveScanResult);
+  const saveScanError = useMutation(api.monitors.saveScanError);
   const router = useRouter();
 
   const [deleteOpen, setDeleteOpen] = useState(false);
+
+  async function handleRescan(id: Id<"monitors">) {
+    if (!monitor) return;
+    try {
+      await updateMonitor(id, { status: "scanning" as "active" });
+      const res = await fetch("/api/scraper/extract", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: monitor.url, prompt: monitor.prompt, name: monitor.name }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || json.message || "Failed");
+      const matchCount = json.matches?.length ?? 0;
+      const totalItems = json.totalItems ?? 0;
+      await saveScanResult({ id, schema: json.schema, matchCount });
+      toast.success("Rescan complete", { description: `${totalItems} items, ${matchCount} matches` });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Rescan failed";
+      await saveScanError({ id, error: msg }).catch(() => {});
+      toast.error("Rescan failed", { description: msg });
+    }
+  }
 
   // Derive computed values before early returns (rules of hooks)
   const schema = monitor?.schema as ExtractionSchema | undefined;
@@ -144,6 +170,7 @@ export default function MonitorDetailPage({
             monitor={monitor}
             matches={matches}
             totalItems={allItems.length}
+            onRescan={handleRescan}
           />
         </TabsContent>
 

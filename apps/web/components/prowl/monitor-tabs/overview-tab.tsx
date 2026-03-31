@@ -21,6 +21,8 @@ import {
   X,
   Save,
   Loader2,
+  AlertTriangle,
+  RotateCw,
 } from "lucide-react";
 import type { Id } from "@/convex/_generated/dataModel";
 import type { ExtractedItem, ExtractionSchema } from "@prowl/shared";
@@ -41,15 +43,37 @@ interface OverviewTabProps {
     matchCount: number;
     checkCount?: number;
     schema?: unknown;
+    status: string;
+    lastError?: string;
   };
   matches: ExtractedItem[];
   totalItems: number;
+  onRescan?: (id: Id<"monitors">) => Promise<void>;
 }
 
-export function OverviewTab({ monitorId, monitor, matches, totalItems }: OverviewTabProps) {
+const RETRY_LIMIT = 3;
+const RETRY_WINDOW_MS = 60 * 60 * 1000; // 1 hour
+
+export function OverviewTab({ monitorId, monitor, matches, totalItems, onRescan }: OverviewTabProps) {
   const [insightsOpen, setInsightsOpen] = useState(false);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [retrying, setRetrying] = useState(false);
+  const [retryTimestamps, setRetryTimestamps] = useState<number[]>([]);
+
+  const recentRetries = retryTimestamps.filter((t) => Date.now() - t < RETRY_WINDOW_MS);
+  const canRetry = monitor.status === "error" && onRescan && recentRetries.length < RETRY_LIMIT && !retrying;
+
+  async function handleRetry() {
+    if (!canRetry) return;
+    setRetrying(true);
+    setRetryTimestamps((prev) => [...prev, Date.now()]);
+    try {
+      await onRescan!(monitorId);
+    } finally {
+      setRetrying(false);
+    }
+  }
 
   // Edit state
   const [editName, setEditName] = useState(monitor.name);
@@ -93,6 +117,40 @@ export function OverviewTab({ monitorId, monitor, matches, totalItems }: Overvie
 
   return (
     <div className="space-y-8">
+      {/* Error banner */}
+      {monitor.status === "error" && monitor.lastError && (
+        <Card className="border-red-500/30 bg-red-500/5 shadow-sm">
+          <CardContent className="p-4 sm:p-5">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="h-5 w-5 text-red-400 shrink-0 mt-0.5" />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold text-red-400 mb-1">Monitor failed</p>
+                <p className="text-sm text-muted-foreground break-words">{monitor.lastError}</p>
+                <p className="text-xs text-muted-foreground/60 mt-2">
+                  Try pausing other monitors, checking the URL is accessible, or simplifying your prompt.
+                </p>
+              </div>
+              {onRescan && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5 shrink-0 border-red-500/20 hover:bg-red-500/10"
+                  disabled={!canRetry}
+                  onClick={handleRetry}
+                >
+                  {retrying ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <RotateCw className="h-3.5 w-3.5" />
+                  )}
+                  {retrying ? "Retrying..." : `Retry${recentRetries.length > 0 ? ` (${RETRY_LIMIT - recentRetries.length} left)` : ""}`}
+                </Button>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Prompt + Edit */}
       <Card className="border-border/30 bg-card/50 shadow-sm shadow-black/5">
         <CardContent className="p-6">
