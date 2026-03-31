@@ -90,22 +90,18 @@ export function useTier(): TierInfo {
       const client = authClient as any;
       const state = await client.customer?.state?.();
 
-      console.log("[useTier] customer.state response:", JSON.stringify(state?.data, null, 2)?.slice(0, 500));
       if (state?.data) {
         const subs = state.data.activeSubscriptions ?? state.data.subscriptions ?? [];
-        console.log("[useTier] subscriptions found:", subs.length, subs.map((s: Record<string, unknown>) => ({ slug: s.slug, productSlug: s.productSlug, name: s.name, productName: s.productName })));
         if (Array.isArray(subs) && subs.length > 0) {
-          const detected = detectTier(subs);
-          console.log("[useTier] detected tier:", detected);
-          setPolarTier(detected);
+          setPolarTier(detectTier(subs));
         } else {
           setPolarTier("free");
         }
-      } else {
-        console.log("[useTier] no state data returned");
       }
     } catch (err) {
-      console.error("[useTier] failed to fetch from Polar:", err);
+      if (process.env.NODE_ENV !== "production") {
+        console.error("useTier: failed to fetch from Polar", err);
+      }
     } finally {
       setPolarLoading(false);
     }
