@@ -4,6 +4,34 @@ import type { GenericCtx } from "@convex-dev/better-auth/utils";
 import type { BetterAuthOptions } from "better-auth";
 import { betterAuth } from "better-auth";
 import { polar, checkout, portal, webhooks } from "@polar-sh/better-auth";
+
+// Polyfill Buffer for Convex runtime — @polar-sh/sdk/webhooks uses
+// Buffer.from() for webhook signature verification which isn't available
+// in Convex's V8 isolate.
+if (typeof globalThis.Buffer === "undefined") {
+  // Minimal Buffer.from shim — only supports UTF-8 input to base64 output,
+  // which is the specific pattern used by @polar-sh/sdk webhook verification.
+  globalThis.Buffer = {
+    from(input: string, encoding?: string): { toString(enc: string): string } {
+      if (encoding && !/^utf-?8$/i.test(encoding)) {
+        throw new Error(`Buffer.from shim: unsupported encoding "${encoding}" (only UTF-8 is supported)`);
+      }
+      const bytes = new TextEncoder().encode(input);
+      return {
+        toString(enc: string) {
+          if (enc === "base64") {
+            let binary = "";
+            for (const byte of bytes) {
+              binary += String.fromCharCode(byte);
+            }
+            return btoa(binary);
+          }
+          throw new Error(`Buffer.toString shim: unsupported encoding "${enc}" (only base64 is supported)`);
+        },
+      };
+    },
+  } as unknown as typeof Buffer;
+}
 import { Polar } from "@polar-sh/sdk";
 import { components } from "../_generated/api";
 import type { DataModel } from "../_generated/dataModel";
