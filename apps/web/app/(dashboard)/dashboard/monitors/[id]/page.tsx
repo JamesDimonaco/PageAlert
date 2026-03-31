@@ -55,8 +55,9 @@ export default function MonitorDetailPage({
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || json.message || "Failed");
-      const matchCount = json.matches?.length ?? 0;
-      const totalItems = json.totalItems ?? 0;
+      if (!json.schema || typeof json.schema !== "object") throw new Error("Invalid response from scraper");
+      const matchCount = Array.isArray(json.matches) ? json.matches.length : 0;
+      const totalItems = typeof json.totalItems === "number" ? json.totalItems : 0;
       await saveScanResult({ id, schema: json.schema, matchCount });
       toast.success("Rescan complete", { description: `${totalItems} items, ${matchCount} matches` });
     } catch (e) {
