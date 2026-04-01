@@ -67,6 +67,7 @@ export function CreateMonitorProvider({ children }: { children: ReactNode }) {
       url: string;
       prompt: string;
       checkInterval: "5m" | "15m" | "30m" | "1h" | "6h" | "24h";
+      notificationChannels?: ("email" | "telegram" | "discord")[];
     }) => {
       if (isSubmittingRef.current) return;
       isSubmittingRef.current = true;

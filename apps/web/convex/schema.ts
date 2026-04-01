@@ -31,6 +31,11 @@ export default defineSchema({
     checkCount: v.optional(v.number()),
     retryCount: v.optional(v.number()),
     nextCheckAt: v.optional(v.number()),
+    notificationChannels: v.optional(v.array(v.union(
+      v.literal("email"),
+      v.literal("telegram"),
+      v.literal("discord")
+    ))),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -132,4 +137,13 @@ export default defineSchema({
     periodEnd: v.optional(v.number()),
     updatedAt: v.number(),
   }).index("by_userId", ["userId"]),
+
+  channelClaims: defineTable({
+    channel: v.union(v.literal("telegram"), v.literal("discord")),
+    target: v.string(),
+    userId: v.string(),
+    claimedAt: v.number(),
+  })
+    .index("by_channel_target", ["channel", "target"])
+    .index("by_userId", ["userId"]),
 });

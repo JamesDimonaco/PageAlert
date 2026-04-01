@@ -201,7 +201,11 @@ export const runScheduledChecks = internalAction({
           const isNewMatch = checkResult.hasMatch && !previouslyHadMatches;
 
           if (isNewMatch) {
-            // Create in-app notification
+            // Per-monitor channel filtering: if set, only send to those channels
+            const monitorChannels = (monitor as any).notificationChannels as string[] | undefined;
+            const shouldSend = (channel: string) => !monitorChannels || monitorChannels.includes(channel);
+
+            // Create in-app notification (always)
             await ctx.runMutation(internal.userNotifications.create, {
               userId: monitor.userId,
               monitorId: monitor._id,
@@ -211,7 +215,7 @@ export const runScheduledChecks = internalAction({
             }).catch(() => {});
 
             // Send email
-            if (monitor.userEmail) {
+            if (shouldSend("email") && monitor.userEmail) {
               await ctx.runAction(internal.emails.sendMatchAlert, {
                 to: monitor.userEmail,
                 monitorName: monitor.name,
@@ -223,36 +227,40 @@ export const runScheduledChecks = internalAction({
               }).catch(() => {});
             }
 
-            // Send to Telegram if configured
-            const telegramSetting = await ctx.runQuery(internal.scheduler.getNotificationSetting, {
-              userId: monitor.userId,
-              channel: "telegram",
-            });
-            if (telegramSetting?.enabled && telegramSetting.target) {
-              await ctx.runAction(internal.telegram.sendMatchAlert, {
-                chatId: telegramSetting.target,
-                monitorName: monitor.name,
-                monitorId: monitor._id,
-                url: monitor.url,
-                matchCount: checkResult.matchCount,
-                totalItems: checkResult.totalItems,
-              }).catch(() => {});
+            // Send to Telegram if configured and enabled for this monitor
+            if (shouldSend("telegram")) {
+              const telegramSetting = await ctx.runQuery(internal.scheduler.getNotificationSetting, {
+                userId: monitor.userId,
+                channel: "telegram",
+              });
+              if (telegramSetting?.enabled && telegramSetting.target) {
+                await ctx.runAction(internal.telegram.sendMatchAlert, {
+                  chatId: telegramSetting.target,
+                  monitorName: monitor.name,
+                  monitorId: monitor._id,
+                  url: monitor.url,
+                  matchCount: checkResult.matchCount,
+                  totalItems: checkResult.totalItems,
+                }).catch(() => {});
+              }
             }
 
-            // Send to Discord if configured
-            const discordSetting = await ctx.runQuery(internal.scheduler.getNotificationSetting, {
-              userId: monitor.userId,
-              channel: "discord",
-            });
-            if (discordSetting?.enabled && discordSetting.target) {
-              await ctx.runAction(internal.discord.sendMatchAlert, {
-                webhookUrl: discordSetting.target,
-                monitorName: monitor.name,
-                monitorId: monitor._id,
-                url: monitor.url,
-                matchCount: checkResult.matchCount,
-                totalItems: checkResult.totalItems,
-              }).catch(() => {});
+            // Send to Discord if configured and enabled for this monitor
+            if (shouldSend("discord")) {
+              const discordSetting = await ctx.runQuery(internal.scheduler.getNotificationSetting, {
+                userId: monitor.userId,
+                channel: "discord",
+              });
+              if (discordSetting?.enabled && discordSetting.target) {
+                await ctx.runAction(internal.discord.sendMatchAlert, {
+                  webhookUrl: discordSetting.target,
+                  monitorName: monitor.name,
+                  monitorId: monitor._id,
+                  url: monitor.url,
+                  matchCount: checkResult.matchCount,
+                  totalItems: checkResult.totalItems,
+                }).catch(() => {});
+              }
             }
           }
         } catch (e) {
@@ -274,7 +282,10 @@ export const runScheduledChecks = internalAction({
 
           // Send error notifications when retries exhausted
           if (willError) {
-            // In-app notification
+            const monitorChannels = (monitor as any).notificationChannels as string[] | undefined;
+            const shouldSend = (channel: string) => !monitorChannels || monitorChannels.includes(channel);
+
+            // In-app notification (always)
             await ctx.runMutation(internal.userNotifications.create, {
               userId: monitor.userId,
               monitorId: monitor._id,
@@ -284,7 +295,7 @@ export const runScheduledChecks = internalAction({
             }).catch(() => {});
 
             // Email
-            if (monitor.userEmail) {
+            if (shouldSend("email") && monitor.userEmail) {
               await ctx.runAction(internal.emails.sendErrorAlert, {
                 to: monitor.userEmail,
                 monitorName: monitor.name,
@@ -295,31 +306,34 @@ export const runScheduledChecks = internalAction({
             }
 
             // Telegram
-            const telegramSetting = await ctx.runQuery(internal.scheduler.getNotificationSetting, {
-              userId: monitor.userId,
-              channel: "telegram",
-            });
-            if (telegramSetting?.enabled && telegramSetting.target) {
-              await ctx.runAction(internal.telegram.sendErrorAlert, {
-                chatId: telegramSetting.target,
-                monitorName: monitor.name,
-                monitorId: monitor._id,
-                url: monitor.url,
-                error: msg,
-              }).catch(() => {});
+            if (shouldSend("telegram")) {
+              const telegramSetting = await ctx.runQuery(internal.scheduler.getNotificationSetting, {
+                userId: monitor.userId,
+                channel: "telegram",
+              });
+              if (telegramSetting?.enabled && telegramSetting.target) {
+                await ctx.runAction(internal.telegram.sendErrorAlert, {
+                  chatId: telegramSetting.target,
+                  monitorName: monitor.name,
+                  monitorId: monitor._id,
+                  url: monitor.url,
+                  error: msg,
+                }).catch(() => {});
+              }
             }
 
             // Discord
-            const discordSetting = await ctx.runQuery(internal.scheduler.getNotificationSetting, {
-              userId: monitor.userId,
-              channel: "discord",
-            });
-            if (discordSetting?.enabled && discordSetting.target) {
-              await ctx.runAction(internal.discord.sendErrorAlert, {
-                webhookUrl: discordSetting.target,
-                monitorName: monitor.name,
-                monitorId: monitor._id,
-                url: monitor.url,
+            if (shouldSend("discord")) {
+              const discordSetting = await ctx.runQuery(internal.scheduler.getNotificationSetting, {
+                userId: monitor.userId,
+                channel: "discord",
+              });
+              if (discordSetting?.enabled && discordSetting.target) {
+                await ctx.runAction(internal.discord.sendErrorAlert, {
+                  webhookUrl: discordSetting.target,
+                  monitorName: monitor.name,
+                  monitorId: monitor._id,
+                  url: monitor.url,
                 error: msg,
               }).catch(() => {});
             }

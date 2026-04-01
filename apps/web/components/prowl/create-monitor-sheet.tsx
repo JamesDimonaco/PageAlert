@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import {
   Sheet,
   SheetContent,
@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
+import { ChannelSelector } from "@/components/prowl/channel-selector";
 import { Separator } from "@/components/ui/separator";
 import { IntervalSelector } from "@/components/prowl/interval-selector";
 import {
@@ -66,6 +67,7 @@ export function CreateMonitorSheet({
   const [url, setUrl] = useState("");
   const [prompt, setPrompt] = useState("");
   const [checkInterval, setCheckInterval] = useState<CheckInterval>("6h");
+  const [channels, setChannels] = useState<("email" | "telegram" | "discord")[]>(["email"]);
 
   // Match conditions editing
   const [editedConditions, setEditedConditions] = useState<MatchConditions | null>(null);
@@ -125,6 +127,7 @@ export function CreateMonitorSheet({
     setUrl("");
     setPrompt("");
     setCheckInterval("6h");
+    setChannels(["email"]);
     setEditedConditions(null);
   }
 
@@ -188,6 +191,7 @@ export function CreateMonitorSheet({
                     url,
                     prompt,
                     checkInterval,
+                    notificationChannels: channels,
                   });
                 }}
                 className="space-y-6"
@@ -230,6 +234,7 @@ export function CreateMonitorSheet({
                   <Label className="text-sm font-medium">Check frequency</Label>
                   <IntervalSelector value={checkInterval} onValueChange={setCheckInterval} />
                 </div>
+                <ChannelSelector value={channels} onChange={setChannels} monitorId={null} />
                 <div className="flex justify-end gap-3 pt-4">
                   <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
                     Cancel

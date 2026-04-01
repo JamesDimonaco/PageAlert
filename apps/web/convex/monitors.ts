@@ -133,6 +133,12 @@ export const get = query({
 
 // ---- Mutations ----
 
+const channelValidator = v.array(v.union(
+  v.literal("email"),
+  v.literal("telegram"),
+  v.literal("discord")
+));
+
 /** Create a monitor in "scanning" state. The scan runs client-side, then saveScanResult is called. */
 export const create = mutation({
   args: {
@@ -140,6 +146,7 @@ export const create = mutation({
     url: v.string(),
     prompt: v.string(),
     checkInterval: intervalValidator,
+    notificationChannels: v.optional(channelValidator),
   },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
@@ -170,6 +177,7 @@ export const create = mutation({
       url: args.url.trim(),
       prompt: args.prompt.trim(),
       checkInterval: checkInterval,
+      notificationChannels: args.notificationChannels,
       userId,
       userEmail,
       status: "scanning",
@@ -253,6 +261,7 @@ export const update = mutation({
     status: v.optional(statusValidator),
     checkInterval: v.optional(intervalValidator),
     schema: v.optional(v.any()),
+    notificationChannels: v.optional(channelValidator),
   },
   handler: async (ctx, { id, ...fields }) => {
     const userId = await getAuthUserId(ctx);
