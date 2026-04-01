@@ -336,8 +336,9 @@ export const runScheduledChecks = internalAction({
                   monitorName: monitor.name,
                   monitorId: monitor._id,
                   url: monitor.url,
-                error: msg,
-              }).catch(() => {});
+                  error: msg,
+                }).catch(() => {});
+              }
             }
           }
         }
