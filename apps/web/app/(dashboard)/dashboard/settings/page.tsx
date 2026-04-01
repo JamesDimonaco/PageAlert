@@ -33,7 +33,7 @@ import {
 export default function SettingsPage() {
   const { user, signOut } = useAuth();
   const { monitors } = useMonitors();
-  const { tier, maxMonitors, description: tierDescription, isLoading: tierLoading, refetch: refetchTier } = useTier();
+  const { tier, maxMonitors, description: tierDescription, isLoading: tierLoading, refetch: refetchTier, isCancelled, daysRemaining, periodEnd } = useTier();
   const [name, setName] = useState(user?.name ?? "");
   const [email, setEmail] = useState(user?.email ?? "");
 
@@ -492,6 +492,43 @@ export default function SettingsPage() {
               <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
             </div>
           ) : (<>
+          {/* Cancellation banner */}
+          {isCancelled && tier !== "free" && (
+            <Card className="border-amber-500/30 bg-amber-500/5 shadow-sm">
+              <CardContent className="p-4 sm:p-5">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div>
+                    <p className="text-sm font-semibold text-amber-400">
+                      Your {tier.charAt(0).toUpperCase() + tier.slice(1)} plan has been cancelled
+                    </p>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      {daysRemaining !== null && daysRemaining > 0
+                        ? `You have access until ${new Date(periodEnd!).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })} (${daysRemaining} day${daysRemaining !== 1 ? "s" : ""} remaining).`
+                        : "Your access has expired."}
+                    </p>
+                    <p className="text-xs text-muted-foreground/70 mt-1">
+                      Your monitors will continue running until then. After that, you&apos;ll be on the free plan.
+                    </p>
+                  </div>
+                  <Button
+                    size="sm"
+                    className="gap-1.5 shrink-0"
+                    onClick={async () => {
+                      try {
+                        await authClient.customer.portal();
+                      } catch {
+                        toast.error("Portal unavailable");
+                      }
+                    }}
+                  >
+                    <Sparkles className="h-3.5 w-3.5" />
+                    Resubscribe
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
           {/* Current Plan */}
           <Card className="border-border/30 bg-card/50 shadow-sm shadow-black/5">
             <CardHeader className="pb-4">
@@ -502,7 +539,11 @@ export default function SettingsPage() {
                 <div>
                   <div className="flex items-center gap-3">
                     <p className="text-xl font-bold capitalize">{tier}</p>
-                    <Badge variant="outline" className="text-xs">Current plan</Badge>
+                    {isCancelled ? (
+                      <Badge variant="outline" className="text-xs bg-amber-500/10 text-amber-400 border-amber-500/20">Cancelling</Badge>
+                    ) : (
+                      <Badge variant="outline" className="text-xs">Current plan</Badge>
+                    )}
                   </div>
                   <p className="text-sm text-muted-foreground mt-2 leading-relaxed">
                     {tierDescription}
@@ -548,8 +589,9 @@ export default function SettingsPage() {
               </div>
               {tier !== "free" && (
                 <p className="text-xs text-muted-foreground mt-4">
-                  Manage your billing, update payment method, or cancel your subscription from the Polar customer portal.
-                  {" "}If you cancel, you&apos;ll keep access until the end of your billing period.
+                  Manage your billing, update payment method, or cancel your subscription from the Polar portal.
+                  {" "}You&apos;ll be redirected to Polar — close the tab to return here.
+                  {!isCancelled && " If you cancel, you'll keep access until the end of your billing period."}
                 </p>
               )}
             </CardContent>

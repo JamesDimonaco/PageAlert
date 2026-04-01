@@ -128,6 +128,8 @@ export default defineSchema({
     tier: v.union(v.literal("free"), v.literal("pro"), v.literal("max")),
     polarCustomerId: v.optional(v.string()),
     polarSubscriptionId: v.optional(v.string()),
+    cancelledAt: v.optional(v.number()),
+    periodEnd: v.optional(v.number()),
     updatedAt: v.number(),
   }).index("by_userId", ["userId"]),
 });

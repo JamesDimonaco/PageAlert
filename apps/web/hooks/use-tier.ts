@@ -57,6 +57,9 @@ interface TierInfo {
   channels: string[];
   description: string;
   allowedIntervals: string[];
+  isCancelled: boolean;
+  periodEnd: number | null;
+  daysRemaining: number | null;
   refetch: () => void;
 }
 
@@ -136,9 +139,25 @@ export function useTier(): TierInfo {
     }
   }, [tier, isLoading]);
 
+  const isCancelled = convexTier?.isCancelled ?? false;
+  const periodEnd = convexTier?.periodEnd ?? null;
+
+  // Compute daysRemaining client-side only to avoid SSR hydration mismatch
+  const [daysRemaining, setDaysRemaining] = useState<number | null>(null);
+  useEffect(() => {
+    if (periodEnd) {
+      setDaysRemaining(Math.max(0, Math.ceil((periodEnd - Date.now()) / (1000 * 60 * 60 * 24))));
+    } else {
+      setDaysRemaining(null);
+    }
+  }, [periodEnd]);
+
   return {
     tier,
     isLoading,
+    isCancelled,
+    periodEnd,
+    daysRemaining,
     refetch: fetchAndSync,
     ...TIER_LIMITS[tier],
   };
