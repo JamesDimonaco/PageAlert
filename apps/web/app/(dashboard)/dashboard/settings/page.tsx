@@ -68,6 +68,7 @@ export default function SettingsPage() {
   const [telegramChatId, setTelegramChatId] = useState("");
   const [discordWebhook, setDiscordWebhook] = useState("");
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [telegramQrOpen, setTelegramQrOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [testEmailSending, setTestEmailSending] = useState(false);
   const [testEmailSent, setTestEmailSent] = useState(false);
@@ -327,6 +328,33 @@ export default function SettingsPage() {
                     <li>Press <strong>Start</strong> — the bot will send your Chat ID as a separate message</li>
                     <li>Copy the number and paste it above, then click Connect &amp; Test</li>
                   </ol>
+                  <Dialog open={telegramQrOpen} onOpenChange={setTelegramQrOpen}>
+                    <button
+                      onClick={() => setTelegramQrOpen(true)}
+                      className="mt-2 text-primary hover:underline text-xs font-medium flex items-center gap-1"
+                    >
+                      <MessageCircle className="h-3 w-3" />
+                      Open on phone? Scan QR code
+                    </button>
+                    <DialogContent className="sm:max-w-xs">
+                      <DialogHeader>
+                        <DialogTitle className="text-center">Scan to open in Telegram</DialogTitle>
+                        <DialogDescription className="text-center text-xs">
+                          Scan with your phone camera to message @PageAlertNotify_bot
+                        </DialogDescription>
+                      </DialogHeader>
+                      <div className="flex justify-center py-4">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent("https://t.me/PageAlertNotify_bot")}&bgcolor=0a0a0b&color=3b82f6&format=svg`}
+                          alt="QR code to open PageAlert bot in Telegram"
+                          width={200}
+                          height={200}
+                          className="rounded-lg"
+                        />
+                      </div>
+                    </DialogContent>
+                  </Dialog>
                 </div>
               </div>
               {tier === "free" ? (
