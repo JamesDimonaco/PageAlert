@@ -31,45 +31,45 @@ export const handler = httpAction(async (_ctx, request) => {
     return new Response("OK", { status: 200 });
   }
 
-  let replyText: string;
+  const send = (msg: string, markdown = true) =>
+    fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text: msg,
+        ...(markdown && { parse_mode: "Markdown" }),
+      }),
+    });
 
   if (text === "/start" || text.startsWith("/start")) {
-    replyText = [
+    await send([
       `Hey ${firstName}! 👋`,
       ``,
-      `Your Chat ID is:`,
-      `\`${chatId}\``,
+      `I'll send you alerts when your PageAlert monitors find matches.`,
       ``,
-      `Copy this number and paste it into your PageAlert notification settings.`,
-      ``,
+      `Your Chat ID is below — copy it and paste it into your notification settings:`,
       `🔗 pagealert.io/dashboard/settings`,
-    ].join("\n");
+    ].join("\n"));
+
+    // Send chat ID as a separate plain text message for easy copy-paste
+    await send(String(chatId), false);
   } else if (text === "/help") {
-    replyText = [
-      `PageAlert Notification Bot`,
+    await send([
+      `*PageAlert Notification Bot*`,
       ``,
       `This bot sends you alerts when your monitors find matches.`,
-      ``,
-      `Your Chat ID: \`${chatId}\``,
       ``,
       `Commands:`,
       `/start — Get your Chat ID`,
       `/help — Show this message`,
-    ].join("\n");
-  } else {
-    replyText = `Your Chat ID is \`${chatId}\`. Paste this into PageAlert settings to receive notifications here.`;
-  }
+    ].join("\n"));
 
-  // Send reply via Telegram API
-  await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      chat_id: chatId,
-      text: replyText,
-      parse_mode: "Markdown",
-    }),
-  });
+    await send(String(chatId), false);
+  } else {
+    await send(`Your Chat ID is below — paste it into PageAlert settings:`);
+    await send(String(chatId), false);
+  }
 
   return new Response("OK", { status: 200 });
 });

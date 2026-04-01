@@ -323,9 +323,9 @@ export default function SettingsPage() {
                 <div className="text-xs text-muted-foreground leading-relaxed space-y-1">
                   <p className="font-medium text-foreground/70">How to get your Chat ID:</p>
                   <ol className="list-decimal pl-4 space-y-0.5">
-                    <li>Open Telegram and search for <strong>@PageAlertNotify_bot</strong></li>
-                    <li>Press <strong>Start</strong> to begin a conversation</li>
-                    <li>The bot will reply with your Chat ID — paste it above</li>
+                    <li>Open Telegram and message <a href="https://t.me/PageAlertNotify_bot" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline font-semibold">@PageAlertNotify_bot</a></li>
+                    <li>Press <strong>Start</strong> — the bot will send your Chat ID as a separate message</li>
+                    <li>Copy the number and paste it above, then click Connect &amp; Test</li>
                   </ol>
                 </div>
               </div>
