@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   Sheet,
   SheetContent,
@@ -14,7 +14,6 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { ChannelSelector } from "@/components/prowl/channel-selector";
-import { useTier } from "@/hooks/use-tier";
 import { Separator } from "@/components/ui/separator";
 import { IntervalSelector } from "@/components/prowl/interval-selector";
 import {
@@ -102,7 +101,6 @@ export function CreateMonitorSheet({
   }, [step]);
 
   // Default channels to all configured channels
-  const { tier } = useTier();
   const notifSettings = useQuery(api.notificationSettings.list);
 
   // Reset form when the sheet opens for a new monitor (false → true transition)

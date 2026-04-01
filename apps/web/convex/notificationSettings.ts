@@ -68,10 +68,11 @@ export const upsert = mutation({
 
     // Anti-abuse: free tier channel deduplication
     if (tier === "free" && args.enabled && (args.channel === "telegram" || args.channel === "discord")) {
+      const claimChannel = args.channel as "telegram" | "discord";
       const existingClaim = await ctx.db
         .query("channelClaims")
         .withIndex("by_channel_target", (q) =>
-          q.eq("channel", args.channel).eq("target", args.target.trim())
+          q.eq("channel", claimChannel).eq("target", args.target.trim())
         )
         .unique();
 
