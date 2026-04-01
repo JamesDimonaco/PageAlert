@@ -44,6 +44,10 @@ export const logger = {
 
   /** Call in route handlers to ensure logs are sent before serverless freeze */
   async flush() {
-    await loggerProvider.forceFlush();
+    try {
+      await loggerProvider.forceFlush();
+    } catch {
+      // Swallow — don't let flush failures propagate into after() hooks
+    }
   },
 };

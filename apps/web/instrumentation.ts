@@ -7,17 +7,19 @@ const POSTHOG_KEY = process.env.NEXT_PUBLIC_POSTHOG_KEY;
 
 export const loggerProvider = new LoggerProvider({
   resource: resourceFromAttributes({ "service.name": "pagealert-web" }),
-  processors: [
-    new BatchLogRecordProcessor(
-      new OTLPLogExporter({
-        url: "https://us.i.posthog.com/i/v1/logs",
-        headers: {
-          Authorization: `Bearer ${POSTHOG_KEY}`,
-          "Content-Type": "application/json",
-        },
-      })
-    ),
-  ],
+  processors: POSTHOG_KEY
+    ? [
+        new BatchLogRecordProcessor(
+          new OTLPLogExporter({
+            url: "https://us.i.posthog.com/i/v1/logs",
+            headers: {
+              Authorization: `Bearer ${POSTHOG_KEY}`,
+              "Content-Type": "application/json",
+            },
+          })
+        ),
+      ]
+    : [],
 });
 
 export function register() {
