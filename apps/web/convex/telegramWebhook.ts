@@ -13,6 +13,15 @@ export const handler = httpAction(async (_ctx, request) => {
     return new Response("Bot not configured", { status: 503 });
   }
 
+  // Verify webhook authenticity via secret token header
+  const webhookSecret = process.env.TELEGRAM_WEBHOOK_SECRET;
+  if (webhookSecret) {
+    const headerSecret = request.headers.get("X-Telegram-Bot-Api-Secret-Token");
+    if (headerSecret !== webhookSecret) {
+      return new Response("Unauthorized", { status: 401 });
+    }
+  }
+
   let body: Record<string, unknown>;
   try {
     body = await request.json();
