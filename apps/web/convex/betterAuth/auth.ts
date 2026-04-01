@@ -117,11 +117,10 @@ export const createAuthOptions = (ctx: GenericCtx<DataModel>) => {
               // Don't downgrade tier — user keeps access until period ends.
               // Just mark the subscription as cancelled with the period end date.
               if (userId) {
-                const periodEnd = sub.currentPeriodEnd
-                  ? new Date(sub.currentPeriodEnd as string).getTime()
-                  : (sub as any).current_period_end
-                    ? new Date((sub as any).current_period_end as string).getTime()
-                    : undefined;
+                const rawPeriodEnd = (sub as any).currentPeriodEnd ?? (sub as any).current_period_end;
+                const periodEnd = rawPeriodEnd
+                  ? new Date(String(rawPeriodEnd)).getTime()
+                  : undefined;
 
                 if (periodEnd) {
                   await (ctx as any).runMutation(internal.tiers.markCancelled, {
