@@ -171,13 +171,28 @@ export const create = mutation({
       throw new Error(`Your ${tier} plan allows ${limits.maxMonitors} monitors. Upgrade for more.`);
     }
 
+    // Server-side enforcement: free tier can only have one monitor with non-email channels
+    let channels = args.notificationChannels;
+    if (tier === "free" && channels) {
+      const hasNonEmail = channels.some((c) => c !== "email");
+      if (hasNonEmail) {
+        const existingWithChannels = existingMonitors.find((m) =>
+          (m as any).notificationChannels?.some((c: string) => c === "telegram" || c === "discord")
+        );
+        if (existingWithChannels) {
+          // Strip non-email channels — free user already has one monitor with them
+          channels = channels.filter((c) => c === "email");
+        }
+      }
+    }
+
     const now = Date.now();
     return ctx.db.insert("monitors", {
       name: args.name.trim(),
       url: args.url.trim(),
       prompt: args.prompt.trim(),
       checkInterval: checkInterval,
-      notificationChannels: args.notificationChannels,
+      notificationChannels: channels,
       userId,
       userEmail,
       status: "scanning",

@@ -14,6 +14,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { ChannelSelector } from "@/components/prowl/channel-selector";
+import { useTier } from "@/hooks/use-tier";
 import { Separator } from "@/components/ui/separator";
 import { IntervalSelector } from "@/components/prowl/interval-selector";
 import {
@@ -29,7 +30,7 @@ import { MatchConditionsEditor } from "./match-conditions-editor";
 import { AiInsightsCard } from "./ai-insights";
 import { applyMatchConditions } from "@prowl/shared";
 import { useMonitor } from "@/hooks/use-monitors";
-import { useMutation } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import type { MatchConditions, ExtractedItem, ExtractionSchema } from "@prowl/shared";
@@ -99,14 +100,28 @@ export function CreateMonitorSheet({
     };
   }, [step]);
 
+  // Default channels to all configured channels
+  const { tier } = useTier();
+  const notifSettings = useQuery(api.notificationSettings.list);
+
   // Reset form when the sheet opens for a new monitor (false → true transition)
   const prevOpenRef = useRef(open);
   useEffect(() => {
     if (open && !prevOpenRef.current && !activeMonitorId && !isScanning) {
       resetForm();
+      // Set default channels to all configured ones
+      const configured: ("email" | "telegram" | "discord")[] = ["email"];
+      if (notifSettings) {
+        for (const s of notifSettings) {
+          if (s.enabled && (s.channel === "telegram" || s.channel === "discord")) {
+            configured.push(s.channel);
+          }
+        }
+      }
+      setChannels(configured);
     }
     prevOpenRef.current = open;
-  }, [open, activeMonitorId, isScanning]);
+  }, [open, activeMonitorId, isScanning, notifSettings]);
 
   // When monitor loads with schema, init edited conditions
   useEffect(() => {

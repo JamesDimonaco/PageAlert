@@ -65,6 +65,40 @@ export const upsert = mutation({
       }
     }
 
+    // Anti-abuse: free tier channel deduplication
+    if (tier === "free" && args.enabled && (args.channel === "telegram" || args.channel === "discord")) {
+      const existingClaim = await ctx.db
+        .query("channelClaims")
+        .withIndex("by_channel_target", (q) =>
+          q.eq("channel", args.channel).eq("target", args.target.trim())
+        )
+        .unique();
+
+      if (existingClaim && existingClaim.userId !== userId) {
+        throw new Error("This channel is already in use on another free account");
+      }
+
+      // Create or update claim
+      if (!existingClaim) {
+        // Remove any existing claim by this user for this channel type
+        const userClaims = await ctx.db
+          .query("channelClaims")
+          .withIndex("by_userId", (q) => q.eq("userId", userId))
+          .collect();
+        for (const claim of userClaims) {
+          if (claim.channel === args.channel) {
+            await ctx.db.delete(claim._id);
+          }
+        }
+        await ctx.db.insert("channelClaims", {
+          channel: args.channel,
+          target: args.target.trim(),
+          userId,
+          claimedAt: Date.now(),
+        });
+      }
+    }
+
     const existing = await ctx.db
       .query("notificationSettings")
       .withIndex("by_userId_channel", (q) =>

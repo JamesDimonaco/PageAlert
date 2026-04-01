@@ -52,5 +52,14 @@ export const deleteAccount = mutation({
     for (const notif of remainingNotifs) {
       await ctx.db.delete(notif._id);
     }
+
+    // Delete channel claims (anti-abuse)
+    const claims = await ctx.db
+      .query("channelClaims")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .collect();
+    for (const claim of claims) {
+      await ctx.db.delete(claim._id);
+    }
   },
 });

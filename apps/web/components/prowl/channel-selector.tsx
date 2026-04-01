@@ -3,10 +3,9 @@
 import { Badge } from "@/components/ui/badge";
 import { Mail, MessageCircle, Hash, Check, Settings } from "lucide-react";
 import { useTier } from "@/hooks/use-tier";
-import { useQuery } from "convex/react";
+import { useQuery, useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { useMonitors } from "@/hooks/use-monitors";
-import Link from "next/link";
 import { toast } from "sonner";
 
 type Channel = "email" | "telegram" | "discord";
@@ -29,6 +28,7 @@ export function ChannelSelector({ value, onChange, monitorId, disabled }: Channe
   const { tier } = useTier();
   const notifSettings = useQuery(api.notificationSettings.list);
   const { monitors } = useMonitors();
+  const updateMonitor = useMutation(api.monitors.update);
 
   // Which channels are configured in Settings
   const configuredChannels = new Set<Channel>(
@@ -72,15 +72,27 @@ export function ChannelSelector({ value, onChange, monitorId, disabled }: Channe
     }
 
     if (!available && tier === "free") {
-      // Free user trying to enable on a second monitor
+      // Free user trying to enable on a second monitor — offer to switch
       if (freeMonitorWithChannels) {
-        toast(`${CHANNEL_CONFIG[channel].label} is enabled on "${(freeMonitorWithChannels as any).name}". Switch it here?`, {
+        const otherName = (freeMonitorWithChannels as any).name;
+        const otherId = freeMonitorWithChannels._id;
+        toast(`${CHANNEL_CONFIG[channel].label} is enabled on "${otherName}". Switch it here?`, {
           action: {
             label: "Switch",
-            onClick: () => {
-              // Enable here, will need to disable on the other monitor
-              // For now just enable — the scheduler enforces the limit server-side
-              onChange([...value, channel]);
+            onClick: async () => {
+              try {
+                // Remove non-email channels from the other monitor
+                const otherChannels = ((freeMonitorWithChannels as any).notificationChannels ?? []) as string[];
+                await updateMonitor({
+                  id: otherId,
+                  notificationChannels: otherChannels.filter((c) => c === "email") as any,
+                });
+                // Enable on this monitor
+                onChange([...value, channel]);
+                toast.success(`Switched ${CHANNEL_CONFIG[channel].label} to this monitor`);
+              } catch {
+                toast.error("Failed to switch channel");
+              }
             },
           },
         });
