@@ -38,23 +38,25 @@ export const update = internalMutation({
       .unique();
 
     if (existing) {
-      await ctx.db.patch(existing._id, {
+      const patch: Record<string, unknown> = {
         tier: args.tier,
-        polarCustomerId: args.polarCustomerId,
-        polarSubscriptionId: args.polarSubscriptionId,
-        // Clear cancellation when tier is actively set (new sub or upgrade)
+        // Clear cancellation — this is called on new sub or revoke, both are definitive
         cancelledAt: undefined,
         periodEnd: undefined,
         updatedAt: Date.now(),
-      });
+      };
+      if (args.polarCustomerId != null) patch.polarCustomerId = args.polarCustomerId;
+      if (args.polarSubscriptionId != null) patch.polarSubscriptionId = args.polarSubscriptionId;
+      await ctx.db.patch(existing._id, patch);
     } else {
-      await ctx.db.insert("userTiers", {
+      const doc: Record<string, unknown> = {
         userId: args.userId,
         tier: args.tier,
-        polarCustomerId: args.polarCustomerId,
-        polarSubscriptionId: args.polarSubscriptionId,
         updatedAt: Date.now(),
-      });
+      };
+      if (args.polarCustomerId != null) doc.polarCustomerId = args.polarCustomerId;
+      if (args.polarSubscriptionId != null) doc.polarSubscriptionId = args.polarSubscriptionId;
+      await ctx.db.insert("userTiers", doc as any);
     }
   },
 });
@@ -77,11 +79,12 @@ export const markCancelled = internalMutation({
       return;
     }
 
-    await ctx.db.patch(existing._id, {
+    const patch: Record<string, unknown> = {
       cancelledAt: Date.now(),
       periodEnd: args.periodEnd,
-      polarSubscriptionId: args.polarSubscriptionId,
       updatedAt: Date.now(),
-    });
+    };
+    if (args.polarSubscriptionId != null) patch.polarSubscriptionId = args.polarSubscriptionId;
+    await ctx.db.patch(existing._id, patch);
   },
 });
