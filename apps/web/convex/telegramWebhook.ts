@@ -1,5 +1,8 @@
 import { httpAction } from "./_generated/server";
 
+const APP_URL = process.env.SITE_URL ?? "https://pagealert.io";
+const TIMEOUT = 5_000;
+
 /**
  * Handles incoming Telegram Bot updates (webhook).
  * When a user sends /start or any message, the bot replies with their Chat ID.
@@ -31,8 +34,8 @@ export const handler = httpAction(async (_ctx, request) => {
     return new Response("OK", { status: 200 });
   }
 
-  const send = (msg: string, markdown = true) =>
-    fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+  const send = async (msg: string, markdown = true) => {
+    const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -40,16 +43,24 @@ export const handler = httpAction(async (_ctx, request) => {
         text: msg,
         ...(markdown && { parse_mode: "Markdown" }),
       }),
+      signal: AbortSignal.timeout(TIMEOUT),
     });
+    if (!res.ok) {
+      console.error("[telegram-webhook] Send failed:", res.status, await res.text().catch(() => ""));
+    }
+  };
+
+  // Escape markdown characters in user-provided text
+  const safeName = String(firstName).replace(/[_*[\]()~`>#+\-=|{}.!\\]/g, "");
 
   if (text === "/start" || text.startsWith("/start")) {
     await send([
-      `Hey ${firstName}! 👋`,
+      `Hey ${safeName}! 👋`,
       ``,
       `I'll send you alerts when your PageAlert monitors find matches.`,
       ``,
       `Your Chat ID is below — copy it and paste it into your notification settings:`,
-      `🔗 pagealert.io/dashboard/settings`,
+      `🔗 ${APP_URL}/dashboard/settings`,
     ].join("\n"));
 
     // Send chat ID as a separate plain text message for easy copy-paste
