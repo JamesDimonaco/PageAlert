@@ -106,9 +106,12 @@ export default function SettingsPage() {
             <User className="mr-2 h-4 w-4" />
             Profile
           </TabsTrigger>
-          <TabsTrigger value="notifications">
+          <TabsTrigger value="notifications" className="relative">
             <Bell className="mr-2 h-4 w-4" />
             Notifications
+            {notifSettings && notifSettings.filter((s) => s.enabled).length === 0 && (
+              <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-amber-400" />
+            )}
           </TabsTrigger>
           <TabsTrigger value="billing">
             <CreditCard className="mr-2 h-4 w-4" />

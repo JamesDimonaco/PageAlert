@@ -20,6 +20,7 @@ import {
   Zap,
   ArrowRight,
   RefreshCw,
+  BellOff,
 } from "lucide-react";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
 import Link from "next/link";
@@ -85,6 +86,12 @@ export function MonitorCard({ monitor, onTogglePause, onDelete, onRescan }: Moni
               {monitor.matchCount > 0 && (
                 <span className="text-primary font-semibold">
                   {monitor.matchCount} match{monitor.matchCount !== 1 && "es"}
+                </span>
+              )}
+              {(monitor as any).notificationChannels?.length === 0 && (
+                <span className="flex items-center gap-1 text-amber-400">
+                  <BellOff className="h-3 w-3" />
+                  No alerts
                 </span>
               )}
             </div>
