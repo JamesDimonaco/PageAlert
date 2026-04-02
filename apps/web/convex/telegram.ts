@@ -104,6 +104,11 @@ async function sendMessage(token: string, chatId: string, text: string) {
   if (!res.ok) {
     const body = await res.text();
     console.error("[telegram] Send failed:", res.status, body);
+
+    // User hasn't pressed /start on the bot yet
+    if (res.status === 403) {
+      throw new Error("Please message @PageAlertNotify_bot on Telegram and press Start first, then try again");
+    }
     throw new Error("Failed to send Telegram message");
   }
 }

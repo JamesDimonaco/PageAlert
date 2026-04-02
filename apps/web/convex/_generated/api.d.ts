@@ -20,6 +20,7 @@ import type * as notifications from "../notifications.js";
 import type * as scheduler from "../scheduler.js";
 import type * as shared from "../shared.js";
 import type * as telegram from "../telegram.js";
+import type * as telegramWebhook from "../telegramWebhook.js";
 import type * as tiers from "../tiers.js";
 import type * as userNotifications from "../userNotifications.js";
 
@@ -42,6 +43,7 @@ declare const fullApi: ApiFromModules<{
   scheduler: typeof scheduler;
   shared: typeof shared;
   telegram: typeof telegram;
+  telegramWebhook: typeof telegramWebhook;
   tiers: typeof tiers;
   userNotifications: typeof userNotifications;
 }>;
