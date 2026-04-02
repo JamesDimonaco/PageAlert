@@ -14,12 +14,16 @@ export const handler = httpAction(async (_ctx, request) => {
   }
 
   // Verify webhook authenticity via secret token header
+  // Fail closed — reject if secret not configured or mismatched
   const webhookSecret = process.env.TELEGRAM_WEBHOOK_SECRET;
-  if (webhookSecret) {
-    const headerSecret = request.headers.get("X-Telegram-Bot-Api-Secret-Token");
-    if (headerSecret !== webhookSecret) {
-      return new Response("Unauthorized", { status: 401 });
-    }
+  if (!webhookSecret) {
+    console.error("[telegram-webhook] TELEGRAM_WEBHOOK_SECRET not configured");
+    return new Response("Webhook secret not configured", { status: 503 });
+  }
+  const headerSecret = request.headers.get("X-Telegram-Bot-Api-Secret-Token");
+  if (headerSecret !== webhookSecret) {
+    console.error("[telegram-webhook] Invalid secret token");
+    return new Response("Unauthorized", { status: 401 });
   }
 
   let body: Record<string, unknown>;
@@ -55,41 +59,48 @@ export const handler = httpAction(async (_ctx, request) => {
       signal: AbortSignal.timeout(TIMEOUT),
     });
     if (!res.ok) {
-      console.error("[telegram-webhook] Send failed:", res.status, await res.text().catch(() => ""));
+      const body = await res.text().catch(() => "");
+      console.error("[telegram-webhook] Send failed:", res.status, body);
+      throw new Error(`Telegram send failed: ${res.status}`);
     }
   };
 
   // Escape markdown characters in user-provided text
   const safeName = String(firstName).replace(/[_*[\]()~`>#+\-=|{}.!\\]/g, "");
 
-  if (text === "/start" || text.startsWith("/start")) {
-    await send([
-      `Hey ${safeName}! 👋`,
-      ``,
-      `I'll send you alerts when your PageAlert monitors find matches.`,
-      ``,
-      `Your Chat ID is below — copy it and paste it into your notification settings:`,
-      `🔗 ${APP_URL}/dashboard/settings`,
-    ].join("\n"));
+  try {
+    if (text === "/start" || text.startsWith("/start")) {
+      await send([
+        `Hey ${safeName}! 👋`,
+        ``,
+        `I'll send you alerts when your PageAlert monitors find matches.`,
+        ``,
+        `Your Chat ID is below — copy it and paste it into your notification settings:`,
+        `🔗 ${APP_URL}/dashboard/settings`,
+      ].join("\n"));
 
-    // Send chat ID as a separate plain text message for easy copy-paste
-    await send(String(chatId), false);
-  } else if (text === "/help") {
-    await send([
-      `*PageAlert Notification Bot*`,
-      ``,
-      `This bot sends you alerts when your monitors find matches.`,
-      ``,
-      `Commands:`,
-      `/start — Get your Chat ID`,
-      `/help — Show this message`,
-    ].join("\n"));
+      // Send chat ID as a separate plain text message for easy copy-paste
+      await send(String(chatId), false);
+    } else if (text === "/help") {
+      await send([
+        `*PageAlert Notification Bot*`,
+        ``,
+        `This bot sends you alerts when your monitors find matches.`,
+        ``,
+        `Commands:`,
+        `/start — Get your Chat ID`,
+        `/help — Show this message`,
+      ].join("\n"));
 
-    await send(String(chatId), false);
-  } else {
-    await send(`Your Chat ID is below — paste it into PageAlert settings:`);
-    await send(String(chatId), false);
+      await send(String(chatId), false);
+    } else {
+      await send(`Your Chat ID is below — paste it into PageAlert settings:`);
+      await send(String(chatId), false);
+    }
+
+    return new Response("OK", { status: 200 });
+  } catch (e) {
+    console.error("[telegram-webhook] Handler error:", e);
+    return new Response("Internal error", { status: 500 });
   }
-
-  return new Response("OK", { status: 200 });
 });
