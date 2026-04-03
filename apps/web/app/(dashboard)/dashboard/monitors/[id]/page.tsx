@@ -137,8 +137,8 @@ export default function MonitorDetailPage({
                   try {
                     await togglePause(monitorId);
                     toast.success(monitor.status === "paused" ? "Monitor resumed" : "Monitor paused");
-                  } catch {
-                    toast.error("Failed to update monitor");
+                  } catch (err) {
+                    toast.error("Failed to update monitor", { description: err instanceof Error ? err.message : "" });
                   }
                 }}
               >
@@ -224,10 +224,14 @@ export default function MonitorDetailPage({
       <DeleteDialog
         open={deleteOpen}
         onOpenChange={setDeleteOpen}
-        onConfirm={() => {
-          deleteMonitor(monitorId);
-          toast.success("Monitor deleted");
-          router.push("/dashboard");
+        onConfirm={async () => {
+          try {
+            await deleteMonitor(monitorId);
+            toast.success("Monitor deleted");
+            router.push("/dashboard");
+          } catch (err) {
+            toast.error("Failed to delete", { description: err instanceof Error ? err.message : "" });
+          }
         }}
         monitorName={monitor.name}
       />
