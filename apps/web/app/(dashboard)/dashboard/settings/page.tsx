@@ -364,8 +364,25 @@ export default function SettingsPage() {
                   Upgrade to Pro
                 </Button>
               ) : notifSettings?.find((s) => s.channel === "telegram")?.enabled ? (
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-xs">Connected</Badge>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={async () => {
+                      try {
+                        const chatId = notifSettings?.find((s) => s.channel === "telegram")?.target;
+                        if (chatId) {
+                          await sendTelegramTest({ chatId });
+                          toast.success("Test message sent to Telegram");
+                        }
+                      } catch (e) {
+                        toast.error("Test failed", { description: e instanceof Error ? e.message : "" });
+                      }
+                    }}
+                  >
+                    Send Test
+                  </Button>
                   <Button
                     variant="ghost"
                     size="sm"
@@ -439,122 +456,19 @@ export default function SettingsPage() {
             </CardContent>
           </Card>
 
-          <Card className={`border-border/30 bg-card/50 shadow-sm shadow-black/5 ${tier === "free" ? "opacity-60" : ""}`}>
+          <Card className="border-border/30 bg-card/50 shadow-sm shadow-black/5 opacity-60">
             <CardHeader className="pb-4">
               <CardTitle className="flex items-center gap-2 text-lg font-semibold">
                 <Hash className="h-5 w-5 text-muted-foreground" />
                 Discord
-                {tier === "free" && (
-                  <Badge variant="outline" className="text-[10px] gap-1 px-1.5 py-0 ml-1">
-                    <Lock className="h-2.5 w-2.5" />
-                    Pro
-                  </Badge>
-                )}
+                <Badge variant="outline" className="text-[10px] gap-1 px-1.5 py-0 ml-1">
+                  Coming soon
+                </Badge>
               </CardTitle>
               <CardDescription className="text-sm">
-                {tier === "free"
-                  ? "Upgrade to Pro to send notifications to Discord"
-                  : "Send notifications to a Discord channel via webhook"}
+                Send notifications to a Discord channel via webhook. Coming in a future update.
               </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-5">
-              <div className="space-y-2">
-                <Label htmlFor="discord" className="text-sm font-medium">Webhook URL</Label>
-                <Input
-                  id="discord"
-                  type="url"
-                  placeholder="https://discord.com/api/webhooks/..."
-                  value={discordWebhook}
-                  onChange={(e) => setDiscordWebhook(e.target.value)}
-                  disabled={tier === "free"}
-                />
-                <div className="text-xs text-muted-foreground leading-relaxed space-y-1">
-                  <p className="font-medium text-foreground/70">How to get a webhook URL:</p>
-                  <ol className="list-decimal pl-4 space-y-0.5">
-                    <li>Open your Discord server and go to <strong>Server Settings</strong></li>
-                    <li>Click <strong>Integrations</strong> &rarr; <strong>Webhooks</strong> &rarr; <strong>New Webhook</strong></li>
-                    <li>Choose the channel, then click <strong>Copy Webhook URL</strong></li>
-                  </ol>
-                </div>
-              </div>
-              {tier === "free" ? (
-                <Button size="sm" className="gap-1.5" onClick={() => handleCheckout("pro")}>
-                  <Sparkles className="h-3.5 w-3.5" />
-                  Upgrade to Pro
-                </Button>
-              ) : notifSettings?.find((s) => s.channel === "discord")?.enabled ? (
-                <div className="flex items-center gap-2">
-                  <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-xs">Connected</Badge>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={async () => {
-                      try {
-                        await removeSetting({ channel: "discord" });
-                        setDiscordWebhook("");
-                        trackNotificationChannelToggled({ channel: "discord", enabled: false });
-                        toast.success("Discord disconnected");
-                      } catch {
-                        toast.error("Failed to disconnect Discord");
-                      }
-                    }}
-                  >
-                    Disconnect
-                  </Button>
-                </div>
-              ) : (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={!discordWebhook || discordSaving}
-                  onClick={async () => {
-                    setDiscordSaving(true);
-                    try {
-                      await sendDiscordTest({ webhookUrl: discordWebhook });
-                      await upsertSetting({ channel: "discord", enabled: true, target: discordWebhook });
-                      trackNotificationChannelToggled({ channel: "discord", enabled: true });
-
-                      if (monitors.length > 0) {
-                        toast.success("Discord connected!", {
-                          description: `Enable Discord notifications on all ${monitors.length} monitor${monitors.length !== 1 ? "s" : ""}?`,
-                          action: {
-                            label: "Enable all",
-                            onClick: async () => {
-                              try {
-                                for (const m of monitors) {
-                                  const existing = (m as any).notificationChannels as string[] | undefined;
-                                  if (!existing || !existing.includes("discord")) {
-                                    await updateMonitor({
-                                      id: m._id,
-                                      notificationChannels: [...(existing ?? ["email"]), "discord"] as any,
-                                    });
-                                  }
-                                }
-                                toast.success(`Discord enabled on all monitors`);
-                              } catch {
-                                toast.error("Failed to update monitors");
-                              }
-                            },
-                          },
-                          duration: 10000,
-                        });
-                      } else {
-                        toast.success("Discord connected", { description: "Test message sent" });
-                      }
-                    } catch (e) {
-                      toast.error("Failed to connect", {
-                        description: e instanceof Error ? e.message : "Check your webhook URL and try again",
-                      });
-                    } finally {
-                      setDiscordSaving(false);
-                    }
-                  }}
-                >
-                  {discordSaving ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null}
-                  Connect & Test
-                </Button>
-              )}
-            </CardContent>
           </Card>
 
           <Card className="border-border/30 bg-card/50 shadow-sm shadow-black/5 opacity-60">

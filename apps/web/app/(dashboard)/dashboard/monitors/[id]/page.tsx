@@ -9,6 +9,13 @@ import { OverviewTab } from "@/components/prowl/monitor-tabs/overview-tab";
 import { ItemsTab } from "@/components/prowl/monitor-tabs/items-tab";
 import { HistoryTab } from "@/components/prowl/monitor-tabs/history-tab";
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
   ArrowLeft,
   Play,
   Pause,
@@ -17,6 +24,8 @@ import {
   LayoutDashboard,
   List,
   History,
+  MoreVertical,
+  Copy,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -102,45 +111,64 @@ export default function MonitorDetailPage({
   return (
     <div className="space-y-8">
       {/* Header */}
-      <div className="flex items-center gap-4">
-        <Link href="/dashboard">
+      <div className="flex items-center gap-3 overflow-hidden">
+        <Link href="/dashboard" className="shrink-0">
           <Button variant="ghost" size="icon">
             <ArrowLeft className="h-5 w-5" />
           </Button>
         </Link>
-        <div className="flex-1">
+        <div className="flex-1 min-w-0">
           <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold tracking-tight">{monitor.name}</h1>
+            <h1 className="text-xl sm:text-2xl font-bold tracking-tight truncate">{monitor.name}</h1>
             <StatusBadge status={monitor.status} />
           </div>
           <p className="text-muted-foreground mt-1.5 text-sm leading-relaxed">
             &ldquo;{monitor.prompt}&rdquo;
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            className="gap-1.5"
-            onClick={() => {
-              togglePause(monitorId);
-              toast.success(monitor.status === "paused" ? "Monitor resumed" : "Monitor paused");
-            }}
-          >
-            {monitor.status === "paused" ? (
-              <><Play className="h-3.5 w-3.5" /> Resume</>
-            ) : (
-              <><Pause className="h-3.5 w-3.5" /> Pause</>
-            )}
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            className="gap-1.5 text-destructive hover:text-destructive"
-            onClick={() => setDeleteOpen(true)}
-          >
-            <Trash2 className="h-3.5 w-3.5" /> Delete
-          </Button>
+        <div className="shrink-0">
+          <DropdownMenu>
+            <DropdownMenuTrigger className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-border/50 hover:bg-muted transition-colors">
+              <MoreVertical className="h-4 w-4" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem
+                onClick={() => {
+                  togglePause(monitorId);
+                  toast.success(monitor.status === "paused" ? "Monitor resumed" : "Monitor paused");
+                }}
+              >
+                {monitor.status === "paused" ? (
+                  <><Play className="mr-2 h-4 w-4" /> Resume</>
+                ) : (
+                  <><Pause className="mr-2 h-4 w-4" /> Pause</>
+                )}
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => {
+                  // Clone — open create sheet with this monitor's data
+                  if (typeof window !== "undefined") {
+                    const params = new URLSearchParams({
+                      clone: monitorId,
+                      name: `${monitor.name} (copy)`,
+                      url: monitor.url,
+                      prompt: monitor.prompt,
+                    });
+                    window.location.href = `/dashboard?${params.toString()}`;
+                  }
+                }}
+              >
+                <Copy className="mr-2 h-4 w-4" /> Clone
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                className="text-destructive"
+                onClick={() => setDeleteOpen(true)}
+              >
+                <Trash2 className="mr-2 h-4 w-4" /> Delete
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
 
