@@ -1,4 +1,5 @@
 import { httpAction, internalQuery } from "./_generated/server";
+import { internal } from "./_generated/api";
 import { v } from "convex/values";
 
 const APP_URL = process.env.SITE_URL ?? "https://pagealert.io";
@@ -89,7 +90,7 @@ export const handler = httpAction(async (ctx, request) => {
       ].join("\n"));
 
     } else if (command === "/monitors" || command === "/status") {
-      const data = await ctx.runQuery("telegramWebhook:getMonitorsByChatId" as any, {
+      const data = await ctx.runQuery(internal.telegramWebhook.getMonitorsByChatId, {
         chatId: String(chatId),
       });
       const monitors = (data ?? []) as Array<{ name: string; status: string; matchCount: number; checkCount?: number }>;
@@ -144,12 +145,13 @@ export const handler = httpAction(async (ctx, request) => {
 export const getMonitorsByChatId = internalQuery({
   args: { chatId: v.string() },
   handler: async (ctx, args) => {
-    // Find the notification setting with this chat ID
-    const settings = await ctx.db.query("notificationSettings").collect();
-    const setting = settings.find(
-      (s) => s.channel === "telegram" && s.enabled && s.target === args.chatId
-    );
-    if (!setting) return [];
+    const setting = await ctx.db
+      .query("notificationSettings")
+      .withIndex("by_channel_target", (q) =>
+        q.eq("channel", "telegram").eq("target", args.chatId)
+      )
+      .unique();
+    if (!setting || !setting.enabled) return [];
 
     // Get all monitors for this user
     const monitors = await ctx.db

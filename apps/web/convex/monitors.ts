@@ -428,7 +428,7 @@ export const sendInitialScanNotifications = internalAction({
         channel: "in_app",
         title: `${monitor.name} — ${args.matchCount} match${args.matchCount !== 1 ? "es" : ""} found`,
         message: `Initial scan found ${args.matchCount} match${args.matchCount !== 1 ? "es" : ""} out of ${args.totalItems} items on ${monitor.url}`,
-      }).catch(() => {});
+      }).catch((e) => console.error("[monitors] Notification failed:", e));
     }
 
     // Email
@@ -441,7 +441,7 @@ export const sendInitialScanNotifications = internalAction({
         matchCount: args.matchCount,
         matches: [],
         totalItems: args.totalItems,
-      }).catch(() => {});
+      }).catch((e) => console.error("[monitors] Notification failed:", e));
     }
 
     // Telegram
@@ -458,7 +458,7 @@ export const sendInitialScanNotifications = internalAction({
           url: monitor.url,
           matchCount: args.matchCount,
           totalItems: args.totalItems,
-        }).catch(() => {});
+        }).catch((e) => console.error("[monitors] Notification failed:", e));
       }
     }
 
@@ -476,7 +476,7 @@ export const sendInitialScanNotifications = internalAction({
           url: monitor.url,
           matchCount: args.matchCount,
           totalItems: args.totalItems,
-        }).catch(() => {});
+        }).catch((e) => console.error("[monitors] Notification failed:", e));
       }
     }
   },

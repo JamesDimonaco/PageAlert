@@ -73,6 +73,7 @@ export default function SettingsPage() {
   const [testEmailSending, setTestEmailSending] = useState(false);
   const [testEmailSent, setTestEmailSent] = useState(false);
   const [telegramSaving, setTelegramSaving] = useState(false);
+  const [telegramTesting, setTelegramTesting] = useState(false);
   const [discordSaving, setDiscordSaving] = useState(false);
   const deleteAccountMutation = useMutation(api.account.deleteAccount);
   const sendTestEmail = useAction(api.notifications.sendTestEmail);
@@ -369,7 +370,9 @@ export default function SettingsPage() {
                   <Button
                     variant="outline"
                     size="sm"
+                    disabled={telegramTesting}
                     onClick={async () => {
+                      setTelegramTesting(true);
                       try {
                         const chatId = notifSettings?.find((s) => s.channel === "telegram")?.target;
                         if (chatId) {
@@ -378,9 +381,12 @@ export default function SettingsPage() {
                         }
                       } catch (e) {
                         toast.error("Test failed", { description: e instanceof Error ? e.message : "" });
+                      } finally {
+                        setTelegramTesting(false);
                       }
                     }}
                   >
+                    {telegramTesting ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : null}
                     Send Test
                   </Button>
                   <Button
@@ -420,15 +426,19 @@ export default function SettingsPage() {
                             label: "Enable all",
                             onClick: async () => {
                               try {
-                                for (const m of monitors) {
-                                  const existing = (m as any).notificationChannels as string[] | undefined;
-                                  if (!existing || !existing.includes("telegram")) {
-                                    await updateMonitor({
+                                const updates = monitors
+                                  .filter((m) => {
+                                    const existing = (m as any).notificationChannels as string[] | undefined;
+                                    return !existing || !existing.includes("telegram");
+                                  })
+                                  .map((m) => {
+                                    const existing = ((m as any).notificationChannels ?? ["email"]) as string[];
+                                    return updateMonitor({
                                       id: m._id,
-                                      notificationChannels: [...(existing ?? ["email"]), "telegram"] as any,
+                                      notificationChannels: [...existing, "telegram"] as any,
                                     });
-                                  }
-                                }
+                                  });
+                                await Promise.all(updates);
                                 toast.success(`Telegram enabled on all monitors`);
                               } catch {
                                 toast.error("Failed to update monitors");

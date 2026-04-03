@@ -133,9 +133,13 @@ export default function MonitorDetailPage({
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               <DropdownMenuItem
-                onClick={() => {
-                  togglePause(monitorId);
-                  toast.success(monitor.status === "paused" ? "Monitor resumed" : "Monitor paused");
+                onClick={async () => {
+                  try {
+                    await togglePause(monitorId);
+                    toast.success(monitor.status === "paused" ? "Monitor resumed" : "Monitor paused");
+                  } catch {
+                    toast.error("Failed to update monitor");
+                  }
                 }}
               >
                 {monitor.status === "paused" ? (
@@ -147,15 +151,13 @@ export default function MonitorDetailPage({
               <DropdownMenuItem
                 onClick={() => {
                   // Clone — open create sheet with this monitor's data
-                  if (typeof window !== "undefined") {
-                    const params = new URLSearchParams({
-                      clone: monitorId,
-                      name: `${monitor.name} (copy)`,
-                      url: monitor.url,
-                      prompt: monitor.prompt,
-                    });
-                    window.location.href = `/dashboard?${params.toString()}`;
-                  }
+                  const params = new URLSearchParams({
+                    clone: monitorId,
+                    name: `${monitor.name} (copy)`,
+                    url: monitor.url,
+                    prompt: monitor.prompt,
+                  });
+                  router.push(`/dashboard?${params.toString()}`);
                 }}
               >
                 <Copy className="mr-2 h-4 w-4" /> Clone
