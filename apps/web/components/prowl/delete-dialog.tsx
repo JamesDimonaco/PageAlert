@@ -49,8 +49,10 @@ export function DeleteDialog({ open, onOpenChange, onConfirm, monitorName }: Del
               try {
                 await onConfirm();
                 onOpenChange(false);
-              } catch {
-                // Error handling is done by the caller's onConfirm
+              } catch (err) {
+                if (process.env.NODE_ENV !== "production") {
+                  console.error("[DeleteDialog] onConfirm error:", err);
+                }
               } finally {
                 setIsDeleting(false);
               }
