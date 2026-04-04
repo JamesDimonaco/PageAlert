@@ -30,6 +30,8 @@ import {
   trackNotificationChannelToggled,
 } from "@/lib/posthog";
 
+type NotificationChannel = "email" | "telegram" | "discord";
+
 export default function SettingsPage() {
   const { user, signOut } = useAuth();
   const { monitors } = useMonitors();
@@ -209,7 +211,7 @@ export default function SettingsPage() {
         <TabsContent value="notifications" className="mt-8 space-y-8">
           <div className="rounded-lg border border-border/20 bg-muted/30 px-4 py-3">
             <p className="text-sm text-muted-foreground leading-relaxed">
-              Notifications are sent for <strong className="text-foreground">all your monitors</strong> when new matches are found or errors occur.
+              Notifications are sent for <strong className="text-foreground">all your monitors </strong>when new matches are found or errors occur.
               Enable any channels below and they&apos;ll all receive alerts.
               {tier === "free" && " Upgrade to Pro for Telegram and Discord."}
             </p>
@@ -416,14 +418,17 @@ export default function SettingsPage() {
                               try {
                                 const updates = monitors
                                   .filter((m) => {
-                                    const existing = (m as any).notificationChannels as string[] | undefined;
+                                    const existing = (m as { notificationChannels?: NotificationChannel[] })
+                                      .notificationChannels;
                                     return !existing || !existing.includes("telegram");
                                   })
                                   .map((m) => {
-                                    const existing = ((m as any).notificationChannels ?? ["email"]) as string[];
+                                    const existing: NotificationChannel[] =
+                                      (m as { notificationChannels?: NotificationChannel[] }).notificationChannels ??
+                                      (["email"] as NotificationChannel[]);
                                     return updateMonitor({
                                       id: m._id,
-                                      notificationChannels: [...existing, "telegram"] as any,
+                                      notificationChannels: [...existing, "telegram"],
                                     });
                                   });
                                 await Promise.all(updates);
