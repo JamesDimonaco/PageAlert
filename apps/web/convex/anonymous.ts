@@ -44,7 +44,7 @@ export const createAnonymous = mutation({
       await ctx.db.insert("anonymousScanCounter", { date: today, count: 1 });
     }
 
-    // Validate URL
+    // Validate URL with SSRF protection
     let parsed: URL;
     try {
       parsed = new URL(args.url);
@@ -53,6 +53,24 @@ export const createAnonymous = mutation({
     }
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
       throw new Error("Only http and https URLs are allowed");
+    }
+    const hostname = parsed.hostname.toLowerCase();
+    const blockedHosts = [
+      "localhost", "127.0.0.1", "0.0.0.0", "[::1]",
+      "metadata.google.internal", "169.254.169.254",
+    ];
+    if (blockedHosts.includes(hostname)) {
+      throw new Error("This hostname is not allowed");
+    }
+    const ipMatch = hostname.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+    if (ipMatch) {
+      const [, a, b] = ipMatch.map(Number);
+      if (a === 10 || (a === 172 && b! >= 16 && b! <= 31) || (a === 192 && b === 168) || a === 127 || (a === 169 && b === 254) || a === 0) {
+        throw new Error("URLs pointing to private/internal IP addresses are not allowed");
+      }
+    }
+    if (!hostname.includes(".")) {
+      throw new Error("URL must use a fully qualified domain name");
     }
 
     const now = Date.now();

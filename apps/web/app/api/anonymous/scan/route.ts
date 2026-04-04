@@ -71,11 +71,23 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "URL and prompt are required" }, { status: 400 });
   }
 
-  // Basic URL validation
+  // URL validation + SSRF protection
   try {
     const parsed = new URL(body.url);
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
       return NextResponse.json({ error: "Only http/https URLs are allowed" }, { status: 400 });
+    }
+    const hostname = parsed.hostname.toLowerCase();
+    const blocked = ["localhost", "127.0.0.1", "0.0.0.0", "[::1]", "metadata.google.internal", "169.254.169.254"];
+    if (blocked.includes(hostname) || !hostname.includes(".")) {
+      return NextResponse.json({ error: "This URL is not allowed" }, { status: 400 });
+    }
+    const ipMatch = hostname.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+    if (ipMatch) {
+      const [, a, b] = ipMatch.map(Number);
+      if (a === 10 || (a === 172 && b! >= 16 && b! <= 31) || (a === 192 && b === 168) || a === 127 || a === 0) {
+        return NextResponse.json({ error: "This URL is not allowed" }, { status: 400 });
+      }
     }
   } catch {
     return NextResponse.json({ error: "Invalid URL" }, { status: 400 });
