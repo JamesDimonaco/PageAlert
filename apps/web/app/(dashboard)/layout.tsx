@@ -4,8 +4,11 @@ import { Navbar } from "@/components/prowl/navbar";
 import { useAuth } from "@/hooks/use-auth";
 import { CreateMonitorProvider } from "@/hooks/use-create-monitor";
 import { useRouter } from "next/navigation";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
+import { useMutation } from "convex/react";
+import { api } from "@/convex/_generated/api";
 import { Loader2 } from "lucide-react";
+import { toast } from "sonner";
 
 export default function DashboardLayout({
   children,
@@ -14,12 +17,27 @@ export default function DashboardLayout({
 }) {
   const { isAuthenticated, isLoading } = useAuth();
   const router = useRouter();
+  const claimAnonymous = useMutation(api.anonymous.claimMyAnonymousMonitors);
+  const claimedRef = useRef(false);
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
       router.replace("/login");
     }
   }, [isLoading, isAuthenticated, router]);
+
+  // Transfer anonymous monitors on first dashboard load
+  useEffect(() => {
+    if (isAuthenticated && !claimedRef.current) {
+      claimedRef.current = true;
+      claimAnonymous().then((result) => {
+        if (result.transferred > 0) {
+          localStorage.removeItem("pagealert_anon_monitor");
+          toast.success(`${result.transferred} monitor${result.transferred !== 1 ? "s" : ""} transferred from your free scan!`);
+        }
+      }).catch(() => {});
+    }
+  }, [isAuthenticated, claimAnonymous]);
 
   if (isLoading) {
     return (

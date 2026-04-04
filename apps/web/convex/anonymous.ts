@@ -242,3 +242,34 @@ export const transferToUser = internalMutation({
     return { transferred };
   },
 });
+
+/** Public: transfer anonymous monitors to the authenticated user */
+export const claimMyAnonymousMonitors = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity || !identity.email) return { transferred: 0 };
+
+    const monitors = await ctx.db
+      .query("monitors")
+      .withIndex("by_anonymousEmail", (q) => q.eq("anonymousEmail", identity.email!.toLowerCase()))
+      .collect();
+
+    let transferred = 0;
+    for (const monitor of monitors) {
+      if (monitor.isAnonymous) {
+        await ctx.db.patch(monitor._id, {
+          userId: identity.subject,
+          userEmail: identity.email!.toLowerCase(),
+          isAnonymous: undefined,
+          expiresAt: undefined,
+          anonymousEmail: undefined,
+          updatedAt: Date.now(),
+        });
+        transferred++;
+      }
+    }
+
+    return { transferred };
+  },
+});

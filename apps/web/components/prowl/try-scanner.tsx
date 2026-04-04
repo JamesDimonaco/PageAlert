@@ -127,6 +127,7 @@ export function TryScanner() {
 
       if (!res.ok) {
         await saveError({ monitorId, anonId, error: json.error || "Scan failed" });
+        localStorage.removeItem("pagealert_anon_monitor");
         toast.error("Scan failed", { description: json.error });
         setScanning(false);
         return;
@@ -144,6 +145,7 @@ export function TryScanner() {
       // Navigate to results page
       router.push(`/try/${monitorId}`);
     } catch (e) {
+      localStorage.removeItem("pagealert_anon_monitor");
       toast.error("Something went wrong", {
         description: e instanceof Error ? e.message : "Please try again",
       });
