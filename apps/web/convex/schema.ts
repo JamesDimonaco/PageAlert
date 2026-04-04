@@ -36,13 +36,17 @@ export default defineSchema({
       v.literal("telegram"),
       v.literal("discord")
     ))),
+    isAnonymous: v.optional(v.boolean()),
+    anonymousEmail: v.optional(v.string()),
+    expiresAt: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
     .index("by_userId", ["userId"])
     .index("by_status", ["status"])
     .index("by_userId_status", ["userId", "status"])
-    .index("by_nextCheckAt", ["nextCheckAt"]),
+    .index("by_nextCheckAt", ["nextCheckAt"])
+    .index("by_anonymousEmail", ["anonymousEmail"]),
 
   scrapeResults: defineTable({
     monitorId: v.id("monitors"),
@@ -147,4 +151,9 @@ export default defineSchema({
   })
     .index("by_channel_target", ["channel", "target"])
     .index("by_userId", ["userId"]),
+
+  anonymousScanCounter: defineTable({
+    date: v.string(), // YYYY-MM-DD
+    count: v.number(),
+  }).index("by_date", ["date"]),
 });
