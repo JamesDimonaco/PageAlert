@@ -365,10 +365,12 @@ export default function SettingsPage() {
                       setTelegramTesting(true);
                       try {
                         const chatId = notifSettings?.find((s) => s.channel === "telegram")?.target;
-                        if (chatId) {
-                          await sendTelegramTest({ chatId });
-                          toast.success("Test message sent to Telegram");
+                        if (!chatId) {
+                          toast.error("No Telegram chat ID configured");
+                          return;
                         }
+                        await sendTelegramTest({ chatId });
+                        toast.success("Test message sent to Telegram");
                       } catch (e) {
                         toast.error("Test failed", { description: e instanceof Error ? e.message : "" });
                       } finally {
@@ -420,12 +422,12 @@ export default function SettingsPage() {
                                   .filter((m) => {
                                     const existing = (m as { notificationChannels?: NotificationChannel[] })
                                       .notificationChannels;
-                                    return !existing || !existing.includes("telegram");
+                                    // Skip undefined (already sends to all) and those already including telegram
+                                    return existing !== undefined && !existing.includes("telegram");
                                   })
                                   .map((m) => {
-                                    const existing: NotificationChannel[] =
-                                      (m as { notificationChannels?: NotificationChannel[] }).notificationChannels ??
-                                      (["email"] as NotificationChannel[]);
+                                    const existing = (m as { notificationChannels?: NotificationChannel[] })
+                                      .notificationChannels!;
                                     return updateMonitor({
                                       id: m._id,
                                       notificationChannels: [...existing, "telegram"],
