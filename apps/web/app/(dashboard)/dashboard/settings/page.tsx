@@ -295,21 +295,15 @@ export default function SettingsPage() {
             </CardContent>
           </Card>
 
-          <Card className={`border-border/30 bg-card/50 shadow-sm shadow-black/5 ${tier === "free" ? "opacity-60" : ""}`}>
+          <Card className="border-border/30 bg-card/50 shadow-sm shadow-black/5">
             <CardHeader className="pb-4">
               <CardTitle className="flex items-center gap-2 text-lg font-semibold">
                 <MessageCircle className="h-5 w-5 text-muted-foreground" />
                 Telegram
-                {tier === "free" && (
-                  <Badge variant="outline" className="text-[10px] gap-1 px-1.5 py-0 ml-1">
-                    <Lock className="h-2.5 w-2.5" />
-                    Pro
-                  </Badge>
-                )}
               </CardTitle>
               <CardDescription className="text-sm">
                 {tier === "free"
-                  ? "Upgrade to Pro to get instant Telegram notifications"
+                  ? "Get instant Telegram notifications on one monitor"
                   : "Get instant notifications via Telegram bot"}
               </CardDescription>
             </CardHeader>
@@ -321,7 +315,6 @@ export default function SettingsPage() {
                   placeholder="Your Telegram chat ID"
                   value={telegramChatId}
                   onChange={(e) => setTelegramChatId(e.target.value)}
-                  disabled={tier === "free"}
                 />
                 <div className="text-xs text-muted-foreground leading-relaxed space-y-1">
                   <p className="font-medium text-foreground/70">How to get your Chat ID:</p>
@@ -359,12 +352,7 @@ export default function SettingsPage() {
                   </Dialog>
                 </div>
               </div>
-              {tier === "free" ? (
-                <Button size="sm" className="gap-1.5" onClick={() => handleCheckout("pro")}>
-                  <Sparkles className="h-3.5 w-3.5" />
-                  Upgrade to Pro
-                </Button>
-              ) : notifSettings?.find((s) => s.channel === "telegram")?.enabled ? (
+              {notifSettings?.find((s) => s.channel === "telegram")?.enabled ? (
                 <div className="flex items-center gap-2 flex-wrap">
                   <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-xs">Connected</Badge>
                   <Button
