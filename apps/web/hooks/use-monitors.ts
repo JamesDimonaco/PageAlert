@@ -34,7 +34,7 @@ export function useMonitors() {
   const togglePause = (id: Id<"monitors">) => {
     const monitor = monitors.find((m) => m._id === id);
     if (monitor) {
-      updateMutation({
+      return updateMutation({
         id,
         status: monitor.status === "paused" ? "active" : "paused",
       });

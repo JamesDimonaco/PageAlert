@@ -76,7 +76,8 @@ export function ChannelSelector({ value, onChange, monitorId, disabled }: Channe
       if (freeMonitorWithChannels) {
         const otherName = (freeMonitorWithChannels as any).name;
         const otherId = freeMonitorWithChannels._id;
-        toast(`${CHANNEL_CONFIG[channel].label} is enabled on "${otherName}". Switch it here?`, {
+        toast(`${CHANNEL_CONFIG[channel].label} is active on "${otherName}". Move it to this monitor?`, {
+          duration: 8000,
           action: {
             label: "Switch",
             onClick: async () => {
@@ -118,6 +119,9 @@ export function ChannelSelector({ value, onChange, monitorId, disabled }: Channe
           const isConfigured = configuredChannels.has(channel);
           const available = isChannelAvailable(channel);
 
+          // Free tier: channel is configured but used on another monitor
+          const isLockedFree = isConfigured && !available && tier === "free";
+
           return (
             <button
               key={channel}
@@ -125,21 +129,23 @@ export function ChannelSelector({ value, onChange, monitorId, disabled }: Channe
               onClick={() => handleToggle(channel)}
               disabled={disabled}
               className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
-                isActive
-                  ? "border-primary/30 bg-primary/10 text-primary"
-                  : isConfigured && available
-                    ? "border-border/50 bg-card hover:border-primary/30 hover:bg-primary/5 text-muted-foreground"
-                    : "border-border/30 bg-muted/30 text-muted-foreground/50 cursor-default"
+                isLockedFree
+                  ? "border-amber-500/30 bg-amber-500/5 text-amber-400 hover:bg-amber-500/10"
+                  : isActive
+                    ? "border-primary/30 bg-primary/10 text-primary"
+                    : isConfigured && available
+                      ? "border-border/50 bg-card hover:border-primary/30 hover:bg-primary/5 text-muted-foreground"
+                      : "border-border/30 bg-muted/30 text-muted-foreground/50 cursor-default"
               }`}
             >
               <Icon className="h-3 w-3" />
               {config.label}
-              {isActive && <Check className="h-3 w-3" />}
+              {isActive && !isLockedFree && <Check className="h-3 w-3" />}
               {!isConfigured && (
                 <Settings className="h-3 w-3 text-muted-foreground/40" />
               )}
-              {isConfigured && !available && tier === "free" && (
-                <Badge variant="outline" className="text-[9px] px-1 py-0 ml-0.5">1 monitor</Badge>
+              {isLockedFree && (
+                <Badge variant="outline" className="text-[9px] px-1 py-0 ml-0.5 border-amber-500/30 text-amber-400">1 monitor</Badge>
               )}
             </button>
           );

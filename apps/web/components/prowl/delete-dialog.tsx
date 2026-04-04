@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -9,18 +10,20 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Trash2 } from "lucide-react";
+import { Trash2, Loader2 } from "lucide-react";
 
 interface DeleteDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onConfirm: () => void;
+  onConfirm: () => void | Promise<void>;
   monitorName: string;
 }
 
 export function DeleteDialog({ open, onOpenChange, onConfirm, monitorName }: DeleteDialogProps) {
+  const [isDeleting, setIsDeleting] = useState(false);
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={(v) => { if (!isDeleting) onOpenChange(v); }}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
@@ -35,17 +38,28 @@ export function DeleteDialog({ open, onOpenChange, onConfirm, monitorName }: Del
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>
-          <Button variant="ghost" onClick={() => onOpenChange(false)}>
+          <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={isDeleting}>
             Cancel
           </Button>
           <Button
             variant="destructive"
-            onClick={() => {
-              onConfirm();
-              onOpenChange(false);
+            disabled={isDeleting}
+            onClick={async () => {
+              setIsDeleting(true);
+              try {
+                await onConfirm();
+                onOpenChange(false);
+              } catch (err) {
+                if (process.env.NODE_ENV !== "production") {
+                  console.error("[DeleteDialog] onConfirm error:", err);
+                }
+              } finally {
+                setIsDeleting(false);
+              }
             }}
           >
-            Delete
+            {isDeleting ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null}
+            {isDeleting ? "Deleting..." : "Delete"}
           </Button>
         </DialogFooter>
       </DialogContent>

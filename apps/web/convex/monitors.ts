@@ -1,5 +1,6 @@
 import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import { mutation, query, internalAction, internalQuery } from "./_generated/server";
+import { internal } from "./_generated/api";
 import { intervalToMs, MAX_RETRIES } from "./shared";
 
 // ---- Resource Limits ----
@@ -241,6 +242,15 @@ export const saveScanResult = mutation({
       hasNewMatches: matchCount > 0,
       scrapedAt: now,
     });
+
+    // Send notifications for initial scan matches
+    if (matchCount > 0) {
+      await ctx.scheduler.runAfter(0, internal.monitors.sendInitialScanNotifications, {
+        monitorId: id,
+        matchCount,
+        totalItems: items.length,
+      });
+    }
   },
 });
 
@@ -386,5 +396,88 @@ export const getResults = query({
       .withIndex("by_monitorId", (q) => q.eq("monitorId", monitorId))
       .order("desc")
       .take(safeLimit);
+  },
+});
+
+/** Internal: get a monitor by ID without auth check (for internal actions) */
+export const getInternal = internalQuery({
+  args: { id: v.id("monitors") },
+  handler: async (ctx, { id }) => ctx.db.get(id),
+});
+
+/** Send notifications for the initial scan when matches are found */
+export const sendInitialScanNotifications = internalAction({
+  args: {
+    monitorId: v.id("monitors"),
+    matchCount: v.number(),
+    totalItems: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const monitor = await ctx.runQuery(internal.monitors.getInternal, { id: args.monitorId });
+    if (!monitor) return;
+
+    const monitorChannels = (monitor as any).notificationChannels as string[] | undefined;
+    const shouldSend = (channel: string) => !monitorChannels || monitorChannels.includes(channel);
+    const hasAnyChannel = !monitorChannels || monitorChannels.length > 0;
+
+    // In-app notification
+    if (hasAnyChannel) {
+      await ctx.runMutation(internal.userNotifications.create, {
+        userId: monitor.userId,
+        monitorId: args.monitorId,
+        channel: "in_app",
+        title: `${monitor.name} — ${args.matchCount} match${args.matchCount !== 1 ? "es" : ""} found`,
+        message: `Initial scan found ${args.matchCount} match${args.matchCount !== 1 ? "es" : ""} out of ${args.totalItems} items on ${monitor.url}`,
+      }).catch((e) => console.error("[monitors] Notification failed:", e));
+    }
+
+    // Email
+    if (shouldSend("email") && monitor.userEmail) {
+      await ctx.runAction(internal.emails.sendMatchAlert, {
+        to: monitor.userEmail,
+        monitorName: monitor.name,
+        monitorId: args.monitorId,
+        url: monitor.url,
+        matchCount: args.matchCount,
+        matches: [],
+        totalItems: args.totalItems,
+      }).catch((e) => console.error("[monitors] Notification failed:", e));
+    }
+
+    // Telegram
+    if (shouldSend("telegram")) {
+      const telegramSetting = await ctx.runQuery(internal.scheduler.getNotificationSetting, {
+        userId: monitor.userId,
+        channel: "telegram",
+      });
+      if (telegramSetting?.enabled && telegramSetting.target) {
+        await ctx.runAction(internal.telegram.sendMatchAlert, {
+          chatId: telegramSetting.target,
+          monitorName: monitor.name,
+          monitorId: args.monitorId,
+          url: monitor.url,
+          matchCount: args.matchCount,
+          totalItems: args.totalItems,
+        }).catch((e) => console.error("[monitors] Notification failed:", e));
+      }
+    }
+
+    // Discord
+    if (shouldSend("discord")) {
+      const discordSetting = await ctx.runQuery(internal.scheduler.getNotificationSetting, {
+        userId: monitor.userId,
+        channel: "discord",
+      });
+      if (discordSetting?.enabled && discordSetting.target) {
+        await ctx.runAction(internal.discord.sendMatchAlert, {
+          webhookUrl: discordSetting.target,
+          monitorName: monitor.name,
+          monitorId: args.monitorId,
+          url: monitor.url,
+          matchCount: args.matchCount,
+          totalItems: args.totalItems,
+        }).catch((e) => console.error("[monitors] Notification failed:", e));
+      }
+    }
   },
 });

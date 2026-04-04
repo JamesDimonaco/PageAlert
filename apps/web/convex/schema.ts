@@ -126,7 +126,8 @@ export default defineSchema({
     target: v.string(),
   })
     .index("by_userId", ["userId"])
-    .index("by_userId_channel", ["userId", "channel"]),
+    .index("by_userId_channel", ["userId", "channel"])
+    .index("by_channel_target", ["channel", "target"]),
 
   userTiers: defineTable({
     userId: v.string(),
