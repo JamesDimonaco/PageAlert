@@ -258,7 +258,21 @@ export default function LogsPage() {
   );
 }
 
-function LogEntry({ log }: { log: { _id: string; url: string; status: "success" | "error" | "timeout"; createdAt: number; durationMs: number; monitorName?: string; itemCount?: number; matchCount?: number; error?: string; aiConfidence?: number } }) {
+interface Log {
+  _id: string;
+  url: string;
+  status: "success" | "error" | "timeout";
+  createdAt: number;
+  durationMs: number;
+  monitorId?: string;
+  monitorName?: string;
+  itemCount?: number;
+  matchCount?: number;
+  error?: string;
+  aiConfidence?: number;
+}
+
+function LogEntry({ log }: { log: Log }) {
   const config = statusConfig[log.status];
   const Icon = config.icon;
 
