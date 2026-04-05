@@ -30,7 +30,20 @@ export default function DashboardLayout({
   useEffect(() => {
     if (isAuthenticated && !claimedRef.current) {
       claimedRef.current = true;
-      claimAnonymous().then((result) => {
+
+      // Read localStorage for anonymous monitor to transfer by ID
+      let monitorId: string | undefined;
+      let anonId: string | undefined;
+      try {
+        const stored = localStorage.getItem("pagealert_anon_monitor");
+        if (stored) {
+          const data = JSON.parse(stored);
+          monitorId = data.monitorId;
+          anonId = data.anonId;
+        }
+      } catch {}
+
+      claimAnonymous({ monitorId, anonId } as any).then((result) => {
         if (result.transferred > 0) {
           localStorage.removeItem("pagealert_anon_monitor");
           toast.success(`${result.transferred} monitor${result.transferred !== 1 ? "s" : ""} transferred from your free scan!`);

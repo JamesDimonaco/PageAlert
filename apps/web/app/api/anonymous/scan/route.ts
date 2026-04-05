@@ -85,7 +85,7 @@ export async function POST(request: Request) {
     const ipMatch = hostname.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
     if (ipMatch) {
       const [, a, b] = ipMatch.map(Number);
-      if (a === 10 || (a === 172 && b! >= 16 && b! <= 31) || (a === 192 && b === 168) || a === 127 || a === 0) {
+      if (a === 10 || (a === 172 && b! >= 16 && b! <= 31) || (a === 192 && b === 168) || a === 127 || (a === 169 && b === 254) || a === 0) {
         return NextResponse.json({ error: "This URL is not allowed" }, { status: 400 });
       }
     }

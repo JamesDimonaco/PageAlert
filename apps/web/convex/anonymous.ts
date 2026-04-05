@@ -173,7 +173,7 @@ export const getAnonymous = query({
       matchCount: monitor.matchCount,
       lastError: monitor.lastError,
       schema: monitor.schema,
-      anonymousEmail: monitor.anonymousEmail,
+      hasClaimed: !!monitor.anonymousEmail,
       createdAt: monitor.createdAt,
       expiresAt: monitor.expiresAt,
     };
@@ -243,31 +243,51 @@ export const transferToUser = internalMutation({
   },
 });
 
-/** Public: transfer anonymous monitors to the authenticated user */
+/** Public: transfer anonymous monitors to the authenticated user.
+ *  Finds by email match OR by specific monitorId from localStorage. */
 export const claimMyAnonymousMonitors = mutation({
-  args: {},
-  handler: async (ctx) => {
+  args: {
+    monitorId: v.optional(v.id("monitors")),
+    anonId: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
-    if (!identity || !identity.email) return { transferred: 0 };
+    if (!identity) return { transferred: 0 };
 
-    const monitors = await ctx.db
-      .query("monitors")
-      .withIndex("by_anonymousEmail", (q) => q.eq("anonymousEmail", identity.email!.toLowerCase()))
-      .collect();
+    const toTransfer: Array<{ _id: any }> = [];
+
+    // Find by email match
+    if (identity.email) {
+      const byEmail = await ctx.db
+        .query("monitors")
+        .withIndex("by_anonymousEmail", (q) => q.eq("anonymousEmail", identity.email!.toLowerCase()))
+        .collect();
+      for (const m of byEmail) {
+        if (m.isAnonymous) toTransfer.push(m);
+      }
+    }
+
+    // Find by localStorage monitorId + anonId
+    if (args.monitorId && args.anonId) {
+      const byId = await ctx.db.get(args.monitorId);
+      if (byId && byId.isAnonymous && byId.userId === args.anonId) {
+        if (!toTransfer.some((m) => m._id === byId._id)) {
+          toTransfer.push(byId);
+        }
+      }
+    }
 
     let transferred = 0;
-    for (const monitor of monitors) {
-      if (monitor.isAnonymous) {
-        await ctx.db.patch(monitor._id, {
-          userId: identity.subject,
-          userEmail: identity.email!.toLowerCase(),
-          isAnonymous: undefined,
-          expiresAt: undefined,
-          anonymousEmail: undefined,
-          updatedAt: Date.now(),
-        });
-        transferred++;
-      }
+    for (const monitor of toTransfer) {
+      await ctx.db.patch(monitor._id, {
+        userId: identity.subject,
+        userEmail: identity.email?.toLowerCase(),
+        isAnonymous: undefined,
+        expiresAt: undefined,
+        anonymousEmail: undefined,
+        updatedAt: Date.now(),
+      });
+      transferred++;
     }
 
     return { transferred };

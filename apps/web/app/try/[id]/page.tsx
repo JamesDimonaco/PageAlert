@@ -75,7 +75,7 @@ export default function TryResultPage({
   const items = Array.isArray(schema?.items) ? schema.items as Record<string, unknown>[] : [];
   const insights = schema?.insights as Record<string, unknown> | undefined;
   const confidence = Number(insights?.confidence ?? 0);
-  const hasClaimed = !!monitor.anonymousEmail;
+  const hasClaimed = monitor.hasClaimed;
 
   async function handleClaim() {
     if (!email || !anonId) return;

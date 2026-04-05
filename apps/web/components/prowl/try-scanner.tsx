@@ -72,24 +72,30 @@ export function TryScanner() {
   async function handleScan() {
     if (!url || !prompt || scanning) return;
 
-    // Check if user already has an anonymous monitor
-    const existing = typeof window !== "undefined"
-      ? localStorage.getItem("pagealert_anon_monitor")
-      : null;
-    if (existing) {
-      try {
-        const data = JSON.parse(existing);
-        if (data.monitorId) {
-          toast("You already have a free scan running", {
-            action: {
-              label: "View results",
-              onClick: () => router.push(`/try/${data.monitorId}`),
-            },
-            duration: 8000,
-          });
-          return;
+    // Check if user already has a recent anonymous monitor (< 1 hour old)
+    if (typeof window !== "undefined") {
+      const existing = localStorage.getItem("pagealert_anon_monitor");
+      if (existing) {
+        try {
+          const data = JSON.parse(existing);
+          const ageMs = Date.now() - (data.createdAt ?? 0);
+          const ONE_HOUR = 60 * 60 * 1000;
+          if (data.monitorId && ageMs < ONE_HOUR) {
+            toast("You already have a free scan running", {
+              action: {
+                label: "View results",
+                onClick: () => router.push(`/try/${data.monitorId}`),
+              },
+              duration: 8000,
+            });
+            return;
+          }
+          // Expired — clear and allow new scan
+          localStorage.removeItem("pagealert_anon_monitor");
+        } catch {
+          localStorage.removeItem("pagealert_anon_monitor");
         }
-      } catch {}
+      }
     }
 
     setScanning(true);
