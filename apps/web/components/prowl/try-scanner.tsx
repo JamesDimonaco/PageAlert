@@ -12,25 +12,18 @@ import { toast } from "sonner";
 
 const EXAMPLES = [
   {
-    label: "RAM prices",
-    emoji: "💾",
-    name: "DDR5 RAM deals",
-    url: "https://www.newegg.com/p/pl?N=100007611%20601203950",
-    prompt: "DDR5 RAM 32GB kit under $200",
+    label: "Price tracking",
+    emoji: "💰",
+    name: "MacBook deals on eBay",
+    url: "https://www.ebay.co.uk/sch/i.html?_nkw=macbook+pro+m3&_sop=15&LH_BIN=1",
+    prompt: "MacBook Pro M3 under £1000",
   },
   {
-    label: "Restock alerts",
-    emoji: "🎮",
-    name: "PS5 stock check",
-    url: "https://www.amazon.com/s?k=playstation+5+console",
-    prompt: "PlayStation 5 console in stock under $500",
-  },
-  {
-    label: "Job hunting",
+    label: "Startup jobs",
     emoji: "💼",
-    name: "Remote React jobs",
-    url: "https://uk.indeed.com/jobs?q=react+developer&l=Remote",
-    prompt: "Senior React developer remote position",
+    name: "YC startup jobs",
+    url: "https://news.ycombinator.com/jobs",
+    prompt: "Engineering role at an AI or developer tools company",
   },
   {
     label: "Property search",
@@ -40,11 +33,18 @@ const EXAMPLES = [
     prompt: "3 bedroom house under £400,000",
   },
   {
-    label: "Sneaker drops",
-    emoji: "👟",
-    name: "Nike Dunks",
-    url: "https://www.nike.com/w/dunk-shoes-90aohzy7ok",
-    prompt: "Nike Dunk Low in stock under $120",
+    label: "Open source",
+    emoji: "⭐",
+    name: "Trending Next.js repos",
+    url: "https://github.com/topics/nextjs?l=typescript&o=desc&s=stars",
+    prompt: "Repository with over 10,000 stars",
+  },
+  {
+    label: "Phone deals",
+    emoji: "📱",
+    name: "iPhone deals on eBay",
+    url: "https://www.ebay.co.uk/sch/i.html?_nkw=iphone+15+pro&_sop=15&LH_BIN=1",
+    prompt: "iPhone 15 Pro under £700",
   },
 ];
 
