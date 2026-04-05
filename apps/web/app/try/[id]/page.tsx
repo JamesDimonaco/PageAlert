@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { toast } from "sonner";
+import { trackEvent } from "@/lib/posthog";
 
 export default function TryResultPage({
   params,
@@ -82,6 +83,7 @@ export default function TryResultPage({
     setClaiming(true);
     try {
       await claimMutation({ monitorId, anonId, email });
+      trackEvent("anonymous_email_captured", { monitorId });
       toast.success("Email saved! We'll notify you when matches are found.");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to save email");

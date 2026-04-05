@@ -1,5 +1,6 @@
 import { v } from "convex/values";
-import { mutation, query, internalMutation } from "./_generated/server";
+import { mutation, query, internalMutation, internalAction } from "./_generated/server";
+import { internal } from "./_generated/api";
 
 const DAILY_CAP = 20;
 const EXPIRY_NO_EMAIL = 7 * 24 * 60 * 60 * 1000; // 7 days
@@ -208,6 +209,16 @@ export const claimWithEmail = mutation({
       updatedAt: now,
     });
 
+    // Schedule email notification about results
+    await ctx.scheduler.runAfter(0, internal.emails.sendAnonymousScanComplete, {
+      to: args.email.trim().toLowerCase(),
+      monitorName: monitor.name,
+      monitorId: args.monitorId,
+      url: monitor.url,
+      matchCount: monitor.matchCount,
+      totalItems: Array.isArray((monitor.schema as any)?.items) ? (monitor.schema as any).items.length : 0,
+    });
+
     return { claimed: true };
   },
 });
@@ -291,5 +302,64 @@ export const claimMyAnonymousMonitors = mutation({
     }
 
     return { transferred };
+  },
+});
+
+/** Cleanup expired anonymous monitors — called by cron daily */
+export const cleanupExpired = internalAction({
+  handler: async (ctx) => {
+    const result = await ctx.runMutation(internal.anonymous.deleteExpiredMonitors);
+    if (result.deleted > 0) {
+      console.log(`[anonymous] Cleaned up ${result.deleted} expired anonymous monitors`);
+    }
+  },
+});
+
+/** Delete expired anonymous monitors and their data */
+export const deleteExpiredMonitors = internalMutation({
+  handler: async (ctx) => {
+    const now = Date.now();
+
+    // Find all anonymous monitors that have expired
+    const allMonitors = await ctx.db.query("monitors").collect();
+    const expired = allMonitors.filter(
+      (m) => m.isAnonymous && m.expiresAt && m.expiresAt < now
+    );
+
+    let deleted = 0;
+    for (const monitor of expired) {
+      // Delete scrape results
+      const results = await ctx.db
+        .query("scrapeResults")
+        .withIndex("by_monitorId", (q) => q.eq("monitorId", monitor._id))
+        .collect();
+      for (const result of results) {
+        await ctx.db.delete(result._id);
+      }
+
+      // Delete notifications
+      const notifs = await ctx.db
+        .query("notifications")
+        .withIndex("by_monitorId", (q) => q.eq("monitorId", monitor._id))
+        .collect();
+      for (const notif of notifs) {
+        await ctx.db.delete(notif._id);
+      }
+
+      // Delete the monitor
+      await ctx.db.delete(monitor._id);
+      deleted++;
+    }
+
+    // Also clean up old daily counters (older than 7 days)
+    const weekAgo = new Date(now - 7 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]!;
+    const counters = await ctx.db.query("anonymousScanCounter").collect();
+    for (const counter of counters) {
+      if (counter.date < weekAgo) {
+        await ctx.db.delete(counter._id);
+      }
+    }
+
+    return { deleted };
   },
 });

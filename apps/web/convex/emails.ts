@@ -231,3 +231,74 @@ export const sendErrorAlert = internalAction({
     }
   },
 });
+
+/** Send scan complete email to anonymous user who gave their email */
+export const sendAnonymousScanComplete = internalAction({
+  args: {
+    to: v.string(),
+    monitorName: v.string(),
+    monitorId: v.string(),
+    url: v.string(),
+    matchCount: v.number(),
+    totalItems: v.number(),
+  },
+  handler: async (_ctx, args) => {
+    const apiKey = process.env.RESEND_API_KEY;
+    if (!apiKey) return;
+
+    const html = `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f4f4f5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif">
+  <div style="max-width:560px;margin:0 auto;padding:40px 20px">
+    <div style="background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.1)">
+      <div style="background:#3b82f6;padding:24px 32px">
+        <h1 style="margin:0;color:#fff;font-size:20px;font-weight:600">Your scan is ready!</h1>
+      </div>
+      <div style="padding:32px">
+        <p style="margin:0 0 16px;color:#333;font-size:16px">
+          We scanned <strong>${esc(args.monitorName)}</strong> and found <strong>${args.totalItems} items</strong>${args.matchCount > 0 ? ` with <strong>${args.matchCount} matches</strong>` : ""}.
+        </p>
+        <a href="${APP_URL}/try/${args.monitorId}" style="display:inline-block;background:#3b82f6;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:500;font-size:14px">
+          View Results
+        </a>
+        <p style="margin:24px 0 0;color:#666;font-size:14px">
+          We'll check this page every 24 hours and email you when new matches appear.
+        </p>
+        <div style="margin-top:24px;padding-top:24px;border-top:1px solid #eee">
+          <p style="margin:0;color:#666;font-size:14px">
+            Want faster checks and more monitors?
+          </p>
+          <a href="${APP_URL}/login" style="display:inline-block;margin-top:12px;background:#f4f4f5;color:#333;padding:10px 20px;border-radius:8px;text-decoration:none;font-weight:500;font-size:13px;border:1px solid #ddd">
+            Create a free account
+          </a>
+        </div>
+      </div>
+      <div style="padding:16px 32px;background:#f9fafb;border-top:1px solid #eee">
+        <p style="margin:0;color:#999;font-size:12px">
+          PageAlert — AI-powered website monitoring. <a href="${APP_URL}" style="color:#999">pagealert.io</a>
+        </p>
+      </div>
+    </div>
+  </div>
+</body>
+</html>`;
+
+    await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        from: FROM_EMAIL,
+        to: [args.to],
+        subject: `PageAlert — Your scan of ${esc(args.monitorName)} is ready`,
+        html,
+        text: `Your scan is ready!\n\nWe found ${args.totalItems} items${args.matchCount > 0 ? ` with ${args.matchCount} matches` : ""} on ${args.monitorName}.\n\nView results: ${APP_URL}/try/${args.monitorId}\n\nWe'll check every 24 hours and email you when new matches appear.\n\nCreate a free account for more: ${APP_URL}/login`,
+      }),
+      signal: AbortSignal.timeout(RESEND_TIMEOUT),
+    }).catch((e) => console.error("[emails] Anonymous scan email failed:", e));
+  },
+});

@@ -9,6 +9,7 @@ import { api } from "@/convex/_generated/api";
 import { Loader2, Sparkles } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
+import { trackEvent } from "@/lib/posthog";
 
 const EXAMPLES = [
   {
@@ -99,6 +100,12 @@ export function TryScanner() {
     }
 
     setScanning(true);
+    trackEvent("anonymous_scan_started", {
+      url_domain: (() => { try { return new URL(url).hostname; } catch { return url; } })(),
+      prompt_length: prompt.length,
+      used_example: selectedExample !== null,
+      example_label: selectedExample !== null ? EXAMPLES[selectedExample]!.label : undefined,
+    });
 
     try {
       // Determine name from URL
@@ -146,6 +153,12 @@ export function TryScanner() {
         anonId,
         schema: json.schema,
         matchCount,
+      });
+
+      trackEvent("anonymous_scan_completed", {
+        items: json.totalItems ?? 0,
+        matches: matchCount,
+        type: "anonymous",
       });
 
       // Navigate to results page
