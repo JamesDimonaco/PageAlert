@@ -285,7 +285,7 @@ export const sendAnonymousScanComplete = internalAction({
 </body>
 </html>`;
 
-    await fetch("https://api.resend.com/emails", {
+    const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -294,7 +294,7 @@ export const sendAnonymousScanComplete = internalAction({
       body: JSON.stringify({
         from: FROM_EMAIL,
         to: [args.to],
-        subject: `PageAlert — Your scan of ${esc(args.monitorName)} is ready`,
+        subject: `PageAlert — Your scan of ${args.monitorName} is ready`,
         html,
         text: `Your scan is ready!\n\nWe found ${args.totalItems} items${args.matchCount > 0 ? ` with ${args.matchCount} matches` : ""} on ${args.monitorName}.\n\nView results: ${APP_URL}/try/${args.monitorId}\n\nWe'll check every 24 hours and email you when new matches appear.\n\nCreate a free account for more: ${APP_URL}/login`,
       }),
