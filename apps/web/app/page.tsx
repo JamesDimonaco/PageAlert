@@ -7,6 +7,7 @@ import { authClient } from "@/lib/auth-client";
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { PLANS } from "@/lib/plans";
+import { TryScanner } from "@/components/prowl/try-scanner";
 
 export default function LandingPage() {
   const session = authClient.useSession();
@@ -120,30 +121,8 @@ export default function LandingPage() {
               </div>
             </div>
 
-            {/* Demo preview */}
-            <div className="mx-auto mt-24 max-w-4xl">
-              <div className="rounded-xl border-t-2 border-t-primary/40 border border-border/30 bg-card/60 p-4 sm:p-8 shadow-xl shadow-black/10 backdrop-blur">
-                <div className="flex items-center gap-2 mb-6">
-                  <div className="h-3 w-3 rounded-full bg-red-500/50" />
-                  <div className="h-3 w-3 rounded-full bg-yellow-500/50" />
-                  <div className="h-3 w-3 rounded-full bg-green-500/50" />
-                </div>
-                <div className="space-y-4">
-                  <div className="rounded-lg bg-background/80 p-5 shadow-sm shadow-black/5">
-                    <p className="text-xs font-medium text-muted-foreground mb-2">URL</p>
-                    <p className="text-sm font-mono text-foreground/90 break-all">https://apple.com/shop/refurbished/mac</p>
-                  </div>
-                  <div className="rounded-lg bg-background/80 p-5 shadow-sm shadow-black/5">
-                    <p className="text-xs font-medium text-muted-foreground mb-2">What are you looking for?</p>
-                    <p className="text-sm text-foreground/90">&ldquo;MacBook Pro 14 inch M3 gray under $1500&rdquo;</p>
-                  </div>
-                  <div className="flex items-center gap-2 pt-1">
-                    <div className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
-                    <p className="text-xs font-medium text-emerald-400">Monitoring every 15 minutes...</p>
-                  </div>
-                </div>
-              </div>
-            </div>
+            {/* Interactive try-it scanner */}
+            <TryScanner />
           </div>
         </section>
 

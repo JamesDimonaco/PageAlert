@@ -10,4 +10,11 @@ crons.interval(
   internal.scheduler.runScheduledChecks
 );
 
+// Clean up expired anonymous monitors daily
+crons.interval(
+  "cleanup-anonymous",
+  { hours: 24 },
+  internal.anonymous.cleanupExpired
+);
+
 export default crons;

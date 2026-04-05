@@ -9,6 +9,7 @@
  */
 
 import type * as account from "../account.js";
+import type * as anonymous from "../anonymous.js";
 import type * as crons from "../crons.js";
 import type * as discord from "../discord.js";
 import type * as emails from "../emails.js";
@@ -32,6 +33,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   account: typeof account;
+  anonymous: typeof anonymous;
   crons: typeof crons;
   discord: typeof discord;
   emails: typeof emails;
