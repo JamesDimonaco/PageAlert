@@ -30,9 +30,6 @@ export default function DashboardLayout({
   // Transfer anonymous monitors on first dashboard load
   useEffect(() => {
     if (isAuthenticated && !claimedRef.current) {
-      claimedRef.current = true;
-
-      // Read localStorage for anonymous monitor to transfer by ID
       let monitorId: string | undefined;
       let anonId: string | undefined;
       try {
@@ -42,15 +39,19 @@ export default function DashboardLayout({
           monitorId = data.monitorId;
           anonId = data.anonId;
         }
-      } catch {}
+      } catch {
+        localStorage.removeItem("pagealert_anon_monitor");
+      }
 
       claimAnonymous({ monitorId: monitorId as Id<"monitors"> | undefined, anonId }).then((result) => {
+        claimedRef.current = true;
         if (result.transferred > 0) {
           localStorage.removeItem("pagealert_anon_monitor");
           toast.success(`${result.transferred} monitor${result.transferred !== 1 ? "s" : ""} transferred from your free scan!`);
         }
       }).catch((err) => {
         console.error("[dashboard] Failed to claim anonymous monitors:", err);
+        // Don't set claimedRef — allow retry on next render
       });
     }
   }, [isAuthenticated, claimAnonymous]);
