@@ -43,7 +43,7 @@ function recordRequest(ip: string): void {
 
 /** Resolve hostname and reject private/internal IPs */
 async function isHostAllowed(hostname: string): Promise<boolean> {
-  let addresses: string[] = [];
+  const addresses: string[] = [];
   try {
     const [ipv4, ipv6] = await Promise.allSettled([
       resolve4(hostname),
