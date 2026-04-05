@@ -184,17 +184,34 @@ export const runScheduledChecks = internalAction({
     // Run checks concurrently (up to MAX_CONCURRENT_CHECKS)
     const results = await Promise.allSettled(
       monitors.map(async (monitor) => {
+        const startTime = Date.now();
         try {
           const checkCount = monitor.checkCount ?? 0;
           const needsReextract = checkCount > 0 && checkCount % FULL_REEXTRACT_EVERY === 0;
 
-          let checkResult: { hasMatch: boolean; matchCount: number; matches: unknown[]; totalItems: number };
+          let checkResult: { hasMatch: boolean; matchCount: number; matches: unknown[]; totalItems: number | null };
 
           if (needsReextract && monitor.schema) {
             checkResult = await runFullExtract(ctx, monitor, scraperUrl, scraperKey);
           } else {
             checkResult = await runQuickCheck(ctx, monitor, scraperUrl, scraperKey);
           }
+
+          // Log successful check — use monitor's last known item count when totalItems is unknown
+          const displayTotalItems = checkResult.totalItems != null
+            ? checkResult.totalItems
+            : (Array.isArray((monitor.schema as any)?.items) ? (monitor.schema as any).items.length : 0);
+          await ctx.runMutation(internal.logs.createInternal, {
+            userId: monitor.userId,
+            monitorId: monitor._id,
+            monitorName: monitor.name,
+            url: monitor.url,
+            prompt: monitor.prompt,
+            status: "success",
+            durationMs: Date.now() - startTime,
+            itemCount: displayTotalItems,
+            matchCount: checkResult.matchCount,
+          }).catch(() => {});
 
           // Only notify on NEW matches (not when the same match persists across checks)
           const previouslyHadMatches = (monitor.matchCount ?? 0) > 0;
@@ -212,7 +229,7 @@ export const runScheduledChecks = internalAction({
               monitorId: monitor._id,
               channel: "in_app",
               title: `${monitor.name} — ${checkResult.matchCount} match${checkResult.matchCount !== 1 ? "es" : ""}`,
-              message: `Found ${checkResult.matchCount} match${checkResult.matchCount !== 1 ? "es" : ""} out of ${checkResult.totalItems} items on ${monitor.url}`,
+              message: `Found ${checkResult.matchCount} match${checkResult.matchCount !== 1 ? "es" : ""} out of ${displayTotalItems} items on ${monitor.url}`,
             }).catch(() => {});
 
             // Send email
@@ -224,7 +241,7 @@ export const runScheduledChecks = internalAction({
                 url: monitor.url,
                 matchCount: checkResult.matchCount,
                 matches: checkResult.matches,
-                totalItems: checkResult.totalItems,
+                totalItems: displayTotalItems,
               }).catch(() => {});
             }
 
@@ -241,7 +258,7 @@ export const runScheduledChecks = internalAction({
                   monitorId: monitor._id,
                   url: monitor.url,
                   matchCount: checkResult.matchCount,
-                  totalItems: checkResult.totalItems,
+                  totalItems: displayTotalItems,
                 }).catch(() => {});
               }
             }
@@ -259,7 +276,7 @@ export const runScheduledChecks = internalAction({
                   monitorId: monitor._id,
                   url: monitor.url,
                   matchCount: checkResult.matchCount,
-                  totalItems: checkResult.totalItems,
+                  totalItems: displayTotalItems,
                 }).catch(() => {});
               }
             }
@@ -267,6 +284,22 @@ export const runScheduledChecks = internalAction({
         } catch (e) {
           const msg = e instanceof Error ? e.message : "Unknown error";
           console.error(`[scheduler] Monitor ${monitor._id} failed:`, msg);
+
+          const isTimeout =
+            (e instanceof Error && e.name === "TimeoutError") ||
+            msg.includes("timed out") || msg.includes("Timeout");
+
+          // Log failed check
+          await ctx.runMutation(internal.logs.createInternal, {
+            userId: monitor.userId,
+            monitorId: monitor._id,
+            monitorName: monitor.name,
+            url: monitor.url,
+            prompt: monitor.prompt,
+            status: isTimeout ? "timeout" : "error",
+            durationMs: Date.now() - startTime,
+            error: msg,
+          }).catch(() => {});
 
           // Check if this will max out retries
           const retryCount = (monitor.retryCount ?? 0) + 1;
@@ -360,7 +393,7 @@ async function runQuickCheck(
   monitor: any,
   scraperUrl: string,
   scraperKey: string
-): Promise<{ hasMatch: boolean; matchCount: number; matches: unknown[]; totalItems: number }> {
+): Promise<{ hasMatch: boolean; matchCount: number; matches: unknown[]; totalItems: number | null }> {
   const matchConditions = monitor.schema?.matchConditions ?? {};
 
   const res = await fetch(`${scraperUrl}/api/quick-check`, {
@@ -404,7 +437,7 @@ async function runQuickCheck(
   const matchData = hasMatch
     ? [{ quickCheck: true, keywordResults: result.keywordResults, priceResults: result.priceResults }]
     : [];
-  return { hasMatch, matchCount: hasMatch ? 1 : 0, matches: matchData, totalItems: 0 };
+  return { hasMatch, matchCount: hasMatch ? 1 : 0, matches: matchData, totalItems: null };
 }
 
 async function runFullExtract(
@@ -414,7 +447,7 @@ async function runFullExtract(
   monitor: any,
   scraperUrl: string,
   scraperKey: string
-): Promise<{ hasMatch: boolean; matchCount: number; matches: unknown[]; totalItems: number }> {
+): Promise<{ hasMatch: boolean; matchCount: number; matches: unknown[]; totalItems: number | null }> {
   // First check page is accessible before burning AI credits
   const quickRes = await fetch(`${scraperUrl}/api/quick-check`, {
     method: "POST",
@@ -442,7 +475,7 @@ async function runFullExtract(
         matches: [],
         // No error field — this is informational, not a retry-worthy failure
       });
-      return { hasMatch: false, matchCount: 0, matches: [], totalItems: 0 };
+      return { hasMatch: false, matchCount: 0, matches: [], totalItems: null };
     }
   }
 
@@ -480,7 +513,7 @@ async function runFullExtract(
       matches: [],
       // No error field — informational, not retry-worthy
     });
-    return { hasMatch: false, matchCount: 0, matches: [], totalItems: 0 };
+    return { hasMatch: false, matchCount: 0, matches: [], totalItems: null };
   }
 
   const allMatches = result.matches ?? [];
