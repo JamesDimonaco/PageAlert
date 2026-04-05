@@ -45,7 +45,6 @@ export default function DashboardLayout({
       }
 
       claimAnonymous({ monitorId: monitorId as Id<"monitors"> | undefined, anonId }).then((result) => {
-        claimedRef.current = true;
         localStorage.removeItem("pagealert_anon_monitor");
         if (result.transferred > 0) {
           toast.success(`${result.transferred} monitor${result.transferred !== 1 ? "s" : ""} transferred from your free scan!`);

@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query, internalMutation, internalAction } from "./_generated/server";
 import { internal } from "./_generated/api";
+import { validateMonitorUrl } from "./shared";
 
 const DAILY_CAP = 20;
 const EXPIRY_NO_EMAIL = 7 * 24 * 60 * 60 * 1000; // 7 days
@@ -39,33 +40,7 @@ export const createAnonymous = mutation({
     }
 
     // Validate URL with SSRF protection (before incrementing counter)
-    let parsed: URL;
-    try {
-      parsed = new URL(args.url);
-    } catch {
-      throw new Error("Invalid URL");
-    }
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-      throw new Error("Only http and https URLs are allowed");
-    }
-    const hostname = parsed.hostname.toLowerCase();
-    const blockedHosts = [
-      "localhost", "127.0.0.1", "0.0.0.0", "[::1]",
-      "metadata.google.internal", "169.254.169.254",
-    ];
-    if (blockedHosts.includes(hostname)) {
-      throw new Error("This hostname is not allowed");
-    }
-    const ipMatch = hostname.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-    if (ipMatch) {
-      const [, a, b] = ipMatch.map(Number);
-      if (a === 10 || (a === 172 && b! >= 16 && b! <= 31) || (a === 192 && b === 168) || a === 127 || (a === 169 && b === 254) || a === 0) {
-        throw new Error("URLs pointing to private/internal IP addresses are not allowed");
-      }
-    }
-    if (!hostname.includes(".")) {
-      throw new Error("URL must use a fully qualified domain name");
-    }
+    validateMonitorUrl(args.url);
 
     const now = Date.now();
     const anonId = `anon_${crypto.randomUUID()}`;

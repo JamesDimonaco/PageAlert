@@ -1,10 +1,9 @@
 import { v } from "convex/values";
 import { mutation, query, internalAction, internalQuery } from "./_generated/server";
 import { internal } from "./_generated/api";
-import { intervalToMs, MAX_RETRIES } from "./shared";
+import { intervalToMs, MAX_RETRIES, validateMonitorUrl } from "./shared";
 
 // ---- Resource Limits ----
-const MAX_URL_LENGTH = 2048;
 const MAX_NAME_LENGTH = 200;
 const MAX_PROMPT_LENGTH = 2000;
 const MAX_RESULTS_LIMIT = 100;
@@ -38,38 +37,6 @@ async function getAuthUserId(ctx: { auth: { getUserIdentity: () => Promise<{ sub
   return identity.subject;
 }
 
-function validateMonitorUrl(url: string): void {
-  if (url.length > MAX_URL_LENGTH) {
-    throw new Error(`URL exceeds maximum length of ${MAX_URL_LENGTH} characters`);
-  }
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    throw new Error("Invalid URL format");
-  }
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    throw new Error("Only http and https URLs are allowed");
-  }
-  const hostname = parsed.hostname.toLowerCase();
-  const blockedHosts = [
-    "localhost", "127.0.0.1", "0.0.0.0", "[::1]",
-    "metadata.google.internal", "169.254.169.254",
-  ];
-  if (blockedHosts.includes(hostname)) {
-    throw new Error("This hostname is not allowed");
-  }
-  const ipMatch = hostname.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-  if (ipMatch) {
-    const [, a, b] = ipMatch.map(Number);
-    if (a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || a === 127 || (a === 169 && b === 254) || a === 0) {
-      throw new Error("URLs pointing to private/internal IP addresses are not allowed");
-    }
-  }
-  if (!hostname.includes(".")) {
-    throw new Error("URL must use a fully qualified domain name");
-  }
-}
 
 function validateName(name: string): void {
   if (name.length === 0) throw new Error("Name is required");
@@ -99,16 +66,7 @@ const intervalValidator = v.union(
 
 // ---- Queries ----
 
-/** Public: total monitors created across all users (for social proof) */
-export const totalCount = query({
-  args: {},
-  handler: async (ctx) => {
-    const all = await ctx.db.query("monitors").collect();
-    return all.length;
-  },
-});
-
-/** Public: total non-anonymous monitors (excludes try-before-signup demos) */
+/** Public: total non-anonymous monitors for social proof (excludes try-before-signup demos) */
 export const publicCount = query({
   args: {},
   handler: async (ctx) => {
