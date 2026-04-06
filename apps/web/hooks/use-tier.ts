@@ -98,18 +98,20 @@ export function useTier(): TierInfo {
       }
       const state = await client.customer.state();
 
-      if (state?.data) {
-        const subs = state.data.activeSubscriptions ?? state.data.subscriptions ?? [];
-        if (Array.isArray(subs) && subs.length > 0) {
-          setPolarTier(detectTier(subs));
-        } else {
-          setPolarTier("free");
-        }
+      // Server returned an error (e.g. Polar not configured in dev)
+      if (state?.error || !state?.data) {
+        setPolarTier(null);
+        return;
       }
-    } catch (err) {
-      if (process.env.NODE_ENV !== "production") {
-        console.error("useTier: failed to fetch from Polar", err);
+
+      const subs = state.data.activeSubscriptions ?? state.data.subscriptions ?? [];
+      if (Array.isArray(subs) && subs.length > 0) {
+        setPolarTier(detectTier(subs));
+      } else {
+        setPolarTier("free");
       }
+    } catch {
+      // Polar fallback is non-critical — Convex tier is the primary source
     } finally {
       setPolarLoading(false);
     }
