@@ -116,7 +116,11 @@ export function PriceAlertCard({ monitorId, priceAlerts, allItems, suggestedPric
     await save(() => update({ id: monitorId, priceAlerts: { ...priceAlerts!, trackedItems: next } } as any), "Item removed");
   }
 
+  const MAX_TRACKED = 20;
+  const atTrackLimit = (priceAlerts?.trackedItems.length ?? 0) >= MAX_TRACKED;
+
   async function handleAddItem(key: string) {
+    if (atTrackLimit) { toast.error(`Cannot track more than ${MAX_TRACKED} items`); return; }
     const next = [...priceAlerts!.trackedItems, key];
     await save(() => update({ id: monitorId, priceAlerts: { ...priceAlerts!, trackedItems: next } } as any), "Item added");
   }
@@ -202,7 +206,7 @@ export function PriceAlertCard({ monitorId, priceAlerts, allItems, suggestedPric
               </div>
             );
           })}
-          {editing && untrackedPriced.length > 0 && (
+          {editing && untrackedPriced.length > 0 && !atTrackLimit && (
             <>
               <button type="button" onClick={() => setShowAddList(!showAddList)} className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors mt-1">
                 <Plus className="h-3.5 w-3.5" /> Add item
@@ -218,6 +222,9 @@ export function PriceAlertCard({ monitorId, priceAlerts, allItems, suggestedPric
                 </div>
               )}
             </>
+          )}
+          {editing && atTrackLimit && (
+            <p className="text-xs text-muted-foreground mt-1">Maximum {MAX_TRACKED} items tracked</p>
           )}
         </div>
 
