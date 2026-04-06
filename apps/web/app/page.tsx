@@ -5,6 +5,8 @@ import { LandingNav } from "@/components/prowl/landing-nav";
 import { HeroCTA } from "@/components/prowl/hero-cta";
 import { MonitorCountBadge } from "@/components/prowl/monitor-count-badge";
 import { TryScanner } from "@/components/prowl/try-scanner";
+import { ExampleResults } from "@/components/prowl/example-results";
+import { Testimonials } from "@/components/prowl/testimonials";
 
 export default function LandingPage() {
   return (
@@ -79,13 +81,16 @@ export default function LandingPage() {
           </div>
         </section>
 
+        {/* Example results showcase */}
+        <ExampleResults />
+
         {/* Features */}
         <section id="how-it-works" className="border-t border-border/30 bg-card/20 scroll-mt-20">
           <div className="mx-auto max-w-7xl px-4 sm:px-6 py-16 sm:py-28">
             <div className="mx-auto max-w-2xl text-center mb-16">
               <h2 className="text-3xl font-bold tracking-tight leading-tight">How it works</h2>
               <p className="mt-4 text-muted-foreground leading-relaxed">
-                Three steps to never miss a price drop, restock, or listing again
+                No CSS selectors. No code. No setup that breaks when pages change.
               </p>
             </div>
 
@@ -126,6 +131,9 @@ export default function LandingPage() {
             </div>
           </div>
         </section>
+
+        {/* Testimonials */}
+        <Testimonials />
 
         {/* Pricing preview */}
         <section className="border-t border-border/30">
@@ -197,7 +205,7 @@ export default function LandingPage() {
                 },
                 {
                   q: "Do I need to know CSS selectors or coding?",
-                  a: "No. Unlike traditional web monitoring tools, PageAlert uses AI to understand pages. Just describe what you want in plain English — no CSS selectors, XPath, or code required.",
+                  a: "No. Traditional monitoring tools like Visualping or Distill require you to select page elements that break when sites update their layout. PageAlert uses AI to re-read the page every time — no selectors to maintain, nothing breaks when a site redesigns.",
                 },
                 {
                   q: "How often does PageAlert check my pages?",
