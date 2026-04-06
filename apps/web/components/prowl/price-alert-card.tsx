@@ -102,9 +102,10 @@ export function PriceAlertCard({ monitorId, priceAlerts, allItems, suggestedPric
   async function handleSave() {
     await save(async () => {
       await update({ id: monitorId, priceAlerts: {
-        onPriceDrop, onPriceIncrease, trackedItems: priceAlerts!.trackedItems,
-        ...(parseThreshold(belowThreshold) != null ? { belowThreshold: parseThreshold(belowThreshold) } : {}),
-        ...(parseThreshold(aboveThreshold) != null ? { aboveThreshold: parseThreshold(aboveThreshold) } : {}),
+        ...priceAlerts!,
+        onPriceDrop, onPriceIncrease,
+        belowThreshold: parseThreshold(belowThreshold),
+        aboveThreshold: parseThreshold(aboveThreshold),
       }} as any);
       setEditing(false);
     }, "Price alerts updated", "price_alerts_updated");
