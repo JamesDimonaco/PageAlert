@@ -360,7 +360,8 @@ export const sendPriceAlert = internalAction({
     let subject: string;
     if (args.variant === "threshold" && firstHit) {
       const threshold = firstBelow ? args.belowThreshold : args.aboveThreshold;
-      subject = `🎯 ${firstHit.title} dropped below your ${fmt(threshold ?? 0)} target!`;
+      const direction = firstBelow ? "dropped below" : "rose above";
+      subject = `🎯 ${firstHit.title} ${direction} your ${fmt(threshold ?? 0)} target!`;
     } else if (args.variant === "single_drop" && firstChange) {
       subject = `${firstChange.title} dropped to ${fmt(firstChange.newPrice)} (-${pct(firstChange.changePercent)})`;
     } else {

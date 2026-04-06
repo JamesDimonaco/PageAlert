@@ -310,14 +310,24 @@ export const runScheduledChecks = internalAction({
                   ?? (Array.isArray(schema?.items) && schema.items.some((i: any) => typeof i.price === "number"));
 
                 if (tracksPrices) {
-                  // Filter to tracked items only
+                  // Filter to tracked items only — match by key, fall back to title
+                  // (title-price keys change when prices change, so title fallback is needed)
                   const trackedSet = new Set(priceAlerts.trackedItems);
                   const allItems = (schema?.items ?? []) as Record<string, unknown>[];
+                  const trackedTitles = new Set(
+                    priceAlerts.trackedItems.map((k) => {
+                      const item = allItems.find((i) => {
+                        const iKey = i.url ? String(i.url) : `${String(i.title ?? "")}-${String(i.price ?? "")}`;
+                        return iKey === k;
+                      });
+                      return item ? String(item.title ?? "").toLowerCase() : k.split("-")[0]?.toLowerCase() ?? "";
+                    }).filter(Boolean)
+                  );
                   const relevantChanges = changes.priceChanges.filter((pc) => {
                     const item = allItems.find((i) => String(i.title ?? "").toLowerCase() === pc.title.toLowerCase());
-                    if (!item) return false;
+                    if (!item) return trackedTitles.has(pc.title.toLowerCase());
                     const key = item.url ? String(item.url) : `${String(item.title ?? "")}-${String(item.price ?? "")}`;
-                    return trackedSet.has(key);
+                    return trackedSet.has(key) || trackedTitles.has(pc.title.toLowerCase());
                   });
 
                   // Apply minimum change threshold
