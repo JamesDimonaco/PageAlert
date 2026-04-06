@@ -4,10 +4,12 @@ export const POSTHOG_KEY = process.env.NEXT_PUBLIC_POSTHOG_KEY;
 export const POSTHOG_HOST = process.env.NEXT_PUBLIC_POSTHOG_HOST ?? "https://us.i.posthog.com";
 
 let initialized = false;
+let pendingPageView: string | null = null;
 
 export function initPostHog() {
   if (typeof window === "undefined") return;
   if (!POSTHOG_KEY) return;
+  if (initialized) return;
 
   posthog.init(POSTHOG_KEY, {
     api_host: "/ingest",
@@ -18,12 +20,26 @@ export function initPostHog() {
     capture_exceptions: true,
     persistence: "localStorage+cookie",
     person_profiles: "identified_only",
+    disable_session_recording: true,
     session_recording: {
       maskAllInputs: true,
       maskTextSelector: "[data-ph-mask]",
     },
   });
   initialized = true;
+
+  // Fire any pageview that was queued before init
+  if (pendingPageView) {
+    posthog.capture("$pageview", { $current_url: pendingPageView });
+    pendingPageView = null;
+  }
+
+  // Lazily start session recording after main thread is idle
+  if ("requestIdleCallback" in window) {
+    requestIdleCallback(() => posthog.startSessionRecording());
+  } else {
+    setTimeout(() => posthog.startSessionRecording(), 3000);
+  }
 }
 
 export function getPostHog() {
@@ -53,7 +69,10 @@ export function trackEvent(event: string, properties?: Record<string, unknown>) 
 }
 
 export function trackPageView(url: string) {
-  if (!initialized) return;
+  if (!initialized) {
+    pendingPageView = url;
+    return;
+  }
   posthog.capture("$pageview", { $current_url: url });
 }
 
