@@ -58,7 +58,7 @@ interface OverviewTabProps {
   allItems: ExtractedItem[];
   totalItems: number;
   onRescan?: (id: Id<"monitors">) => Promise<void>;
-  onToggleMute?: (id: Id<"monitors">) => Promise<unknown>;
+  onToggleMute?: () => Promise<unknown>;
 }
 
 const RETRY_LIMIT = 3;
@@ -195,11 +195,7 @@ export function OverviewTab({ monitorId, monitor, matches, allItems, totalItems,
                 variant="outline"
                 size="sm"
                 className="gap-1.5 shrink-0 border-amber-500/20 hover:bg-amber-500/10"
-                onClick={async () => {
-                  try {
-                    if (onToggleMute) await onToggleMute(monitorId);
-                  } catch {}
-                }}
+                onClick={() => onToggleMute?.()}
               >
                 <Bell className="h-3.5 w-3.5" />
                 Unmute

@@ -170,25 +170,24 @@ export async function extractWithAI(
     }
   }
 
-  // Normalise insights
-  const rawInsights = raw.insights as Record<string, unknown> | undefined;
-  const insights = rawInsights
-    ? {
-        understanding: String(rawInsights.understanding ?? ""),
-        confidence: typeof rawInsights.confidence === "number" ? rawInsights.confidence : 50,
-        matchSignal: String(rawInsights.matchSignal ?? ""),
-        noMatchSignal: String(rawInsights.noMatchSignal ?? ""),
-        notices: Array.isArray(rawInsights.notices)
-          ? rawInsights.notices.filter((n): n is string => typeof n === "string")
-          : [],
-        tracksPrices: typeof rawInsights.tracksPrices === "boolean"
-          ? rawInsights.tracksPrices
-          : (Array.isArray(raw.items) && raw.items.some((item: Record<string, unknown>) => typeof item.price === "number")),
-        suggestedPriceTrackItems: Array.isArray(rawInsights.suggestedPriceTrackItems)
-          ? rawInsights.suggestedPriceTrackItems.filter((n): n is string => typeof n === "string").slice(0, 5)
-          : [],
-      }
-    : undefined;
+  // Normalise insights — always produce an object so tracksPrices is inferred even when AI omits insights
+  const rawInsights = (raw.insights as Record<string, unknown>) ?? {};
+  const inferredTracksPrices = Array.isArray(raw.items) && raw.items.some((item: Record<string, unknown>) => typeof item.price === "number");
+  const insights = {
+    understanding: String(rawInsights.understanding ?? ""),
+    confidence: typeof rawInsights.confidence === "number" ? rawInsights.confidence : 50,
+    matchSignal: String(rawInsights.matchSignal ?? ""),
+    noMatchSignal: String(rawInsights.noMatchSignal ?? ""),
+    notices: Array.isArray(rawInsights.notices)
+      ? rawInsights.notices.filter((n): n is string => typeof n === "string")
+      : [],
+    tracksPrices: typeof rawInsights.tracksPrices === "boolean"
+      ? rawInsights.tracksPrices
+      : inferredTracksPrices,
+    suggestedPriceTrackItems: Array.isArray(rawInsights.suggestedPriceTrackItems)
+      ? rawInsights.suggestedPriceTrackItems.filter((n): n is string => typeof n === "string").slice(0, 5)
+      : [],
+  };
 
   // Normalise into our expected schema shape - be lenient about what AI returns
   const parsed: ExtractionSchema = {

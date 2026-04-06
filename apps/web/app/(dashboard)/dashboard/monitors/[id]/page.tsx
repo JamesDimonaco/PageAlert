@@ -60,6 +60,17 @@ export default function MonitorDetailPage({
 
   const [deleteOpen, setDeleteOpen] = useState(false);
 
+  async function handleToggleMute() {
+    try {
+      const newMuted = await toggleMute(monitorId);
+      trackEvent(newMuted ? "monitor_muted" : "monitor_unmuted", { monitor_id: monitorId });
+      toast.success(newMuted ? "Monitor muted — notifications paused" : "Monitor unmuted — notifications resumed");
+    } catch (err) {
+      captureException(err, { context: "toggleMute", monitorId });
+      toast.error("Failed to update monitor", { description: err instanceof Error ? err.message : "" });
+    }
+  }
+
   async function handleRescan(id: Id<"monitors">) {
     if (!monitor) return;
     try {
@@ -161,18 +172,7 @@ export default function MonitorDetailPage({
                   <><Pause className="mr-2 h-4 w-4" /> Pause</>
                 )}
               </DropdownMenuItem>
-              <DropdownMenuItem
-                onClick={async () => {
-                  try {
-                    const newMuted = await toggleMute(monitorId);
-                    trackEvent(newMuted ? "monitor_muted" : "monitor_unmuted", { monitor_id: monitorId });
-                    toast.success(newMuted ? "Monitor muted — notifications paused" : "Monitor unmuted — notifications resumed");
-                  } catch (err) {
-                    captureException(err, { context: "toggleMute", monitorId });
-                    toast.error("Failed to update monitor", { description: err instanceof Error ? err.message : "" });
-                  }
-                }}
-              >
+              <DropdownMenuItem onClick={handleToggleMute}>
                 {(monitor as any).muted ? (
                   <><Bell className="mr-2 h-4 w-4" /> Unmute</>
                 ) : (
@@ -233,16 +233,7 @@ export default function MonitorDetailPage({
             allItems={allItems}
             totalItems={allItems.length}
             onRescan={handleRescan}
-            onToggleMute={async (id) => {
-              try {
-                const newMuted = await toggleMute(id);
-                trackEvent(newMuted ? "monitor_muted" : "monitor_unmuted", { monitor_id: id });
-                toast.success(newMuted ? "Monitor muted — notifications paused" : "Monitor unmuted — notifications resumed");
-              } catch (err) {
-                captureException(err, { context: "toggleMute_overview", monitorId: id });
-                toast.error("Failed to update monitor", { description: err instanceof Error ? err.message : "" });
-              }
-            }}
+            onToggleMute={handleToggleMute}
           />
         </TabsContent>
 

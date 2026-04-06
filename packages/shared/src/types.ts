@@ -20,9 +20,9 @@ export interface AiInsights {
   /** Warnings about data limitations (e.g. "RAM not shown on listing page") */
   notices: string[];
   /** Whether the page contains prices associated with items */
-  tracksPrices: boolean;
+  tracksPrices?: boolean;
   /** Up to 5 item titles most relevant for price tracking */
-  suggestedPriceTrackItems: string[];
+  suggestedPriceTrackItems?: string[];
 }
 
 export interface ExtractionSchema {

@@ -213,33 +213,38 @@ export const runScheduledChecks = internalAction({
             matchCount: checkResult.matchCount,
           }).catch(() => {});
 
-          if (!monitor.muted) {
+          // Re-fetch monitor to pick up any user changes (muted, channels) during the long-running check
+          const freshMonitor = await ctx.runQuery(internal.monitors.getInternal, { id: monitor._id });
+          if (!freshMonitor || freshMonitor.muted) {
+            if (!freshMonitor) console.log(`[scheduler] Monitor ${monitor._id} deleted during check, skipping notifications`);
+            // Data already recorded above — just skip notifications
+          } else {
             // Only notify on NEW matches (not when the same match persists across checks)
             const previouslyHadMatches = (monitor.matchCount ?? 0) > 0;
             const isNewMatch = checkResult.hasMatch && !previouslyHadMatches;
 
             if (isNewMatch) {
-              // Per-monitor channel filtering: if set, only send to those channels
-              const monitorChannels = (monitor as any).notificationChannels as string[] | undefined;
+              // Per-monitor channel filtering using fresh data
+              const monitorChannels = (freshMonitor as any).notificationChannels as string[] | undefined;
               const shouldSend = (channel: string) => !monitorChannels || monitorChannels.includes(channel);
               const hasAnyChannel = !monitorChannels || monitorChannels.length > 0;
 
               // Create in-app notification (unless all channels explicitly disabled)
               if (hasAnyChannel) await ctx.runMutation(internal.userNotifications.create, {
-                userId: monitor.userId,
-                monitorId: monitor._id,
+                userId: freshMonitor.userId,
+                monitorId: freshMonitor._id,
                 channel: "in_app",
-                title: `${monitor.name} — ${checkResult.matchCount} match${checkResult.matchCount !== 1 ? "es" : ""}`,
-                message: `Found ${checkResult.matchCount} match${checkResult.matchCount !== 1 ? "es" : ""} out of ${displayTotalItems} items on ${monitor.url}`,
+                title: `${freshMonitor.name} — ${checkResult.matchCount} match${checkResult.matchCount !== 1 ? "es" : ""}`,
+                message: `Found ${checkResult.matchCount} match${checkResult.matchCount !== 1 ? "es" : ""} out of ${displayTotalItems} items on ${freshMonitor.url}`,
               }).catch(() => {});
 
               // Send email
-              if (shouldSend("email") && monitor.userEmail) {
+              if (shouldSend("email") && freshMonitor.userEmail) {
                 await ctx.runAction(internal.emails.sendMatchAlert, {
-                  to: monitor.userEmail,
-                  monitorName: monitor.name,
-                  monitorId: monitor._id,
-                  url: monitor.url,
+                  to: freshMonitor.userEmail,
+                  monitorName: freshMonitor.name,
+                  monitorId: freshMonitor._id,
+                  url: freshMonitor.url,
                   matchCount: checkResult.matchCount,
                   matches: checkResult.matches,
                   totalItems: displayTotalItems,
@@ -249,15 +254,15 @@ export const runScheduledChecks = internalAction({
               // Send to Telegram if configured and enabled for this monitor
               if (shouldSend("telegram")) {
                 const telegramSetting = await ctx.runQuery(internal.scheduler.getNotificationSetting, {
-                  userId: monitor.userId,
+                  userId: freshMonitor.userId,
                   channel: "telegram",
                 });
                 if (telegramSetting?.enabled && telegramSetting.target) {
                   await ctx.runAction(internal.telegram.sendMatchAlert, {
                     chatId: telegramSetting.target,
-                    monitorName: monitor.name,
-                    monitorId: monitor._id,
-                    url: monitor.url,
+                    monitorName: freshMonitor.name,
+                    monitorId: freshMonitor._id,
+                    url: freshMonitor.url,
                     matchCount: checkResult.matchCount,
                     totalItems: displayTotalItems,
                   }).catch(() => {});
@@ -267,15 +272,15 @@ export const runScheduledChecks = internalAction({
               // Send to Discord if configured and enabled for this monitor
               if (shouldSend("discord")) {
                 const discordSetting = await ctx.runQuery(internal.scheduler.getNotificationSetting, {
-                  userId: monitor.userId,
+                  userId: freshMonitor.userId,
                   channel: "discord",
                 });
                 if (discordSetting?.enabled && discordSetting.target) {
                   await ctx.runAction(internal.discord.sendMatchAlert, {
                     webhookUrl: discordSetting.target,
-                    monitorName: monitor.name,
-                    monitorId: monitor._id,
-                    url: monitor.url,
+                    monitorName: freshMonitor.name,
+                    monitorId: freshMonitor._id,
+                    url: freshMonitor.url,
                     matchCount: checkResult.matchCount,
                     totalItems: displayTotalItems,
                   }).catch(() => {});
@@ -316,63 +321,66 @@ export const runScheduledChecks = internalAction({
             error: msg,
           });
 
-          // Send error notifications when retries exhausted
-          if (willError && !monitor.muted) {
-            const monitorChannels = (monitor as any).notificationChannels as string[] | undefined;
-            const shouldSend = (channel: string) => !monitorChannels || monitorChannels.includes(channel);
-            const hasAnyChannel = !monitorChannels || monitorChannels.length > 0;
+          // Send error notifications when retries exhausted — re-fetch for fresh muted/channel state
+          if (willError) {
+            const freshErrMonitor = await ctx.runQuery(internal.monitors.getInternal, { id: monitor._id });
+            if (freshErrMonitor && !freshErrMonitor.muted) {
+              const monitorChannels = (freshErrMonitor as any).notificationChannels as string[] | undefined;
+              const shouldSend = (channel: string) => !monitorChannels || monitorChannels.includes(channel);
+              const hasAnyChannel = !monitorChannels || monitorChannels.length > 0;
 
-            // In-app notification (unless all channels explicitly disabled)
-            if (hasAnyChannel) await ctx.runMutation(internal.userNotifications.create, {
-              userId: monitor.userId,
-              monitorId: monitor._id,
-              channel: "in_app",
-              title: `${monitor.name} — Error`,
-              message: msg,
-            }).catch(() => {});
-
-            // Email
-            if (shouldSend("email") && monitor.userEmail) {
-              await ctx.runAction(internal.emails.sendErrorAlert, {
-                to: monitor.userEmail,
-                monitorName: monitor.name,
-                monitorId: monitor._id,
-                url: monitor.url,
-                error: msg,
+              // In-app notification (unless all channels explicitly disabled)
+              if (hasAnyChannel) await ctx.runMutation(internal.userNotifications.create, {
+                userId: freshErrMonitor.userId,
+                monitorId: freshErrMonitor._id,
+                channel: "in_app",
+                title: `${freshErrMonitor.name} — Error`,
+                message: msg,
               }).catch(() => {});
-            }
 
-            // Telegram
-            if (shouldSend("telegram")) {
-              const telegramSetting = await ctx.runQuery(internal.scheduler.getNotificationSetting, {
-                userId: monitor.userId,
-                channel: "telegram",
-              });
-              if (telegramSetting?.enabled && telegramSetting.target) {
-                await ctx.runAction(internal.telegram.sendErrorAlert, {
-                  chatId: telegramSetting.target,
-                  monitorName: monitor.name,
-                  monitorId: monitor._id,
-                  url: monitor.url,
+              // Email
+              if (shouldSend("email") && freshErrMonitor.userEmail) {
+                await ctx.runAction(internal.emails.sendErrorAlert, {
+                  to: freshErrMonitor.userEmail,
+                  monitorName: freshErrMonitor.name,
+                  monitorId: freshErrMonitor._id,
+                  url: freshErrMonitor.url,
                   error: msg,
                 }).catch(() => {});
               }
-            }
 
-            // Discord
-            if (shouldSend("discord")) {
-              const discordSetting = await ctx.runQuery(internal.scheduler.getNotificationSetting, {
-                userId: monitor.userId,
-                channel: "discord",
-              });
-              if (discordSetting?.enabled && discordSetting.target) {
-                await ctx.runAction(internal.discord.sendErrorAlert, {
-                  webhookUrl: discordSetting.target,
-                  monitorName: monitor.name,
-                  monitorId: monitor._id,
-                  url: monitor.url,
-                  error: msg,
-                }).catch(() => {});
+              // Telegram
+              if (shouldSend("telegram")) {
+                const telegramSetting = await ctx.runQuery(internal.scheduler.getNotificationSetting, {
+                  userId: freshErrMonitor.userId,
+                  channel: "telegram",
+                });
+                if (telegramSetting?.enabled && telegramSetting.target) {
+                  await ctx.runAction(internal.telegram.sendErrorAlert, {
+                    chatId: telegramSetting.target,
+                    monitorName: freshErrMonitor.name,
+                    monitorId: freshErrMonitor._id,
+                    url: freshErrMonitor.url,
+                    error: msg,
+                  }).catch(() => {});
+                }
+              }
+
+              // Discord
+              if (shouldSend("discord")) {
+                const discordSetting = await ctx.runQuery(internal.scheduler.getNotificationSetting, {
+                  userId: freshErrMonitor.userId,
+                  channel: "discord",
+                });
+                if (discordSetting?.enabled && discordSetting.target) {
+                  await ctx.runAction(internal.discord.sendErrorAlert, {
+                    webhookUrl: discordSetting.target,
+                    monitorName: freshErrMonitor.name,
+                    monitorId: freshErrMonitor._id,
+                    url: freshErrMonitor.url,
+                    error: msg,
+                  }).catch(() => {});
+                }
               }
             }
           }
