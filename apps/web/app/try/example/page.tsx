@@ -6,38 +6,22 @@ import {
   CheckCircle2,
   ExternalLink,
   TrendingDown,
-  TrendingUp,
   Zap,
   Clock,
   ArrowRight,
   History,
-  Mail,
   Quote,
 } from "lucide-react";
 import Link from "next/link";
+import { EXAMPLE_ITEMS, EXAMPLE_MATCHES, EXAMPLE_PRICE_DROPS, EXAMPLE_HISTORY } from "@/lib/example-data";
 
 export const metadata: Metadata = {
   title: "Example Scan Results",
   description: "See what PageAlert finds when monitoring a website. AI-powered extraction with matches, price tracking, and change detection.",
 };
 
-const ITEMS = [
-  { title: "MacBook Pro 14\" M3 Pro 18GB — Refurbished", price: 1399, matched: true, oldPrice: 1549 },
-  { title: "MacBook Pro 14\" M3 8GB — Refurbished", price: 1099, matched: true, oldPrice: null },
-  { title: "MacBook Pro 14\" M3 Pro 36GB — Refurbished", price: 1479, matched: true, oldPrice: 1599 },
-  { title: "MacBook Pro 16\" M3 Pro 18GB — Refurbished", price: 1849, matched: false, oldPrice: null },
-  { title: "MacBook Pro 16\" M3 Max 36GB — Refurbished", price: 2349, matched: false, oldPrice: 2499 },
-  { title: "MacBook Pro 14\" M3 Pro 18GB Space Black — Refurbished", price: 1449, matched: true, oldPrice: null },
-  { title: "MacBook Pro 16\" M3 Pro 36GB — Refurbished", price: 2149, matched: false, oldPrice: null },
-];
-
-const HISTORY = [
-  { time: "2 hours ago", event: "Price drop detected", detail: "MacBook Pro 14\" M3 Pro dropped from $1,549 to $1,399", type: "price" as const },
-  { time: "6 hours ago", event: "3 matches found", detail: "3 items match your criteria", type: "match" as const },
-  { time: "12 hours ago", event: "New item added", detail: "MacBook Pro 14\" M3 Pro Space Black now available", type: "new" as const },
-  { time: "1 day ago", event: "Routine check", detail: "7 items scanned, 2 matches", type: "check" as const },
-  { time: "2 days ago", event: "Price drop detected", detail: "MacBook Pro 16\" M3 Max dropped from $2,499 to $2,349", type: "price" as const },
-];
+const ITEMS = EXAMPLE_ITEMS;
+const HISTORY = EXAMPLE_HISTORY;
 
 export default function ExamplePage() {
   return (
@@ -82,7 +66,7 @@ export default function ExamplePage() {
           <Card className="border-emerald-500/20 bg-emerald-500/5">
             <CardContent className="p-4">
               <p className="text-xs text-muted-foreground mb-1">Matches</p>
-              <p className="text-2xl font-bold text-emerald-400">4</p>
+              <p className="text-2xl font-bold text-emerald-400">{EXAMPLE_MATCHES}</p>
             </CardContent>
           </Card>
           <Card className="border-border/30 bg-card/50">
@@ -104,7 +88,7 @@ export default function ExamplePage() {
           <h2 className="text-sm font-semibold mb-3 flex items-center gap-2">
             <CheckCircle2 className="h-4 w-4 text-emerald-400" />
             Matched Items
-            <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-xs">4</Badge>
+            <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-xs">{EXAMPLE_MATCHES}</Badge>
           </h2>
           <div className="space-y-2">
             {ITEMS.filter((i) => i.matched).map((item, i) => (
@@ -137,7 +121,7 @@ export default function ExamplePage() {
 
         {/* All items */}
         <div>
-          <h2 className="text-sm font-semibold mb-3">All Items ({ITEMS.length})</h2>
+          <h2 className="text-sm font-semibold mb-3">Other Items ({ITEMS.filter((i) => !i.matched).length})</h2>
           <div className="space-y-2">
             {ITEMS.filter((i) => !i.matched).map((item, i) => (
               <Card key={i} className="border-border/30 bg-card/30">

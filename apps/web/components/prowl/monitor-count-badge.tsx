@@ -12,7 +12,7 @@ export function MonitorCountBadge() {
   return (
     <span className="flex items-center gap-1.5">
       <Zap className="h-3.5 w-3.5" />
-      {(totalMonitors + 200).toLocaleString()} monitors created
+      {totalMonitors.toLocaleString()} monitors created
     </span>
   );
 }

@@ -1,17 +1,12 @@
-import { Card, CardContent } from "@/components/ui/card";
+import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { CheckCircle2, ExternalLink, TrendingDown, Zap, Clock, ArrowRight } from "lucide-react";
+import { CheckCircle2, TrendingDown, Zap, Clock, ArrowRight } from "lucide-react";
 import Link from "next/link";
-
-const EXAMPLE_ITEMS = [
-  { title: "MacBook Pro 14\" M3 Pro — Refurbished", price: "$1,399", matched: true },
-  { title: "MacBook Pro 16\" M3 Max — Refurbished", price: "$2,149", matched: false },
-  { title: "MacBook Pro 14\" M3 — Refurbished", price: "$1,099", matched: true },
-  { title: "MacBook Pro 16\" M3 Pro — Refurbished", price: "$1,899", matched: false },
-  { title: "MacBook Pro 14\" M3 Pro 18GB — Refurbished", price: "$1,479", matched: true },
-];
+import { EXAMPLE_ITEMS, EXAMPLE_MATCHES, EXAMPLE_PRICE_DROPS } from "@/lib/example-data";
 
 export function ExampleResults() {
+  const teaser = EXAMPLE_ITEMS.slice(0, 5);
+
   return (
     <div className="mx-auto mt-16 sm:mt-20 max-w-4xl">
       <div className="text-center mb-8">
@@ -30,7 +25,7 @@ export function ExampleResults() {
             <div>
               <div className="flex items-center gap-2 mb-1">
                 <h3 className="font-bold">MacBook Pro Refurbished</h3>
-                <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-xs">3 matches</Badge>
+                <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-xs">{EXAMPLE_MATCHES} matches</Badge>
               </div>
               <p className="text-xs text-muted-foreground">
                 &ldquo;MacBook Pro under $1500&rdquo;
@@ -52,16 +47,16 @@ export function ExampleResults() {
         {/* Stats */}
         <div className="grid grid-cols-3 border-b border-border/20 text-center">
           <div className="py-3 border-r border-border/20">
-            <p className="text-lg font-bold">5</p>
+            <p className="text-lg font-bold">{teaser.length}</p>
             <p className="text-[10px] text-muted-foreground">Items</p>
           </div>
           <div className="py-3 border-r border-border/20">
-            <p className="text-lg font-bold text-primary">3</p>
+            <p className="text-lg font-bold text-primary">{teaser.filter((i) => i.matched).length}</p>
             <p className="text-[10px] text-muted-foreground">Matches</p>
           </div>
           <div className="py-3">
             <p className="text-lg font-bold flex items-center justify-center gap-1">
-              <TrendingDown className="h-4 w-4 text-emerald-400" />2
+              <TrendingDown className="h-4 w-4 text-emerald-400" />{EXAMPLE_PRICE_DROPS}
             </p>
             <p className="text-[10px] text-muted-foreground">Price drops</p>
           </div>
@@ -69,7 +64,7 @@ export function ExampleResults() {
 
         {/* Items */}
         <div className="px-4 sm:px-6 py-4 space-y-1.5">
-          {EXAMPLE_ITEMS.map((item, i) => (
+          {teaser.map((item, i) => (
             <div
               key={i}
               className={`flex items-center justify-between gap-2 rounded-lg px-3 py-2.5 text-sm ${
@@ -85,13 +80,13 @@ export function ExampleResults() {
                 </span>
               </div>
               <span className={`text-xs sm:text-sm font-bold shrink-0 ${item.matched ? "text-emerald-400" : ""}`}>
-                {item.price}
+                ${item.price.toLocaleString()}
               </span>
             </div>
           ))}
         </div>
 
-        {/* Footer with link */}
+        {/* Footer */}
         <div className="border-t border-border/20 px-4 sm:px-6 py-3 bg-muted/20 flex items-center justify-between">
           <p className="text-xs text-muted-foreground">
             Example results from a real scan

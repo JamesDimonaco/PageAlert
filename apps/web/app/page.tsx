@@ -6,7 +6,6 @@ import { HeroCTA } from "@/components/prowl/hero-cta";
 import { MonitorCountBadge } from "@/components/prowl/monitor-count-badge";
 import { TryScanner } from "@/components/prowl/try-scanner";
 import { ExampleResults } from "@/components/prowl/example-results";
-import { Testimonials } from "@/components/prowl/testimonials";
 
 export default function LandingPage() {
   return (
