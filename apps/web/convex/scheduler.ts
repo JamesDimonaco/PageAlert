@@ -311,25 +311,27 @@ export const runScheduledChecks = internalAction({
                   ?? (Array.isArray(schema?.items) && schema.items.some((i: any) => typeof i.price === "number"));
 
                 if (tracksPrices) {
-                  // Filter to tracked items only — match by key, fall back to title
-                  // (title-price keys change when prices change, so title fallback is needed)
-                  const trackedSet = new Set(priceAlerts.trackedItems);
+                  // Filter to tracked items by title — title-price composite keys are unstable
+                  // across price changes, so we resolve tracked keys to titles and match on that
                   const allItems = (schema?.items ?? []) as Record<string, unknown>[];
                   const trackedTitles = new Set(
                     priceAlerts.trackedItems.map((k) => {
+                      // Try to find the item by key to get its title
                       const item = allItems.find((i) => {
                         const iKey = i.url ? String(i.url) : `${String(i.title ?? "")}-${String(i.price ?? "")}`;
                         return iKey === k;
                       });
-                      return item ? String(item.title ?? "").toLowerCase() : k.split("-")[0]?.toLowerCase() ?? "";
+                      if (item) return String(item.title ?? "").toLowerCase();
+                      // For URL keys, check if any item has this URL
+                      const byUrl = allItems.find((i) => String(i.url ?? "") === k);
+                      if (byUrl) return String(byUrl.title ?? "").toLowerCase();
+                      // Last resort: extract title portion from title-price key
+                      return k.split("-").slice(0, -1).join("-").toLowerCase() || k.toLowerCase();
                     }).filter(Boolean)
                   );
-                  const relevantChanges = changes.priceChanges.filter((pc) => {
-                    const item = allItems.find((i) => String(i.title ?? "").toLowerCase() === pc.title.toLowerCase());
-                    if (!item) return trackedTitles.has(pc.title.toLowerCase());
-                    const key = item.url ? String(item.url) : `${String(item.title ?? "")}-${String(item.price ?? "")}`;
-                    return trackedSet.has(key) || trackedTitles.has(pc.title.toLowerCase());
-                  });
+                  const relevantChanges = changes.priceChanges.filter((pc) =>
+                    trackedTitles.has(pc.title.toLowerCase())
+                  );
 
                   // Apply minimum change threshold
                   const minPct = priceAlerts.minChangePercent ?? 2;
@@ -361,7 +363,7 @@ export const runScheduledChecks = internalAction({
                         await ctx.runMutation(internal.scheduler.updatePriceAlertTimestamp, {
                           monitorId: freshMonitor._id,
                           lastNotifiedAt: Date.now(),
-                        }).catch(() => {});
+                        }).catch((e) => console.error(`[scheduler] Failed to update price alert cooldown for ${freshMonitor._id}:`, e));
 
                         // Determine template variant
                         const hasThresholdCrossing = belowHits.length > 0 || aboveHits.length > 0;
@@ -383,6 +385,7 @@ export const runScheduledChecks = internalAction({
                         // Per-monitor channel filtering
                         const monitorChannels = (freshMonitor as any).notificationChannels as string[] | undefined;
                         const shouldSend = (channel: string) => !monitorChannels || monitorChannels.includes(channel);
+                        const hasAnyChannel = !monitorChannels || monitorChannels.length > 0;
 
                         // Email
                         if (shouldSend("email") && freshMonitor.userEmail) {
@@ -420,22 +423,24 @@ export const runScheduledChecks = internalAction({
                           }
                         }
 
-                        // In-app notification
-                        const dropCount = drops.length;
-                        const incCount = increases.length;
-                        const title = hasThresholdCrossing
-                          ? `${freshMonitor.name} — Price target hit!`
-                          : dropCount > 0 && incCount === 0
-                            ? `${freshMonitor.name} — ${dropCount} price drop${dropCount !== 1 ? "s" : ""}`
-                            : `${freshMonitor.name} — ${significantChanges.length} price change${significantChanges.length !== 1 ? "s" : ""}`;
+                        // In-app notification (unless all channels explicitly disabled)
+                        if (hasAnyChannel) {
+                          const dropCount = drops.length;
+                          const incCount = increases.length;
+                          const title = hasThresholdCrossing
+                            ? `${freshMonitor.name} — Price target hit!`
+                            : dropCount > 0 && incCount === 0
+                              ? `${freshMonitor.name} — ${dropCount} price drop${dropCount !== 1 ? "s" : ""}`
+                              : `${freshMonitor.name} — ${significantChanges.length} price change${significantChanges.length !== 1 ? "s" : ""}`;
 
-                        await ctx.runMutation(internal.userNotifications.create, {
-                          userId: freshMonitor.userId,
-                          monitorId: freshMonitor._id,
-                          channel: "in_app",
-                          title,
-                          message: significantChanges.map((pc) => `${pc.title}: $${pc.oldPrice} → $${pc.newPrice}`).join(", "),
-                        }).catch(() => {});
+                          await ctx.runMutation(internal.userNotifications.create, {
+                            userId: freshMonitor.userId,
+                            monitorId: freshMonitor._id,
+                            channel: "in_app",
+                            title,
+                            message: significantChanges.map((pc) => `${pc.title}: $${pc.oldPrice} → $${pc.newPrice}`).join(", "),
+                          }).catch(() => {});
+                        }
 
                         console.log(`[scheduler] Price alert sent for ${freshMonitor._id}: ${significantChanges.length} changes, variant=${variant}`);
                       }

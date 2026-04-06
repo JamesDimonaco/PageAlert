@@ -374,7 +374,9 @@ export const sendPriceAlert = internalAction({
     if (args.variant === "threshold" && firstHit) {
       const threshold = firstBelow ? args.belowThreshold : args.aboveThreshold;
       const direction = firstBelow ? "dropped below" : "rose above";
-      subject = `🎯 ${firstHit.title} ${direction} your ${fmt(threshold ?? 0)} target!`;
+      subject = threshold != null
+        ? `🎯 ${firstHit.title} ${direction} your ${fmt(threshold)} target!`
+        : `🎯 ${firstHit.title} — price target hit!`;
     } else if (args.variant === "single_drop" && firstChange) {
       subject = `${firstChange.title} dropped to ${fmt(firstChange.newPrice)} (-${pct(firstChange.changePercent)})`;
     } else {
