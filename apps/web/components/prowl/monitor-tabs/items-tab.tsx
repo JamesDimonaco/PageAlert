@@ -7,6 +7,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { MatchConditionsEditor } from "@/components/prowl/match-conditions-editor";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   ExternalLink,
   Search,
   CheckCircle2,
@@ -17,6 +24,9 @@ import {
   Loader2,
   RefreshCw,
   Filter,
+  ArrowUpDown,
+  TrendingDown,
+  TrendingUp,
 } from "lucide-react";
 import type { Id } from "@/convex/_generated/dataModel";
 import type { ExtractedItem, MatchConditions, ExtractionSchema } from "@prowl/shared";
@@ -34,11 +44,18 @@ interface ItemsTabProps {
   blacklist: string[];
 }
 
+type StatusFilter = "all" | "matches" | "non-matches" | "dismissed";
+type SortOption = "default" | "price-asc" | "price-desc" | "name-asc" | "name-desc";
+
 export function ItemsTab({ monitorId, allItems, schema, blacklist }: ItemsTabProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [editedConditions, setEditedConditions] = useState<MatchConditions | null>(null);
   const [saving, setSaving] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [sortBy, setSortBy] = useState<SortOption>("default");
+  const [priceMin, setPriceMin] = useState("");
+  const [priceMax, setPriceMax] = useState("");
 
   const updateBlacklist = useMutation(api.monitors.updateBlacklist);
   const updateMutation = useMutation(api.monitors.update);
@@ -56,15 +73,52 @@ export function ItemsTab({ monitorId, allItems, schema, blacklist }: ItemsTabPro
   const blacklistKeys = useMemo(() => new Set(blacklist), [blacklist]);
 
   const filteredItems = useMemo(() => {
-    if (!searchQuery) return allItems;
-    const q = searchQuery.toLowerCase();
-    return allItems.filter((item) =>
-      JSON.stringify(item).toLowerCase().includes(q)
-    );
-  }, [allItems, searchQuery]);
+    let items = allItems;
+
+    // Text search
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      items = items.filter((item) => JSON.stringify(item).toLowerCase().includes(q));
+    }
+
+    // Status filter
+    if (statusFilter === "matches") items = items.filter((i) => matchKeys.has(getItemKey(i)));
+    else if (statusFilter === "non-matches") items = items.filter((i) => !matchKeys.has(getItemKey(i)) && !blacklistKeys.has(getItemKey(i)));
+    else if (statusFilter === "dismissed") items = items.filter((i) => blacklistKeys.has(getItemKey(i)));
+
+    // Price range filter
+    const pMin = priceMin ? Number(priceMin) : null;
+    const pMax = priceMax ? Number(priceMax) : null;
+    if (pMin != null && Number.isFinite(pMin)) {
+      items = items.filter((i) => {
+        const p = typeof i.price === "number" ? i.price : NaN;
+        return !Number.isFinite(p) || p >= pMin; // keep items without prices
+      });
+    }
+    if (pMax != null && Number.isFinite(pMax)) {
+      items = items.filter((i) => {
+        const p = typeof i.price === "number" ? i.price : NaN;
+        return !Number.isFinite(p) || p <= pMax;
+      });
+    }
+
+    return items;
+  }, [allItems, searchQuery, statusFilter, priceMin, priceMax, matchKeys, blacklistKeys]);
 
   const sortedItems = useMemo(() => {
     return [...filteredItems].sort((a, b) => {
+      // User-selected sort takes priority
+      if (sortBy === "price-asc" || sortBy === "price-desc") {
+        const aP = typeof a.price === "number" ? a.price : sortBy === "price-asc" ? Infinity : -Infinity;
+        const bP = typeof b.price === "number" ? b.price : sortBy === "price-asc" ? Infinity : -Infinity;
+        return sortBy === "price-asc" ? aP - bP : bP - aP;
+      }
+      if (sortBy === "name-asc" || sortBy === "name-desc") {
+        const aT = String(a.title ?? a.name ?? "").toLowerCase();
+        const bT = String(b.title ?? b.name ?? "").toLowerCase();
+        return sortBy === "name-asc" ? aT.localeCompare(bT) : bT.localeCompare(aT);
+      }
+      // Default: matches first, dismissed last
       const aKey = getItemKey(a);
       const bKey = getItemKey(b);
       const aBlack = blacklistKeys.has(aKey);
@@ -75,7 +129,7 @@ export function ItemsTab({ monitorId, allItems, schema, blacklist }: ItemsTabPro
       if (aMatch !== bMatch) return aMatch ? -1 : 1;
       return 0;
     });
-  }, [filteredItems, matchKeys, blacklistKeys]);
+  }, [filteredItems, sortBy, matchKeys, blacklistKeys]);
 
   async function saveConditions() {
     if (!schema || !editedConditions) return;
@@ -126,7 +180,7 @@ export function ItemsTab({ monitorId, allItems, schema, blacklist }: ItemsTabPro
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <Badge variant="outline" className="text-xs">{filteredItems.length} items</Badge>
+          <Badge variant="outline" className="text-xs">{filteredItems.length}{filteredItems.length !== allItems.length ? ` of ${allItems.length}` : ""} items</Badge>
           <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-xs">
             {matches.length} match{matches.length !== 1 ? "es" : ""}
           </Badge>
@@ -153,7 +207,51 @@ export function ItemsTab({ monitorId, allItems, schema, blacklist }: ItemsTabPro
         </div>
       </div>
 
-      {/* Collapsible filters */}
+      {/* Quick filters */}
+      <div className="flex flex-wrap items-center gap-2">
+        <Select value={statusFilter} onValueChange={(v) => v && setStatusFilter(v as StatusFilter)}>
+          <SelectTrigger className="w-[140px] h-8 text-xs">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All items</SelectItem>
+            <SelectItem value="matches">Matches only</SelectItem>
+            <SelectItem value="non-matches">Non-matches</SelectItem>
+            <SelectItem value="dismissed">Dismissed</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={sortBy} onValueChange={(v) => v && setSortBy(v as SortOption)}>
+          <SelectTrigger className="w-[150px] h-8 text-xs">
+            <ArrowUpDown className="h-3 w-3 mr-1.5" />
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="default">Default</SelectItem>
+            <SelectItem value="price-asc">Price: low to high</SelectItem>
+            <SelectItem value="price-desc">Price: high to low</SelectItem>
+            <SelectItem value="name-asc">Name: A–Z</SelectItem>
+            <SelectItem value="name-desc">Name: Z–A</SelectItem>
+          </SelectContent>
+        </Select>
+        <div className="flex items-center gap-1.5">
+          <div className="relative w-24">
+            <TrendingDown className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground" />
+            <Input type="number" placeholder="Min" value={priceMin} onChange={(e) => setPriceMin(e.target.value)} className="pl-7 h-8 text-xs" />
+          </div>
+          <span className="text-xs text-muted-foreground">–</span>
+          <div className="relative w-24">
+            <TrendingUp className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground" />
+            <Input type="number" placeholder="Max" value={priceMax} onChange={(e) => setPriceMax(e.target.value)} className="pl-7 h-8 text-xs" />
+          </div>
+        </div>
+        {(statusFilter !== "all" || sortBy !== "default" || priceMin || priceMax) && (
+          <Button variant="ghost" size="sm" className="h-8 text-xs gap-1 text-muted-foreground" onClick={() => { setStatusFilter("all"); setSortBy("default"); setPriceMin(""); setPriceMax(""); }}>
+            <X className="h-3 w-3" /> Clear
+          </Button>
+        )}
+      </div>
+
+      {/* Match condition editor */}
       {showFilters && schema && (
         <Card className="border-border/30 bg-card/50 shadow-sm shadow-black/5">
           <CardContent className="p-5 space-y-4">
