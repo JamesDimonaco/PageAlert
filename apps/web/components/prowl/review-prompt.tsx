@@ -44,6 +44,7 @@ export function ReviewPrompt() {
         role: role || undefined,
         quote,
       });
+      setDismissed(true); // Hide immediately, don't wait for shouldPrompt refetch
       toast.success("Thank you for your review!");
       trackEvent("review_submitted", { quote_length: quote.length, has_role: !!role });
     } catch (e) {
@@ -77,6 +78,7 @@ export function ReviewPrompt() {
               variant="ghost"
               size="icon"
               className="h-7 w-7"
+              aria-label="Close review form"
               onClick={() => setShowForm(false)}
             >
               <X className="h-4 w-4" />
@@ -85,10 +87,11 @@ export function ReviewPrompt() {
 
           <div className="space-y-3">
             <div>
-              <label className="text-xs font-medium text-muted-foreground mb-1 block">
+              <label htmlFor="review-name" className="text-xs font-medium text-muted-foreground mb-1 block">
                 Your name
               </label>
               <Input
+                id="review-name"
                 value={displayName}
                 onChange={(e) => setDisplayName(e.target.value)}
                 placeholder="John Doe"
@@ -97,10 +100,11 @@ export function ReviewPrompt() {
             </div>
 
             <div>
-              <label className="text-xs font-medium text-muted-foreground mb-1 block">
+              <label htmlFor="review-role" className="text-xs font-medium text-muted-foreground mb-1 block">
                 What do you do? (optional)
               </label>
               <Input
+                id="review-role"
                 value={role}
                 onChange={(e) => setRole(e.target.value)}
                 placeholder="e.g. Freelance Developer"
@@ -109,10 +113,11 @@ export function ReviewPrompt() {
             </div>
 
             <div>
-              <label className="text-xs font-medium text-muted-foreground mb-1 block">
+              <label htmlFor="review-quote" className="text-xs font-medium text-muted-foreground mb-1 block">
                 What do you think of PageAlert?
               </label>
               <Textarea
+                id="review-quote"
                 value={quote}
                 onChange={(e) => setQuote(e.target.value)}
                 placeholder="I love how easy it is to..."
