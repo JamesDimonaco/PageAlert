@@ -134,9 +134,15 @@ export const incrementScanCount = mutation({
       await ctx.db.patch(record._id, {
         dailyScans: isToday ? (record.dailyScans ?? 0) + 1 : 1,
         dailyScansDate: today,
-      } as any); // as any until types regenerated
+      } as any);
+    } else {
+      await ctx.db.insert("userTiers", {
+        userId,
+        tier: "free",
+        dailyScans: 1,
+        dailyScansDate: today,
+        updatedAt: Date.now(),
+      } as any);
     }
-    // If no tier record exists, user is free tier — they can still scan, we just don't track.
-    // The tier record is created when they first sign up or by webhooks.
   },
 });

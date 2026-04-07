@@ -92,11 +92,11 @@ export function CreateMonitorProvider({ children }: { children: ReactNode }) {
       if (isSubmittingRef.current) return;
 
       // Check daily scan budget before creating the monitor
-      if (scanBudget && !scanBudget.canScan) {
-        trackEvent("scan_budget_exceeded", { limit: scanBudget.limit });
-        toast.error("Daily scan limit reached", {
-          description: `${scanBudget.limit} scans/day on your plan. Resets at midnight UTC.`,
+      if (!scanBudget?.canScan) {
+        toast.error(scanBudget ? "Daily scan limit reached" : "Loading...", {
+          description: scanBudget ? `${scanBudget.limit} scans/day on your plan. Resets at midnight UTC.` : "Please wait a moment.",
         });
+        if (scanBudget) trackEvent("scan_budget_exceeded", { limit: scanBudget.limit });
         return;
       }
 
@@ -242,7 +242,7 @@ export function CreateMonitorProvider({ children }: { children: ReactNode }) {
         isSubmittingRef.current = false;
       }
     },
-    [createMutation, saveScanResult, saveScanError, createLog]
+    [createMutation, saveScanResult, saveScanError, createLog, scanBudget, incrementScans]
   );
 
   const cancelScan = useCallback(async () => {

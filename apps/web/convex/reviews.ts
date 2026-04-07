@@ -37,6 +37,15 @@ export const submit = mutation({
       .first();
     if (existing) throw new Error("You've already submitted a review");
 
+    // Verify eligibility (2+ non-anonymous monitors)
+    const monitors = await ctx.db
+      .query("monitors")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .take(20);
+    if (monitors.filter((m) => !m.isAnonymous).length < 2) {
+      throw new Error("Create at least 2 monitors before submitting a review");
+    }
+
     await ctx.db.insert("reviews", {
       userId,
       displayName: args.displayName.trim(),
@@ -60,8 +69,13 @@ export const dismiss = mutation({
       .withIndex("by_userId", (q) => q.eq("userId", userId))
       .unique();
     if (record) {
-      await ctx.db.patch(record._id, {
+      await ctx.db.patch(record._id, { reviewDismissed: true } as any);
+    } else {
+      await ctx.db.insert("userTiers", {
+        userId,
+        tier: "free",
         reviewDismissed: true,
+        updatedAt: Date.now(),
       } as any);
     }
   },
@@ -107,6 +121,7 @@ export const listPublic = query({
       .order("desc")
       .take(MAX_PUBLIC_REVIEWS);
     return reviews.map((r) => ({
+      id: r._id,
       displayName: r.displayName,
       role: r.role,
       quote: r.quote,
