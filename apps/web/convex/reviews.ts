@@ -18,17 +18,15 @@ export const submit = mutation({
     if (!identity) throw new Error("Not authenticated");
     const userId = identity.subject;
 
-    // Validate
-    if (args.displayName.trim().length === 0)
-      throw new Error("Name is required");
-    if (args.displayName.length > MAX_NAME_LENGTH)
-      throw new Error(`Name must be under ${MAX_NAME_LENGTH} characters`);
-    if (args.quote.trim().length === 0)
-      throw new Error("Review text is required");
-    if (args.quote.length > MAX_QUOTE_LENGTH)
-      throw new Error(`Review must be under ${MAX_QUOTE_LENGTH} characters`);
-    if (args.role && args.role.length > MAX_ROLE_LENGTH)
-      throw new Error(`Role must be under ${MAX_ROLE_LENGTH} characters`);
+    // Normalize + validate
+    const name = args.displayName.trim();
+    const quote = args.quote.trim();
+    const role = args.role?.trim() || undefined;
+    if (name.length === 0) throw new Error("Name is required");
+    if (name.length > MAX_NAME_LENGTH) throw new Error(`Name must be under ${MAX_NAME_LENGTH} characters`);
+    if (quote.length === 0) throw new Error("Review text is required");
+    if (quote.length > MAX_QUOTE_LENGTH) throw new Error(`Review must be under ${MAX_QUOTE_LENGTH} characters`);
+    if (role && role.length > MAX_ROLE_LENGTH) throw new Error(`Role must be under ${MAX_ROLE_LENGTH} characters`);
 
     // One per user
     const existing = await ctx.db
@@ -41,16 +39,16 @@ export const submit = mutation({
     const monitors = await ctx.db
       .query("monitors")
       .withIndex("by_userId", (q) => q.eq("userId", userId))
-      .take(20);
+      .collect();
     if (monitors.filter((m) => !m.isAnonymous).length < 2) {
       throw new Error("Create at least 2 monitors before submitting a review");
     }
 
     await ctx.db.insert("reviews", {
       userId,
-      displayName: args.displayName.trim(),
-      role: args.role?.trim() || undefined,
-      quote: args.quote.trim(),
+      displayName: name,
+      role,
+      quote,
       createdAt: Date.now(),
     });
   },

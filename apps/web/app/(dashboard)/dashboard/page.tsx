@@ -13,7 +13,7 @@ import { useCreateMonitor } from "@/hooks/use-create-monitor";
 import { useTier } from "@/hooks/use-tier";
 import Link from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
-import { useMutation } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { toast } from "sonner";
 import { trackMonitorDeleted, trackMonitorPaused, trackMonitorResumed, trackEvent, setUserProperties, captureException } from "@/lib/posthog";
@@ -58,6 +58,8 @@ export default function DashboardPage() {
     handleClone(source);
     router.replace("/dashboard", { scroll: false });
   }, [searchParams, monitors, openWithDefaults, router, atLimit]);
+  const scanBudget = useQuery(api.tiers.canScan);
+  const consumeScan = useMutation(api.tiers.consumeScan);
   const saveScanResult = useMutation(api.monitors.saveScanResult);
   const saveScanError = useMutation(api.monitors.saveScanError);
   const createLog = useMutation(api.logs.create);
@@ -71,6 +73,22 @@ export default function DashboardPage() {
   }, [monitors]);
 
   async function handleRescan(monitorId: Id<"monitors">) {
+    // Atomically consume a scan from the daily budget
+    try {
+      const result = await consumeScan();
+      if (!result.success) {
+        trackEvent("scan_budget_exceeded", { limit: result.limit });
+        toast.error("Daily scan limit reached", {
+          description: `${result.limit} scans/day on your plan. Resets at midnight UTC.`,
+        });
+        return;
+      }
+    } catch (e) {
+      captureException(e, { context: "consumeScan" });
+      toast.error("Failed to check scan budget");
+      return;
+    }
+
     const monitor = monitors.find((m) => m._id === monitorId);
     if (!monitor) return;
 
@@ -121,6 +139,7 @@ export default function DashboardPage() {
       toast.success("Rescan complete", {
         description: `${totalItems} items, ${matchCount} matches`,
       });
+      // Scan budget already consumed atomically above
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Rescan failed";
       const durationMs = Date.now() - startTime;
@@ -182,6 +201,12 @@ export default function DashboardPage() {
       </div>
 
       <StatsCards monitors={monitors} />
+
+      {scanBudget && (
+        <p className="text-xs text-muted-foreground">
+          {scanBudget.remaining}/{scanBudget.limit} scans remaining today
+        </p>
+      )}
 
       <ReviewPrompt />
 

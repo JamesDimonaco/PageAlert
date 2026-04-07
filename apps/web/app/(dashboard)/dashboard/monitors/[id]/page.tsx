@@ -34,7 +34,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMonitor, useMonitorResults, useMonitors } from "@/hooks/use-monitors";
 import { useTier } from "@/hooks/use-tier";
-import { useMutation } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { applyMatchConditions, getItemKey } from "@prowl/shared";
 import type { Id } from "@/convex/_generated/dataModel";
@@ -66,6 +66,8 @@ export default function MonitorDetailPage({
   const { monitors, togglePause, deleteMonitor, updateMonitor, toggleMute } = useMonitors();
   const { maxMonitors } = useTier();
   const atLimit = monitors.length >= maxMonitors;
+  const scanBudget = useQuery(api.tiers.canScan);
+  const consumeScan = useMutation(api.tiers.consumeScan);
   const saveScanResult = useMutation(api.monitors.saveScanResult);
   const saveScanError = useMutation(api.monitors.saveScanError);
   const router = useRouter();
@@ -85,6 +87,23 @@ export default function MonitorDetailPage({
 
   async function handleRescan(id: Id<"monitors">) {
     if (!monitor) return;
+
+    // Atomically consume a scan from the daily budget
+    try {
+      const result = await consumeScan();
+      if (!result.success) {
+        trackEvent("scan_budget_exceeded", { limit: result.limit });
+        toast.error("Daily scan limit reached", {
+          description: `${result.limit} scans/day on your plan. Resets at midnight UTC.`,
+        });
+        return;
+      }
+    } catch (e) {
+      captureException(e, { context: "consumeScan" });
+      toast.error("Failed to check scan budget");
+      return;
+    }
+
     try {
       await updateMonitor(id, { status: "scanning" as "active" });
       const res = await fetch("/api/scraper/extract", {
@@ -99,6 +118,7 @@ export default function MonitorDetailPage({
       const totalItems = typeof json.totalItems === "number" ? json.totalItems : 0;
       await saveScanResult({ id, schema: json.schema, matchCount });
       toast.success("Rescan complete", { description: `${totalItems} items, ${matchCount} matches` });
+      // Scan budget already consumed atomically above
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Rescan failed";
       await saveScanError({ id, error: msg }).catch((saveErr) => {

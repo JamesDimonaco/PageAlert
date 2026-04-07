@@ -57,6 +57,7 @@ export function CreateMonitorProvider({ children }: { children: ReactNode }) {
   const saveScanError = useMutation(api.monitors.saveScanError);
   const removeMutation = useMutation(api.monitors.remove);
   const createLog = useMutation(api.logs.create);
+  // scanBudget not used here — initial monitor creation doesn't consume rescan quota
 
   const open = useCallback(() => {
     if (!isScanning) {
@@ -199,6 +200,7 @@ export function CreateMonitorProvider({ children }: { children: ReactNode }) {
         }).catch(() => {});
 
         trackScanCompleted({ url: data.url, itemCount: totalItems, matchCount, durationMs, confidence: insights?.confidence });
+        // Initial scan — doesn't consume rescan budget
 
         toast.success("Scan complete", {
           description: `${totalItems} items found, ${matchCount} match${matchCount !== 1 ? "es" : ""}`,

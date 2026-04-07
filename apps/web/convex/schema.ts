@@ -153,6 +153,8 @@ export default defineSchema({
     polarSubscriptionId: v.optional(v.string()),
     cancelledAt: v.optional(v.number()),
     periodEnd: v.optional(v.number()),
+    dailyScans: v.optional(v.number()),
+    dailyScansDate: v.optional(v.string()),
     reviewDismissed: v.optional(v.boolean()),
     updatedAt: v.number(),
   }).index("by_userId", ["userId"]),
