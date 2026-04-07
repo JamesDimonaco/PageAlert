@@ -153,6 +153,7 @@ export default defineSchema({
     polarSubscriptionId: v.optional(v.string()),
     cancelledAt: v.optional(v.number()),
     periodEnd: v.optional(v.number()),
+    reviewDismissed: v.optional(v.boolean()),
     updatedAt: v.number(),
   }).index("by_userId", ["userId"]),
 
@@ -163,6 +164,15 @@ export default defineSchema({
     claimedAt: v.number(),
   })
     .index("by_channel_target", ["channel", "target"])
+    .index("by_userId", ["userId"]),
+
+  reviews: defineTable({
+    userId: v.string(),
+    displayName: v.string(),
+    role: v.optional(v.string()),
+    quote: v.string(),
+    createdAt: v.number(),
+  })
     .index("by_userId", ["userId"]),
 
   anonymousScanCounter: defineTable({

@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { MonitorCard } from "@/components/prowl/monitor-card";
 import { StatsCards } from "@/components/prowl/stats-cards";
 import { DeleteDialog } from "@/components/prowl/delete-dialog";
+import { ReviewPrompt } from "@/components/prowl/review-prompt";
 import { useMonitors } from "@/hooks/use-monitors";
 import { useCreateMonitor } from "@/hooks/use-create-monitor";
 import { useTier } from "@/hooks/use-tier";
@@ -181,6 +182,8 @@ export default function DashboardPage() {
       </div>
 
       <StatsCards monitors={monitors} />
+
+      <ReviewPrompt />
 
       <div className="flex flex-col sm:flex-row sm:items-center gap-3">
         <div className="relative flex-1 sm:max-w-sm">
