@@ -111,7 +111,7 @@ export default function MonitorDetailPage({
       const totalItems = typeof json.totalItems === "number" ? json.totalItems : 0;
       await saveScanResult({ id, schema: json.schema, matchCount });
       toast.success("Rescan complete", { description: `${totalItems} items, ${matchCount} matches` });
-      await incrementScans().catch(() => {});
+      await incrementScans().catch((e) => captureException(e, { context: "incrementScans" }));
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Rescan failed";
       await saveScanError({ id, error: msg }).catch((saveErr) => {

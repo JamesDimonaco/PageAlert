@@ -8,12 +8,12 @@ import {
   useRef,
   type ReactNode,
 } from "react";
-import { useMutation } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { CreateMonitorSheet } from "@/components/prowl/create-monitor-sheet";
 import { toast } from "sonner";
-import { trackMonitorCreated, trackScanStarted, trackScanCompleted, trackScanFailed } from "@/lib/posthog";
+import { trackMonitorCreated, trackScanStarted, trackScanCompleted, trackScanFailed, trackEvent, captureException } from "@/lib/posthog";
 
 interface CloneDefaults {
   name: string;
@@ -57,6 +57,8 @@ export function CreateMonitorProvider({ children }: { children: ReactNode }) {
   const saveScanError = useMutation(api.monitors.saveScanError);
   const removeMutation = useMutation(api.monitors.remove);
   const createLog = useMutation(api.logs.create);
+  const scanBudget = useQuery(api.tiers.canScan);
+  const incrementScans = useMutation(api.tiers.incrementScanCount);
 
   const open = useCallback(() => {
     if (!isScanning) {
@@ -88,6 +90,16 @@ export function CreateMonitorProvider({ children }: { children: ReactNode }) {
       notificationChannels?: ("email" | "telegram" | "discord")[];
     }) => {
       if (isSubmittingRef.current) return;
+
+      // Check daily scan budget before creating the monitor
+      if (scanBudget && !scanBudget.canScan) {
+        trackEvent("scan_budget_exceeded", { limit: scanBudget.limit });
+        toast.error("Daily scan limit reached", {
+          description: `${scanBudget.limit} scans/day on your plan. Resets at midnight UTC.`,
+        });
+        return;
+      }
+
       isSubmittingRef.current = true;
 
       let monitorId: Id<"monitors">;
@@ -199,6 +211,7 @@ export function CreateMonitorProvider({ children }: { children: ReactNode }) {
         }).catch(() => {});
 
         trackScanCompleted({ url: data.url, itemCount: totalItems, matchCount, durationMs, confidence: insights?.confidence });
+        await incrementScans().catch((e) => captureException(e, { context: "incrementScans_create" }));
 
         toast.success("Scan complete", {
           description: `${totalItems} items found, ${matchCount} match${matchCount !== 1 ? "es" : ""}`,

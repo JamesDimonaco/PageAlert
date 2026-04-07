@@ -132,7 +132,7 @@ export default function DashboardPage() {
       toast.success("Rescan complete", {
         description: `${totalItems} items, ${matchCount} matches`,
       });
-      await incrementScans().catch(() => {});
+      await incrementScans().catch((e) => captureException(e, { context: "incrementScans" }));
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Rescan failed";
       const durationMs = Date.now() - startTime;
