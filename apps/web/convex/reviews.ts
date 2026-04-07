@@ -103,7 +103,7 @@ export const shouldPrompt = query({
       .unique();
     if ((tier as any)?.reviewDismissed) return false;
 
-    // Has 2+ monitors?
+    // Has 2+ non-anonymous monitors?
     const monitors = await ctx.db
       .query("monitors")
       .withIndex("by_userId", (q) => q.eq("userId", userId))
