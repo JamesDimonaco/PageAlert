@@ -684,13 +684,21 @@ async function runFullExtract(
       url: monitor.url,
       prompt: monitor.prompt,
       ...(retryAttempt > 0 ? { retryAttempt } : {}),
+      ...(skipQuickCheck ? { skipBlockCheck: true } : {}),
     }),
     signal: AbortSignal.timeout(120_000),
   });
 
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    throw new Error(`AI extract failed ${res.status}: ${body.slice(0, 200)}`);
+    let errorMsg = `AI extract failed (${res.status})`;
+    try {
+      const parsed = JSON.parse(body);
+      if (parsed.message) errorMsg = parsed.message;
+    } catch {
+      if (body) errorMsg = `${errorMsg}: ${body.slice(0, 200)}`;
+    }
+    throw new Error(errorMsg);
   }
 
   const result = await res.json();
