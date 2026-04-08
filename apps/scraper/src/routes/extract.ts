@@ -12,15 +12,16 @@ const extractSchema = z.object({
   timeout: z.number().int().min(1000).max(60000).optional(),
   retryAttempt: z.number().int().min(0).max(10).optional(),
   skipBlockCheck: z.boolean().optional(),
+  useProxy: z.boolean().optional(),
 });
 
 export const extractRoutes = new Hono();
 
 extractRoutes.post("/", zValidator("json", extractSchema), async (c) => {
-  const { url, prompt, name, timeout, retryAttempt, skipBlockCheck } = c.req.valid("json");
+  const { url, prompt, name, timeout, retryAttempt, skipBlockCheck, useProxy } = c.req.valid("json");
 
   try {
-    const scraped = await scrapeUrl(url, { timeout, retryAttempt });
+    const scraped = await scrapeUrl(url, { timeout, retryAttempt, useProxy });
 
     // Don't waste AI credits on anti-bot challenge pages — unless caller
     // explicitly skips (e.g., forced retry where we want the AI to try anyway)

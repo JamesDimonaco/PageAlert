@@ -19,6 +19,10 @@ const scrapeLogArgs = {
   aiNoMatchSignal: v.optional(v.string()),
   aiNotices: v.optional(v.array(v.string())),
   matchConditions: v.optional(v.any()),
+  retryAttempt: v.optional(v.number()),
+  blocked: v.optional(v.boolean()),
+  blockReason: v.optional(v.string()),
+  strategy: v.optional(v.string()),
 };
 
 export const create = mutation({

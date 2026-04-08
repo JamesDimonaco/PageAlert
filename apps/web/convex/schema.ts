@@ -126,6 +126,11 @@ export default defineSchema({
     aiNotices: v.optional(v.array(v.string())),
     // Match conditions the AI generated
     matchConditions: v.optional(v.any()),
+    // Scraping metadata
+    retryAttempt: v.optional(v.number()),
+    blocked: v.optional(v.boolean()),
+    blockReason: v.optional(v.string()),
+    strategy: v.optional(v.string()),
     createdAt: v.number(),
   })
     .index("by_userId", ["userId"])

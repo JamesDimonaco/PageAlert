@@ -33,9 +33,30 @@ async function getBrowser(): Promise<Browser> {
   return browser;
 }
 
+/**
+ * Get proxy configuration if available.
+ * Supports PROXY_URL env var in format: http://user:pass@host:port
+ * Works with residential proxy providers like Bright Data, Oxylabs, SmartProxy, etc.
+ */
+function getProxyConfig(): { server: string; username?: string; password?: string } | null {
+  const proxyUrl = process.env.PROXY_URL;
+  if (!proxyUrl) return null;
+  try {
+    const parsed = new URL(proxyUrl);
+    return {
+      server: `${parsed.protocol}//${parsed.hostname}:${parsed.port || "8080"}`,
+      username: parsed.username || undefined,
+      password: parsed.password || undefined,
+    };
+  } catch {
+    console.warn("[scraper] Invalid PROXY_URL format, ignoring");
+    return null;
+  }
+}
+
 export async function scrapeUrl(
   url: string,
-  options?: { timeout?: number; waitFor?: string; retryAttempt?: number }
+  options?: { timeout?: number; waitFor?: string; retryAttempt?: number; useProxy?: boolean }
 ): Promise<ScrapeResponse> {
   // SSRF protection: validate URL before making any request
   await validateUrlForScraping(url);
@@ -43,6 +64,7 @@ export async function scrapeUrl(
   // Enforce timeout cap
   const timeout = Math.min(options?.timeout ?? 30000, MAX_TIMEOUT);
   const retry = options?.retryAttempt ?? 0;
+  const useProxy = options?.useProxy ?? false;
 
   // Resource exhaustion protection: limit concurrent contexts
   if (activeContexts >= MAX_CONCURRENT_CONTEXTS) {
@@ -60,9 +82,16 @@ export async function scrapeUrl(
       ? { width: 390, height: 844 }  // iPhone viewport
       : { width: 1920, height: 1080 };
 
+    // Use proxy when requested and configured
+    const proxyConfig = useProxy ? getProxyConfig() : null;
+    if (useProxy && !proxyConfig) {
+      console.warn("[scraper] Proxy requested but PROXY_URL not configured, using direct connection");
+    }
+
     const context = await b.newContext({
       userAgent: ua,
       viewport,
+      ...(proxyConfig ? { proxy: proxyConfig } : {}),
     });
 
     const page = await context.newPage();
@@ -127,6 +156,7 @@ export async function scrapeUrl(
         title,
         scrapedAt: new Date().toISOString(),
         ...(botCheck.blocked ? { blocked: true, blockReason: botCheck.reason } : {}),
+        ...(proxyConfig ? { proxied: true } : {}),
       };
     } finally {
       await context.close();

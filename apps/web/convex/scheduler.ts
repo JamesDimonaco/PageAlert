@@ -185,26 +185,28 @@ export const runScheduledChecks = internalAction({
     const results = await Promise.allSettled(
       monitors.map(async (monitor) => {
         const startTime = Date.now();
+        const checkCount = monitor.checkCount ?? 0;
+        const retryCount = monitor.retryCount ?? 0;
+        const needsReextract = checkCount > 0 && checkCount % FULL_REEXTRACT_EVERY === 0;
+        // On 3rd retry, skip quick-check and go straight to full extract with proxy
+        const forceFullExtract = retryCount >= 2;
+        // Use proxy on retry 1+ to bypass anti-bot IP blocking
+        const useProxy = retryCount >= 1;
         try {
-          const checkCount = monitor.checkCount ?? 0;
-          const retryCount = monitor.retryCount ?? 0;
-          const needsReextract = checkCount > 0 && checkCount % FULL_REEXTRACT_EVERY === 0;
-          // On 3rd retry, skip quick-check and go straight to full extract — the AI
-          // may handle partial/challenge content better than keyword matching
-          const forceFullExtract = retryCount >= 2;
 
           let checkResult: { hasMatch: boolean; matchCount: number; matches: unknown[]; totalItems: number | null };
 
           if ((needsReextract && monitor.schema) || forceFullExtract) {
-            checkResult = await runFullExtract(ctx, monitor, scraperUrl, scraperKey, retryCount, forceFullExtract);
+            checkResult = await runFullExtract(ctx, monitor, scraperUrl, scraperKey, retryCount, forceFullExtract, useProxy);
           } else {
-            checkResult = await runQuickCheck(ctx, monitor, scraperUrl, scraperKey, retryCount);
+            checkResult = await runQuickCheck(ctx, monitor, scraperUrl, scraperKey, retryCount, useProxy);
           }
 
           // Log successful check — use monitor's last known item count when totalItems is unknown
           const displayTotalItems = checkResult.totalItems != null
             ? checkResult.totalItems
             : (Array.isArray((monitor.schema as any)?.items) ? (monitor.schema as any).items.length : 0);
+          const strategy = `${forceFullExtract ? "forced-extract" : needsReextract ? "full-extract" : "quick-check"}${useProxy ? "+proxy" : ""}`;
           await ctx.runMutation(internal.logs.createInternal, {
             userId: monitor.userId,
             monitorId: monitor._id,
@@ -215,6 +217,8 @@ export const runScheduledChecks = internalAction({
             durationMs: Date.now() - startTime,
             itemCount: displayTotalItems,
             matchCount: checkResult.matchCount,
+            retryAttempt: retryCount > 0 ? retryCount : undefined,
+            strategy,
           }).catch(() => {});
 
           // Re-fetch monitor to pick up any user changes (muted, channels) during the long-running check
@@ -459,6 +463,8 @@ export const runScheduledChecks = internalAction({
             msg.includes("timed out") || msg.includes("Timeout");
 
           // Log failed check
+          const isBlocked = msg.includes("blocking automated access") || msg.includes("anti-bot") || msg.includes("CAPTCHA");
+          const failStrategy = `${forceFullExtract ? "forced-extract" : needsReextract ? "full-extract" : "quick-check"}${useProxy ? "+proxy" : ""}`;
           await ctx.runMutation(internal.logs.createInternal, {
             userId: monitor.userId,
             monitorId: monitor._id,
@@ -468,11 +474,15 @@ export const runScheduledChecks = internalAction({
             status: isTimeout ? "timeout" : "error",
             durationMs: Date.now() - startTime,
             error: msg,
+            retryAttempt: retryCount > 0 ? retryCount : undefined,
+            blocked: isBlocked || undefined,
+            blockReason: isBlocked ? msg.slice(0, 200) : undefined,
+            strategy: failStrategy,
           }).catch(() => {});
 
           // Check if this will max out retries
-          const retryCount = (monitor.retryCount ?? 0) + 1;
-          const willError = retryCount >= MAX_RETRIES;
+          const nextRetryCount = (monitor.retryCount ?? 0) + 1;
+          const willError = nextRetryCount >= MAX_RETRIES;
 
           await ctx.runMutation(internal.scheduler.recordCheckResult, {
             monitorId: monitor._id,
@@ -565,7 +575,8 @@ async function runQuickCheck(
   monitor: any,
   scraperUrl: string,
   scraperKey: string,
-  retryAttempt = 0
+  retryAttempt = 0,
+  useProxy = false
 ): Promise<{ hasMatch: boolean; matchCount: number; matches: unknown[]; totalItems: number | null }> {
   const matchConditions = monitor.schema?.matchConditions ?? {};
 
@@ -579,6 +590,7 @@ async function runQuickCheck(
       url: monitor.url,
       matchConditions,
       ...(retryAttempt > 0 ? { retryAttempt } : {}),
+      ...(useProxy ? { useProxy: true } : {}),
     }),
     signal: AbortSignal.timeout(90_000),
   });
@@ -633,7 +645,8 @@ async function runFullExtract(
   scraperUrl: string,
   scraperKey: string,
   retryAttempt = 0,
-  skipQuickCheck = false
+  skipQuickCheck = false,
+  useProxy = false
 ): Promise<{ hasMatch: boolean; matchCount: number; matches: unknown[]; totalItems: number | null }> {
   // Skip the accessibility pre-check when forced (e.g., on retry after anti-bot detection)
   // — go straight to the AI extract which may handle partial/challenge content better
@@ -649,6 +662,7 @@ async function runFullExtract(
         url: monitor.url,
         matchConditions: monitor.schema?.matchConditions ?? {},
         ...(retryAttempt > 0 ? { retryAttempt } : {}),
+        ...(useProxy ? { useProxy: true } : {}),
       }),
       signal: AbortSignal.timeout(90_000),
     });
@@ -685,6 +699,7 @@ async function runFullExtract(
       prompt: monitor.prompt,
       ...(retryAttempt > 0 ? { retryAttempt } : {}),
       ...(skipQuickCheck ? { skipBlockCheck: true } : {}),
+      ...(useProxy ? { useProxy: true } : {}),
     }),
     signal: AbortSignal.timeout(120_000),
   });
