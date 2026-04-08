@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
-    "@hono/node-server": "^1.13.8",
+    "@hono/node-server": "^1.19.13",
     "@hono/zod-validator": "^0.7.6",
     "@opentelemetry/api": "^1.9.0",
     "@opentelemetry/exporter-trace-otlp-http": "^0.213.0",
@@ -19,7 +19,7 @@
     "@opentelemetry/sdk-node": "^0.213.0",
     "@posthog/ai": "^7.12.2",
     "@prowl/shared": "workspace:*",
-    "hono": "^4.7.4",
+    "hono": "^4.12.12",
     "playwright": "1.58.2",
     "posthog-node": "^5.28.5",
     "zod": "^3.24.2"
