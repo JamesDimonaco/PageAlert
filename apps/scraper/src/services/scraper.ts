@@ -44,7 +44,7 @@ function getProxyConfig(): { server: string; username?: string; password?: strin
   try {
     const parsed = new URL(proxyUrl);
     return {
-      server: `${parsed.protocol}//${parsed.hostname}:${parsed.port || "8080"}`,
+      server: `${parsed.protocol}//${parsed.host}`,
       username: parsed.username || undefined,
       password: parsed.password || undefined,
     };
