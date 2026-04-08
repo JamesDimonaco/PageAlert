@@ -252,6 +252,8 @@ export const saveScanError = mutation({
       await ctx.db.patch(id, {
         status: "error",
         lastError: error,
+        retryCount: 0,
+        nextCheckAt: undefined,
         updatedAt: now,
       });
     }

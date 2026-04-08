@@ -231,7 +231,8 @@ export function OverviewTab({ monitorId, monitor, matches, allItems, totalItems,
 
       {/* Error banner */}
       {monitor.status === "error" && monitor.lastError && (() => {
-        const isBlocked = monitor.lastError.includes("blocking") || monitor.lastError.includes("CAPTCHA") || monitor.lastError.includes("anti-bot");
+        const err = monitor.lastError.toLowerCase();
+        const isBlocked = err.includes("blocking") || err.includes("captcha") || err.includes("anti-bot") || err.includes("blocked");
         return (
         <Card className="border-red-500/30 bg-red-500/5 shadow-sm">
           <CardContent className="p-4 sm:p-5">
