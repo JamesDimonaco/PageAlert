@@ -22,7 +22,8 @@ extractRoutes.post("/", zValidator("json", extractSchema), async (c) => {
 
     // Don't waste AI credits on anti-bot challenge pages
     if (scraped.blocked) {
-      console.warn(`[extract] Blocked by anti-bot for ${url}: ${scraped.blockReason}`);
+      const safeUrl = (() => { try { return new URL(url).hostname; } catch { return "[invalid]"; } })();
+      console.warn(`[extract] Blocked by anti-bot for ${safeUrl}: ${scraped.blockReason}`);
       return c.json({
         error: "blocked",
         message: `Site is blocking automated access: ${scraped.blockReason ?? "anti-bot protection detected"}`,

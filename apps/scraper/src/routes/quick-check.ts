@@ -132,7 +132,7 @@ quickCheckRoutes.post("/", zValidator("json", quickCheckSchema), async (c) => {
       userMessage = "Too many concurrent checks. Will retry automatically.";
       statusCode = 429;
     } else {
-      userMessage = `Check failed: ${message.slice(0, 200)}`;
+      userMessage = "Check failed — please try again later.";
     }
 
     return c.json({ error: "check_failed", message: userMessage }, statusCode as 400 | 429 | 500 | 504);
