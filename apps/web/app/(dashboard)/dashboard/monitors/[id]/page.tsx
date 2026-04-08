@@ -134,7 +134,8 @@ export default function MonitorDetailPage({
       await saveScanError({ id, error: msg }).catch((saveErr) => {
         console.error("[rescan] Failed to persist error state:", saveErr, { monitorId: id, error: msg });
       });
-      const isBlocked = msg.includes("blocking") || msg.includes("anti-bot") || msg.includes("CAPTCHA");
+      const lower = msg.toLowerCase();
+      const isBlocked = lower.includes("blocking") || lower.includes("anti-bot") || lower.includes("captcha") || lower.includes("blocked");
       await createLog({
         monitorId: id, monitorName: monitor.name, url: monitor.url, prompt: monitor.prompt,
         status: "error" as const, durationMs, error: msg,
