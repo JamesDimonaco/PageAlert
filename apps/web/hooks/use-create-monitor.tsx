@@ -126,7 +126,7 @@ export function CreateMonitorProvider({ children }: { children: ReactNode }) {
         const durationMs = Date.now() - startTime;
 
         if (!res.ok) {
-          const errorMsg = json.error || json.message || "Extraction failed";
+          const errorMsg = json.message || json.error || "Extraction failed";
 
           await createLog({
             monitorId,

@@ -196,7 +196,7 @@ export const runScheduledChecks = internalAction({
           let checkResult: { hasMatch: boolean; matchCount: number; matches: unknown[]; totalItems: number | null };
 
           if ((needsReextract && monitor.schema) || forceFullExtract) {
-            checkResult = await runFullExtract(ctx, monitor, scraperUrl, scraperKey, retryCount);
+            checkResult = await runFullExtract(ctx, monitor, scraperUrl, scraperKey, retryCount, forceFullExtract);
           } else {
             checkResult = await runQuickCheck(ctx, monitor, scraperUrl, scraperKey, retryCount);
           }
@@ -632,38 +632,45 @@ async function runFullExtract(
   monitor: any,
   scraperUrl: string,
   scraperKey: string,
-  retryAttempt = 0
+  retryAttempt = 0,
+  skipQuickCheck = false
 ): Promise<{ hasMatch: boolean; matchCount: number; matches: unknown[]; totalItems: number | null }> {
-  // First check page is accessible before burning AI credits
-  const quickRes = await fetch(`${scraperUrl}/api/quick-check`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": scraperKey,
-    },
-    body: JSON.stringify({
-      url: monitor.url,
-      matchConditions: monitor.schema?.matchConditions ?? {},
-      ...(retryAttempt > 0 ? { retryAttempt } : {}),
-    }),
-    signal: AbortSignal.timeout(90_000),
-  });
+  // Skip the accessibility pre-check when forced (e.g., on retry after anti-bot detection)
+  // — go straight to the AI extract which may handle partial/challenge content better
+  if (!skipQuickCheck) {
+    // First check page is accessible before burning AI credits
+    const quickRes = await fetch(`${scraperUrl}/api/quick-check`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": scraperKey,
+      },
+      body: JSON.stringify({
+        url: monitor.url,
+        matchConditions: monitor.schema?.matchConditions ?? {},
+        ...(retryAttempt > 0 ? { retryAttempt } : {}),
+      }),
+      signal: AbortSignal.timeout(90_000),
+    });
 
-  if (quickRes.ok) {
-    const quickResult = await quickRes.json();
-    if (!quickResult.accessible) {
-      // Soft failure — don't count as retry, just skip the re-extract
-      console.log(`[scheduler] Skipping re-extract for ${monitor._id}: page inaccessible`);
-      await ctx.runMutation(internal.scheduler.recordCheckResult, {
-        monitorId: monitor._id,
-        hasNewMatches: false,
-        matchCount: monitor.matchCount ?? 0,
-        totalItems: 0,
-        matches: [],
-        // No error field — this is informational, not a retry-worthy failure
-      });
-      return { hasMatch: false, matchCount: 0, matches: [], totalItems: null };
+    if (quickRes.ok) {
+      const quickResult = await quickRes.json();
+      if (!quickResult.accessible) {
+        // Soft failure — don't count as retry, just skip the re-extract
+        console.log(`[scheduler] Skipping re-extract for ${monitor._id}: page inaccessible`);
+        await ctx.runMutation(internal.scheduler.recordCheckResult, {
+          monitorId: monitor._id,
+          hasNewMatches: false,
+          matchCount: monitor.matchCount ?? 0,
+          totalItems: 0,
+          matches: [],
+          // No error field — this is informational, not a retry-worthy failure
+        });
+        return { hasMatch: false, matchCount: 0, matches: [], totalItems: null };
+      }
     }
+  } else {
+    console.log(`[scheduler] Skipping quick-check for ${monitor._id} (retry ${retryAttempt}, forced full extract)`);
   }
 
   // Page is accessible — do the full AI extraction

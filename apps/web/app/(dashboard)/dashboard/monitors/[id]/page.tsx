@@ -112,7 +112,7 @@ export default function MonitorDetailPage({
         body: JSON.stringify({ url: monitor.url, prompt: monitor.prompt, name: monitor.name }),
       });
       const json = await res.json();
-      if (!res.ok) throw new Error(json.error || json.message || "Failed");
+      if (!res.ok) throw new Error(json.message || json.error || "Failed");
       if (!json.schema || typeof json.schema !== "object") throw new Error("Invalid response from scraper");
       const matchCount = Array.isArray(json.matches) ? json.matches.length : 0;
       const totalItems = typeof json.totalItems === "number" ? json.totalItems : 0;

@@ -106,7 +106,7 @@ export default function DashboardPage() {
       const json = await res.json();
       const durationMs = Date.now() - startTime;
 
-      if (!res.ok) throw new Error(json.error || json.message || "Failed");
+      if (!res.ok) throw new Error(json.message || json.error || "Failed");
 
       const matchCount = json.matches?.length ?? 0;
       const totalItems = json.totalItems ?? 0;
