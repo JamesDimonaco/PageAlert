@@ -185,7 +185,10 @@ export const create = mutation({
     if (counter) {
       await ctx.db.patch(counter._id, { value: counter.value + 1 });
     } else {
-      await ctx.db.insert("counters", { name: "monitors", value: 1 });
+      // First time — seed counter from existing non-anonymous monitors + this new one
+      const existing = await ctx.db.query("monitors").collect();
+      const currentCount = existing.filter((m) => !m.isAnonymous).length;
+      await ctx.db.insert("counters", { name: "monitors", value: currentCount });
     }
 
     return id;

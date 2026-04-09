@@ -57,6 +57,7 @@ export default defineSchema({
     .index("by_status", ["status"])
     .index("by_userId_status", ["userId", "status"])
     .index("by_nextCheckAt", ["nextCheckAt"])
+    .index("by_status_nextCheckAt", ["status", "nextCheckAt"])
     .index("by_anonymousEmail", ["anonymousEmail"])
     .index("by_isAnonymous", ["isAnonymous"])
     .index("by_isAnonymous_expiresAt", ["isAnonymous", "expiresAt"]),
