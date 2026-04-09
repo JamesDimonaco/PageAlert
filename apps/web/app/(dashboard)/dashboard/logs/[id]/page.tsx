@@ -4,6 +4,8 @@ import { use, useState } from "react";
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 
+import { formatStrategy } from "@/lib/strategy";
+
 // Extended log type until Convex regenerates types with new fields
 interface LogExtended {
   monitorName?: string;
@@ -13,6 +15,10 @@ interface LogExtended {
   aiNoMatchSignal?: string;
   aiNotices?: string[];
   matchConditions?: unknown;
+  strategy?: string;
+  blocked?: boolean;
+  blockReason?: string;
+  retryAttempt?: number;
   [key: string]: unknown;
 }
 import { Button } from "@/components/ui/button";
@@ -96,7 +102,9 @@ export default function LogDetailPage({
         </Link>
         <div className="flex-1 min-w-0">
           <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-            <h1 className="text-xl sm:text-2xl font-bold tracking-tight">Scrape Log</h1>
+            <h1 className="text-xl sm:text-2xl font-bold tracking-tight">
+              {log.monitorName ? log.monitorName : "Scrape Log"}
+            </h1>
             <Badge
               variant="outline"
               className={`${
@@ -114,6 +122,26 @@ export default function LogDetailPage({
           <p className="text-muted-foreground mt-1 text-sm">{new Date(log.createdAt).toLocaleString()}</p>
         </div>
       </div>
+
+      {/* Scan details */}
+      {(log.strategy || log.blocked || (log.retryAttempt != null && log.retryAttempt > 0)) && (
+        <div className="flex flex-wrap items-center gap-2">
+          {log.strategy && (() => {
+            const strat = formatStrategy(log.strategy);
+            return <Badge variant="outline" className={`text-xs ${strat.color}`}>{strat.label}</Badge>;
+          })()}
+          {log.blocked && (
+            <Badge className="bg-red-500/10 text-red-400 border-red-500/20 text-xs">
+              Blocked{log.blockReason ? `: ${log.blockReason}` : ""}
+            </Badge>
+          )}
+          {log.retryAttempt != null && log.retryAttempt > 0 && (
+            <Badge variant="outline" className="text-xs bg-amber-500/10 text-amber-400 border-amber-500/20">
+              Retry attempt {log.retryAttempt} of 3
+            </Badge>
+          )}
+        </div>
+      )}
 
       {/* Summary */}
       <div className="grid gap-4 grid-cols-2 md:grid-cols-4">
