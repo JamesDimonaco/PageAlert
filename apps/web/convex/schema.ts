@@ -57,6 +57,7 @@ export default defineSchema({
     .index("by_status", ["status"])
     .index("by_userId_status", ["userId", "status"])
     .index("by_nextCheckAt", ["nextCheckAt"])
+    .index("by_status_nextCheckAt", ["status", "nextCheckAt"])
     .index("by_anonymousEmail", ["anonymousEmail"])
     .index("by_isAnonymous", ["isAnonymous"])
     .index("by_isAnonymous_expiresAt", ["isAnonymous", "expiresAt"]),
@@ -186,4 +187,10 @@ export default defineSchema({
     date: v.string(), // YYYY-MM-DD
     count: v.number(),
   }).index("by_date", ["date"]),
+
+  // Lightweight counter for public monitor count (avoids reading all monitors)
+  counters: defineTable({
+    name: v.string(),
+    value: v.number(),
+  }).index("by_name", ["name"]),
 });

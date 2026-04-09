@@ -66,12 +66,17 @@ const intervalValidator = v.union(
 
 // ---- Queries ----
 
-/** Public: total non-anonymous monitors for social proof (excludes try-before-signup demos) */
+/** Public: total non-anonymous monitors for social proof.
+ * Reads a single counter document instead of scanning all monitors.
+ */
 export const publicCount = query({
   args: {},
   handler: async (ctx) => {
-    const all = await ctx.db.query("monitors").collect();
-    return all.filter((m) => !m.isAnonymous).length;
+    const counter = await ctx.db
+      .query("counters")
+      .withIndex("by_name", (q) => q.eq("name", "monitors"))
+      .unique();
+    return counter?.value ?? 0;
   },
 });
 
@@ -80,11 +85,14 @@ export const list = query({
   handler: async (ctx) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) return [];
-    return ctx.db
+    const monitors = await ctx.db
       .query("monitors")
       .withIndex("by_userId", (q) => q.eq("userId", identity.subject))
       .order("desc")
       .collect();
+    // Strip heavy schema field — dashboard only needs metadata, not full extraction data.
+    // The detail page uses the `get` query which returns the full document.
+    return monitors.map(({ schema, ...rest }) => rest);
   },
 });
 
@@ -155,7 +163,7 @@ export const create = mutation({
     }
 
     const now = Date.now();
-    return ctx.db.insert("monitors", {
+    const id = await ctx.db.insert("monitors", {
       name: args.name.trim(),
       url: args.url.trim(),
       prompt: args.prompt.trim(),
@@ -171,6 +179,19 @@ export const create = mutation({
       createdAt: now,
       updatedAt: now,
     });
+
+    // Increment public monitor counter (lightweight alternative to counting all docs)
+    const counter = await ctx.db.query("counters").withIndex("by_name", (q) => q.eq("name", "monitors")).unique();
+    if (counter) {
+      await ctx.db.patch(counter._id, { value: counter.value + 1 });
+    } else {
+      // First time — seed counter from existing non-anonymous monitors + this new one
+      const existing = await ctx.db.query("monitors").collect();
+      const currentCount = existing.filter((m) => !m.isAnonymous).length;
+      await ctx.db.insert("counters", { name: "monitors", value: currentCount });
+    }
+
+    return id;
   },
 });
 
@@ -392,6 +413,14 @@ export const remove = mutation({
     }
 
     await ctx.db.delete(id);
+
+    // Decrement public monitor counter
+    if (!existing.isAnonymous) {
+      const counter = await ctx.db.query("counters").withIndex("by_name", (q) => q.eq("name", "monitors")).unique();
+      if (counter && counter.value > 0) {
+        await ctx.db.patch(counter._id, { value: counter.value - 1 });
+      }
+    }
   },
 });
 
