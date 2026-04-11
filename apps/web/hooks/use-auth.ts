@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { authClient } from "@/lib/auth-client";
 import { identifyUser, setUserProperties, resetUser, trackSignOut } from "@/lib/posthog";
+import { clearMonitorDraft } from "@/lib/monitor-draft";
 
 export function useAuth() {
   const session = authClient.useSession();
@@ -37,6 +38,9 @@ export function useAuth() {
         // Ignore signout errors
       } finally {
         resetUser();
+        // Drop any in-progress create-monitor draft so the next user on
+        // this browser doesn't inherit it. See PROWL-038 Phase 3.
+        clearMonitorDraft();
         window.location.href = "/login";
       }
     },

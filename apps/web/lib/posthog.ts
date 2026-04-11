@@ -146,6 +146,14 @@ export function trackMonitorCreated(props: { url: string; prompt: string; checkI
   });
 }
 
+export function trackMonitorDraftRestored() {
+  trackEvent("monitor_draft_restored");
+}
+
+export function trackMonitorDraftCleared() {
+  trackEvent("monitor_draft_cleared");
+}
+
 export function trackMonitorDeleted() {
   trackEvent("monitor_deleted");
 }

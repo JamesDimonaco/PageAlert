@@ -34,6 +34,12 @@ import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import type { MatchConditions, ExtractedItem, ExtractionSchema } from "@prowl/shared";
 import { toast } from "sonner";
+import {
+  readMonitorDraft,
+  writeMonitorDraft,
+  clearMonitorDraft,
+} from "@/lib/monitor-draft";
+import { trackMonitorDraftRestored, trackMonitorDraftCleared } from "@/lib/posthog";
 
 type CheckInterval = "5m" | "15m" | "30m" | "1h" | "6h" | "24h";
 
@@ -73,6 +79,11 @@ export function CreateMonitorSheet({
   const [prompt, setPrompt] = useState("");
   const [checkInterval, setCheckInterval] = useState<CheckInterval>("6h");
   const [channels, setChannels] = useState<("email" | "telegram" | "discord")[]>(["email"]);
+  // True when the form was just hydrated from a saved draft, used to show
+  // the "Restored from your last draft" banner. Cleared when the user
+  // interacts with the form for the first time after hydration, or when
+  // they hit "Start over". See PROWL-038 Phase 3.
+  const [hydratedFromDraft, setHydratedFromDraft] = useState(false);
 
   // Match conditions editing
   const [editedConditions, setEditedConditions] = useState<MatchConditions | null>(null);
@@ -114,24 +125,49 @@ export function CreateMonitorSheet({
   // Default channels to all configured channels
   const notifSettings = useQuery(api.notificationSettings.list);
 
-  // Reset form when the sheet opens for a new monitor (false → true transition)
+  // Reset (or hydrate from draft) when the sheet opens for a new monitor.
+  // Hydration takes precedence over reset so users who navigated away
+  // mid-form don't lose their work. See PROWL-038 Phase 3.
   const prevOpenRef = useRef(open);
   useEffect(() => {
     if (open && !prevOpenRef.current && !activeMonitorId && !isScanning) {
-      resetForm();
-      // Set default channels to all configured ones
-      const configured: ("email" | "telegram" | "discord")[] = ["email"];
-      if (notifSettings) {
-        for (const s of notifSettings) {
-          if (s.enabled && (s.channel === "telegram" || s.channel === "discord")) {
-            configured.push(s.channel);
+      const draft = readMonitorDraft();
+      if (draft) {
+        setName(draft.name);
+        setUrl(draft.url);
+        setPrompt(draft.prompt);
+        setCheckInterval(draft.checkInterval);
+        setChannels(draft.channels);
+        setHydratedFromDraft(true);
+        trackMonitorDraftRestored();
+      } else {
+        resetForm();
+        // Set default channels to all configured ones
+        const configured: ("email" | "telegram" | "discord")[] = ["email"];
+        if (notifSettings) {
+          for (const s of notifSettings) {
+            if (s.enabled && (s.channel === "telegram" || s.channel === "discord")) {
+              configured.push(s.channel);
+            }
           }
         }
+        setChannels(configured);
+        setHydratedFromDraft(false);
       }
-      setChannels(configured);
     }
     prevOpenRef.current = open;
   }, [open, activeMonitorId, isScanning, notifSettings]);
+
+  // Debounced persistence of the draft. Only writes when the form has
+  // some content; the writeMonitorDraft helper short-circuits empty drafts.
+  useEffect(() => {
+    if (activeMonitorId || isScanning) return;
+    if (!open) return;
+    const t = setTimeout(() => {
+      writeMonitorDraft({ name, url, prompt, checkInterval, channels });
+    }, 300);
+    return () => clearTimeout(t);
+  }, [name, url, prompt, checkInterval, channels, open, activeMonitorId, isScanning]);
 
   // Pre-populate form when clone defaults are provided
   useEffect(() => {
@@ -231,6 +267,10 @@ export function CreateMonitorSheet({
               <form
                 onSubmit={(e) => {
                   e.preventDefault();
+                  // Clear the draft as soon as the scan starts — once we have
+                  // an activeMonitorId the form is no longer in a "draft" state.
+                  clearMonitorDraft();
+                  setHydratedFromDraft(false);
                   onStartScan({
                     name: name || `Monitor ${new URL(url).hostname}`,
                     url,
@@ -241,6 +281,24 @@ export function CreateMonitorSheet({
                 }}
                 className="space-y-6"
               >
+                {hydratedFromDraft && (
+                  <div className="flex items-center justify-between gap-3 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-xs">
+                    <span className="text-primary">Restored from your last draft</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        clearMonitorDraft();
+                        resetForm();
+                        setHydratedFromDraft(false);
+                        trackMonitorDraftCleared();
+                      }}
+                      className="text-muted-foreground hover:text-foreground underline"
+                    >
+                      Start over
+                    </button>
+                  </div>
+                )}
+
                 <div className="space-y-2">
                   <Label htmlFor="create-name" className="text-sm font-medium">Name</Label>
                   <Input
@@ -281,7 +339,17 @@ export function CreateMonitorSheet({
                 </div>
                 <ChannelSelector value={channels} onChange={setChannels} monitorId={null} />
                 <div className="flex justify-end gap-3 pt-4">
-                  <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={() => {
+                      // Cancel = abandon the draft. The user can always
+                      // start fresh next time.
+                      clearMonitorDraft();
+                      setHydratedFromDraft(false);
+                      onOpenChange(false);
+                    }}
+                  >
                     Cancel
                   </Button>
                   <Button type="submit" className="gap-2 shadow-sm shadow-primary/15">
