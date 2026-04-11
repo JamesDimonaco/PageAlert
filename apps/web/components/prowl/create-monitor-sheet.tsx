@@ -341,7 +341,36 @@ export function CreateMonitorSheet({
 
             {/* ---- STEP 3: PREVIEW ---- */}
             {step === "preview" && monitor && (
-              <div className="space-y-6">
+              <div className="space-y-6 pb-2">
+                {/* Top action bar — surface the next step immediately so the
+                    user doesn't have to scroll past insights/filters/items
+                    before discovering "View Details". See PROWL-038 Phase 2. */}
+                <div className="flex items-center justify-between gap-3 rounded-lg border border-primary/20 bg-primary/5 px-4 py-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold">
+                      {matches.length > 0
+                        ? `${matches.length} match${matches.length !== 1 ? "es" : ""} found`
+                        : "Scan complete"}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      Review the filters below or jump straight to the monitor.
+                    </p>
+                  </div>
+                  <Button
+                    size="sm"
+                    onClick={async () => {
+                      await handleConfirm();
+                      if (activeMonitorId) {
+                        router.push(`/dashboard/monitors/${activeMonitorId}`);
+                      }
+                    }}
+                    className="gap-2 shrink-0"
+                  >
+                    View Details
+                    <ArrowRight className="h-4 w-4" />
+                  </Button>
+                </div>
+
                 {/* AI Insights */}
                 {schema?.insights && <AiInsightsCard insights={schema.insights} />}
 
@@ -385,7 +414,7 @@ export function CreateMonitorSheet({
                     Extracted Items
                     <Badge variant="outline" className="ml-2 text-xs">{allItems.length}</Badge>
                   </h3>
-                  <div className="max-h-[300px] overflow-y-auto space-y-2 rounded-lg border border-border/30 p-3">
+                  <div className="max-h-[240px] overflow-y-auto space-y-2 rounded-lg border border-border/30 p-3">
                     {allItems.length === 0 ? (
                       <p className="text-sm text-muted-foreground text-center py-8">
                         No items extracted from the page
@@ -431,25 +460,36 @@ export function CreateMonitorSheet({
                       })
                     )}
                   </div>
+                  {allItems.length > 0 && (
+                    <p className="text-[11px] text-muted-foreground/80 mt-2 text-center">
+                      Showing {allItems.length} extracted item{allItems.length !== 1 ? "s" : ""} — full list and history live on the details page
+                    </p>
+                  )}
                 </div>
 
-                <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-3 pt-4">
-                  <Button variant="outline" onClick={handleConfirm} className="gap-2 w-full sm:w-auto">
-                    <CheckCircle2 className="h-4 w-4" />
-                    Looks Good
-                  </Button>
-                  <Button
-                    onClick={async () => {
-                      await handleConfirm();
-                      if (activeMonitorId) {
-                        router.push(`/dashboard/monitors/${activeMonitorId}`);
-                      }
-                    }}
-                    className="gap-2 shadow-sm shadow-primary/15 w-full sm:w-auto"
-                  >
-                    View Details
-                    <ArrowRight className="h-4 w-4" />
-                  </Button>
+                {/* Sticky bottom action bar — keeps the CTAs visible no matter
+                    how far the user has scrolled down the items list. The
+                    negative margins extend it across the SheetContent's
+                    p-4 sm:p-6 padding so it spans the full sheet width. */}
+                <div className="sticky bottom-0 -mx-4 sm:-mx-6 -mb-4 sm:-mb-6 mt-6 border-t border-border/30 bg-background/95 backdrop-blur px-4 sm:px-6 py-4">
+                  <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-3">
+                    <Button variant="outline" onClick={handleConfirm} className="gap-2 w-full sm:w-auto">
+                      <CheckCircle2 className="h-4 w-4" />
+                      Looks Good
+                    </Button>
+                    <Button
+                      onClick={async () => {
+                        await handleConfirm();
+                        if (activeMonitorId) {
+                          router.push(`/dashboard/monitors/${activeMonitorId}`);
+                        }
+                      }}
+                      className="gap-2 shadow-sm shadow-primary/15 w-full sm:w-auto"
+                    >
+                      View Details
+                      <ArrowRight className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </div>
               </div>
             )}
