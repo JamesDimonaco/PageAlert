@@ -84,10 +84,17 @@ export function CreateMonitorSheet({
   // Read the monitor from Convex (reactive - updates when scan completes)
   const monitor = useMonitor(activeMonitorId!);
 
+  // After an initial scan is blocked, the monitor flips to status="active"
+  // with retryCount > 0 and a nextCheckAt scheduled by the scheduler. We treat
+  // this as "still scanning" from the user's perspective so they get continued
+  // visual feedback rather than an empty preview while a retry is queued.
+  const isInRetry =
+    !!monitor && (monitor.retryCount ?? 0) > 0 && monitor.status !== "error";
+
   // Determine step from state
   const step = !activeMonitorId
     ? "form"
-    : (isScanning || monitor?.status === "scanning" || monitor?.status === "error")
+    : (isScanning || monitor?.status === "scanning" || monitor?.status === "error" || isInRetry)
       ? "scanning"
       : "preview";
 
@@ -175,18 +182,26 @@ export function CreateMonitorSheet({
     }
   }
 
-  // Floating indicator when scanning in background
-  const showFloatingIndicator = !open && (isScanning || monitor?.status === "scanning");
+  // Floating indicator when scanning (or auto-retrying) in background
+  const showFloatingIndicator = !open && (isScanning || monitor?.status === "scanning" || isInRetry);
+  const retryAttempt = monitor?.retryCount ?? 0;
 
   return (
     <>
       {showFloatingIndicator && (
         <button
           onClick={() => onOpenChange(true)}
-          className="fixed bottom-6 right-6 z-50 flex items-center gap-3 rounded-lg bg-primary px-4 py-3 text-sm font-medium text-primary-foreground shadow-lg shadow-primary/25 hover:bg-primary/90 transition-colors animate-in slide-in-from-bottom-4"
+          className="fixed bottom-6 right-6 z-50 flex flex-col items-start gap-1 rounded-lg bg-primary px-4 py-3 text-sm font-medium text-primary-foreground shadow-lg shadow-primary/25 hover:bg-primary/90 transition-colors animate-in slide-in-from-bottom-4 max-w-xs"
         >
-          <Loader2 className="h-4 w-4 animate-spin" />
-          Scanning... {elapsed}s
+          <span className="flex items-center gap-2">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            {isInRetry ? `Retry ${retryAttempt} of 3` : `Scanning... ${elapsed}s`}
+          </span>
+          {isInRetry && (
+            <span className="text-[11px] font-normal opacity-80">
+              The site blocked us — trying again with a proxy
+            </span>
+          )}
         </button>
       )}
 
@@ -198,12 +213,14 @@ export function CreateMonitorSheet({
                 <Radar className="h-4 w-4 text-primary" />
               </div>
               {step === "form" && "New Monitor"}
-              {step === "scanning" && "Scanning..."}
+              {step === "scanning" && (isInRetry ? "Retrying..." : "Scanning...")}
               {step === "preview" && "Review Results"}
             </SheetTitle>
             <SheetDescription>
               {step === "form" && "Paste a URL and describe what you're looking for."}
-              {step === "scanning" && "AI is scanning the page and extracting data..."}
+              {step === "scanning" && (isInRetry
+                ? "The first attempt was blocked — automatically retrying."
+                : "AI is scanning the page and extracting data...")}
               {step === "preview" && "Review the extracted data and adjust your filters."}
             </SheetDescription>
           </SheetHeader>
@@ -294,16 +311,28 @@ export function CreateMonitorSheet({
                 ) : (
                   <>
                     <Loader2 className="h-12 w-12 animate-spin text-primary mb-6" />
-                    <p className="text-lg font-semibold mb-1">Scanning page...</p>
-                    <p className="text-sm text-muted-foreground mb-1">{elapsed}s elapsed</p>
+                    <p className="text-lg font-semibold mb-1">
+                      {isInRetry ? `Retry ${retryAttempt} of 3` : "Scanning page..."}
+                    </p>
+                    {isInRetry ? (
+                      <div className="text-sm text-muted-foreground text-center max-w-sm space-y-1 mb-1">
+                        <p>The site blocked the first attempt.</p>
+                        <p>
+                          We&apos;re trying again automatically with a proxy
+                          {retryAttempt >= 2 ? " and a different browser" : ""}.
+                        </p>
+                      </div>
+                    ) : (
+                      <p className="text-sm text-muted-foreground mb-1">{elapsed}s elapsed</p>
+                    )}
                     <p className="text-xs text-muted-foreground font-mono truncate max-w-sm">
                       {monitor?.url}
                     </p>
                     <p className="text-xs text-muted-foreground mt-4">
-                      You can close this panel — the scan will continue.
+                      You can close this panel — {isInRetry ? "we'll keep retrying in the background." : "the scan will continue."}
                     </p>
                     <Button variant="ghost" className="mt-4 text-destructive" onClick={onCancelScan}>
-                      Cancel scan
+                      Cancel {isInRetry ? "retries" : "scan"}
                     </Button>
                   </>
                 )}
