@@ -5,6 +5,7 @@ export const POSTHOG_HOST = process.env.NEXT_PUBLIC_POSTHOG_HOST ?? "https://us.
 
 let initialized = false;
 let pendingPageView: string | null = null;
+let pendingIdentify: { userId: string; properties?: Record<string, unknown> } | null = null;
 
 export function initPostHog() {
   if (typeof window === "undefined") return;
@@ -34,6 +35,12 @@ export function initPostHog() {
     pendingPageView = null;
   }
 
+  // Fire any identify that was queued before init
+  if (pendingIdentify) {
+    posthog.identify(pendingIdentify.userId, pendingIdentify.properties);
+    pendingIdentify = null;
+  }
+
   // Lazily start session recording after main thread is idle
   if ("requestIdleCallback" in window) {
     requestIdleCallback(() => posthog.startSessionRecording());
@@ -49,7 +56,10 @@ export function getPostHog() {
 // ---- Core helpers ----
 
 export function identifyUser(userId: string, properties?: Record<string, unknown>) {
-  if (!initialized) return;
+  if (!initialized) {
+    pendingIdentify = { userId, properties };
+    return;
+  }
   posthog.identify(userId, properties);
 }
 

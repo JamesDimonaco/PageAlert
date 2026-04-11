@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
+import { Analytics } from "@vercel/analytics/next";
+import { SpeedInsights } from "@vercel/speed-insights/next";
 import { Toaster } from "@/components/ui/sonner";
 import { ConvexClientProvider } from "@/components/convex-provider";
 import { PostHogProvider } from "@/components/posthog-provider";
@@ -215,6 +217,8 @@ export default async function RootLayout({
           </PostHogProvider>
         </Suspense>
         <Toaster />
+        <Analytics />
+        <SpeedInsights />
       </body>
     </html>
   );

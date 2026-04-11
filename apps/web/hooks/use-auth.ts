@@ -11,8 +11,13 @@ export function useAuth() {
   // Identify user in PostHog and set properties
   useEffect(() => {
     if (user) {
-      identifyUser(user.id);
+      identifyUser(user.id, {
+        email: user.email,
+        name: user.name,
+      });
       setUserProperties({
+        email: user.email,
+        name: user.name,
         created_at: user.createdAt,
         has_image: !!user.image,
       });
