@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -32,12 +33,33 @@ import {
 
 type NotificationChannel = "email" | "telegram" | "discord";
 
+const VALID_TABS = ["profile", "notifications", "billing"] as const;
+type SettingsTab = (typeof VALID_TABS)[number];
+
 export default function SettingsPage() {
   const { user, signOut } = useAuth();
   const { monitors } = useMonitors();
   const { tier, maxMonitors, description: tierDescription, isLoading: tierLoading, refetch: refetchTier, isCancelled, daysRemaining, periodEnd } = useTier();
   const [name, setName] = useState(user?.name ?? "");
   const [email, setEmail] = useState(user?.email ?? "");
+
+  // Tab state — driven by ?tab= so deep-links (e.g. from the channel-selector
+  // toast) land on the right tab. Falls back to "profile" if missing/invalid.
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
+  const tabFromQuery = searchParams.get("tab");
+  const initialTab: SettingsTab = (VALID_TABS as readonly string[]).includes(tabFromQuery ?? "")
+    ? (tabFromQuery as SettingsTab)
+    : "profile";
+  const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab);
+
+  function handleTabChange(value: string) {
+    setActiveTab(value as SettingsTab);
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("tab", value);
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+  }
 
   // Show success toast after returning from Polar checkout
   useEffect(() => {
@@ -105,7 +127,7 @@ export default function SettingsPage() {
         <p className="text-muted-foreground mt-2 text-sm leading-relaxed">Manage your account and preferences</p>
       </div>
 
-      <Tabs defaultValue="profile">
+      <Tabs value={activeTab} onValueChange={handleTabChange}>
         <TabsList>
           <TabsTrigger value="profile">
             <User className="mr-2 h-4 w-4" />
