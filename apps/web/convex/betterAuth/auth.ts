@@ -179,6 +179,31 @@ export const createAuthOptions = (ctx: GenericCtx<DataModel>) => {
       },
     },
     plugins,
+    databaseHooks: {
+      user: {
+        create: {
+          // Queue the welcome-email sequence as soon as a user is created.
+          // The actual sender is gated behind ONBOARDING_EMAILS_ENABLED so
+          // this safely lands as wired-but-silent until the kill switch
+          // is flipped. See PROWL-038 Phase 4.
+          after: async (user) => {
+            try {
+              // (ctx as any).runMutation — see Polar webhook precedent at
+              // line 102 above. The GenericCtx union doesn't expose
+              // runMutation in the type, but at runtime in HTTP route
+              // handlers ctx is action-like and has it.
+              await (ctx as any).runMutation(internal.onboarding.queueWelcomeSequence, {
+                userId: user.id,
+                email: user.email,
+              });
+            } catch (e) {
+              // Never block signup on onboarding queueing failure.
+              console.error("[onboarding] failed to queue welcome sequence:", e);
+            }
+          },
+        },
+      },
+    },
   } satisfies BetterAuthOptions;
 };
 
