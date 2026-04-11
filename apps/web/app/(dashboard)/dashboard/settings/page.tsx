@@ -3,13 +3,13 @@
 import { useState, useEffect, useRef } from "react";
 import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { User, Bell, CreditCard, Mail, MessageCircle, Hash, Trash2, Send, CheckCircle2, Loader2, ExternalLink, Sparkles, Lock } from "lucide-react";
+import { User, Bell, CreditCard, Mail, MessageCircle, Hash, Trash2, Send, CheckCircle2, Loader2, ExternalLink, Sparkles, Lock, Smartphone } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -332,6 +332,53 @@ export default function SettingsPage() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-5">
+              {/* Action buttons — only shown until Telegram is connected.
+                  These were previously buried inside the helper text below
+                  the Chat ID input; promoting them so the user has an
+                  obvious "do this first" path. See PROWL-038 Phase 1d. */}
+              {!notifSettings?.find((s) => s.channel === "telegram")?.enabled && (
+                <div className="space-y-3">
+                  <div className="grid sm:grid-cols-2 gap-3">
+                    <a
+                      href="https://t.me/PageAlertNotify_bot"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className={buttonVariants({
+                        variant: "outline",
+                        className: "h-auto flex-col items-start gap-1 py-3 px-4 text-left whitespace-normal",
+                      })}
+                    >
+                      <span className="flex items-center gap-2 text-sm font-semibold">
+                        <ExternalLink className="h-4 w-4" />
+                        Open in Telegram
+                      </span>
+                      <span className="text-xs text-muted-foreground font-normal">
+                        If Telegram is on this device
+                      </span>
+                    </a>
+                    <button
+                      type="button"
+                      onClick={() => setTelegramQrOpen(true)}
+                      className={buttonVariants({
+                        variant: "outline",
+                        className: "h-auto flex-col items-start gap-1 py-3 px-4 text-left whitespace-normal",
+                      })}
+                    >
+                      <span className="flex items-center gap-2 text-sm font-semibold">
+                        <Smartphone className="h-4 w-4" />
+                        Scan QR code
+                      </span>
+                      <span className="text-xs text-muted-foreground font-normal">
+                        Open on your phone instead
+                      </span>
+                    </button>
+                  </div>
+                  <p className="text-xs text-center text-muted-foreground">
+                    Press <strong className="text-foreground/80">Start</strong> in the bot — it will reply with your Chat ID, then paste it below.
+                  </p>
+                </div>
+              )}
+
               <div className="space-y-2">
                 <Label htmlFor="telegram" className="text-sm font-medium">Chat ID</Label>
                 <Input
@@ -340,42 +387,30 @@ export default function SettingsPage() {
                   value={telegramChatId}
                   onChange={(e) => setTelegramChatId(e.target.value)}
                 />
-                <div className="text-xs text-muted-foreground leading-relaxed space-y-1">
-                  <p className="font-medium text-foreground/70">How to get your Chat ID:</p>
-                  <ol className="list-decimal pl-4 space-y-0.5">
-                    <li>Open Telegram and message <a href="https://t.me/PageAlertNotify_bot" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline font-semibold">@PageAlertNotify_bot</a></li>
-                    <li>Press <strong>Start</strong> — the bot will send your Chat ID as a separate message</li>
-                    <li>Copy the number and paste it above, then click Connect &amp; Test</li>
-                  </ol>
-                  <Dialog open={telegramQrOpen} onOpenChange={setTelegramQrOpen}>
-                    <button
-                      onClick={() => setTelegramQrOpen(true)}
-                      className="mt-2 text-primary hover:underline text-xs font-medium flex items-center gap-1"
-                    >
-                      <MessageCircle className="h-3 w-3" />
-                      Open on phone? Scan QR code
-                    </button>
-                    <DialogContent className="sm:max-w-xs">
-                      <DialogHeader>
-                        <DialogTitle className="text-center">Scan to open in Telegram</DialogTitle>
-                        <DialogDescription className="text-center text-xs">
-                          Scan with your phone camera to message @PageAlertNotify_bot
-                        </DialogDescription>
-                      </DialogHeader>
-                      <div className="flex justify-center py-4">
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img
-                          src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent("https://t.me/PageAlertNotify_bot")}&bgcolor=0a0a0b&color=3b82f6&format=svg`}
-                          alt="QR code to open PageAlert bot in Telegram"
-                          width={200}
-                          height={200}
-                          className="rounded-lg"
-                        />
-                      </div>
-                    </DialogContent>
-                  </Dialog>
-                </div>
               </div>
+
+              {/* QR dialog — controlled by `telegramQrOpen` so the trigger
+                  button can live anywhere in the card. */}
+              <Dialog open={telegramQrOpen} onOpenChange={setTelegramQrOpen}>
+                <DialogContent className="sm:max-w-xs">
+                  <DialogHeader>
+                    <DialogTitle className="text-center">Scan to open in Telegram</DialogTitle>
+                    <DialogDescription className="text-center text-xs">
+                      Scan with your phone camera to message @PageAlertNotify_bot
+                    </DialogDescription>
+                  </DialogHeader>
+                  <div className="flex justify-center py-4">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent("https://t.me/PageAlertNotify_bot")}&bgcolor=0a0a0b&color=3b82f6&format=svg`}
+                      alt="QR code to open PageAlert bot in Telegram"
+                      width={200}
+                      height={200}
+                      className="rounded-lg"
+                    />
+                  </div>
+                </DialogContent>
+              </Dialog>
               {notifSettings?.find((s) => s.channel === "telegram")?.enabled ? (
                 <div className="flex items-center gap-2 flex-wrap">
                   <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-xs">Connected</Badge>
