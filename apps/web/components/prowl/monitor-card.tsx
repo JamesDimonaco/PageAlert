@@ -26,7 +26,6 @@ import {
   Copy,
 } from "lucide-react";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { timeAgo } from "@/lib/time";
 
@@ -53,18 +52,20 @@ export function MonitorCard({ monitor, onTogglePause, onDelete, onRescan, onClon
           ? "group-hover:border-l-red-500/50"
           : "group-hover:border-l-amber-500/50";
 
+  const detailHref = `/dashboard/monitors/${monitor._id}`;
+
   return (
-    <Card className={`group relative overflow-hidden border-border/30 border-l-2 border-l-transparent bg-card/50 shadow-sm shadow-black/5 backdrop-blur transition-all hover:shadow-md hover:shadow-black/10 hover:bg-card/80 ${statusBorderColor}`}>
+    <Card
+      className={`group relative overflow-hidden border-border/30 border-l-2 border-l-transparent bg-card/50 shadow-sm shadow-black/5 backdrop-blur transition-all hover:shadow-md hover:shadow-black/10 hover:bg-card/80 cursor-pointer ${statusBorderColor}`}
+      onClick={() => router.push(detailHref)}
+    >
       <CardContent className="p-4 sm:p-6">
         <div className="flex items-start justify-between gap-4">
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-3 mb-2.5">
-              <Link
-                href={`/dashboard/monitors/${monitor._id}`}
-                className="text-base font-semibold truncate hover:text-primary transition-colors"
-              >
+              <span className="text-base font-semibold truncate">
                 {monitor.name}
-              </Link>
+              </span>
               <StatusBadge status={monitor.status} />
               {(monitor as any).muted && (
                 <Badge variant="outline" className="gap-1 bg-amber-500/10 text-amber-400 border-amber-500/20">
@@ -114,10 +115,14 @@ export function MonitorCard({ monitor, onTogglePause, onDelete, onRescan, onClon
             </div>
           </div>
 
-          <DropdownMenu>
-            <DropdownMenuTrigger aria-label="Monitor actions" className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg opacity-100 sm:opacity-0 sm:group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100 transition-all hover:bg-muted outline-none focus-visible:ring-2 focus-visible:ring-ring">
-              <MoreVertical className="h-4 w-4" />
-            </DropdownMenuTrigger>
+          {/* Stop click propagation on the menu so card click doesn't
+              fire when interacting with the dropdown. */}
+          {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions, jsx-a11y/click-events-have-key-events */}
+          <div onClick={(e) => e.stopPropagation()}>
+            <DropdownMenu>
+              <DropdownMenuTrigger aria-label="Monitor actions" className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg opacity-100 sm:opacity-0 sm:group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100 transition-all hover:bg-muted outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                <MoreVertical className="h-4 w-4" />
+              </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               <DropdownMenuItem onClick={() => router.push(`/dashboard/monitors/${monitor._id}`)}>
                 <ArrowRight className="mr-2 h-4 w-4" />
@@ -161,6 +166,7 @@ export function MonitorCard({ monitor, onTogglePause, onDelete, onRescan, onClon
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
+          </div>
         </div>
       </CardContent>
     </Card>

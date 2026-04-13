@@ -329,8 +329,10 @@ export function OverviewTab({ monitorId, monitor, matches, allItems, totalItems,
           <CardContent className="p-4 sm:p-5">
             <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-1.5">URL</p>
             <a href={monitor.url} target="_blank" rel="noopener noreferrer"
-              className="text-sm font-medium text-primary hover:underline flex items-center gap-1.5 break-all">
-              {monitor.url.replace(/^https?:\/\//, "")}
+              className="text-sm font-medium text-primary hover:underline flex items-center gap-1.5 min-w-0"
+              title={monitor.url}
+            >
+              <span className="truncate">{monitor.url.replace(/^https?:\/\//, "")}</span>
               <ExternalLink className="h-3 w-3 shrink-0" />
             </a>
           </CardContent>

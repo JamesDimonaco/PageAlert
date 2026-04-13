@@ -23,6 +23,8 @@ import {
   XCircle,
   AlertTriangle,
   ArrowRight,
+  Mail,
+  MessageCircle,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { MatchConditionsEditor } from "./match-conditions-editor";
@@ -399,6 +401,49 @@ export function CreateMonitorSheet({
                     <p className="text-xs text-muted-foreground mt-4">
                       You can close this panel — {isInRetry ? "we'll keep retrying in the background." : "the scan will continue."}
                     </p>
+
+                    {/* While-you-wait suggestions — give the user something
+                        productive to do during the 10-30s scan instead of
+                        staring at a spinner. Only shown during the initial
+                        scan (not retry). */}
+                    {!isInRetry && (
+                      <div className="mt-8 w-full max-w-sm space-y-2">
+                        <p className="text-xs font-medium text-muted-foreground text-center">While you wait</p>
+                        <div className="space-y-1.5">
+                          {!(notifSettings?.find((s) => s.channel === "telegram")?.enabled) && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                onOpenChange(false);
+                                router.push("/dashboard/settings?tab=notifications");
+                              }}
+                              className="w-full flex items-center gap-3 rounded-lg border border-border/30 bg-card/50 px-3 py-2.5 text-left text-xs hover:bg-muted/50 transition-colors"
+                            >
+                              <MessageCircle className="h-4 w-4 text-muted-foreground shrink-0" />
+                              <span>
+                                <span className="font-medium text-foreground">Set up Telegram</span>
+                                <span className="text-muted-foreground"> — get instant alerts on your phone</span>
+                              </span>
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              onOpenChange(false);
+                              router.push("/dashboard/settings?tab=notifications");
+                            }}
+                            className="w-full flex items-center gap-3 rounded-lg border border-border/30 bg-card/50 px-3 py-2.5 text-left text-xs hover:bg-muted/50 transition-colors"
+                          >
+                            <Mail className="h-4 w-4 text-muted-foreground shrink-0" />
+                            <span>
+                              <span className="font-medium text-foreground">Send a test email</span>
+                              <span className="text-muted-foreground"> — make sure alerts reach your inbox</span>
+                            </span>
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
                     <Button variant="ghost" className="mt-4 text-destructive" onClick={onCancelScan}>
                       Cancel {isInRetry ? "retries" : "scan"}
                     </Button>
