@@ -42,6 +42,8 @@ import {
   clearMonitorDraft,
 } from "@/lib/monitor-draft";
 import { trackMonitorDraftRestored, trackMonitorDraftCleared } from "@/lib/posthog";
+import { ScanStep } from "./scan-step";
+import type { ScanStage } from "@/hooks/use-create-monitor";
 
 type CheckInterval = "5m" | "15m" | "30m" | "1h" | "6h" | "24h";
 
@@ -50,6 +52,7 @@ interface CreateMonitorSheetProps {
   onOpenChange: (open: boolean) => void;
   activeMonitorId: Id<"monitors"> | null;
   isScanning: boolean;
+  scanStage: ScanStage;
   onStartScan: (data: {
     name: string;
     url: string;
@@ -68,6 +71,7 @@ export function CreateMonitorSheet({
   onOpenChange,
   activeMonitorId,
   isScanning,
+  scanStage,
   onStartScan,
   onCancelScan,
   onConfirm,
@@ -378,54 +382,62 @@ export function CreateMonitorSheet({
                       Delete & try again
                     </Button>
                   </>
-                ) : (
+                ) : isInRetry ? (
                   <>
                     <Loader2 className="h-12 w-12 animate-spin text-primary mb-6" />
-                    <p className="text-lg font-semibold mb-1">
-                      {isInRetry ? `Retry ${retryAttempt} of 3` : "Scanning page..."}
-                    </p>
-                    {isInRetry ? (
-                      <div className="text-sm text-muted-foreground text-center max-w-sm space-y-1 mb-1">
-                        <p>The site blocked the first attempt.</p>
-                        <p>
-                          We&apos;re trying again automatically with a proxy
-                          {retryAttempt >= 2 ? " and a different browser" : ""}.
-                        </p>
-                      </div>
-                    ) : (
-                      <p className="text-sm text-muted-foreground mb-1">{elapsed}s elapsed</p>
-                    )}
+                    <p className="text-lg font-semibold mb-1">Retry {retryAttempt} of 3</p>
+                    <div className="text-sm text-muted-foreground text-center max-w-sm space-y-1 mb-1">
+                      <p>The site blocked the first attempt.</p>
+                      <p>
+                        We&apos;re trying again automatically with a proxy
+                        {retryAttempt >= 2 ? " and a different browser" : ""}.
+                      </p>
+                    </div>
                     <p className="text-xs text-muted-foreground font-mono truncate max-w-sm">
                       {monitor?.url}
                     </p>
                     <p className="text-xs text-muted-foreground mt-4">
-                      You can close this panel — {isInRetry ? "we'll keep retrying in the background." : "the scan will continue."}
+                      You can close this panel — we&apos;ll keep retrying in the background.
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    {/* Real scan progress — two stages that reflect the actual
+                        scrape → extract split. See PROWL-039 Part 1. */}
+                    {(() => {
+                      const hostname = (() => { try { return new URL(monitor?.url ?? "").hostname; } catch { return "page"; } })();
+                      const scrapeDone = scanStage !== "idle" && scanStage !== "scraping";
+                      return (
+                    <div className="w-full max-w-sm space-y-4 py-8">
+                      <ScanStep
+                        status={scanStage === "scraping" ? "active" : scrapeDone ? "done" : "pending"}
+                        label="Scraping page"
+                        detail={scanStage === "scraping" ? `Loading ${hostname}` : scrapeDone ? `Loaded from ${hostname}` : undefined}
+                        elapsed={scanStage === "scraping" ? elapsed : undefined}
+                      />
+                      <ScanStep
+                        status={scanStage === "extracting" ? "active" : (scanStage === "saving" || scanStage === "done") ? "done" : "pending"}
+                        label="AI extracting data"
+                        detail={scanStage === "extracting" ? "Reading the page and finding items" : undefined}
+                        elapsed={scanStage === "extracting" ? elapsed : undefined}
+                      />
+                      <ScanStep
+                        status={(scanStage === "saving" || scanStage === "done") ? "done" : "pending"}
+                        label="Done"
+                      />
+                    </div>
+                      );
+                    })()}
+
+                    <p className="text-xs text-muted-foreground">
+                      You can close this panel — the scan will continue.
                     </p>
 
-                    {/* While-you-wait suggestions — give the user something
-                        productive to do during the 10-30s scan instead of
-                        staring at a spinner. Only shown during the initial
-                        scan (not retry). */}
-                    {!isInRetry && (
-                      <div className="mt-8 w-full max-w-sm space-y-2">
-                        <p className="text-xs font-medium text-muted-foreground text-center">While you wait</p>
-                        <div className="space-y-1.5">
-                          {!(notifSettings?.find((s) => s.channel === "telegram")?.enabled) && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                onOpenChange(false);
-                                router.push("/dashboard/settings?tab=notifications");
-                              }}
-                              className="w-full flex items-center gap-3 rounded-lg border border-border/30 bg-card/50 px-3 py-2.5 text-left text-xs hover:bg-muted/50 transition-colors"
-                            >
-                              <MessageCircle className="h-4 w-4 text-muted-foreground shrink-0" />
-                              <span>
-                                <span className="font-medium text-foreground">Set up Telegram</span>
-                                <span className="text-muted-foreground"> — get instant alerts on your phone</span>
-                              </span>
-                            </button>
-                          )}
+                    {/* While-you-wait suggestions */}
+                    <div className="mt-6 w-full max-w-sm space-y-2">
+                      <p className="text-xs font-medium text-muted-foreground text-center">While you wait</p>
+                      <div className="space-y-1.5">
+                        {!(notifSettings?.find((s) => s.channel === "telegram")?.enabled) && (
                           <button
                             type="button"
                             onClick={() => {
@@ -434,15 +446,29 @@ export function CreateMonitorSheet({
                             }}
                             className="w-full flex items-center gap-3 rounded-lg border border-border/30 bg-card/50 px-3 py-2.5 text-left text-xs hover:bg-muted/50 transition-colors"
                           >
-                            <Mail className="h-4 w-4 text-muted-foreground shrink-0" />
+                            <MessageCircle className="h-4 w-4 text-muted-foreground shrink-0" />
                             <span>
-                              <span className="font-medium text-foreground">Send a test email</span>
-                              <span className="text-muted-foreground"> — make sure alerts reach your inbox</span>
+                              <span className="font-medium text-foreground">Set up Telegram</span>
+                              <span className="text-muted-foreground"> — get instant alerts on your phone</span>
                             </span>
                           </button>
-                        </div>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onOpenChange(false);
+                            router.push("/dashboard/settings?tab=notifications");
+                          }}
+                          className="w-full flex items-center gap-3 rounded-lg border border-border/30 bg-card/50 px-3 py-2.5 text-left text-xs hover:bg-muted/50 transition-colors"
+                        >
+                          <Mail className="h-4 w-4 text-muted-foreground shrink-0" />
+                          <span>
+                            <span className="font-medium text-foreground">Send a test email</span>
+                            <span className="text-muted-foreground"> — make sure alerts reach your inbox</span>
+                          </span>
+                        </button>
                       </div>
-                    )}
+                    </div>
 
                     <Button variant="ghost" className="mt-4 text-destructive" onClick={onCancelScan}>
                       Cancel {isInRetry ? "retries" : "scan"}

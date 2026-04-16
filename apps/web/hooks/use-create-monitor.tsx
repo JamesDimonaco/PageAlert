@@ -21,6 +21,8 @@ interface CloneDefaults {
   prompt: string;
 }
 
+export type ScanStage = "idle" | "scraping" | "extracting" | "saving" | "done";
+
 interface CreateMonitorContextValue {
   open: () => void;
   openWithDefaults: (defaults: CloneDefaults) => void;
@@ -28,6 +30,7 @@ interface CreateMonitorContextValue {
   resume: (monitorId: Id<"monitors">) => void;
   activeMonitorId: Id<"monitors"> | null;
   isScanning: boolean;
+  scanStage: ScanStage;
   isOpen: boolean;
 }
 
@@ -38,6 +41,7 @@ const CreateMonitorContext = createContext<CreateMonitorContextValue>({
   resume: () => {},
   activeMonitorId: null,
   isScanning: false,
+  scanStage: "idle",
   isOpen: false,
 });
 
@@ -49,6 +53,7 @@ export function CreateMonitorProvider({ children }: { children: ReactNode }) {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [activeMonitorId, setActiveMonitorId] = useState<Id<"monitors"> | null>(null);
   const [isScanning, setIsScanning] = useState(false);
+  const [scanStage, setScanStage] = useState<ScanStage>("idle");
   const [cloneDefaults, setCloneDefaults] = useState<CloneDefaults | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
@@ -112,6 +117,7 @@ export function CreateMonitorProvider({ children }: { children: ReactNode }) {
 
       setActiveMonitorId(monitorId);
       setIsScanning(true);
+      setScanStage("scraping");
 
       abortRef.current?.abort();
       const controller = new AbortController();
@@ -121,10 +127,66 @@ export function CreateMonitorProvider({ children }: { children: ReactNode }) {
 
       let alreadyLogged = false;
       try {
+        // ---- Stage 1: Scrape the page with Playwright ----
+        const scrapeRes = await fetch("/api/scraper/scrape", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url: data.url }),
+          signal: controller.signal,
+        });
+
+        const scrapeJson = await scrapeRes.json();
+
+        if (!scrapeRes.ok) {
+          const errorMsg = scrapeJson.message || scrapeJson.error || "Scrape failed";
+          const durationMs = Date.now() - startTime;
+
+          await createLog({
+            monitorId,
+            monitorName: data.name,
+            url: data.url,
+            prompt: data.prompt,
+            status: scrapeRes.status === 502 || scrapeRes.status === 504 ? "timeout" : "error",
+            durationMs,
+            error: errorMsg,
+            rawResponse: JSON.stringify(scrapeJson).slice(0, 10000),
+          });
+          alreadyLogged = true;
+
+          throw new Error(errorMsg);
+        }
+
+        // Check for blocked status from the scraper
+        if (scrapeJson.blocked) {
+          const errorMsg = `Site is blocking automated access: ${scrapeJson.blockReason ?? "anti-bot protection detected"}`;
+          const durationMs = Date.now() - startTime;
+
+          await createLog({
+            monitorId,
+            monitorName: data.name,
+            url: data.url,
+            prompt: data.prompt,
+            status: "error",
+            durationMs,
+            error: errorMsg,
+          });
+          alreadyLogged = true;
+
+          throw new Error(errorMsg);
+        }
+
+        // ---- Stage 2: AI extraction ----
+        setScanStage("extracting");
+
         const res = await fetch("/api/scraper/extract", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ url: data.url, prompt: data.prompt, name: data.name }),
+          body: JSON.stringify({
+            url: data.url,
+            prompt: data.prompt,
+            name: data.name,
+            scrapedText: scrapeJson.text,
+          }),
           signal: controller.signal,
         });
 
@@ -148,6 +210,9 @@ export function CreateMonitorProvider({ children }: { children: ReactNode }) {
 
           throw new Error(errorMsg);
         }
+
+        // ---- Stage 3: Save results ----
+        setScanStage("saving");
 
         const matchCount = json.matches?.length ?? 0;
         const totalItems = json.totalItems ?? json.schema?.items?.length ?? 0;
@@ -208,6 +273,8 @@ export function CreateMonitorProvider({ children }: { children: ReactNode }) {
         trackScanCompleted({ url: data.url, itemCount: totalItems, matchCount, durationMs, confidence: insights?.confidence });
         // Initial scan — doesn't consume rescan budget
 
+        setScanStage("done");
+
         toast.success("Scan complete", {
           description: `${totalItems} items found, ${matchCount} match${matchCount !== 1 ? "es" : ""}`,
         });
@@ -242,6 +309,7 @@ export function CreateMonitorProvider({ children }: { children: ReactNode }) {
         }
       } finally {
         setIsScanning(false);
+        setScanStage("idle");
         isSubmittingRef.current = false;
       }
     },
@@ -268,7 +336,7 @@ export function CreateMonitorProvider({ children }: { children: ReactNode }) {
 
   return (
     <CreateMonitorContext.Provider
-      value={{ open, openWithDefaults, close, resume, activeMonitorId, isScanning, isOpen: sheetOpen }}
+      value={{ open, openWithDefaults, close, resume, activeMonitorId, isScanning, scanStage, isOpen: sheetOpen }}
     >
       {children}
       <CreateMonitorSheet
@@ -276,6 +344,7 @@ export function CreateMonitorProvider({ children }: { children: ReactNode }) {
         onOpenChange={setSheetOpen}
         activeMonitorId={activeMonitorId}
         isScanning={isScanning}
+        scanStage={scanStage}
         onStartScan={startScan}
         onCancelScan={cancelScan}
         onConfirm={confirmMonitor}
