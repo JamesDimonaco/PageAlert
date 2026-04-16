@@ -13,35 +13,51 @@ const extractSchema = z.object({
   retryAttempt: z.number().int().min(0).max(10).optional(),
   skipBlockCheck: z.boolean().optional(),
   useProxy: z.boolean().optional(),
+  // Pre-scraped text from the /scrape endpoint — when provided, skip the
+  // Playwright scrape and go straight to AI extraction. Used by the split
+  // scan flow (PROWL-039) for real progress reporting.
+  scrapedText: z.string().max(5 * 1024 * 1024).optional(),
 });
 
 export const extractRoutes = new Hono();
 
 extractRoutes.post("/", zValidator("json", extractSchema), async (c) => {
-  const { url, prompt, name, timeout, retryAttempt, skipBlockCheck, useProxy } = c.req.valid("json");
+  const { url, prompt, name, timeout, retryAttempt, skipBlockCheck, useProxy, scrapedText } = c.req.valid("json");
 
   try {
-    const scraped = await scrapeUrl(url, { timeout, retryAttempt, useProxy });
+    let text: string;
+    let scrapedAt: string;
 
-    // Don't waste AI credits on anti-bot challenge pages — unless caller
-    // explicitly skips (e.g., forced retry where we want the AI to try anyway)
-    if (scraped.blocked && !skipBlockCheck) {
-      const safeUrl = (() => { try { return new URL(url).hostname; } catch { return "[invalid]"; } })();
-      console.warn(`[extract] Blocked by anti-bot for ${safeUrl}: ${scraped.blockReason}`);
-      return c.json({
-        error: "blocked",
-        message: `Site is blocking automated access: ${scraped.blockReason ?? "anti-bot protection detected"}`,
-      }, 403);
+    if (scrapedText) {
+      // Pre-scraped text provided — skip Playwright entirely.
+      text = scrapedText;
+      scrapedAt = new Date().toISOString();
+    } else {
+      const scraped = await scrapeUrl(url, { timeout, retryAttempt, useProxy });
+
+      // Don't waste AI credits on anti-bot challenge pages — unless caller
+      // explicitly skips (e.g., forced retry where we want the AI to try anyway)
+      if (scraped.blocked && !skipBlockCheck) {
+        const safeUrl = (() => { try { return new URL(url).hostname; } catch { return "[invalid]"; } })();
+        console.warn(`[extract] Blocked by anti-bot for ${safeUrl}: ${scraped.blockReason}`);
+        return c.json({
+          error: "blocked",
+          message: `Site is blocking automated access: ${scraped.blockReason ?? "anti-bot protection detected"}`,
+        }, 403);
+      }
+
+      text = scraped.text;
+      scrapedAt = scraped.scrapedAt;
     }
 
-    const { schema, matches } = await extractWithAI(scraped.text, prompt, url, name);
+    const { schema, matches } = await extractWithAI(text, prompt, url, name);
 
     return c.json({
       url,
       schema,
       matches,
       totalItems: schema.items.length,
-      scrapedAt: scraped.scrapedAt,
+      scrapedAt,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
