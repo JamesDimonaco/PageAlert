@@ -56,8 +56,12 @@ export function MonitorCard({ monitor, onTogglePause, onDelete, onRescan, onClon
 
   return (
     <Card
+      role="link"
+      tabIndex={0}
+      aria-label={`View ${monitor.name} details`}
       className={`group relative overflow-hidden border-border/30 border-l-2 border-l-transparent bg-card/50 shadow-sm shadow-black/5 backdrop-blur transition-all hover:shadow-md hover:shadow-black/10 hover:bg-card/80 cursor-pointer ${statusBorderColor}`}
       onClick={() => router.push(detailHref)}
+      onKeyDown={(e) => { if (e.key === "Enter") router.push(detailHref); }}
     >
       <CardContent className="p-4 sm:p-6">
         <div className="flex items-start justify-between gap-4">

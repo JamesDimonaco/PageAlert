@@ -489,11 +489,11 @@ export const sendPriceAlert = internalAction({
 /**
  * Day 0 onboarding (welcome) email.
  *
- * The body intentionally hands the user one worked example as a story
- * (Sarah / refurbished MacBook) plus a "Try this monitor in one click"
- * deep-link that opens the create-monitor sheet pre-populated. The
- * deep-link handler lives in app/(dashboard)/dashboard/page.tsx — see
- * PROWL-038 Phase 4e.
+ * The body hands the user one worked example (Mac Mini stock check on
+ * Apple's website) plus a "Try this monitor in one click" deep-link
+ * that opens the create-monitor sheet pre-populated. The deep-link
+ * handler lives in app/(dashboard)/dashboard/page.tsx — see PROWL-038
+ * Phase 4e.
  *
  * The processor that triggers this is internally gated by
  * ONBOARDING_EMAILS_ENABLED, so this won't auto-send until James
@@ -510,11 +510,11 @@ export const sendOnboardingDay0 = internalAction({
 
     // The "try this monitor" deep-link in the body. Pre-fills the
     // create-monitor sheet with a real, known-good URL + prompt so
-    // the user can scan it in one click. Uses a different example from
-    // the homepage (which uses Apple refurb / MacBooks) so the email
-    // feels fresh, not repetitive.
-    const tryUrl = "https://news.ycombinator.com/jobs";
-    const tryPrompt = "Engineering role at an AI or developer tools startup";
+    // the user can scan it in one click. Uses the Mac Mini stock
+    // example — real users are already doing this exact search, so
+    // it resonates as a concrete, relatable use case.
+    const tryUrl = "https://www.apple.com/uk/shop/buy-mac/mac-mini";
+    const tryPrompt = "Mac Mini M4 in stock";
     const tryHref = `${APP_URL}/dashboard?try=${encodeURIComponent(tryUrl)}&prompt=${encodeURIComponent(tryPrompt)}`;
     const dashboardHref = `${APP_URL}/dashboard`;
 
@@ -540,12 +540,12 @@ export const sendOnboardingDay0 = internalAction({
         <div style="background:#f4f6fb;border-left:3px solid #3b82f6;padding:16px 20px;border-radius:6px;margin:0 0 28px">
           <p style="margin:0 0 8px;color:#0a0a0b;font-size:14px;font-weight:600">Here's an example</p>
           <p style="margin:0;color:#444;font-size:14px">
-            Tom wanted to find a role at an AI startup. He pasted the Hacker News jobs page, typed &ldquo;engineering role at an AI or dev tools startup&rdquo; as his prompt, and got an alert three days later when a match appeared. Total setup time: about 30 seconds.
+            Lots of people are using PageAlert to track when specific Mac Minis come back in stock on Apple&rsquo;s website. They paste the Mac Mini page, type &ldquo;Mac Mini M4 in stock&rdquo;, and get an alert as soon as one appears. Total setup time: about 30 seconds.
           </p>
         </div>
 
         <p style="margin:0 0 16px;color:#0a0a0b;font-size:15px;font-weight:600">
-          Try Tom's exact monitor &mdash; one click:
+          Try this exact monitor &mdash; one click:
         </p>
         <a href="${safeHref(tryHref)}" style="display:inline-block;background:#3b82f6;color:#fff;padding:14px 28px;border-radius:8px;text-decoration:none;font-weight:600;font-size:15px">
           Try this monitor &rarr;
@@ -578,9 +578,9 @@ You're in. Thanks for signing up.
 PageAlert watches any web page using AI — just paste a URL and describe what you're looking for in plain English. We'll check the page on a schedule and notify you the moment your conditions are met.
 
 Here's an example:
-Tom wanted to find a role at an AI startup. He pasted the Hacker News jobs page, typed "engineering role at an AI or dev tools startup" as his prompt, and got an alert three days later when a match appeared.
+Lots of people are using PageAlert to track when specific Mac Minis come back in stock on Apple's website. They paste the Mac Mini page, type "Mac Mini M4 in stock", and get an alert as soon as one appears. Total setup time: about 30 seconds.
 
-Try Tom's exact monitor in one click:
+Try this exact monitor in one click:
 ${tryHref}
 
 Or start from scratch:
