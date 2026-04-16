@@ -588,27 +588,37 @@ ${dashboardHref}
 — PageAlert
 ${APP_URL}`;
 
-    const res = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        from: HELLO_FROM_EMAIL,
-        to: [args.to],
-        subject,
-        html,
-        text,
-      }),
-      signal: AbortSignal.timeout(RESEND_TIMEOUT),
-    });
+    // Unlike the notification senders (sendMatchAlert etc.) which swallow
+    // errors, this function intentionally rethrows so the caller
+    // (processDueEmails) can mark the row as "failed" with the error
+    // message. Network errors, timeouts, and non-OK responses all
+    // propagate as thrown errors for consistent failure handling.
+    try {
+      const res = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          from: HELLO_FROM_EMAIL,
+          to: [args.to],
+          subject,
+          html,
+          text,
+        }),
+        signal: AbortSignal.timeout(RESEND_TIMEOUT),
+      });
 
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      console.error("[onboarding] day0 email failed:", res.status, body, "user:", args.userId);
-      throw new Error(`Day0 email failed: ${res.status}`);
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        console.error("[onboarding] day0 email failed:", res.status, body, "user:", args.userId);
+        throw new Error(`Day0 email failed: ${res.status}`);
+      }
+      console.log("[onboarding] day0 email sent, user:", args.userId);
+    } catch (e) {
+      console.error("[onboarding] day0 email network error:", e, "user:", args.userId);
+      throw e;
     }
-    console.log("[onboarding] day0 email sent, user:", args.userId);
   },
 });
