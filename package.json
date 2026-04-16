@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "turbo dev",
     "build": "turbo build",
-    "build:production": "pnpm convex deploy --cmd 'turbo build'",
+    "build:production": "pnpm --filter @prowl/web exec convex deploy --cmd 'turbo build'",
     "lint": "turbo lint",
     "dev:web": "turbo dev --filter=@prowl/web",
     "dev:scraper": "turbo dev --filter=@prowl/scraper"
