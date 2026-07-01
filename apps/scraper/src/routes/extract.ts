@@ -4,6 +4,7 @@ import { z } from "zod";
 import { scrapeUrl } from "../services/scraper.js";
 import { extractWithAI } from "../services/extractor.js";
 import { MAX_URL_LENGTH } from "../utils/url-validation.js";
+import { hashContent } from "../utils/content-hash.js";
 
 const extractSchema = z.object({
   url: z.string().url().max(MAX_URL_LENGTH),
@@ -41,6 +42,7 @@ extractRoutes.post("/", zValidator("json", extractSchema), async (c) => {
       schema,
       matches,
       totalItems: schema.items.length,
+      contentHash: hashContent(scraped.text),
       scrapedAt: scraped.scrapedAt,
     });
   } catch (error) {
@@ -73,6 +75,6 @@ extractRoutes.post("/", zValidator("json", extractSchema), async (c) => {
       clientMessage = "AI returned invalid response - try a different prompt";
     }
 
-    return c.json({ error: "extract_failed", message: clientMessage }, statusCode);
+    return c.json({ error: "extract_failed", message: clientMessage }, statusCode as 400 | 429 | 500 | 504);
   }
 });

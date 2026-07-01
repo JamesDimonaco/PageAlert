@@ -185,6 +185,7 @@ export function CreateMonitorProvider({ children }: { children: ReactNode }) {
           id: monitorId,
           schema: json.schema,
           matchCount,
+          contentFingerprint: json.contentHash,
         });
 
         await createLog({

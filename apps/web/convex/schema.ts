@@ -24,6 +24,11 @@ export default defineSchema({
     ),
     schema: v.optional(v.any()),
     blacklistedItems: v.optional(v.array(v.string())),
+    // SHA-256 of the page text from the last completed scan — used to skip
+    // all downstream work (and AI) when the page hasn't changed
+    contentFingerprint: v.optional(v.string()),
+    // When the AI last analyzed this page (creation or re-extract) — cooldown gate
+    lastAiExtractAt: v.optional(v.number()),
     lastCheckedAt: v.optional(v.number()),
     lastMatchAt: v.optional(v.number()),
     lastError: v.optional(v.string()),
@@ -193,6 +198,14 @@ export default defineSchema({
     name: v.string(),
     value: v.number(),
   }).index("by_name", ["name"]),
+
+  // Log of every monitor creation, kept even after the monitor is deleted —
+  // powers the rolling creation-rate limit so delete-and-remake can't bypass it
+  monitorCreations: defineTable({
+    userId: v.string(),
+    createdAt: v.number(),
+  })
+    .index("by_userId_createdAt", ["userId", "createdAt"]),
 
   // Onboarding email scheduler — one row per (user, step). The four steps
   // are scheduled at signup time and processed by an hourly cron. See

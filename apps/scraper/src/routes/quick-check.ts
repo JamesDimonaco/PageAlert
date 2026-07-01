@@ -3,6 +3,7 @@ import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { scrapeUrl } from "../services/scraper.js";
 import { MAX_URL_LENGTH } from "../utils/url-validation.js";
+import { hashContent } from "../utils/content-hash.js";
 
 const MAX_KEYWORD_LENGTH = 200;
 const MAX_STRING_ARRAY_ITEMS = 20;
@@ -94,6 +95,7 @@ quickCheckRoutes.post("/", zValidator("json", quickCheckSchema), async (c) => {
     return c.json({
       url,
       accessible: true,
+      contentHash: hashContent(text),
       hasNewMatches: hasMatch,
       keywordResults: {
         included: includeMatches,

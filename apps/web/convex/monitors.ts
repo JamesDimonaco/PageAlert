@@ -16,6 +16,15 @@ const TIER_LIMITS: Record<Tier, { maxMonitors: number; allowedIntervals: string[
   max: { maxMonitors: 9999, allowedIntervals: ["5m", "15m", "30m", "1h", "6h", "24h"] },
 };
 
+// Monitor creations allowed per rolling window — creation triggers a paid
+// one-time AI extraction, and creations are counted even after deletion
+const CREATION_WINDOW_MS = 5 * 60 * 60 * 1000; // 5 hours
+const CREATION_LIMITS: Record<Tier, number> = {
+  free: 3,
+  pro: 20,
+  max: 100,
+};
+
 async function getUserTier(ctx: { db: any }, userId: string): Promise<Tier> {
   const record = await ctx.db
     .query("userTiers")
@@ -29,6 +38,18 @@ type CheckInterval = "5m" | "15m" | "30m" | "1h" | "6h" | "24h";
 function clampInterval(interval: string, tier: Tier): CheckInterval {
   const allowed = TIER_LIMITS[tier].allowedIntervals;
   return (allowed.includes(interval) ? interval : allowed[0]) as CheckInterval;
+}
+
+// Formats a millisecond duration as a human-readable wait time, rounding
+// minutes up so we never tell the user a too-short wait.
+function formatWait(ms: number): string {
+  const minutes = Math.max(1, Math.ceil(ms / 60_000));
+  if (minutes >= 60) {
+    const hours = Math.floor(minutes / 60);
+    const remainingMinutes = minutes % 60;
+    return `${hours}h ${remainingMinutes}m`;
+  }
+  return `${minutes}m`;
 }
 
 async function getAuthUserId(ctx: { auth: { getUserIdentity: () => Promise<{ subject: string } | null> } }) {
@@ -139,6 +160,19 @@ export const create = mutation({
     validateMonitorUrl(args.url);
     validatePrompt(args.prompt);
 
+    // Rolling-window creation rate limit — counts survive deletion so
+    // delete-and-remake can't bypass the paid AI extraction limit
+    const windowStart = Date.now() - CREATION_WINDOW_MS;
+    const recentCreations = await ctx.db
+      .query("monitorCreations")
+      .withIndex("by_userId_createdAt", (q) => q.eq("userId", userId).gt("createdAt", windowStart))
+      .collect();
+    if (recentCreations.length >= CREATION_LIMITS[tier]) {
+      const oldestCreatedAt = Math.min(...recentCreations.map((c) => c.createdAt));
+      const wait = formatWait(oldestCreatedAt + CREATION_WINDOW_MS - Date.now());
+      throw new Error(`Creation limit reached: your ${tier} plan allows ${CREATION_LIMITS[tier]} new monitors per 5 hours. You can create another in ${wait}.`);
+    }
+
     const existingMonitors = await ctx.db
       .query("monitors")
       .withIndex("by_userId", (q) => q.eq("userId", userId))
@@ -180,6 +214,8 @@ export const create = mutation({
       updatedAt: now,
     });
 
+    await ctx.db.insert("monitorCreations", { userId, createdAt: now });
+
     // Increment public monitor counter (lightweight alternative to counting all docs)
     const counter = await ctx.db.query("counters").withIndex("by_name", (q) => q.eq("name", "monitors")).unique();
     if (counter) {
@@ -201,8 +237,9 @@ export const saveScanResult = mutation({
     id: v.id("monitors"),
     schema: v.any(),
     matchCount: v.number(),
+    contentFingerprint: v.optional(v.string()),
   },
-  handler: async (ctx, { id, schema, matchCount }) => {
+  handler: async (ctx, { id, schema, matchCount, contentFingerprint }) => {
     const userId = await getAuthUserId(ctx);
     const monitor = await ctx.db.get(id);
     if (!monitor || monitor.userId !== userId) throw new Error("Monitor not found");
@@ -211,6 +248,8 @@ export const saveScanResult = mutation({
     const now = Date.now();
     await ctx.db.patch(id, {
       schema,
+      contentFingerprint,
+      lastAiExtractAt: now,
       status: "active",
       matchCount,
       checkCount: (monitor.checkCount ?? 0) + 1,

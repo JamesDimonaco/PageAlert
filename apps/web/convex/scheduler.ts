@@ -53,7 +53,45 @@ function detectChanges(previousItems: Record<string, unknown>[], currentItems: R
 }
 
 const MAX_CONCURRENT_CHECKS = 5;
-const FULL_REEXTRACT_EVERY = 100;
+
+// Minimum gap between AI re-extracts per monitor — even when a page keeps
+// changing, AI re-analysis is capped to protect Anthropic credit
+const AI_REEXTRACT_COOLDOWN_MS: Record<string, number> = {
+  pro: 6 * 60 * 60 * 1000,
+  max: 1 * 60 * 60 * 1000,
+};
+
+/**
+ * Decide whether a changed page warrants AI re-analysis.
+ * Free tier never re-runs AI after the one-time creation extract.
+ * Pro/max only when the deterministic path can't conclude:
+ *  - no usable match conditions to check against, or
+ *  - the creation extract had low confidence, or
+ *  - the monitor tracks per-item prices (quick-check can't extract items),
+ * and only outside the per-tier cooldown window.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function shouldEscalateToAI(monitor: any, tier: string, now: number): boolean {
+  const cooldownMs = AI_REEXTRACT_COOLDOWN_MS[tier];
+  if (cooldownMs === undefined) return false; // free tier: deterministic only
+
+  const schema = monitor.schema;
+  const mc = schema?.matchConditions ?? {};
+  const hasUsableConditions =
+    (mc.mustInclude?.length ?? 0) > 0 ||
+    (mc.mustExclude?.length ?? 0) > 0 ||
+    mc.priceMin != null ||
+    mc.priceMax != null;
+  const lowConfidence = (schema?.insights?.confidence ?? 100) < 50;
+  const needsItemExtraction =
+    !!schema?.insights?.tracksPrices &&
+    (monitor.priceAlerts?.trackedItems?.length ?? 0) > 0;
+
+  if (hasUsableConditions && !lowConfidence && !needsItemExtraction) return false;
+
+  const lastAi = monitor.lastAiExtractAt ?? 0;
+  return now - lastAi >= cooldownMs;
+}
 
 /** Query monitors that are due for a check */
 export const getMonitorsDue = internalQuery({
@@ -83,6 +121,12 @@ export const recordCheckResult = internalMutation({
     items: v.optional(v.array(v.any())),
     schema: v.optional(v.any()),
     error: v.optional(v.string()),
+    // Fingerprint of the page content this check observed
+    contentFingerprint: v.optional(v.string()),
+    // Page content identical to last scan — bookkeeping only, no result row
+    unchanged: v.optional(v.boolean()),
+    // This check ran an AI extract — stamps the cooldown
+    usedAi: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const monitor = await ctx.db.get(args.monitorId);
@@ -124,7 +168,7 @@ export const recordCheckResult = internalMutation({
       lastError: undefined,
     };
 
-    if (args.matchCount > 0) {
+    if (args.matchCount > 0 && !args.unchanged) {
       updates.lastMatchAt = now;
     }
 
@@ -132,7 +176,19 @@ export const recordCheckResult = internalMutation({
       updates.schema = args.schema;
     }
 
+    if (args.contentFingerprint) {
+      updates.contentFingerprint = args.contentFingerprint;
+    }
+
+    if (args.usedAi) {
+      updates.lastAiExtractAt = now;
+    }
+
     await ctx.db.patch(args.monitorId, updates);
+
+    // Unchanged page: monitor bookkeeping is done, skip the scrapeResults
+    // insert — no new data to record and no changes to detect
+    if (args.unchanged) return;
 
     // Compute changes from the previous scrape result
     let changes;
@@ -184,28 +240,36 @@ export const runScheduledChecks = internalAction({
     const results = await Promise.allSettled(
       monitors.map(async (monitor) => {
         const startTime = Date.now();
-        const checkCount = monitor.checkCount ?? 0;
         const retryCount = monitor.retryCount ?? 0;
-        const needsReextract = checkCount > 0 && checkCount % FULL_REEXTRACT_EVERY === 0;
-        // On 3rd retry, skip quick-check and go straight to full extract with proxy
-        const forceFullExtract = retryCount >= 2;
         // Use proxy on retry 1+ to bypass anti-bot IP blocking
         const useProxy = retryCount >= 1;
+        let strategyLabel = "quick-check";
         try {
+          const tier = await ctx.runQuery(internal.scheduler.getUserTier, { userId: monitor.userId });
+          // On 3rd retry, skip quick-check and go straight to full extract with
+          // proxy — the AI may handle challenge content better. Paid tiers only;
+          // free stays on the deterministic path with proxy.
+          const forceFullExtract = retryCount >= 2 && tier !== "free";
 
-          let checkResult: { hasMatch: boolean; matchCount: number; matches: unknown[]; totalItems: number | null };
+          let checkResult: CheckOutcome;
 
-          if ((needsReextract && monitor.schema) || forceFullExtract) {
-            checkResult = await runFullExtract(ctx, monitor, scraperUrl, scraperKey, retryCount, forceFullExtract, useProxy);
+          if (forceFullExtract) {
+            strategyLabel = "forced-extract";
+            checkResult = await runFullExtract(ctx, monitor, scraperUrl, scraperKey, retryCount, {
+              skipQuickCheck: true,
+              skipBlockCheck: true,
+              useProxy,
+            });
           } else {
-            checkResult = await runQuickCheck(ctx, monitor, scraperUrl, scraperKey, retryCount, useProxy);
+            checkResult = await runQuickCheck(ctx, monitor, tier, scraperUrl, scraperKey, retryCount, useProxy);
           }
+          strategyLabel = checkResult.strategy;
 
           // Log successful check — use monitor's last known item count when totalItems is unknown
           const displayTotalItems = checkResult.totalItems != null
             ? checkResult.totalItems
             : (Array.isArray((monitor.schema as any)?.items) ? (monitor.schema as any).items.length : 0);
-          const strategy = `${forceFullExtract ? "forced-extract" : needsReextract ? "full-extract" : "quick-check"}${useProxy ? "+proxy" : ""}`;
+          const strategy = `${strategyLabel}${useProxy ? "+proxy" : ""}`;
           await ctx.runMutation(internal.logs.createInternal, {
             userId: monitor.userId,
             monitorId: monitor._id,
@@ -463,7 +527,7 @@ export const runScheduledChecks = internalAction({
 
           // Log failed check
           const isBlocked = msg.includes("blocking automated access") || msg.includes("anti-bot") || msg.includes("CAPTCHA");
-          const failStrategy = `${forceFullExtract ? "forced-extract" : needsReextract ? "full-extract" : "quick-check"}${useProxy ? "+proxy" : ""}`;
+          const failStrategy = `${strategyLabel}${useProxy ? "+proxy" : ""}`;
           await ctx.runMutation(internal.logs.createInternal, {
             userId: monitor.userId,
             monitorId: monitor._id,
@@ -567,16 +631,25 @@ export const runScheduledChecks = internalAction({
   },
 });
 
+type CheckOutcome = {
+  hasMatch: boolean;
+  matchCount: number;
+  matches: unknown[];
+  totalItems: number | null;
+  strategy: string;
+};
+
 async function runQuickCheck(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ctx: { runMutation: (ref: any, args: any) => Promise<any> },
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   monitor: any,
+  tier: string,
   scraperUrl: string,
   scraperKey: string,
   retryAttempt = 0,
   useProxy = false
-): Promise<{ hasMatch: boolean; matchCount: number; matches: unknown[]; totalItems: number | null }> {
+): Promise<CheckOutcome> {
   const matchConditions = monitor.schema?.matchConditions ?? {};
 
   const res = await fetch(`${scraperUrl}/api/quick-check`, {
@@ -616,6 +689,36 @@ async function runQuickCheck(
     throw new Error(reason);
   }
 
+  const contentHash: string | undefined = result.contentHash;
+
+  // Cheap short-circuit: content identical to the last scan — record the
+  // check happened and stop. No AI, no result row, no notifications.
+  if (contentHash && monitor.contentFingerprint && contentHash === monitor.contentFingerprint) {
+    await ctx.runMutation(internal.scheduler.recordCheckResult, {
+      monitorId: monitor._id,
+      hasNewMatches: false,
+      matchCount: monitor.matchCount ?? 0,
+      totalItems: 0,
+      matches: [],
+      unchanged: true,
+    });
+    console.log(`[scheduler] Quick check ${monitor._id}: content unchanged, skipping`);
+    return { hasMatch: false, matchCount: monitor.matchCount ?? 0, matches: [], totalItems: null, strategy: "unchanged" };
+  }
+
+  // Content changed (or no fingerprint stored yet) — AI re-analysis only when
+  // the deterministic path can't conclude, the tier allows it, and the
+  // per-monitor cooldown has passed
+  if (shouldEscalateToAI(monitor, tier, Date.now())) {
+    console.log(`[scheduler] Quick check ${monitor._id}: content changed, escalating to AI re-extract (tier=${tier})`);
+    return runFullExtract(ctx, monitor, scraperUrl, scraperKey, retryAttempt, {
+      // Page was fetched and accessible moments ago — skip the redundant pre-check
+      skipQuickCheck: true,
+      useProxy,
+      contentHash,
+    });
+  }
+
   const hasMatch = result.hasNewMatches;
 
   await ctx.runMutation(internal.scheduler.recordCheckResult, {
@@ -626,6 +729,7 @@ async function runQuickCheck(
     matches: hasMatch
       ? [{ quickCheck: true, keywordResults: result.keywordResults, priceResults: result.priceResults }]
       : [],
+    contentFingerprint: contentHash,
   });
 
   console.log(`[scheduler] Quick check ${monitor._id}: ${hasMatch ? "MATCH" : "no match"}`);
@@ -633,7 +737,7 @@ async function runQuickCheck(
   const matchData = hasMatch
     ? [{ quickCheck: true, keywordResults: result.keywordResults, priceResults: result.priceResults }]
     : [];
-  return { hasMatch, matchCount: hasMatch ? 1 : 0, matches: matchData, totalItems: null };
+  return { hasMatch, matchCount: hasMatch ? 1 : 0, matches: matchData, totalItems: null, strategy: "quick-check" };
 }
 
 async function runFullExtract(
@@ -644,9 +748,20 @@ async function runFullExtract(
   scraperUrl: string,
   scraperKey: string,
   retryAttempt = 0,
-  skipQuickCheck = false,
-  useProxy = false
-): Promise<{ hasMatch: boolean; matchCount: number; matches: unknown[]; totalItems: number | null }> {
+  opts: {
+    /** Skip the accessibility pre-check (caller just fetched the page) */
+    skipQuickCheck?: boolean;
+    /** Tell the scraper to attempt extraction even on anti-bot challenge pages */
+    skipBlockCheck?: boolean;
+    useProxy?: boolean;
+    /** Fingerprint already computed by the caller's quick-check */
+    contentHash?: string;
+  } = {}
+): Promise<CheckOutcome> {
+  const { skipQuickCheck = false, skipBlockCheck = false, useProxy = false } = opts;
+  let contentHash = opts.contentHash;
+  const strategy = skipBlockCheck ? "forced-extract" : "ai-extract";
+
   // Skip the accessibility pre-check when forced (e.g., on retry after anti-bot detection)
   // — go straight to the AI extract which may handle partial/challenge content better
   if (!skipQuickCheck) {
@@ -679,8 +794,9 @@ async function runFullExtract(
           matches: [],
           // No error field — this is informational, not a retry-worthy failure
         });
-        return { hasMatch: false, matchCount: 0, matches: [], totalItems: null };
+        return { hasMatch: false, matchCount: 0, matches: [], totalItems: null, strategy };
       }
+      contentHash = quickResult.contentHash ?? contentHash;
     }
   } else {
     console.log(`[scheduler] Skipping quick-check for ${monitor._id} (retry ${retryAttempt}, forced full extract)`);
@@ -697,7 +813,7 @@ async function runFullExtract(
       url: monitor.url,
       prompt: monitor.prompt,
       ...(retryAttempt > 0 ? { retryAttempt } : {}),
-      ...(skipQuickCheck ? { skipBlockCheck: true } : {}),
+      ...(skipBlockCheck ? { skipBlockCheck: true } : {}),
       ...(useProxy ? { useProxy: true } : {}),
     }),
     signal: AbortSignal.timeout(120_000),
@@ -716,11 +832,14 @@ async function runFullExtract(
   }
 
   const result = await res.json();
+  contentHash = result.contentHash ?? contentHash;
 
   // If low confidence + no items, keep existing schema
   const confidence = result.schema?.insights?.confidence ?? 100;
   if (confidence <= 10 && (result.totalItems ?? 0) === 0) {
-    // Soft failure — don't count as retry
+    // Soft failure — don't count as retry. Still stamp the AI cooldown (the
+    // extract ran and cost money) but keep the old fingerprint so the next
+    // content change can retry once the cooldown passes.
     console.log(`[scheduler] Re-extract ${monitor._id}: low confidence (${confidence}%), keeping existing schema`);
     await ctx.runMutation(internal.scheduler.recordCheckResult, {
       monitorId: monitor._id,
@@ -728,9 +847,10 @@ async function runFullExtract(
       matchCount: monitor.matchCount ?? 0,
       totalItems: 0,
       matches: [],
+      usedAi: true,
       // No error field — informational, not retry-worthy
     });
-    return { hasMatch: false, matchCount: 0, matches: [], totalItems: null };
+    return { hasMatch: false, matchCount: 0, matches: [], totalItems: null, strategy };
   }
 
   const allMatches = result.matches ?? [];
@@ -749,12 +869,26 @@ async function runFullExtract(
     matches: filteredMatches,
     items: result.schema?.items ?? [],
     schema: result.schema,
+    contentFingerprint: contentHash,
+    usedAi: true,
   });
 
   console.log(`[scheduler] Full re-extract ${monitor._id}: ${totalItems} items, ${matchCount} matches (${allMatches.length - matchCount} blacklisted)`);
 
-  return { hasMatch: matchCount > 0, matchCount, matches: filteredMatches, totalItems };
+  return { hasMatch: matchCount > 0, matchCount, matches: filteredMatches, totalItems, strategy };
 }
+
+/** Internal: resolve a user's tier for AI gating decisions */
+export const getUserTier = internalQuery({
+  args: { userId: v.string() },
+  handler: async (ctx, args) => {
+    const record = await ctx.db
+      .query("userTiers")
+      .withIndex("by_userId", (q) => q.eq("userId", args.userId))
+      .unique();
+    return (record?.tier as "free" | "pro" | "max" | undefined) ?? "free";
+  },
+});
 
 /** Internal query to get a user's notification setting for a specific channel */
 export const getNotificationSetting = internalQuery({
