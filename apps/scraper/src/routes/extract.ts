@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
+import Anthropic from "@anthropic-ai/sdk";
 import { scrapeUrl } from "../services/scraper.js";
 import { extractWithAI } from "../services/extractor.js";
 import { MAX_URL_LENGTH } from "../utils/url-validation.js";
@@ -73,6 +74,11 @@ extractRoutes.post("/", zValidator("json", extractSchema), async (c) => {
       statusCode = 429;
     } else if (message.includes("JSON") || message.includes("parse")) {
       clientMessage = "AI returned invalid response - try a different prompt";
+    } else if (error instanceof Anthropic.APIError) {
+      // Anything the branches above missed. A retired-model 404 used to land
+      // in the generic "Extraction failed" bucket and hid a total outage for
+      // weeks — always name the status so the next one is obvious from a log.
+      clientMessage = `AI service error ${error.status ?? "?"}: ${message}`;
     }
 
     return c.json({ error: "extract_failed", message: clientMessage }, statusCode as 400 | 429 | 500 | 504);

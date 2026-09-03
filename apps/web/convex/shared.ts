@@ -1,6 +1,12 @@
 /** Maximum retry attempts before marking a monitor as error */
 export const MAX_RETRIES = 3;
 
+/**
+ * How often an errored monitor retries. Slow enough not to burn scrapes on a
+ * permanently dead URL, fast enough to self-heal within a day of a fix.
+ */
+export const ERROR_RECOVERY_INTERVAL_MS = 6 * 60 * 60 * 1000;
+
 const BLOCKED_HOSTS = [
   "localhost", "127.0.0.1", "0.0.0.0", "[::1]",
   "metadata.google.internal", "169.254.169.254",

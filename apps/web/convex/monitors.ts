@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query, internalAction, internalQuery } from "./_generated/server";
 import { internal } from "./_generated/api";
-import { intervalToMs, MAX_RETRIES, validateMonitorUrl } from "./shared";
+import { ERROR_RECOVERY_INTERVAL_MS, intervalToMs, MAX_RETRIES, validateMonitorUrl } from "./shared";
 
 // ---- Resource Limits ----
 const MAX_NAME_LENGTH = 200;
@@ -313,7 +313,8 @@ export const saveScanError = mutation({
         status: "error",
         lastError: error,
         retryCount: 0,
-        nextCheckAt: undefined,
+        // Stays in the scheduler's slow recovery lane rather than dying
+        nextCheckAt: now + ERROR_RECOVERY_INTERVAL_MS,
         updatedAt: now,
       });
     }

@@ -105,7 +105,7 @@ export async function extractWithAI(
   const truncatedText = pageText.length > 100000 ? pageText.slice(0, 100000) + "\n...[truncated]" : pageText;
 
   const message = await client.messages.create({
-    model: "claude-sonnet-4-20250514",
+    model: "claude-sonnet-5",
     max_tokens: 16384,
     messages: [
       {
@@ -116,7 +116,12 @@ export async function extractWithAI(
     system: EXTRACTION_PROMPT,
   });
 
-  const responseText = message.content[0].type === "text" ? message.content[0].text : "";
+  // Thinking is on by default from Sonnet 5 onward, so content[0] is a thinking
+  // block, not the answer. Collect every text block instead of assuming index 0.
+  const responseText = message.content
+    .filter((block): block is AnthropicOriginal.TextBlock => block.type === "text")
+    .map((block) => block.text)
+    .join("");
 
   console.log("[extractor] AI response length:", responseText.length);
   if (process.env.DEBUG === "true") {
