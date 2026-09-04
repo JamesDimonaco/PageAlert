@@ -69,8 +69,10 @@ const AI_REEXTRACT_EVERY_N_CHECKS = 100;
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function shouldEscalateToAI(monitor: any): boolean {
-  const checkCount = monitor.checkCount ?? 0;
-  return checkCount > 0 && checkCount % AI_REEXTRACT_EVERY_N_CHECKS === 0;
+  // checkCount is incremented by recordCheckResult after this runs, so count
+  // the check in flight or the boundary is missed
+  const completedChecks = (monitor.checkCount ?? 0) + 1;
+  return completedChecks % AI_REEXTRACT_EVERY_N_CHECKS === 0;
 }
 
 /** Query monitors that are due for a check */
@@ -88,19 +90,20 @@ export const getMonitorsDue = internalQuery({
       )
       .take(MAX_CONCURRENT_CHECKS);
 
-    if (active.length >= MAX_CONCURRENT_CHECKS) return active;
-
     // Errored monitors get a slow retry lane. Without this an outage that
     // outlasts MAX_RETRIES parks every monitor permanently — which is exactly
-    // what happened when the scraper went down on 19 May 2026.
+    // what happened when the scraper went down on 19 May 2026. One slot is
+    // always held for recovery so a busy active queue can't starve it.
     const recovering = await ctx.db
       .query("monitors")
       .withIndex("by_status_nextCheckAt", (q) =>
         q.eq("status", "error").lte("nextCheckAt", now)
       )
-      .take(MAX_CONCURRENT_CHECKS - active.length);
+      .take(MAX_CONCURRENT_CHECKS);
 
-    return [...active, ...recovering];
+    const activeSlots = MAX_CONCURRENT_CHECKS - Math.min(recovering.length, 1);
+    const picked = active.slice(0, activeSlots);
+    return [...picked, ...recovering.slice(0, MAX_CONCURRENT_CHECKS - picked.length)];
   },
 });
 
@@ -704,7 +707,7 @@ async function runQuickCheck(
   // Content changed (or no fingerprint stored yet). The AI only re-reads the
   // page on the drift refresh — see shouldEscalateToAI.
   if (shouldEscalateToAI(monitor)) {
-    console.log(`[scheduler] Quick check ${monitor._id}: check ${monitor.checkCount}, running AI drift re-extract`);
+    console.log(`[scheduler] Quick check ${monitor._id}: check ${(monitor.checkCount ?? 0) + 1}, running AI drift re-extract`);
     return runFullExtract(ctx, monitor, scraperUrl, scraperKey, retryAttempt, {
       // Page was fetched and accessible moments ago — skip the redundant pre-check
       skipQuickCheck: true,
