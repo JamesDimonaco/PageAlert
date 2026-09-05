@@ -3,29 +3,27 @@
  *
  * Monitors that died before the recovery lane existed were parked with
  * `nextCheckAt: undefined`, which no index range picks up. This gives them a
- * due time so the scheduler drains them (5/min) back into the normal cycle.
+ * due time so the scheduler drains them back into the normal cycle. Anonymous
+ * scans are left alone: they were never meant to be scheduled.
  */
 import { internalMutation } from "./_generated/server";
 
 export const reviveErroredMonitors = internalMutation({
   args: {},
   handler: async (ctx) => {
-    const errored = await ctx.db
+    const stranded = await ctx.db
       .query("monitors")
-      .withIndex("by_status", (q) => q.eq("status", "error"))
+      .withIndex("by_status_nextCheckAt", (q) => q.eq("status", "error").eq("nextCheckAt", undefined))
       .collect();
 
-    const stranded = errored.filter((m) => m.nextCheckAt === undefined);
     const now = Date.now();
-
+    let revived = 0;
     for (const monitor of stranded) {
-      await ctx.db.patch(monitor._id, {
-        retryCount: 0,
-        nextCheckAt: now,
-        updatedAt: now,
-      });
+      if (monitor.isAnonymous) continue;
+      await ctx.db.patch(monitor._id, { retryCount: 0, nextCheckAt: now, updatedAt: now });
+      revived++;
     }
 
-    return { errored: errored.length, revived: stranded.length };
+    return { stranded: stranded.length, revived };
   },
 });
