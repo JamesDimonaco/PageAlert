@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
-import { scrapeUrl } from "../services/scraper.js";
+import { FALLBACK_PROVIDER_ERROR, scrapeUrl } from "../services/scraper.js";
 import { extractWithAI } from "../services/extractor.js";
 import { MAX_URL_LENGTH } from "../utils/url-validation.js";
 import { hashContent } from "../utils/content-hash.js";
@@ -55,9 +55,13 @@ extractRoutes.post("/", zValidator("json", extractSchema), async (c) => {
     let statusCode = 500;
 
     if (message.startsWith("Site is blocking automated access")) {
-      // Fallback provider failure. Checked first: its reason text can mention
-      // "credits", which must not be mistaken for an Anthropic billing error.
+      // Same shape and status as the detected-block response above
       clientMessage = message;
+      statusCode = 403;
+    } else if (message.startsWith(FALLBACK_PROVIDER_ERROR)) {
+      // Checked before the billing branch: Scrapfly's reason can say "credits"
+      clientMessage = message;
+      statusCode = 502;
     } else if (message.includes("URL") || message.includes("hostname") || message.includes("not allowed")) {
       clientMessage = message; // URL validation errors are safe to return
       statusCode = 400;
@@ -86,6 +90,6 @@ extractRoutes.post("/", zValidator("json", extractSchema), async (c) => {
       clientMessage = `AI service error ${(error as { status: number }).status}: ${message}`;
     }
 
-    return c.json({ error: "extract_failed", message: clientMessage }, statusCode as 400 | 429 | 500 | 504);
+    return c.json({ error: "extract_failed", message: clientMessage }, statusCode as 400 | 403 | 429 | 500 | 502 | 504);
   }
 });

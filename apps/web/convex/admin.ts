@@ -58,6 +58,36 @@ export const claimAlertSlot = internalMutation({
   },
 });
 
+// ---- Blocked-site fallback budget ----
+
+/** Monthly ceiling on fallback calls. 6,000 is the Scrapfly Discovery plan at the worst-case 30 credits each. */
+const FALLBACK_MONTHLY_CALLS = Number(process.env.FALLBACK_MONTHLY_CALLS ?? 6000);
+
+/** Counts a fallback call against this month's budget. False, with one alert per month, when it is spent. */
+export const reserveFallbackCall = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const month = new Date().toISOString().slice(0, 7);
+    const key = `fallback:calls:${month}`;
+    const row = await ctx.db.query("counters").withIndex("by_name", (q) => q.eq("name", key)).unique();
+    const used = row?.value ?? 0;
+    if (used >= FALLBACK_MONTHLY_CALLS) {
+      const alertKey = `fallback:cap-alerted:${month}`;
+      const alerted = await ctx.db.query("counters").withIndex("by_name", (q) => q.eq("name", alertKey)).unique();
+      if (!alerted) {
+        await ctx.db.insert("counters", { name: alertKey, value: Date.now() });
+        await ctx.scheduler.runAfter(0, internal.admin.notify, {
+          text: `PageAlert: fallback call budget for ${month} is spent (${FALLBACK_MONTHLY_CALLS}). Blocked sites will not be retried through Scrapfly until next month.`,
+        });
+      }
+      return false;
+    }
+    if (row) await ctx.db.patch(row._id, { value: used + 1 });
+    else await ctx.db.insert("counters", { name: key, value: 1 });
+    return true;
+  },
+});
+
 // ---- Scraper liveness (cron, every 10 minutes) ----
 
 export const checkScraperHealth = internalAction({
