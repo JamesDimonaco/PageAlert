@@ -23,3 +23,7 @@ overrides:
   path-to-regexp: ">=8.4.2"
   # GHSA-fw9q-39r9-c252 — langsmith prototype pollution (via @posthog/ai)
   langsmith: ">=0.5.18"
+  # GHSA (pnpm audit 2026-09-05) — esbuild dev-server request smuggling; pulled via tsup/tsx.
+  "esbuild@>=0.27.3 <0.28.1": ">=0.28.1"
+  # GHSA (pnpm audit 2026-09-05) — @opentelemetry/core; pulled via exporter-logs-otlp-http@0.214.
+  "@opentelemetry/core@<2.8.0": ">=2.8.0"
