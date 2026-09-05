@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
-import { scrapeUrl } from "../services/scraper.js";
+import { FALLBACK_PROVIDER_ERROR, scrapeUrl } from "../services/scraper.js";
 import { MAX_URL_LENGTH } from "../utils/url-validation.js";
 import { hashContent } from "../utils/content-hash.js";
 
@@ -124,7 +124,12 @@ quickCheckRoutes.post("/", zValidator("json", quickCheckSchema), async (c) => {
     let userMessage: string;
     let statusCode = 500;
 
-    if (isValidationError) {
+    if (message.startsWith("Site is blocking automated access") || message.startsWith(FALLBACK_PROVIDER_ERROR)) {
+      // Fallback outcomes carry their own reason. Checked first: the reason text
+      // can contain words the branches below match on.
+      userMessage = message;
+      statusCode = message.startsWith(FALLBACK_PROVIDER_ERROR) ? 502 : 500;
+    } else if (isValidationError) {
       userMessage = message;
       statusCode = 400;
     } else if (isTimeout) {
@@ -139,6 +144,6 @@ quickCheckRoutes.post("/", zValidator("json", quickCheckSchema), async (c) => {
       userMessage = "Check failed — please try again later.";
     }
 
-    return c.json({ error: "check_failed", message: userMessage }, statusCode as 400 | 429 | 500 | 504);
+    return c.json({ error: "check_failed", message: userMessage }, statusCode as 400 | 429 | 500 | 502 | 504);
   }
 });

@@ -33,25 +33,60 @@ async function getBrowser(): Promise<Browser> {
   return browser;
 }
 
+/** Prefix for failures of the fallback provider itself, as opposed to the site blocking us. */
+export const FALLBACK_PROVIDER_ERROR = "Fallback provider error";
+
+type ScrapflyResponse = {
+  result?: {
+    content?: string;
+    success?: boolean;
+    status_code?: number;
+    error?: { code?: string; message?: string };
+  };
+  context?: { cost?: { total?: number } };
+  message?: string;
+};
+
 /**
- * Get proxy configuration if available.
- * Supports PROXY_URL env var in format: http://user:pass@host:port
- * Works with residential proxy providers like Bright Data, Oxylabs, SmartProxy, etc.
+ * Blocked-site fallback: Scrapfly fetches the page with its anti-bot
+ * protection and returns rendered HTML. Null when no key is configured so
+ * the caller falls back to a direct fetch. Docs: docs/research/unblocker-providers.md
  */
-function getProxyConfig(): { server: string; username?: string; password?: string } | null {
-  const proxyUrl = process.env.PROXY_URL;
-  if (!proxyUrl) return null;
-  try {
-    const parsed = new URL(proxyUrl);
-    return {
-      server: `${parsed.protocol}//${parsed.host}`,
-      username: parsed.username || undefined,
-      password: parsed.password || undefined,
-    };
-  } catch {
-    console.warn("[scraper] Invalid PROXY_URL format, ignoring");
+async function fetchViaUnblocker(url: string, timeout: number): Promise<string | null> {
+  const key = process.env.SCRAPFLY_API_KEY;
+  if (!key) {
+    console.warn("[scraper] Fallback requested but SCRAPFLY_API_KEY not set, using direct connection");
     return null;
   }
+  // asp=true lets Scrapfly escalate the proxy pool only when a site needs it,
+  // so a plain page costs 6 credits and a protected one up to 30.
+  const params = new URLSearchParams({ key, url, render_js: "true", asp: "true" });
+  // 45s leaves room for extraction inside the scheduler's 90s budget
+  const res = await fetch(`https://api.scrapfly.io/scrape?${params}`, {
+    signal: AbortSignal.timeout(Math.min(timeout, 45_000)),
+  });
+  const body = (await res.json().catch(() => null)) as ScrapflyResponse | null;
+  const result = body?.result;
+  if (!res.ok || !result || result.success === false || !result.content) {
+    const reason = result?.error?.message ?? body?.message ?? (result ? "empty page" : `HTTP ${res.status}`);
+    // ERR::ASP::* means Scrapfly reached the site and could not get past its
+    // protection: a real block. Anything else is the provider itself failing
+    // (bad key, no credits, outage) and must not be blamed on the site.
+    if (result?.error?.code?.startsWith("ERR::ASP")) {
+      throw new Error(`Site is blocking automated access: ${reason}`);
+    }
+    throw new Error(`${FALLBACK_PROVIDER_ERROR}: ${reason}`);
+  }
+  console.log(`[scraper] Fallback fetch ${url}: upstream ${result.status_code}, ${body?.context?.cost?.total ?? "?"} credits`);
+  // The HTML is already rendered; running its scripts again against a fresh
+  // DOM lets SPA hydration blank the page after we paid for it.
+  return result.content.replace(/<script\b[\s\S]*?<\/script>/gi, "");
+}
+
+/** Give relative links a real origin when HTML is loaded via setContent. */
+function withBaseHref(html: string, url: string): string {
+  const base = `<base href="${url.replace(/"/g, "&quot;")}">`;
+  return /<head[^>]*>/i.test(html) ? html.replace(/<head[^>]*>/i, (m) => `${m}${base}`) : `${base}${html}`;
 }
 
 export async function scrapeUrl(
@@ -65,6 +100,9 @@ export async function scrapeUrl(
   const timeout = Math.min(options?.timeout ?? 30000, MAX_TIMEOUT);
   const retry = options?.retryAttempt ?? 0;
   const useProxy = options?.useProxy ?? false;
+
+  // Fetched before taking a browser slot: the wait is pure HTTP
+  const unblockedHtml = useProxy ? await fetchViaUnblocker(url, timeout) : null;
 
   // Resource exhaustion protection: limit concurrent contexts
   if (activeContexts >= MAX_CONCURRENT_CONTEXTS) {
@@ -82,17 +120,7 @@ export async function scrapeUrl(
       ? { width: 390, height: 844 }  // iPhone viewport
       : { width: 1920, height: 1080 };
 
-    // Use proxy when requested and configured
-    const proxyConfig = useProxy ? getProxyConfig() : null;
-    if (useProxy && !proxyConfig) {
-      console.warn("[scraper] Proxy requested but PROXY_URL not configured, using direct connection");
-    }
-
-    const context = await b.newContext({
-      userAgent: ua,
-      viewport,
-      ...(proxyConfig ? { proxy: proxyConfig } : {}),
-    });
+    const context = await b.newContext({ userAgent: ua, viewport });
 
     const page = await context.newPage();
 
@@ -117,24 +145,29 @@ export async function scrapeUrl(
     });
 
     try {
-      // Use domcontentloaded instead of networkidle - much more reliable
-      // networkidle waits for zero network connections which many sites never reach
-      await page.goto(url, { waitUntil: "domcontentloaded", timeout });
+      if (unblockedHtml !== null) {
+        // Already rendered upstream; load it so the same DOM extraction runs
+        await page.setContent(withBaseHref(unblockedHtml, url), { waitUntil: "domcontentloaded", timeout });
+      } else {
+        // Use domcontentloaded instead of networkidle - much more reliable
+        // networkidle waits for zero network connections which many sites never reach
+        await page.goto(url, { waitUntil: "domcontentloaded", timeout });
 
-      // Wait for the body to have meaningful content
-      await page.waitForFunction(
-        () => (document.body?.innerText?.length ?? 0) > 100,
-        { timeout: 15000 }
-      ).catch(() => {});
+        // Wait for the body to have meaningful content
+        await page.waitForFunction(
+          () => (document.body?.innerText?.length ?? 0) > 100,
+          { timeout: 15000 }
+        ).catch(() => {});
 
-      if (options?.waitFor) {
-        // Sanitize the waitFor selector to prevent injection
-        const safeSelector = options.waitFor.slice(0, 200);
-        await page.waitForSelector(safeSelector, { timeout: 10000 }).catch(() => {});
+        if (options?.waitFor) {
+          // Sanitize the waitFor selector to prevent injection
+          const safeSelector = options.waitFor.slice(0, 200);
+          await page.waitForSelector(safeSelector, { timeout: 10000 }).catch(() => {});
+        }
+
+        // Let JS frameworks render — wait longer on retries to give anti-bot challenges time to resolve
+        await page.waitForTimeout(retry >= 1 ? 5000 : 3000);
       }
-
-      // Let JS frameworks render — wait longer on retries to give anti-bot challenges time to resolve
-      await page.waitForTimeout(retry >= 1 ? 5000 : 3000);
 
       const title = (await page.title()).slice(0, 500);
 
@@ -156,7 +189,7 @@ export async function scrapeUrl(
         title,
         scrapedAt: new Date().toISOString(),
         ...(botCheck.blocked ? { blocked: true, blockReason: botCheck.reason } : {}),
-        ...(proxyConfig ? { proxied: true } : {}),
+        ...(unblockedHtml !== null ? { proxied: true } : {}),
       };
     } finally {
       await context.close();
@@ -223,7 +256,9 @@ async function getTextWithLinks(page: Page): Promise<string> {
 
       if (!href.trim() || href.trim() === "#") return;
       try {
-        const parsed = new URL(href, document.location.href);
+        // setContent pages have no location; their origin is the injected <base>
+        const origin = document.location.href.startsWith("about:") ? document.baseURI : document.location.href;
+        const parsed = new URL(href, origin);
         if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return;
         a.textContent = `[${text}](${parsed.href})`;
       } catch {

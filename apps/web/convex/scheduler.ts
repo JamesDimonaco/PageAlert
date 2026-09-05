@@ -239,7 +239,12 @@ export const runScheduledChecks = internalAction({
         // monitor for good, and forceFullExtract below keys off the exact value.
         const retryCount = Math.min(monitor.retryCount ?? 0, MAX_RETRIES);
         // Use proxy on retry 1+ to bypass anti-bot IP blocking
-        const useProxy = retryCount >= 1;
+        // Pay for the fallback only when the last failure looked like a block,
+        // and only while this month's call budget lasts.
+        const useProxy =
+          retryCount >= 1 &&
+          isBlockedError(monitor.lastError ?? "") &&
+          (await ctx.runMutation(internal.admin.reserveFallbackCall, {}));
         let strategyLabel = "quick-check";
         try {
           const tier = await ctx.runQuery(internal.scheduler.getUserTier, { userId: monitor.userId });
@@ -532,6 +537,10 @@ export const runScheduledChecks = internalAction({
 
           // Log failed check
           const isBlocked = isBlockedError(msg);
+          if (msg.startsWith("Fallback provider error")) {
+            const send = await ctx.runMutation(internal.admin.claimAlertSlot, { key: "admin:fallback-provider", minIntervalMs: 60 * 60 * 1000 });
+            if (send) await ctx.scheduler.runAfter(0, internal.admin.notify, { text: `Scrapfly is failing: ${msg.slice(0, 300)}` });
+          }
           if (/AI service error 40[01]|authentication error|credit balance|billing/i.test(msg)) {
             const send = await ctx.runMutation(internal.admin.claimAlertSlot, { key: "admin:ai-credit", minIntervalMs: 60 * 60 * 1000 });
             if (send) await ctx.scheduler.runAfter(0, internal.admin.notify, { text: `Anthropic is rejecting calls: ${msg.slice(0, 300)}` });
@@ -662,7 +671,7 @@ async function runQuickCheck(
   // No schema means the first extract never succeeded. A quick-check with
   // empty conditions matches any accessible page, so do the extract instead.
   if (!monitor.schema) {
-    return runFullExtract(ctx, monitor, scraperUrl, scraperKey, retryAttempt, { useProxy });
+    return runFullExtract(ctx, monitor, scraperUrl, scraperKey, retryAttempt, { useProxy, skipQuickCheck: true });
   }
 
   const matchConditions = monitor.schema?.matchConditions ?? {};
