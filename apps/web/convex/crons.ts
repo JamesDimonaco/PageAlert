@@ -26,4 +26,10 @@ crons.interval(
   internal.onboarding.processDueEmails
 );
 
+// Tell the operator when the scraper has been down for over an hour
+crons.interval("scraper-health", { minutes: 10 }, internal.admin.checkScraperHealth);
+
+// Drop expired manual Pro grants back to free
+crons.interval("expire-tier-grants", { hours: 24 }, internal.admin.expireGrants);
+
 export default crons;

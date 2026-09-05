@@ -213,6 +213,14 @@ export const recordCheckResult = internalMutation({
   },
 });
 
+function safeHost(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return url;
+  }
+}
+
 /** The main scheduler action — called by cron */
 export const runScheduledChecks = internalAction({
   args: {},
@@ -299,6 +307,9 @@ export const runScheduledChecks = internalAction({
             const isNewMatch = checkResult.hasMatch && !previouslyHadMatches;
 
             if (isNewMatch) {
+              await ctx.runAction(internal.admin.notify, {
+                text: `Match: ${freshMonitor.name} found ${checkResult.matchCount} on ${safeHost(freshMonitor.url)} (${freshMonitor.userEmail ?? "no email"})`,
+              }).catch(() => {});
 
               // Create in-app notification (unless all channels explicitly disabled)
               if (hasAnyChannel) await ctx.runMutation(internal.userNotifications.create, {
@@ -452,6 +463,9 @@ export const runScheduledChecks = internalAction({
                           aboveHits,
                           trackedItemCount: priceAlerts.trackedItems.length,
                         };
+                        await ctx.runAction(internal.admin.notify, {
+                          text: `Price ${variant}: ${freshMonitor.name} on ${safeHost(freshMonitor.url)}, ${significantChanges.length} change(s) (${freshMonitor.userEmail ?? "no email"})`,
+                        }).catch(() => {});
 
                         // Email
                         if (shouldSend("email") && freshMonitor.userEmail) {
@@ -526,6 +540,10 @@ export const runScheduledChecks = internalAction({
 
           // Log failed check
           const isBlocked = msg.includes("blocking automated access") || msg.includes("anti-bot") || msg.includes("CAPTCHA");
+          if (/AI service error 40[01]|credit balance|billing/i.test(msg)) {
+            const send = await ctx.runMutation(internal.admin.claimAlertSlot, { key: "admin:ai-credit", minIntervalMs: 60 * 60 * 1000 });
+            if (send) await ctx.runAction(internal.admin.notify, { text: `Anthropic is rejecting calls: ${msg.slice(0, 300)}` }).catch(() => {});
+          }
           const failStrategy = `${strategyLabel}${useProxy ? "+proxy" : ""}`;
           await ctx.runMutation(internal.logs.createInternal, {
             userId: monitor.userId,
@@ -738,7 +756,7 @@ async function runQuickCheck(
   return { hasMatch, matchCount: hasMatch ? 1 : 0, matches: matchData, totalItems: null, strategy: "quick-check" };
 }
 
-async function runFullExtract(
+export async function runFullExtract(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ctx: { runMutation: (ref: any, args: any) => Promise<any> },
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
