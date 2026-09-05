@@ -7,6 +7,7 @@
  * scans are left alone: they were never meant to be scheduled.
  */
 import { internalMutation } from "./_generated/server";
+import { MAX_RETRIES } from "./shared";
 
 export const reviveErroredMonitors = internalMutation({
   args: {},
@@ -20,7 +21,7 @@ export const reviveErroredMonitors = internalMutation({
     let revived = 0;
     for (const monitor of stranded) {
       if (monitor.isAnonymous) continue;
-      await ctx.db.patch(monitor._id, { retryCount: 0, nextCheckAt: now, updatedAt: now });
+      await ctx.db.patch(monitor._id, { retryCount: MAX_RETRIES, nextCheckAt: now, updatedAt: now });
       revived++;
     }
 

@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query, internalAction, internalQuery } from "./_generated/server";
 import { internal } from "./_generated/api";
-import { ERROR_RECOVERY_INTERVAL_MS, intervalToMs, validateMonitorUrl } from "./shared";
+import { ERROR_RECOVERY_INTERVAL_MS, intervalToMs, MAX_RETRIES, validateMonitorUrl } from "./shared";
 
 // ---- Resource Limits ----
 const MAX_NAME_LENGTH = 200;
@@ -311,8 +311,10 @@ export const saveScanError = mutation({
       await ctx.db.patch(id, {
         status: "error",
         lastError: error,
-        retryCount: 0,
-        // Stays in the scheduler's slow recovery lane rather than dying
+        // Enter the scheduler's slow recovery lane the same way a failed
+        // scheduled check does. A lower count would replay the fast backoff
+        // ladder (and the paid-tier AI attempt) on a URL already known dead.
+        retryCount: MAX_RETRIES,
         nextCheckAt: now + ERROR_RECOVERY_INTERVAL_MS,
         updatedAt: now,
       });

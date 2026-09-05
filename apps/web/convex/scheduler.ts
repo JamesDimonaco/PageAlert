@@ -234,7 +234,10 @@ export const runScheduledChecks = internalAction({
     const results = await Promise.allSettled(
       monitors.map(async (monitor) => {
         const startTime = Date.now();
-        const retryCount = monitor.retryCount ?? 0;
+        // The recovery lane keeps counting past MAX_RETRIES. Cap it here: the
+        // scraper rejects retryAttempt > 10 with a 400, which would park the
+        // monitor for good, and forceFullExtract below keys off the exact value.
+        const retryCount = Math.min(monitor.retryCount ?? 0, MAX_RETRIES);
         // Use proxy on retry 1+ to bypass anti-bot IP blocking
         const useProxy = retryCount >= 1;
         let strategyLabel = "quick-check";

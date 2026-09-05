@@ -107,6 +107,10 @@ export async function extractWithAI(
   const message = await client.messages.create({
     model: "claude-sonnet-5",
     max_tokens: 16384,
+    // Sonnet 5 thinks by default and those tokens come out of max_tokens, so
+    // a big listing page got its JSON cut off. This is a one-shot JSON task;
+    // it does not need the reasoning.
+    thinking: { type: "disabled" },
     messages: [
       {
         role: "user",
@@ -116,8 +120,11 @@ export async function extractWithAI(
     system: EXTRACTION_PROMPT,
   });
 
-  // Thinking is on by default from Sonnet 5 onward, so content[0] is a thinking
-  // block, not the answer. Collect every text block instead of assuming index 0.
+  if (message.stop_reason === "max_tokens") {
+    throw new Error("AI output hit the token limit - page has too many items");
+  }
+
+  // Never index content[0]: block order is not guaranteed.
   const responseText = message.content
     .filter((block): block is AnthropicOriginal.TextBlock => block.type === "text")
     .map((block) => block.text)
