@@ -3,20 +3,23 @@
  * one-off recovery tools for the 19 May 2026 outage (rerun never-scanned
  * monitors, grant a free Pro month, send the apology email).
  *
- * Run the one-offs from apps/web on the personal profile, e.g.
+ * Run the one-offs from apps/web on the personal profile, in this order:
+ *   npx convex run --prod admin:grantProMonth '{"dryRun":true}'
  *   npx convex run --prod admin:rerunNeverScanned '{"dryRun":true}'
+ *   npx convex run --prod admin:sendApologyEmails '{"dryRun":true}'
+ * Grant before rerun: the rerun relies on the paid-tier forced extract.
  */
 import { v } from "convex/values";
 import { internalAction, internalMutation, internalQuery } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
-import { runFullExtract } from "./scheduler";
-import { HELLO_FROM_EMAIL } from "./emails";
+import { esc, HELLO_FROM_EMAIL } from "./emails";
+import { displayHost, isBlockedError } from "./shared";
 
 const HOUR = 60 * 60 * 1000;
 
 type MonitorSummary = { name: string; url: string; status: string; lastError?: string };
-type NeverScanned = { _id: Id<"monitors">; name: string; url: string; userEmail?: string; lastError?: string };
+type NeverScanned = { _id: Id<"monitors">; name: string; url: string; status: string; userEmail?: string; lastError?: string };
 const DOWN_SINCE = "admin:scraper-down-since";
 const DOWN_ALERTED = "admin:scraper-down-alerted";
 
@@ -111,68 +114,44 @@ export const recordScraperHealth = internalMutation({
 
 export const listNeverScanned = internalQuery({
   args: {},
-  handler: async (ctx) => {
-    const errored = await ctx.db.query("monitors").withIndex("by_status", (q) => q.eq("status", "error")).collect();
-    return errored
-      .filter((m) => !m.isAnonymous && !m.schema)
-      .map((m) => ({ _id: m._id, name: m.name, url: m.url, userEmail: m.userEmail, lastError: m.lastError }));
+  handler: async (ctx): Promise<NeverScanned[]> => {
+    const all = await ctx.db.query("monitors").collect();
+    // No schema means the first extract never succeeded, whatever status the
+    // failure left it in (a blocked first scan parks as active, not error).
+    return all
+      .filter((m) => !m.isAnonymous && !m.schema && m.status !== "paused")
+      .map((m) => ({ _id: m._id, name: m.name, url: m.url, status: m.status, userEmail: m.userEmail, lastError: m.lastError }));
   },
 });
 
-/** Schedules a full extract through the blocked-site fallback for every never-scanned monitor, 20s apart. */
-export const rerunNeverScanned = internalAction({
+/**
+ * Makes every never-scanned monitor due now at retryCount 2, which is the
+ * scheduler's "3rd attempt": a forced full extract through the blocked-site
+ * fallback for paid tiers. Running through the normal cron keeps user
+ * notifications and the single-lane concurrency. Grant Pro first.
+ */
+export const rerunNeverScanned = internalMutation({
   args: { dryRun: v.optional(v.boolean()) },
   handler: async (ctx, { dryRun }) => {
     const list: NeverScanned[] = await ctx.runQuery(internal.admin.listNeverScanned, {});
     if (dryRun) return { count: list.length, monitors: list };
-    for (const [i, m] of list.entries()) {
-      await ctx.scheduler.runAfter(i * 20_000, internal.admin.rescanMonitor, { monitorId: m._id });
+    const now = Date.now();
+    for (const m of list) {
+      await ctx.db.patch(m._id, { retryCount: 2, nextCheckAt: now, updatedAt: now });
     }
-    return { scheduled: list.length };
-  },
-});
-
-export const rescanMonitor = internalAction({
-  args: { monitorId: v.id("monitors") },
-  handler: async (ctx, { monitorId }) => {
-    const scraperUrl = process.env.SCRAPER_URL;
-    const scraperKey = process.env.SCRAPER_API_KEY;
-    if (!scraperUrl || !scraperKey) throw new Error("SCRAPER_URL or SCRAPER_API_KEY not configured");
-    const monitor = await ctx.runQuery(internal.monitors.getInternal, { id: monitorId });
-    if (!monitor) return { skipped: "deleted" };
-    try {
-      // retryAttempt 1 + useProxy sends it straight to the fallback provider.
-      const result = await runFullExtract(ctx, monitor, scraperUrl, scraperKey, 1, {
-        skipQuickCheck: true,
-        useProxy: true,
-      });
-      console.log(`[admin] Rescan ${monitorId}: ${result.totalItems ?? 0} items, ${result.matchCount} matches`);
-      return result;
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "Unknown error";
-      console.error(`[admin] Rescan ${monitorId} failed:`, msg);
-      await ctx.runMutation(internal.scheduler.recordCheckResult, {
-        monitorId,
-        hasNewMatches: false,
-        matchCount: 0,
-        totalItems: 0,
-        matches: [],
-        error: msg,
-      });
-      return { error: msg };
-    }
+    return { queued: list.length };
   },
 });
 
 // ---- Outage recovery: free Pro month for everyone who built a monitor ----
 
 export const grantProMonth = internalMutation({
-  args: { dryRun: v.optional(v.boolean()), days: v.optional(v.number()) },
-  handler: async (ctx, { dryRun, days }) => {
+  args: { dryRun: v.optional(v.boolean()) },
+  handler: async (ctx, { dryRun }) => {
     const monitors = await ctx.db.query("monitors").collect();
     const userIds = [...new Set(monitors.filter((m) => !m.isAnonymous).map((m) => m.userId))];
     const now = Date.now();
-    const periodEnd = now + (days ?? 30) * 24 * HOUR;
+    const grantUntil = now + 30 * 24 * HOUR;
     let granted = 0;
     const skipped: string[] = [];
     for (const userId of userIds) {
@@ -183,9 +162,7 @@ export const grantProMonth = internalMutation({
       }
       granted++;
       if (dryRun) continue;
-      // cancelledAt + periodEnd is what the settings page reads as
-      // "You have access until <date>", and what expireGrants reverts.
-      const patch = { tier: "pro" as const, cancelledAt: now, periodEnd, updatedAt: now };
+      const patch = { tier: "pro" as const, grantUntil, updatedAt: now };
       if (existing) await ctx.db.patch(existing._id, patch);
       else await ctx.db.insert("userTiers", { userId, ...patch });
     }
@@ -193,7 +170,7 @@ export const grantProMonth = internalMutation({
   },
 });
 
-/** Daily cron: drop expired manual grants back to free. Polar subscriptions are untouched. */
+/** Daily cron: drop expired manual grants back to free. Rows without a grant are untouched. */
 export const expireGrants = internalMutation({
   args: {},
   handler: async (ctx) => {
@@ -201,8 +178,8 @@ export const expireGrants = internalMutation({
     const rows = await ctx.db.query("userTiers").collect();
     let expired = 0;
     for (const r of rows) {
-      if (r.tier === "free" || r.polarSubscriptionId || !r.periodEnd || r.periodEnd > now) continue;
-      await ctx.db.patch(r._id, { tier: "free", periodEnd: undefined, cancelledAt: undefined, updatedAt: now });
+      if (!r.grantUntil || r.grantUntil > now) continue;
+      await ctx.db.patch(r._id, { tier: "free", grantUntil: undefined, updatedAt: now });
       expired++;
     }
     return { expired };
@@ -227,13 +204,8 @@ export const listApologyRecipients = internalQuery({
 });
 
 function monitorLine(m: MonitorSummary): string {
-  let host = m.url;
-  try {
-    host = new URL(m.url).hostname.replace(/^www\./, "");
-  } catch {
-    /* keep raw */
-  }
-  const blocked = /blocking automated access|CAPTCHA|Cloudflare|Access denied/i.test(m.lastError ?? "");
+  const host = displayHost(m.url);
+  const blocked = isBlockedError(m.lastError ?? "");
   const state =
     m.status === "active"
       ? "watching again"
@@ -262,10 +234,6 @@ function apologyText(monitors: MonitorSummary[]): string {
     "James",
     "PageAlert",
   ].join("\n");
-}
-
-function esc(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
 export const sendApologyEmails = internalAction({

@@ -11,7 +11,7 @@ const APP_URL = process.env.SITE_URL ?? "https://pagealert.io";
 const RESEND_TIMEOUT = 10_000;
 
 /** HTML-escape untrusted strings to prevent injection */
-function esc(str: string): string {
+export function esc(str: string): string {
   return str
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
