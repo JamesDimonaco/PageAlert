@@ -7,6 +7,20 @@ export const MAX_RETRIES = 3;
  */
 export const ERROR_RECOVERY_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
+/** One classifier for "the site refused us" across scheduler, scan errors, and operator tooling. */
+export function isBlockedError(message: string): boolean {
+  return /blocking automated access|anti-bot|CAPTCHA|Cloudflare|Access denied|blocked/i.test(message);
+}
+
+/** Hostname without www., or the raw string if it does not parse. */
+export function displayHost(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return url;
+  }
+}
+
 const BLOCKED_HOSTS = [
   "localhost", "127.0.0.1", "0.0.0.0", "[::1]",
   "metadata.google.internal", "169.254.169.254",

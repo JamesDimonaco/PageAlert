@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query, internalAction, internalQuery } from "./_generated/server";
 import { internal } from "./_generated/api";
-import { ERROR_RECOVERY_INTERVAL_MS, intervalToMs, MAX_RETRIES, validateMonitorUrl } from "./shared";
+import { ERROR_RECOVERY_INTERVAL_MS, intervalToMs, isBlockedError, MAX_RETRIES, validateMonitorUrl } from "./shared";
 
 // ---- Resource Limits ----
 const MAX_NAME_LENGTH = 200;
@@ -293,7 +293,7 @@ export const saveScanError = mutation({
 
     if (monitor.status !== "scanning" && monitor.status !== "active") return;
 
-    const isBlocked = error.includes("blocking") || error.includes("anti-bot") || error.includes("CAPTCHA") || error.includes("blocked");
+    const isBlocked = isBlockedError(error);
     const now = Date.now();
 
     if (isBlocked && monitor.status === "scanning") {

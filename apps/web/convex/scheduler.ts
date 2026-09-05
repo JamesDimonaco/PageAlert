@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { internalAction, internalMutation, internalQuery } from "./_generated/server";
 import { internal } from "./_generated/api";
-import { ERROR_RECOVERY_INTERVAL_MS, intervalToMs, MAX_RETRIES } from "./shared";
+import { displayHost, isBlockedError, ERROR_RECOVERY_INTERVAL_MS, intervalToMs, MAX_RETRIES } from "./shared";
 
 /** Filter out blacklisted items from a matches array based on item title/url keys */
 function filterBlacklisted(matches: Record<string, unknown>[], blacklist: string[]): Record<string, unknown>[] {
@@ -299,6 +299,9 @@ export const runScheduledChecks = internalAction({
             const isNewMatch = checkResult.hasMatch && !previouslyHadMatches;
 
             if (isNewMatch) {
+              await ctx.scheduler.runAfter(0, internal.admin.notify, {
+                text: `Match: ${freshMonitor.name} found ${checkResult.matchCount} on ${displayHost(freshMonitor.url)} (${freshMonitor.userEmail ?? "no email"})`,
+              });
 
               // Create in-app notification (unless all channels explicitly disabled)
               if (hasAnyChannel) await ctx.runMutation(internal.userNotifications.create, {
@@ -452,6 +455,9 @@ export const runScheduledChecks = internalAction({
                           aboveHits,
                           trackedItemCount: priceAlerts.trackedItems.length,
                         };
+                        await ctx.scheduler.runAfter(0, internal.admin.notify, {
+                          text: `Price ${variant}: ${freshMonitor.name} on ${displayHost(freshMonitor.url)}, ${significantChanges.length} change(s) (${freshMonitor.userEmail ?? "no email"})`,
+                        });
 
                         // Email
                         if (shouldSend("email") && freshMonitor.userEmail) {
@@ -525,7 +531,11 @@ export const runScheduledChecks = internalAction({
             msg.includes("timed out") || msg.includes("Timeout");
 
           // Log failed check
-          const isBlocked = msg.includes("blocking automated access") || msg.includes("anti-bot") || msg.includes("CAPTCHA");
+          const isBlocked = isBlockedError(msg);
+          if (/AI service error 40[01]|authentication error|credit balance|billing/i.test(msg)) {
+            const send = await ctx.runMutation(internal.admin.claimAlertSlot, { key: "admin:ai-credit", minIntervalMs: 60 * 60 * 1000 });
+            if (send) await ctx.scheduler.runAfter(0, internal.admin.notify, { text: `Anthropic is rejecting calls: ${msg.slice(0, 300)}` });
+          }
           const failStrategy = `${strategyLabel}${useProxy ? "+proxy" : ""}`;
           await ctx.runMutation(internal.logs.createInternal, {
             userId: monitor.userId,
@@ -649,6 +659,12 @@ async function runQuickCheck(
   retryAttempt = 0,
   useProxy = false
 ): Promise<CheckOutcome> {
+  // No schema means the first extract never succeeded. A quick-check with
+  // empty conditions matches any accessible page, so do the extract instead.
+  if (!monitor.schema) {
+    return runFullExtract(ctx, monitor, scraperUrl, scraperKey, retryAttempt, { useProxy });
+  }
+
   const matchConditions = monitor.schema?.matchConditions ?? {};
 
   const res = await fetch(`${scraperUrl}/api/quick-check`, {
@@ -835,6 +851,11 @@ async function runFullExtract(
   // If low confidence + no items, keep existing schema
   const confidence = result.schema?.insights?.confidence ?? 100;
   if (confidence <= 10 && (result.totalItems ?? 0) === 0) {
+    // With no schema to fall back on this is a real failure: recording it
+    // as success would mark the monitor active with nothing to watch.
+    if (!monitor.schema) {
+      throw new Error("AI could not find anything to watch on this page - try a more specific prompt");
+    }
     // Soft failure — don't count as retry. Keep the old fingerprint so the
     // next drift refresh gets another go at it.
     console.log(`[scheduler] Re-extract ${monitor._id}: low confidence (${confidence}%), keeping existing schema`);
