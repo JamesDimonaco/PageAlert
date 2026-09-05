@@ -54,7 +54,11 @@ extractRoutes.post("/", zValidator("json", extractSchema), async (c) => {
     let clientMessage = "Extraction failed";
     let statusCode = 500;
 
-    if (message.includes("URL") || message.includes("hostname") || message.includes("not allowed")) {
+    if (message.startsWith("Site is blocking automated access")) {
+      // Fallback provider failure. Checked first: its reason text can mention
+      // "credits", which must not be mistaken for an Anthropic billing error.
+      clientMessage = message;
+    } else if (message.includes("URL") || message.includes("hostname") || message.includes("not allowed")) {
       clientMessage = message; // URL validation errors are safe to return
       statusCode = 400;
     } else if (message.includes("Could not resolve authentication") || message.includes("api_key")) {

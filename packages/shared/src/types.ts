@@ -9,7 +9,7 @@ export interface ScrapeResponse {
   /** Set when the page appears to serve an anti-bot challenge instead of content */
   blocked?: boolean;
   blockReason?: string;
-  /** Whether a proxy was used for this scrape */
+  /** Fetched through the blocked-site fallback rather than directly */
   proxied?: boolean;
 }
 

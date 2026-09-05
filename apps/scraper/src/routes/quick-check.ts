@@ -127,6 +127,9 @@ quickCheckRoutes.post("/", zValidator("json", quickCheckSchema), async (c) => {
     if (isValidationError) {
       userMessage = message;
       statusCode = 400;
+    } else if (message.startsWith("Site is blocking automated access")) {
+      // The fallback provider's own failure reason; the scheduler keys off the prefix
+      userMessage = message;
     } else if (isTimeout) {
       userMessage = "Page took too long to load. The site may be slow or blocking automated access.";
       statusCode = 504;
