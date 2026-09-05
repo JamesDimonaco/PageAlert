@@ -27,7 +27,8 @@ export default defineSchema({
     // SHA-256 of the page text from the last completed scan — used to skip
     // all downstream work (and AI) when the page hasn't changed
     contentFingerprint: v.optional(v.string()),
-    // When the AI last analyzed this page (creation or re-extract) — cooldown gate
+    // No longer written; kept so rows from before the check-count drift
+    // refresh still validate
     lastAiExtractAt: v.optional(v.number()),
     lastCheckedAt: v.optional(v.number()),
     lastMatchAt: v.optional(v.number()),

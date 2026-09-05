@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { internalAction, internalMutation, internalQuery } from "./_generated/server";
 import { internal } from "./_generated/api";
-import { intervalToMs, MAX_RETRIES } from "./shared";
+import { ERROR_RECOVERY_INTERVAL_MS, intervalToMs, MAX_RETRIES } from "./shared";
 
 /** Filter out blacklisted items from a matches array based on item title/url keys */
 function filterBlacklisted(matches: Record<string, unknown>[], blacklist: string[]): Record<string, unknown>[] {
@@ -54,43 +54,24 @@ function detectChanges(previousItems: Record<string, unknown>[], currentItems: R
 
 const MAX_CONCURRENT_CHECKS = 5;
 
-// Minimum gap between AI re-extracts per monitor — even when a page keeps
-// changing, AI re-analysis is capped to protect Anthropic credit
-const AI_REEXTRACT_COOLDOWN_MS: Record<string, number> = {
-  pro: 6 * 60 * 60 * 1000,
-  max: 1 * 60 * 60 * 1000,
-};
+// A monitor re-runs the AI extract once every this many completed checks, to
+// catch the page structure drifting away from the schema it was built from
+const AI_REEXTRACT_EVERY_N_CHECKS = 100;
 
 /**
- * Decide whether a changed page warrants AI re-analysis.
- * Free tier never re-runs AI after the one-time creation extract.
- * Pro/max only when the deterministic path can't conclude:
- *  - no usable match conditions to check against, or
- *  - the creation extract had low confidence, or
- *  - the monitor tracks per-item prices (quick-check can't extract items),
- * and only outside the per-tier cooldown window.
+ * Decide whether a scheduled check should re-run the AI extract.
+ *
+ * Re-extraction costs an Anthropic call per monitor, so a changed page is not
+ * on its own a reason to spend one. The two paths that do warrant the AI have
+ * their own triggers and do not come through here: an explicit rescan from the
+ * monitor page, and the post-failure retry in runScheduledChecks. Everything
+ * else waits for the drift refresh.
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function shouldEscalateToAI(monitor: any, tier: string, now: number): boolean {
-  const cooldownMs = AI_REEXTRACT_COOLDOWN_MS[tier];
-  if (cooldownMs === undefined) return false; // free tier: deterministic only
-
-  const schema = monitor.schema;
-  const mc = schema?.matchConditions ?? {};
-  const hasUsableConditions =
-    (mc.mustInclude?.length ?? 0) > 0 ||
-    (mc.mustExclude?.length ?? 0) > 0 ||
-    mc.priceMin != null ||
-    mc.priceMax != null;
-  const lowConfidence = (schema?.insights?.confidence ?? 100) < 50;
-  const needsItemExtraction =
-    !!schema?.insights?.tracksPrices &&
-    (monitor.priceAlerts?.trackedItems?.length ?? 0) > 0;
-
-  if (hasUsableConditions && !lowConfidence && !needsItemExtraction) return false;
-
-  const lastAi = monitor.lastAiExtractAt ?? 0;
-  return now - lastAi >= cooldownMs;
+function shouldEscalateToAI(monitor: { checkCount?: number }): boolean {
+  // checkCount is incremented by recordCheckResult after this runs, so count
+  // the check in flight or the boundary is missed
+  const completedChecks = (monitor.checkCount ?? 0) + 1;
+  return completedChecks % AI_REEXTRACT_EVERY_N_CHECKS === 0;
 }
 
 /** Query monitors that are due for a check */
@@ -101,12 +82,29 @@ export const getMonitorsDue = internalQuery({
 
     // Compound index: status="active" + nextCheckAt <= now
     // Only reads active monitors that are actually due, not the whole table
-    return ctx.db
+    const active = await ctx.db
       .query("monitors")
       .withIndex("by_status_nextCheckAt", (q) =>
-        q.eq("status", "active").lte("nextCheckAt", now)
+        q.eq("status", "active").gte("nextCheckAt", 0).lte("nextCheckAt", now)
       )
       .take(MAX_CONCURRENT_CHECKS);
+
+    // Errored monitors get a slow retry lane. Without this an outage that
+    // outlasts MAX_RETRIES parks every monitor permanently — which is exactly
+    // what happened when the scraper went down on 19 May 2026. One slot is
+    // always held for recovery so a busy active queue can't starve it.
+    // The lower bound keeps out monitors with no due time at all (anonymous
+    // scans), which sort before every number in the index.
+    const recovering = await ctx.db
+      .query("monitors")
+      .withIndex("by_status_nextCheckAt", (q) =>
+        q.eq("status", "error").gte("nextCheckAt", 0).lte("nextCheckAt", now)
+      )
+      .take(MAX_CONCURRENT_CHECKS);
+
+    const activeSlots = MAX_CONCURRENT_CHECKS - Math.min(recovering.length, 1);
+    const picked = active.slice(0, activeSlots);
+    return [...picked, ...recovering.slice(0, MAX_CONCURRENT_CHECKS - picked.length)];
   },
 });
 
@@ -125,12 +123,10 @@ export const recordCheckResult = internalMutation({
     contentFingerprint: v.optional(v.string()),
     // Page content identical to last scan — bookkeeping only, no result row
     unchanged: v.optional(v.boolean()),
-    // This check ran an AI extract — stamps the cooldown
-    usedAi: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const monitor = await ctx.db.get(args.monitorId);
-    if (!monitor || monitor.status !== "active") return;
+    if (!monitor || (monitor.status !== "active" && monitor.status !== "error")) return;
 
     const now = Date.now();
 
@@ -141,7 +137,9 @@ export const recordCheckResult = internalMutation({
           status: "error",
           lastError: args.error,
           retryCount,
-          nextCheckAt: undefined,
+          // Keep it scheduled, slowly. A monitor that dies during an outage
+          // has to be able to come back on its own once the outage ends.
+          nextCheckAt: now + ERROR_RECOVERY_INTERVAL_MS,
           updatedAt: now,
         });
       } else {
@@ -178,10 +176,6 @@ export const recordCheckResult = internalMutation({
 
     if (args.contentFingerprint) {
       updates.contentFingerprint = args.contentFingerprint;
-    }
-
-    if (args.usedAi) {
-      updates.lastAiExtractAt = now;
     }
 
     await ctx.db.patch(args.monitorId, updates);
@@ -240,16 +234,21 @@ export const runScheduledChecks = internalAction({
     const results = await Promise.allSettled(
       monitors.map(async (monitor) => {
         const startTime = Date.now();
-        const retryCount = monitor.retryCount ?? 0;
+        // The recovery lane keeps counting past MAX_RETRIES. Cap it here: the
+        // scraper rejects retryAttempt > 10 with a 400, which would park the
+        // monitor for good, and forceFullExtract below keys off the exact value.
+        const retryCount = Math.min(monitor.retryCount ?? 0, MAX_RETRIES);
         // Use proxy on retry 1+ to bypass anti-bot IP blocking
         const useProxy = retryCount >= 1;
         let strategyLabel = "quick-check";
         try {
           const tier = await ctx.runQuery(internal.scheduler.getUserTier, { userId: monitor.userId });
-          // On 3rd retry, skip quick-check and go straight to full extract with
-          // proxy — the AI may handle challenge content better. Paid tiers only;
-          // free stays on the deterministic path with proxy.
-          const forceFullExtract = retryCount >= 2 && tier !== "free";
+          // On the 3rd attempt only, skip quick-check and go straight to full
+          // extract with proxy — the AI may handle challenge content better.
+          // Paid tiers only; free stays on the deterministic path with proxy.
+          // Not on the 6h recovery lane (retryCount above that), or a dead URL
+          // would cost an AI call four times a day forever.
+          const forceFullExtract = retryCount === 2 && tier !== "free";
 
           let checkResult: CheckOutcome;
 
@@ -261,7 +260,7 @@ export const runScheduledChecks = internalAction({
               useProxy,
             });
           } else {
-            checkResult = await runQuickCheck(ctx, monitor, tier, scraperUrl, scraperKey, retryCount, useProxy);
+            checkResult = await runQuickCheck(ctx, monitor, scraperUrl, scraperKey, retryCount, useProxy);
           }
           strategyLabel = checkResult.strategy;
 
@@ -543,9 +542,10 @@ export const runScheduledChecks = internalAction({
             strategy: failStrategy,
           }).catch(() => {});
 
-          // Check if this will max out retries
+          // Notify once, on the transition into error. Recovery-lane retries
+          // keep failing with retryCount past MAX_RETRIES and must stay quiet.
           const nextRetryCount = (monitor.retryCount ?? 0) + 1;
-          const willError = nextRetryCount >= MAX_RETRIES;
+          const willError = nextRetryCount >= MAX_RETRIES && monitor.status !== "error";
 
           await ctx.runMutation(internal.scheduler.recordCheckResult, {
             monitorId: monitor._id,
@@ -644,7 +644,6 @@ async function runQuickCheck(
   ctx: { runMutation: (ref: any, args: any) => Promise<any> },
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   monitor: any,
-  tier: string,
   scraperUrl: string,
   scraperKey: string,
   retryAttempt = 0,
@@ -706,11 +705,10 @@ async function runQuickCheck(
     return { hasMatch: false, matchCount: monitor.matchCount ?? 0, matches: [], totalItems: null, strategy: "unchanged" };
   }
 
-  // Content changed (or no fingerprint stored yet) — AI re-analysis only when
-  // the deterministic path can't conclude, the tier allows it, and the
-  // per-monitor cooldown has passed
-  if (shouldEscalateToAI(monitor, tier, Date.now())) {
-    console.log(`[scheduler] Quick check ${monitor._id}: content changed, escalating to AI re-extract (tier=${tier})`);
+  // Content changed (or no fingerprint stored yet). The AI only re-reads the
+  // page on the drift refresh — see shouldEscalateToAI.
+  if (shouldEscalateToAI(monitor)) {
+    console.log(`[scheduler] Quick check ${monitor._id}: check ${(monitor.checkCount ?? 0) + 1}, running AI drift re-extract`);
     return runFullExtract(ctx, monitor, scraperUrl, scraperKey, retryAttempt, {
       // Page was fetched and accessible moments ago — skip the redundant pre-check
       skipQuickCheck: true,
@@ -837,9 +835,8 @@ async function runFullExtract(
   // If low confidence + no items, keep existing schema
   const confidence = result.schema?.insights?.confidence ?? 100;
   if (confidence <= 10 && (result.totalItems ?? 0) === 0) {
-    // Soft failure — don't count as retry. Still stamp the AI cooldown (the
-    // extract ran and cost money) but keep the old fingerprint so the next
-    // content change can retry once the cooldown passes.
+    // Soft failure — don't count as retry. Keep the old fingerprint so the
+    // next drift refresh gets another go at it.
     console.log(`[scheduler] Re-extract ${monitor._id}: low confidence (${confidence}%), keeping existing schema`);
     await ctx.runMutation(internal.scheduler.recordCheckResult, {
       monitorId: monitor._id,
@@ -847,7 +844,6 @@ async function runFullExtract(
       matchCount: monitor.matchCount ?? 0,
       totalItems: 0,
       matches: [],
-      usedAi: true,
       // No error field — informational, not retry-worthy
     });
     return { hasMatch: false, matchCount: 0, matches: [], totalItems: null, strategy };
@@ -870,7 +866,6 @@ async function runFullExtract(
     items: result.schema?.items ?? [],
     schema: result.schema,
     contentFingerprint: contentHash,
-    usedAi: true,
   });
 
   console.log(`[scheduler] Full re-extract ${monitor._id}: ${totalItems} items, ${matchCount} matches (${allMatches.length - matchCount} blacklisted)`);
@@ -878,7 +873,7 @@ async function runFullExtract(
   return { hasMatch: matchCount > 0, matchCount, matches: filteredMatches, totalItems, strategy };
 }
 
-/** Internal: resolve a user's tier for AI gating decisions */
+/** Internal: resolve a user's tier — gates the post-failure full extract */
 export const getUserTier = internalQuery({
   args: { userId: v.string() },
   handler: async (ctx, args) => {

@@ -73,6 +73,13 @@ extractRoutes.post("/", zValidator("json", extractSchema), async (c) => {
       statusCode = 429;
     } else if (message.includes("JSON") || message.includes("parse")) {
       clientMessage = "AI returned invalid response - try a different prompt";
+    } else if (typeof (error as { status?: unknown }).status === "number") {
+      // Anthropic APIError from whichever SDK copy threw it. The PostHog
+      // wrapper ships its own @anthropic-ai/sdk, so an instanceof check against
+      // ours never matches in prod. A retired-model 404 used to land in the
+      // generic "Extraction failed" bucket and hid a total outage for weeks —
+      // always name the status so the next one is obvious from a log.
+      clientMessage = `AI service error ${(error as { status: number }).status}: ${message}`;
     }
 
     return c.json({ error: "extract_failed", message: clientMessage }, statusCode as 400 | 429 | 500 | 504);

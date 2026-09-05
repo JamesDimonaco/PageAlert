@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query, internalAction, internalQuery } from "./_generated/server";
 import { internal } from "./_generated/api";
-import { intervalToMs, MAX_RETRIES, validateMonitorUrl } from "./shared";
+import { ERROR_RECOVERY_INTERVAL_MS, intervalToMs, MAX_RETRIES, validateMonitorUrl } from "./shared";
 
 // ---- Resource Limits ----
 const MAX_NAME_LENGTH = 200;
@@ -249,7 +249,6 @@ export const saveScanResult = mutation({
     await ctx.db.patch(id, {
       schema,
       contentFingerprint,
-      lastAiExtractAt: now,
       status: "active",
       matchCount,
       checkCount: (monitor.checkCount ?? 0) + 1,
@@ -312,8 +311,11 @@ export const saveScanError = mutation({
       await ctx.db.patch(id, {
         status: "error",
         lastError: error,
-        retryCount: 0,
-        nextCheckAt: undefined,
+        // Enter the scheduler's slow recovery lane the same way a failed
+        // scheduled check does. A lower count would replay the fast backoff
+        // ladder (and the paid-tier AI attempt) on a URL already known dead.
+        retryCount: MAX_RETRIES,
+        nextCheckAt: now + ERROR_RECOVERY_INTERVAL_MS,
         updatedAt: now,
       });
     }
