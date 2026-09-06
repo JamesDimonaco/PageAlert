@@ -261,6 +261,101 @@ export const sendErrorAlert = internalAction({
   },
 });
 
+/**
+ * A monitor has stopped being checked for good — the site blocks automated
+ * access even through the proxy. Distinct from sendErrorAlert, whose copy
+ * promises further retries that will never come for a parked monitor.
+ */
+export const sendMonitorStoppedAlert = internalAction({
+  args: {
+    to: v.string(),
+    monitorName: v.string(),
+    monitorId: v.string(),
+    url: v.string(),
+    telegramConnected: v.boolean(),
+  },
+  handler: async (_ctx, args) => {
+    const apiKey = process.env.RESEND_API_KEY;
+    if (!apiKey) {
+      console.error("[email] RESEND_API_KEY not configured, skipping");
+      return;
+    }
+
+    const safeName = esc(args.monitorName);
+    const safeHost = esc(safeHostname(args.url));
+    const monitorHref = `${APP_URL}/dashboard/monitors/${args.monitorId}`;
+
+    const telegramNudge = args.telegramConnected
+      ? ""
+      : `<div style="padding:16px 32px;background:#f5f3ff;border-top:1px solid #ede9fe">
+        <p style="margin:0;color:#5b21b6;font-size:13px">
+          Want alerts the moment they happen? <a href="${APP_URL}/dashboard/settings?tab=notifications" style="color:#4f46e5;font-weight:500">Connect Telegram</a> and we'll message you on your phone.
+        </p>
+      </div>`;
+
+    const html = `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f4f4f5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif">
+  <div style="max-width:560px;margin:0 auto;padding:40px 20px">
+    <div style="background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.1)">
+      <div style="background:#f59e0b;padding:24px 32px">
+        <h1 style="margin:0;color:#fff;font-size:20px;font-weight:600">Checks stopped</h1>
+        <p style="margin:4px 0 0;color:rgba(255,255,255,0.85);font-size:14px">${safeName}</p>
+      </div>
+      <div style="padding:32px">
+        <p style="margin:0 0 16px;color:#333;font-size:16px">
+          We've stopped checking <a href="${safeHref(args.url)}" style="color:#4f46e5;text-decoration:none">${safeHost}</a>.
+          The site blocks automated access even through our proxy, so every attempt was turned away.
+        </p>
+        <p style="margin:0 0 24px;color:#555;font-size:14px">
+          You won't get any more alerts for this monitor until you start it again. If the site has
+          changed, or you have a different URL to try, hit Retry.
+        </p>
+        <a href="${monitorHref}" style="display:inline-block;background:#4f46e5;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:500;font-size:14px">Retry this monitor</a>
+      </div>
+      ${telegramNudge}
+      <div style="padding:16px 32px;background:#f9fafb;border-top:1px solid #eee">
+        <p style="margin:0;color:#999;font-size:12px"><a href="${APP_URL}/dashboard/settings" style="color:#999">Manage notifications</a></p>
+      </div>
+    </div>
+  </div>
+</body>
+</html>`;
+
+    const textNudge = args.telegramConnected
+      ? ""
+      : `\n\nWant alerts the moment they happen? Connect Telegram: ${APP_URL}/dashboard/settings?tab=notifications`;
+
+    try {
+      const res = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          from: FROM_EMAIL,
+          to: [args.to],
+          subject: `Checks stopped: ${args.monitorName}`,
+          html,
+          text: `Checks stopped — ${args.monitorName}\n\nWe've stopped checking ${safeHostname(args.url)}. The site blocks automated access even through our proxy.\n\nYou won't get any more alerts for this monitor until you start it again.\n\nRetry: ${monitorHref}${textNudge}`,
+        }),
+        signal: AbortSignal.timeout(RESEND_TIMEOUT),
+      });
+
+      if (!res.ok) {
+        console.error("[email] Resend API error:", res.status, "monitor:", args.monitorId);
+        return;
+      }
+      console.log("[email] Stopped alert sent, monitor:", args.monitorId);
+    } catch (e) {
+      console.error("[email] Stopped alert failed, monitor:", args.monitorId, e instanceof Error ? e.message : "");
+    }
+  },
+});
+
 /** Send scan complete email to anonymous user who gave their email */
 export const sendAnonymousScanComplete = internalAction({
   args: {

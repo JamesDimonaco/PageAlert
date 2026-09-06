@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { internalAction, action } from "./_generated/server";
+import { displayHost } from "./shared";
 
 const APP_URL = process.env.SITE_URL ?? "https://pagealert.io";
 const TIMEOUT = 10_000;
@@ -52,7 +53,32 @@ export const sendErrorAlert = internalAction({
           fields: [
             { name: "Dashboard", value: `[Check monitor](${APP_URL}/dashboard/monitors/${args.monitorId})`, inline: true },
           ],
-          footer: { text: "Monitor paused after 3 failed attempts" },
+          footer: { text: "Retrying every 6 hours" },
+          timestamp: new Date().toISOString(),
+        },
+      ],
+    });
+  },
+});
+
+/** Send a "we have stopped checking this monitor" alert via Discord webhook */
+export const sendMonitorStoppedAlert = internalAction({
+  args: {
+    webhookUrl: v.string(),
+    monitorName: v.string(),
+    monitorId: v.string(),
+    url: v.string(),
+  },
+  handler: async (_ctx, args) => {
+    await sendWebhook(args.webhookUrl, {
+      embeds: [
+        {
+          title: `🛑 ${args.monitorName} — Checks stopped`,
+          description: `${displayHost(args.url)} blocks automated access even through our proxy, so we have stopped checking it. No more alerts for this monitor until you start it again.`,
+          color: 0xf59e0b,
+          fields: [
+            { name: "Dashboard", value: `[Retry this monitor](${APP_URL}/dashboard/monitors/${args.monitorId})`, inline: true },
+          ],
           timestamp: new Date().toISOString(),
         },
       ],

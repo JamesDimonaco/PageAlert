@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { internalAction, action } from "./_generated/server";
+import { displayHost } from "./shared";
 
 const APP_URL = process.env.SITE_URL ?? "https://pagealert.io";
 const TIMEOUT = 10_000;
@@ -53,9 +54,34 @@ export const sendErrorAlert = internalAction({
       ``,
       `${escMd(args.error)}`,
       ``,
-      `The monitor has been paused after 3 failed attempts\\.`,
+      `Retrying every 6 hours\\.`,
       ``,
       `🔗 [Check monitor](${escUrl(APP_URL + "/dashboard")})`,
+    ].join("\n");
+
+    await sendMessage(token, args.chatId, text);
+  },
+});
+
+/** Send a "we have stopped checking this monitor" alert via Telegram */
+export const sendMonitorStoppedAlert = internalAction({
+  args: {
+    chatId: v.string(),
+    monitorName: v.string(),
+    monitorId: v.string(),
+    url: v.string(),
+  },
+  handler: async (_ctx, args) => {
+    const token = getBotToken();
+
+    const text = [
+      `🛑 *${escMd(args.monitorName)}* — Checks stopped`,
+      ``,
+      `${escMd(displayHost(args.url))} blocks automated access even through our proxy, so we have stopped checking it\\.`,
+      ``,
+      `No more alerts for this monitor until you start it again\\.`,
+      ``,
+      `🔗 [Retry this monitor](${escUrl(APP_URL + "/dashboard/monitors/" + args.monitorId)})`,
     ].join("\n");
 
     await sendMessage(token, args.chatId, text);

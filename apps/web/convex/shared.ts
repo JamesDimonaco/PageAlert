@@ -5,8 +5,12 @@ export const MAX_RETRIES = 3;
  * Confirmed Scrapfly blocks (proxy, asp=true) before a monitor stops being
  * rescheduled entirely. Scrapfly is the specialist for anti-bot pages — if it
  * gets blocked this many times, the site has genuinely beaten it and further
- * 6-hourly attempts are pure spend. Two rather than one so a transient
- * Cloudflare spike doesn't kill a live monitor.
+ * 6-hourly attempts are pure spend.
+ *
+ * Only blocks on the recovery lane count (see confirmedProxyBlock in
+ * scheduler.ts), so these are ERROR_RECOVERY_INTERVAL_MS apart. Counting the
+ * fast 2min/8min ladder instead would park a live monitor inside one
+ * Cloudflare spike.
  */
 export const MAX_PROXY_BLOCKS = 2;
 
