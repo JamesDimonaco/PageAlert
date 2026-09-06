@@ -819,7 +819,9 @@ export const banUser = mutation({
       .collect();
     let paused = 0;
     for (const m of monitors) {
-      if (m.status === "active" || m.status === "scanning") {
+      // "error" monitors sit in the scheduler's recovery lane and keep
+      // getting retried until paused — not just "active"/"scanning"
+      if (m.status === "active" || m.status === "scanning" || m.status === "error") {
         await ctx.db.patch(m._id, { status: "paused", updatedAt: now });
         paused++;
       }
@@ -841,22 +843,16 @@ export const unbanUser = mutation({
   },
 });
 
-/** Deletes every session row for a user, a page at a time until none remain. */
-async function deleteSessionsByUser(ctx: MutationCtx, userId: string): Promise<void> {
-  for (let page = 0; page < 40; page++) {
-    const result = await ctx.runMutation(components.betterAuth.adapter.deleteMany, {
-      input: { model: "session", where: [{ field: "userId", operator: "eq", value: userId }] },
-      paginationOpts: { numItems: 200, cursor: null },
-    });
-    if (result.count === 0 || result.isDone) break;
-  }
-}
+type UserIdRow = { field: "userId"; operator: "eq"; value: string };
 
-/** Deletes every account (OAuth/credential) row for a user, a page at a time until none remain. */
-async function deleteAccountsByUser(ctx: MutationCtx, userId: string): Promise<void> {
+/** Deletes every matching row for a user, a page at a time until none remain. */
+async function deleteAllRowsByUser(
+  ctx: MutationCtx,
+  input: { model: "session"; where: UserIdRow[] } | { model: "account"; where: UserIdRow[] },
+): Promise<void> {
   for (let page = 0; page < 40; page++) {
     const result = await ctx.runMutation(components.betterAuth.adapter.deleteMany, {
-      input: { model: "account", where: [{ field: "userId", operator: "eq", value: userId }] },
+      input,
       paginationOpts: { numItems: 200, cursor: null },
     });
     if (result.count === 0 || result.isDone) break;
@@ -881,8 +877,9 @@ export const deleteUser = mutation({
       .unique();
     if (banned) await ctx.db.delete(banned._id);
 
-    await deleteSessionsByUser(ctx, userId);
-    await deleteAccountsByUser(ctx, userId);
+    const idFilter: UserIdRow[] = [{ field: "userId", operator: "eq", value: userId }];
+    await deleteAllRowsByUser(ctx, { model: "session", where: idFilter });
+    await deleteAllRowsByUser(ctx, { model: "account", where: idFilter });
     await ctx.runMutation(components.betterAuth.adapter.deleteOne, {
       input: { model: "user", where: [{ field: "_id", operator: "eq", value: userId }] },
     });

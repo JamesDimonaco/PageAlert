@@ -1,4 +1,13 @@
-import { mutation, query, type MutationCtx } from "./_generated/server";
+import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
+
+/** Is this user currently banned? Shared by every mutation that gates on ban status. */
+export async function isBanned(ctx: QueryCtx | MutationCtx, userId: string): Promise<boolean> {
+  const row = await ctx.db
+    .query("bannedUsers")
+    .withIndex("by_userId", (q) => q.eq("userId", userId))
+    .unique();
+  return !!row;
+}
 
 /**
  * Deletes every row this app owns for a user: monitors and their scrape
@@ -87,3 +96,5 @@ export const myBanStatus = query({
     return { banned: !!row, reason: row?.reason ?? null };
   },
 });
+
+
