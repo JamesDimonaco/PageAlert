@@ -16,15 +16,21 @@ export function AdminEmailComposer({
   selectedIds,
   onClearSelection,
   onPickRecipients,
+  subject,
+  body,
+  onSubjectChange,
+  onBodyChange,
 }: {
   selectedIds: Set<string>;
   onClearSelection: () => void;
   onPickRecipients: () => void;
+  subject: string;
+  body: string;
+  onSubjectChange: (value: string) => void;
+  onBodyChange: (value: string) => void;
 }) {
   const sendBulkEmail = useAction(api.admin.sendBulkEmail);
   const history = useQuery(api.admin.listSentEmails);
-  const [subject, setSubject] = useState("");
-  const [body, setBody] = useState("");
   const [busy, setBusy] = useState<"test" | "send" | null>(null);
   const [confirming, setConfirming] = useState(false);
 
@@ -40,8 +46,8 @@ export function AdminEmailComposer({
         toast.success("Test email sent to you");
       } else {
         toast.success(`Sent to ${result.sent} user${result.sent === 1 ? "" : "s"}${result.failed > 0 ? `, ${result.failed} failed` : ""}`);
-        setSubject("");
-        setBody("");
+        onSubjectChange("");
+        onBodyChange("");
         setConfirming(false);
         onClearSelection();
       }
@@ -74,14 +80,14 @@ export function AdminEmailComposer({
 
           <div className="grid gap-2">
             <Label htmlFor="email-subject">Subject</Label>
-            <Input id="email-subject" value={subject} onChange={(e) => setSubject(e.target.value)} maxLength={200} />
+            <Input id="email-subject" value={subject} onChange={(e) => onSubjectChange(e.target.value)} maxLength={200} />
           </div>
           <div className="grid gap-2">
             <Label htmlFor="email-body">Body</Label>
             <Textarea
               id="email-body"
               value={body}
-              onChange={(e) => setBody(e.target.value)}
+              onChange={(e) => onBodyChange(e.target.value)}
               rows={12}
               maxLength={10_000}
               placeholder={"Hi {{name}},\n\nWe just shipped…"}
@@ -130,14 +136,19 @@ export function AdminEmailComposer({
                   <button
                     type="button"
                     className="text-left w-full"
-                    onClick={() => { setSubject(h.subject); setBody(h.body); }}
+                    onClick={() => { onSubjectChange(h.subject); onBodyChange(h.body); }}
                     title="Load into composer"
                   >
                     <p className="text-sm font-medium truncate">{h.subject}</p>
                     <p className="text-xs text-muted-foreground mt-0.5">
                       {formatDate(h.sentAt)} · {h.recipientCount} recipient{h.recipientCount === 1 ? "" : "s"}
-                      {h.failedCount > 0 && <span className="text-red-400"> · {h.failedCount} failed</span>}
                     </p>
+                    {h.failedRecipients.length > 0 && (
+                      <p className="text-xs text-red-400 mt-0.5">
+                        {h.failedRecipients.length} failed: {h.failedRecipients.slice(0, 5).join(", ")}
+                        {h.failedRecipients.length > 5 ? "…" : ""}
+                      </p>
+                    )}
                     <p className="text-xs text-muted-foreground/70 truncate">{h.recipientsPreview.join(", ")}{h.recipientCount > 5 ? ", …" : ""}</p>
                   </button>
                 </li>

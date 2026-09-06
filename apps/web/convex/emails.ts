@@ -20,6 +20,17 @@ export function esc(str: string): string {
     .replace(/'/g, "&#39;");
 }
 
+/** Blank-line-separated plain text → escaped `<p>` paragraphs, single newlines as `<br>`, bare URLs linked. */
+export function textToHtmlParagraphs(text: string, paragraphStyle?: string): string {
+  const styleAttr = paragraphStyle ? ` style="${paragraphStyle}"` : "";
+  return text
+    .split(/\n\s*\n/)
+    .map((p) => p.trim())
+    .filter(Boolean)
+    .map((p) => `<p${styleAttr}>${esc(p).replace(/\n/g, "<br>").replace(/(https?:\/\/\S+)/g, '<a href="$1">$1</a>')}</p>`)
+    .join("");
+}
+
 function safeHostname(url: string): string {
   try { return new URL(url).hostname; } catch { return url; }
 }

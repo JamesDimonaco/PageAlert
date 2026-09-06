@@ -120,6 +120,10 @@ export default function SettingsPage() {
     }
   }, [notifSettings]);
 
+  // A manual grant isn't a Polar subscription — the billing tab's
+  // checkout/portal gates key off this, not the raw (possibly trial) tier.
+  const paidTier = grantUntil ? "free" : tier;
+
   return (
     <div className="space-y-10">
       <div>
@@ -562,7 +566,7 @@ export default function SettingsPage() {
                   You&apos;re on a free {tier.charAt(0).toUpperCase() + tier.slice(1)} trial
                 </p>
                 <p className="text-sm text-muted-foreground mt-1">
-                  Trial ends {new Date(grantUntil).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}. Subscribe below to keep {tier.charAt(0).toUpperCase() + tier.slice(1)} after that.
+                  Trial ends {new Date(grantUntil).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}. Upgrade below to keep {tier.charAt(0).toUpperCase() + tier.slice(1)} after that.
                 </p>
               </CardContent>
             </Card>
@@ -625,7 +629,7 @@ export default function SettingsPage() {
                   </p>
                 </div>
                 <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-                  {tier === "free" && (
+                  {paidTier === "free" && (
                     <Button
                       className="gap-1.5 shadow-md shadow-primary/15"
                       onClick={() => handleCheckout("pro")}
@@ -634,7 +638,7 @@ export default function SettingsPage() {
                       Upgrade to Pro
                     </Button>
                   )}
-                  {tier === "pro" && (
+                  {paidTier === "pro" && (
                     <Button
                       className="gap-1.5 shadow-md shadow-primary/15"
                       onClick={() => handleCheckout("max")}
@@ -643,7 +647,7 @@ export default function SettingsPage() {
                       Upgrade to Max
                     </Button>
                   )}
-                  {tier !== "free" && (
+                  {paidTier !== "free" && (
                     <Button
                       variant="outline"
                       size="sm"
@@ -662,7 +666,7 @@ export default function SettingsPage() {
                   )}
                 </div>
               </div>
-              {tier !== "free" && (
+              {paidTier !== "free" && (
                 <p className="text-xs text-muted-foreground mt-4">
                   Manage your billing, update payment method, or cancel your subscription from the Polar portal.
                   {" "}You&apos;ll be redirected to Polar — close the tab to return here.
@@ -673,7 +677,7 @@ export default function SettingsPage() {
           </Card>
 
           {/* Upgrade Options */}
-          {tier === "free" && (
+          {paidTier === "free" && (
             <div className="grid gap-4 md:grid-cols-2">
               <Card className="border-primary/30 bg-primary/5 shadow-sm">
                 <CardContent className="p-6">
@@ -718,7 +722,7 @@ export default function SettingsPage() {
           )}
 
           {/* Pro → Max upgrade */}
-          {tier === "pro" && (
+          {paidTier === "pro" && (
             <Card className="border-border/30 bg-card/50 shadow-sm">
               <CardContent className="p-6">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">

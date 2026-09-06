@@ -28,8 +28,10 @@ import {
 import { components, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { authComponent } from "./betterAuth/auth";
-import { APP_URL, esc, HELLO_FROM_EMAIL, RESEND_TIMEOUT } from "./emails";
+import { APP_URL, HELLO_FROM_EMAIL, RESEND_TIMEOUT, textToHtmlParagraphs } from "./emails";
 import { displayHost, isBlockedError } from "./shared";
+import { effectiveTier } from "./tiers";
+import { PLANS } from "../lib/plans";
 
 const HOUR = 60 * 60 * 1000;
 
@@ -300,10 +302,7 @@ export const sendApologyEmails = internalAction({
     const failed: string[] = [];
     for (const r of recipients) {
       const text = apologyText(r.monitors);
-      const html = `<div style="font-family:sans-serif;line-height:1.5;max-width:600px">${text
-        .split("\n\n")
-        .map((p) => `<p>${esc(p).replace(/\n/g, "<br>").replace(/(https?:\/\/\S+)/g, '<a href="$1">$1</a>')}</p>`)
-        .join("")}</div>`;
+      const html = `<div style="font-family:sans-serif;line-height:1.5;max-width:600px">${textToHtmlParagraphs(text)}</div>`;
       const res = await fetch("https://api.resend.com/emails", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
@@ -334,8 +333,12 @@ type Tier = "free" | "pro" | "max";
 
 const DAY_MS = 24 * HOUR;
 
-// Monthly price in USD cents — mirrors lib/plans.ts
-const TIER_PRICE_CENTS: Record<Tier, number> = { free: 0, pro: 900, max: 2900 };
+/** Monthly price in USD cents, derived from the public pricing plans. */
+function planCents(tier: Tier): number {
+  const plan = PLANS.find((p) => p.name.toLowerCase() === tier);
+  return (plan?.price ?? 0) * 100;
+}
+const TIER_PRICE_CENTS: Record<Tier, number> = { free: planCents("free"), pro: planCents("pro"), max: planCents("max") };
 
 function adminAllowList(): Set<string> {
   return new Set(
@@ -392,12 +395,22 @@ async function fetchAllUsers(ctx: QueryCtx | ActionCtx): Promise<AuthUser[]> {
 }
 
 function isPayingRecord(t: { tier: Tier; grantUntil?: number }): boolean {
-  return t.tier !== "free" && !t.grantUntil;
+  return effectiveTier(t) !== "free" && !t.grantUntil;
 }
 
+/**
+ * Subscribed by every signed-in user's navbar, so this stays to one cheap
+ * read (the identity claim) instead of authComponent's session-verified
+ * lookup. Null means auth hasn't resolved yet, not "not an admin".
+ */
 export const isAdmin = query({
   args: {},
-  handler: async (ctx) => (await callerAdminEmail(ctx)) !== null,
+  handler: async (ctx): Promise<boolean | null> => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return null;
+    const email = identity.email?.toLowerCase();
+    return !!email && adminAllowList().has(email);
+  },
 });
 
 export const overview = query({
@@ -408,11 +421,14 @@ export const overview = query({
     const d7 = now - 7 * DAY_MS;
     const d30 = now - 30 * DAY_MS;
 
-    const [users, tiers, monitors] = await Promise.all([
+    const [users, allTiers, monitors] = await Promise.all([
       fetchAllUsers(ctx),
       ctx.db.query("userTiers").collect(),
       ctx.db.query("monitors").collect(),
     ]);
+    // Drop rows for deleted accounts so they don't inflate MRR/plan counts
+    const userIds = new Set(users.map((u) => u.id));
+    const tiers = allTiers.filter((t) => userIds.has(t.userId));
 
     const signupsByDay = new Map<string, number>();
     for (let i = 29; i >= 0; i--) {
@@ -423,6 +439,8 @@ export const overview = query({
       const day = new Date(u.createdAt).toISOString().slice(0, 10);
       if (signupsByDay.has(day)) signupsByDay.set(day, (signupsByDay.get(day) ?? 0) + 1);
     }
+    // Sum the buckets rather than re-filtering users, so this can never exceed the bars
+    const new30d = [...signupsByDay.values()].reduce((sum, count) => sum + count, 0);
 
     const tierCounts: Record<Tier, number> = { free: 0, pro: 0, max: 0 };
     let trials = 0;
@@ -431,10 +449,11 @@ export const overview = query({
     const tieredUsers = new Set<string>();
     for (const t of tiers) {
       tieredUsers.add(t.userId);
-      tierCounts[t.tier]++;
+      const eff = effectiveTier(t);
+      tierCounts[eff]++;
       if (t.grantUntil) trials++;
       if (isPayingRecord(t)) {
-        mrrCents += TIER_PRICE_CENTS[t.tier];
+        mrrCents += TIER_PRICE_CENTS[eff];
         if (t.cancelledAt) cancelling++;
       }
     }
@@ -471,7 +490,7 @@ export const overview = query({
       users: {
         total: users.length,
         new7d: users.filter((u) => u.createdAt >= d7).length,
-        new30d: users.filter((u) => u.createdAt >= d30).length,
+        new30d,
         signupsByDay: [...signupsByDay.entries()].map(([day, count]) => ({ day, count })),
       },
       tiers: { ...tierCounts, trials, cancelling, mrrCents },
@@ -512,7 +531,7 @@ export const listUsers = query({
     return users
       .map((u) => {
         const t = tierByUser.get(u.id);
-        const tier: Tier = t?.tier ?? "free";
+        const tier: Tier = effectiveTier(t);
         const s = monitorStats.get(u.id);
         return {
           userId: u.id,
@@ -524,7 +543,6 @@ export const listUsers = query({
           isPaying: t ? isPayingRecord(t) : false,
           cancelledAt: t?.cancelledAt ?? null,
           periodEnd: t?.periodEnd ?? null,
-          polarCustomerId: t?.polarCustomerId ?? null,
           monthlyCents: t && isPayingRecord(t) ? TIER_PRICE_CENTS[tier] : 0,
           monitorCount: s?.count ?? 0,
           activeMonitors: s?.active ?? 0,
@@ -537,10 +555,13 @@ export const listUsers = query({
 
 const paidTierValidator = v.union(v.literal("pro"), v.literal("max"));
 
+const TIER_RANK: Record<Tier, number> = { free: 0, pro: 1, max: 2 };
+
 /**
  * Grant (or extend) a free trial via grantUntil (the same field
  * grantProMonth uses; expireGrants reverts it). Users already paying for a
- * plan are skipped so we never clobber a real subscription.
+ * plan are skipped so we never clobber a real subscription. A user already
+ * on a higher live grant keeps that tier — this only extends grantUntil.
  */
 export const grantTrial = mutation({
   args: { userIds: v.array(v.string()), tier: paidTierValidator, days: v.number() },
@@ -565,11 +586,16 @@ export const grantTrial = mutation({
         continue;
       }
 
+      const tier =
+        existing && existing.grantUntil && existing.grantUntil > now && TIER_RANK[effectiveTier(existing, now)] > TIER_RANK[args.tier]
+          ? existing.tier
+          : args.tier;
+
       const base = existing?.grantUntil && existing.grantUntil > now ? existing.grantUntil : now;
       const grantUntil = base + args.days * DAY_MS;
       if (existing) {
         await ctx.db.patch(existing._id, {
-          tier: args.tier,
+          tier,
           grantUntil,
           cancelledAt: undefined,
           periodEnd: undefined,
@@ -608,13 +634,9 @@ const RESEND_BATCH_SIZE = 100;
 /** Plain-text body → email. Blank lines split paragraphs; `{{name}}` is the recipient's first name. */
 function renderBulkEmail(body: string, recipientName: string): { html: string; text: string } {
   const firstName = recipientName.trim().split(/\s+/)[0] || "there";
-  const text = body.replace(/\{\{\s*name\s*\}\}/gi, firstName);
-  const paragraphs = text
-    .split(/\n\s*\n/)
-    .map((p) => p.trim())
-    .filter(Boolean)
-    .map((p) => `<p style="margin:0 0 16px;color:#333;font-size:16px;line-height:1.55">${esc(p).replace(/\n/g, "<br>")}</p>`)
-    .join("");
+  // Function replacement so a `$`-pattern in the recipient's name isn't interpreted
+  const text = body.replace(/\{\{\s*name\s*\}\}/gi, () => firstName);
+  const paragraphs = textToHtmlParagraphs(text, "margin:0 0 16px;color:#333;font-size:16px;line-height:1.55");
 
   const html = `<!DOCTYPE html>
 <html>
@@ -659,6 +681,9 @@ export const sendBulkEmail = action({
 
     const apiKey = process.env.RESEND_API_KEY;
     if (!apiKey) throw new Error("RESEND_API_KEY not configured");
+    // hello@ is send-only, so replies need somewhere real to land
+    const replyTo = process.env.ADMIN_EMAIL;
+    if (!replyTo) throw new Error("ADMIN_EMAIL not configured");
 
     let recipients: Array<{ email: string; name: string }>;
     if (args.testOnly) {
@@ -672,31 +697,39 @@ export const sendBulkEmail = action({
     if (recipients.length === 0) throw new Error("No recipients");
 
     let sent = 0;
-    let failed = 0;
+    const failedRecipients: string[] = [];
     for (let i = 0; i < recipients.length; i += RESEND_BATCH_SIZE) {
       const chunk = recipients.slice(i, i + RESEND_BATCH_SIZE);
       const payload = chunk.map((r) => {
         const { html, text } = renderBulkEmail(body, r.name);
-        return { from: HELLO_FROM_EMAIL, to: [r.email], subject, html, text };
+        return { from: HELLO_FROM_EMAIL, to: [r.email], reply_to: replyTo, subject, html, text };
       });
-      try {
-        const res = await fetch("https://api.resend.com/emails/batch", {
+      const postBatch = () =>
+        fetch("https://api.resend.com/emails/batch", {
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
           body: JSON.stringify(payload),
           signal: AbortSignal.timeout(RESEND_TIMEOUT),
         });
+      try {
+        let res = await postBatch();
+        if (res.status === 429) {
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+          res = await postBatch();
+        }
         if (!res.ok) {
           const detail = await res.text().catch(() => "");
           console.error("[admin] Resend batch failed:", res.status, detail);
-          failed += chunk.length;
+          failedRecipients.push(...chunk.map((r) => r.email));
           continue;
         }
         sent += chunk.length;
       } catch (e) {
         console.error("[admin] Resend batch error:", e instanceof Error ? e.message : e);
-        failed += chunk.length;
+        failedRecipients.push(...chunk.map((r) => r.email));
       }
+      // Resend's default rate limit is 2 requests per second
+      await new Promise((resolve) => setTimeout(resolve, 600));
     }
 
     if (!args.testOnly) {
@@ -705,10 +738,10 @@ export const sendBulkEmail = action({
         subject,
         body,
         recipients: recipients.map((r) => r.email),
-        failedCount: failed,
+        failedRecipients,
       });
     }
-    return { sent, failed };
+    return { sent, failed: failedRecipients.length };
   },
 });
 
@@ -718,7 +751,7 @@ export const logEmail = internalMutation({
     subject: v.string(),
     body: v.string(),
     recipients: v.array(v.string()),
-    failedCount: v.number(),
+    failedRecipients: v.array(v.string()),
   },
   handler: async (ctx, args) => {
     await ctx.db.insert("adminEmails", { ...args, sentAt: Date.now() });
@@ -732,12 +765,11 @@ export const listSentEmails = query({
     const rows = await ctx.db.query("adminEmails").withIndex("by_sentAt").order("desc").take(50);
     return rows.map((r) => ({
       _id: r._id,
-      sentBy: r.sentBy,
       subject: r.subject,
       body: r.body,
       recipientCount: r.recipients.length,
       recipientsPreview: r.recipients.slice(0, 5),
-      failedCount: r.failedCount,
+      failedRecipients: r.failedRecipients,
       sentAt: r.sentAt,
     }));
   },

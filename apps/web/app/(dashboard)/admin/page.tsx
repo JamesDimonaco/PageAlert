@@ -13,6 +13,10 @@ export default function AdminPage() {
   // Selection lives here so "Email selected" on the Users tab can carry
   // recipients across to the Email tab.
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  // Draft lives here (not in the composer) so it survives switching to the
+  // Users tab and back.
+  const [subject, setSubject] = useState("");
+  const [body, setBody] = useState("");
 
   return (
     <div className="space-y-6">
@@ -45,6 +49,10 @@ export default function AdminPage() {
             selectedIds={selectedIds}
             onClearSelection={() => setSelectedIds(new Set())}
             onPickRecipients={() => setTab("users")}
+            subject={subject}
+            body={body}
+            onSubjectChange={setSubject}
+            onBodyChange={setBody}
           />
         </TabsContent>
       </Tabs>

@@ -1,10 +1,11 @@
 "use client";
 
-import { useQuery } from "convex/react";
-import { Loader2 } from "lucide-react";
+import { Loader2, RefreshCw } from "lucide-react";
 import { api } from "@/convex/_generated/api";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { formatUsd } from "./format";
+import { formatDate, formatUsd } from "./format";
+import { useOneShotQuery } from "./use-one-shot-query";
 
 function Tile({ label, value, hint }: { label: string; value: string | number; hint?: string }) {
   return (
@@ -28,7 +29,7 @@ function Row({ label, value }: { label: string; value: string | number }) {
 }
 
 export function AdminOverview() {
-  const data = useQuery(api.admin.overview);
+  const { data, loading, refresh } = useOneShotQuery(api.admin.overview, {});
 
   if (!data) {
     return (
@@ -45,6 +46,13 @@ export function AdminOverview() {
 
   return (
     <div className="space-y-6">
+      <div className="flex justify-end">
+        <Button size="sm" variant="outline" onClick={refresh} disabled={loading}>
+          <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
+          Refresh
+        </Button>
+      </div>
+
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <Tile label="MRR" value={formatUsd(tiers.mrrCents)} hint={tiers.cancelling > 0 ? `${tiers.cancelling} cancelling` : undefined} />
         <Tile label="Paying users" value={paying} hint={tiers.trials > 0 ? `${tiers.trials} on trial` : undefined} />
@@ -64,14 +72,17 @@ export function AdminOverview() {
                   key={d.day}
                   className="flex-1 bg-primary/70 hover:bg-primary rounded-t-[2px] min-h-[2px]"
                   style={{ height: `${Math.max(2, (d.count / maxSignups) * 100)}%` }}
-                  title={`${d.day}: ${d.count}`}
+                  title={`${formatDate(new Date(d.day).getTime())}: ${d.count}`}
                 />
               ))}
             </div>
             <div className="flex justify-between text-[10px] text-muted-foreground mt-1">
-              <span>{users.signupsByDay[0]?.day}</span>
+              <span>{users.signupsByDay[0] && formatDate(new Date(users.signupsByDay[0].day).getTime())}</span>
               <span>{users.new30d} total</span>
-              <span>{users.signupsByDay[users.signupsByDay.length - 1]?.day}</span>
+              <span>
+                {users.signupsByDay[users.signupsByDay.length - 1] &&
+                  formatDate(new Date(users.signupsByDay[users.signupsByDay.length - 1].day).getTime())}
+              </span>
             </div>
           </CardContent>
         </Card>

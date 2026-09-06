@@ -1,8 +1,8 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useMutation, useQuery } from "convex/react";
-import { Loader2, Search, Mail, Gift, X } from "lucide-react";
+import { useMutation } from "convex/react";
+import { Loader2, RefreshCw, Search, Mail, Gift, X } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/convex/_generated/api";
 import { Badge } from "@/components/ui/badge";
@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { timeAgo } from "@/lib/time";
 import { GrantTrialDialog } from "./grant-trial-dialog";
 import { formatDate, formatUsd } from "./format";
+import { useOneShotQuery } from "./use-one-shot-query";
 
 type PlanFilter = "all" | "free" | "paying" | "trial" | "cancelling";
 
@@ -24,7 +25,7 @@ export function AdminUsersTable({
   onSelectionChange: (ids: Set<string>) => void;
   onEmailSelected: () => void;
 }) {
-  const users = useQuery(api.admin.listUsers);
+  const { data: users, loading, refresh } = useOneShotQuery(api.admin.listUsers, {});
   const endTrial = useMutation(api.admin.endTrial);
   const [search, setSearch] = useState("");
   const [plan, setPlan] = useState<PlanFilter>("all");
@@ -64,6 +65,7 @@ export function AdminUsersTable({
     try {
       await endTrial({ userId });
       toast.success(`Ended trial for ${email}`);
+      refresh();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to end trial");
     }
@@ -79,6 +81,13 @@ export function AdminUsersTable({
 
   return (
     <div className="space-y-4">
+      <div className="flex justify-end">
+        <Button size="sm" variant="outline" onClick={refresh} disabled={loading}>
+          <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
+          Refresh
+        </Button>
+      </div>
+
       <div className="flex flex-col sm:flex-row gap-3 sm:items-center">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -195,6 +204,7 @@ export function AdminUsersTable({
         open={trialTarget !== null}
         onOpenChange={(open) => { if (!open) setTrialTarget(null); }}
         userIds={trialTarget ?? []}
+        onDone={refresh}
       />
     </div>
   );

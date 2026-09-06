@@ -216,7 +216,7 @@ export default defineSchema({
     subject: v.string(),
     body: v.string(),
     recipients: v.array(v.string()),
-    failedCount: v.number(),
+    failedRecipients: v.array(v.string()),
     sentAt: v.number(),
   }).index("by_sentAt", ["sentAt"]),
 
