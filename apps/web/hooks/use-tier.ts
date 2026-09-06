@@ -60,6 +60,8 @@ interface TierInfo {
   isCancelled: boolean;
   periodEnd: number | null;
   daysRemaining: number | null;
+  /** Set when an admin granted a free pro/max trial */
+  grantUntil: number | null;
   refetch: () => void;
 }
 
@@ -148,6 +150,7 @@ export function useTier(): TierInfo {
 
   const isCancelled = convexTier?.isCancelled ?? false;
   const periodEnd = convexTier?.periodEnd ?? null;
+  const grantUntil = convexTier?.grantUntil ?? null;
 
   // Compute daysRemaining client-side only to avoid SSR hydration mismatch
   const [daysRemaining, setDaysRemaining] = useState<number | null>(null);
@@ -165,6 +168,7 @@ export function useTier(): TierInfo {
     isCancelled,
     periodEnd,
     daysRemaining,
+    grantUntil,
     refetch: fetchAndSync,
     ...TIER_LIMITS[tier],
   };

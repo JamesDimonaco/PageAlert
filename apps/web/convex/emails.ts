@@ -8,7 +8,7 @@ const FROM_EMAIL = "PageAlert <alerts@pagealert.io>";
 // PROWL-038 Phase 4.
 export const HELLO_FROM_EMAIL = "PageAlert <hello@pagealert.io>";
 export const APP_URL = process.env.SITE_URL ?? "https://pagealert.io";
-const RESEND_TIMEOUT = 10_000;
+export const RESEND_TIMEOUT = 10_000;
 
 /** HTML-escape untrusted strings to prevent injection */
 export function esc(str: string): string {

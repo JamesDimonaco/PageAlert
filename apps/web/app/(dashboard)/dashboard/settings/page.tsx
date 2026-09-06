@@ -39,7 +39,7 @@ type SettingsTab = (typeof VALID_TABS)[number];
 export default function SettingsPage() {
   const { user, signOut } = useAuth();
   const { monitors } = useMonitors();
-  const { tier, maxMonitors, description: tierDescription, isLoading: tierLoading, refetch: refetchTier, isCancelled, daysRemaining, periodEnd } = useTier();
+  const { tier, maxMonitors, description: tierDescription, isLoading: tierLoading, refetch: refetchTier, isCancelled, daysRemaining, periodEnd, grantUntil } = useTier();
   const [name, setName] = useState(user?.name ?? "");
   const [email, setEmail] = useState(user?.email ?? "");
 
@@ -555,6 +555,18 @@ export default function SettingsPage() {
               <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
             </div>
           ) : (<>
+          {grantUntil && tier !== "free" && (
+            <Card className="border-primary/30 bg-primary/5 shadow-sm">
+              <CardContent className="p-4 sm:p-5">
+                <p className="text-sm font-semibold text-primary">
+                  You&apos;re on a free {tier.charAt(0).toUpperCase() + tier.slice(1)} trial
+                </p>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Trial ends {new Date(grantUntil).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}. Subscribe below to keep {tier.charAt(0).toUpperCase() + tier.slice(1)} after that.
+                </p>
+              </CardContent>
+            </Card>
+          )}
           {/* Cancellation banner */}
           {isCancelled && tier !== "free" && (
             <Card className="border-amber-500/30 bg-amber-500/5 shadow-sm">

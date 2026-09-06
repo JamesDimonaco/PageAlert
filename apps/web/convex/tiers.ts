@@ -8,7 +8,7 @@ export const get = query({
   args: {},
   handler: async (ctx) => {
     const identity = await ctx.auth.getUserIdentity();
-    if (!identity) return { tier: "free" as const, isCancelled: false, periodEnd: null };
+    if (!identity) return { tier: "free" as const, isCancelled: false, periodEnd: null, grantUntil: null };
 
     const record = await ctx.db
       .query("userTiers")
@@ -19,6 +19,7 @@ export const get = query({
       tier: (record?.tier ?? "free") as "free" | "pro" | "max",
       isCancelled: !!record?.cancelledAt,
       periodEnd: record?.periodEnd ?? null,
+      grantUntil: record?.grantUntil ?? null,
     };
   },
 });
@@ -40,9 +41,11 @@ export const update = internalMutation({
     if (existing) {
       const patch: Record<string, unknown> = {
         tier: args.tier,
-        // Clear cancellation — this is called on new sub or revoke, both are definitive
+        // Clear cancellation and any manual grant — this is called on
+        // new sub or revoke, both are definitive
         cancelledAt: undefined,
         periodEnd: undefined,
+        grantUntil: undefined,
         updatedAt: Date.now(),
       };
       if (args.polarCustomerId != null) patch.polarCustomerId = args.polarCustomerId;
