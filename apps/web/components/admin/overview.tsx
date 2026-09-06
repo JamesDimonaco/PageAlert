@@ -4,7 +4,8 @@ import { Loader2, RefreshCw } from "lucide-react";
 import { api } from "@/convex/_generated/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { formatDate, formatUsd } from "./format";
+import { formatDay, formatUsd } from "./format";
+import { QueryError } from "./query-error";
 import { useOneShotQuery } from "./use-one-shot-query";
 
 function Tile({ label, value, hint }: { label: string; value: string | number; hint?: string }) {
@@ -29,8 +30,9 @@ function Row({ label, value }: { label: string; value: string | number }) {
 }
 
 export function AdminOverview() {
-  const { data, loading, refresh } = useOneShotQuery(api.admin.overview, {});
+  const { data, loading, error, refresh } = useOneShotQuery(api.admin.overview, {});
 
+  if (error) return <QueryError error={error} onRetry={refresh} />;
   if (!data) {
     return (
       <div className="flex items-center justify-center py-16">
@@ -72,16 +74,16 @@ export function AdminOverview() {
                   key={d.day}
                   className="flex-1 bg-primary/70 hover:bg-primary rounded-t-[2px] min-h-[2px]"
                   style={{ height: `${Math.max(2, (d.count / maxSignups) * 100)}%` }}
-                  title={`${formatDate(new Date(d.day).getTime())}: ${d.count}`}
+                  title={`${formatDay(d.day)}: ${d.count}`}
                 />
               ))}
             </div>
             <div className="flex justify-between text-[10px] text-muted-foreground mt-1">
-              <span>{users.signupsByDay[0] && formatDate(new Date(users.signupsByDay[0].day).getTime())}</span>
+              <span>{users.signupsByDay[0] && formatDay(users.signupsByDay[0].day)}</span>
               <span>{users.new30d} total</span>
               <span>
                 {users.signupsByDay[users.signupsByDay.length - 1] &&
-                  formatDate(new Date(users.signupsByDay[users.signupsByDay.length - 1].day).getTime())}
+                  formatDay(users.signupsByDay[users.signupsByDay.length - 1].day)}
               </span>
             </div>
           </CardContent>

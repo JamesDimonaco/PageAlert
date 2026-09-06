@@ -27,7 +27,7 @@ export function textToHtmlParagraphs(text: string, paragraphStyle?: string): str
     .split(/\n\s*\n/)
     .map((p) => p.trim())
     .filter(Boolean)
-    .map((p) => `<p${styleAttr}>${esc(p).replace(/\n/g, "<br>").replace(/(https?:\/\/\S+)/g, '<a href="$1">$1</a>')}</p>`)
+    .map((p) => `<p${styleAttr}>${esc(p).replace(/\n/g, "<br>").replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1">$1</a>')}</p>`)
     .join("");
 }
 

@@ -31,7 +31,6 @@ import { authComponent } from "./betterAuth/auth";
 import { APP_URL, HELLO_FROM_EMAIL, RESEND_TIMEOUT, textToHtmlParagraphs } from "./emails";
 import { displayHost, isBlockedError } from "./shared";
 import { effectiveTier } from "./tiers";
-import { PLANS } from "../lib/plans";
 
 const HOUR = 60 * 60 * 1000;
 
@@ -333,12 +332,9 @@ type Tier = "free" | "pro" | "max";
 
 const DAY_MS = 24 * HOUR;
 
-/** Monthly price in USD cents, derived from the public pricing plans. */
-function planCents(tier: Tier): number {
-  const plan = PLANS.find((p) => p.name.toLowerCase() === tier);
-  return (plan?.price ?? 0) * 100;
-}
-const TIER_PRICE_CENTS: Record<Tier, number> = { free: planCents("free"), pro: planCents("pro"), max: planCents("max") };
+// Monthly price in USD cents. Keep in step with lib/plans.ts (whole-dollar
+// marketing prices); integer minor units here so MRR never touches a float.
+const TIER_PRICE_CENTS: Record<Tier, number> = { free: 0, pro: 900, max: 2900 };
 
 function adminAllowList(): Set<string> {
   return new Set(
@@ -592,7 +588,10 @@ export const grantTrial = mutation({
           ? existing.tier
           : args.tier;
 
-      const base = existing?.grantUntil && existing.grantUntil > now ? existing.grantUntil : now;
+      // Same tier: extend the live window. Different tier: a fresh window, so
+      // "Max for 7 days" on a long Pro grant is 7 days of Max, not 30.
+      const liveGrant = existing?.grantUntil && existing.grantUntil > now ? existing.grantUntil : null;
+      const base = liveGrant && existing?.tier === tier ? liveGrant : now;
       const grantUntil = base + args.days * DAY_MS;
       if (existing) {
         await ctx.db.patch(existing._id, {

@@ -61,7 +61,7 @@ export function GrantTrialDialog({
         <DialogHeader>
           <DialogTitle>Grant a trial</DialogTitle>
           <DialogDescription>
-            {userIds.length} user{userIds.length === 1 ? "" : "s"} selected. Anyone already paying is skipped. Existing trials are extended.
+            {userIds.length} user{userIds.length === 1 ? "" : "s"} selected. Anyone already paying is skipped. A trial on the same plan is extended; a different plan starts a fresh window.
           </DialogDescription>
         </DialogHeader>
 

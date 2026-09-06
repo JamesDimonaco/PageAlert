@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useConvex } from "convex/react";
-import type { FunctionArgs, FunctionReference, FunctionReturnType } from "convex/server";
+import { getFunctionName, type FunctionArgs, type FunctionReference, type FunctionReturnType } from "convex/server";
 
 /**
  * Runs a Convex query once (on mount, and again on `refresh()`) instead of
@@ -18,6 +18,8 @@ export function useOneShotQuery<Query extends FunctionReference<"query">>(
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
   const [nonce, setNonce] = useState(0);
+  // `api.x.y` is a fresh proxy on every render; the name is the stable identity
+  const queryName = getFunctionName(query);
 
   useEffect(() => {
     let cancelled = false;
@@ -37,10 +39,10 @@ export function useOneShotQuery<Query extends FunctionReference<"query">>(
     return () => {
       cancelled = true;
     };
-    // args intentionally excluded: refresh() (via nonce) is the only re-run
-    // trigger, and args is captured from the render that scheduled this effect.
+    // query/args intentionally excluded: refresh() (via nonce) is the only
+    // re-run trigger; both are captured from the render that scheduled this effect.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [convex, query, nonce]);
+  }, [convex, queryName, nonce]);
 
   const refresh = useCallback(() => setNonce((n) => n + 1), []);
 

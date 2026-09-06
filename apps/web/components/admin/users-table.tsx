@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { timeAgo } from "@/lib/time";
 import { GrantTrialDialog } from "./grant-trial-dialog";
 import { formatDate, formatUsd } from "./format";
+import { QueryError } from "./query-error";
 import { useOneShotQuery } from "./use-one-shot-query";
 
 type PlanFilter = "all" | "free" | "paying" | "trial" | "cancelling";
@@ -25,7 +26,7 @@ export function AdminUsersTable({
   onSelectionChange: (ids: Set<string>) => void;
   onEmailSelected: () => void;
 }) {
-  const { data: users, loading, refresh } = useOneShotQuery(api.admin.listUsers, {});
+  const { data: users, loading, error, refresh } = useOneShotQuery(api.admin.listUsers, {});
   const endTrial = useMutation(api.admin.endTrial);
   const [search, setSearch] = useState("");
   const [plan, setPlan] = useState<PlanFilter>("all");
@@ -71,6 +72,7 @@ export function AdminUsersTable({
     }
   }
 
+  if (error) return <QueryError error={error} onRetry={refresh} />;
   if (!users) {
     return (
       <div className="flex items-center justify-center py-16">
