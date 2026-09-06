@@ -5,23 +5,25 @@ import { useAuth } from "@/hooks/use-auth";
 import { CreateMonitorProvider } from "@/hooks/use-create-monitor";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useEffect, useRef } from "react";
-import { useMutation } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
 
 export default function DashboardLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, isLoading, signOut } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const claimAnonymous = useMutation(api.anonymous.claimMyAnonymousMonitors);
   const claimedRef = useRef(false);
+  const banStatus = useQuery(api.account.myBanStatus, isAuthenticated ? {} : "skip");
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
@@ -74,6 +76,17 @@ export default function DashboardLayout({
   }
 
   if (!isAuthenticated) return null;
+
+  if (banStatus?.banned) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center gap-4 px-6 text-center">
+        <h1 className="text-xl font-semibold">This account has been suspended</h1>
+        {banStatus.reason && <p className="text-sm text-muted-foreground max-w-md">{banStatus.reason}</p>}
+        <p className="text-sm text-muted-foreground">Contact support if you believe this is a mistake.</p>
+        <Button variant="outline" onClick={signOut}>Sign out</Button>
+      </div>
+    );
+  }
 
   return (
     <CreateMonitorProvider>

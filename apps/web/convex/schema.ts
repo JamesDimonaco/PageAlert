@@ -210,6 +210,15 @@ export default defineSchema({
     userId: v.string(),
     appliedAt: v.number(),
   }).index("by_orderId", ["orderId"]),
+  // Super-admin bans. Blocks monitor creation and dashboard access; existing
+  // monitors are paused when the ban is applied (see admin.banUser).
+  bannedUsers: defineTable({
+    userId: v.string(),
+    email: v.string(),
+    reason: v.optional(v.string()),
+    bannedBy: v.string(), // admin's email
+    bannedAt: v.number(),
+  }).index("by_userId", ["userId"]),
 
   channelClaims: defineTable({
     channel: v.union(v.literal("telegram"), v.literal("discord")),

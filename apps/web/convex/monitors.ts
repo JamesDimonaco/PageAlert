@@ -162,6 +162,12 @@ export const create = mutation({
     const userId = identity.subject;
     const userEmail = identity.email ?? undefined;
 
+    const banned = await ctx.db
+      .query("bannedUsers")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .unique();
+    if (banned) throw new Error("This account has been suspended.");
+
     // Dynamic tier-based enforcement
     const tier = await getUserTier(ctx, userId);
     const limits = TIER_LIMITS[tier];
