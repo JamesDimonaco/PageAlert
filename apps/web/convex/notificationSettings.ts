@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import { effectiveTier } from "./tiers";
 import { mutation, query } from "./_generated/server";
 
 const channelValidator = v.union(
@@ -20,7 +21,7 @@ async function getUserTier(ctx: { db: any }, userId: string): Promise<Tier> {
     .query("userTiers")
     .withIndex("by_userId", (q: any) => q.eq("userId", userId))
     .unique();
-  return (record?.tier as Tier) ?? "free";
+  return effectiveTier(record);
 }
 
 /** Get all notification settings for the current user */

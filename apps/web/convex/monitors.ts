@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { mutation, query, internalAction, internalQuery } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { ERROR_RECOVERY_INTERVAL_MS, intervalToMs, isBlockedError, MAX_RETRIES, validateMonitorUrl } from "./shared";
+import { effectiveTier } from "./tiers";
 
 // ---- Resource Limits ----
 const MAX_NAME_LENGTH = 200;
@@ -30,7 +31,7 @@ async function getUserTier(ctx: { db: any }, userId: string): Promise<Tier> {
     .query("userTiers")
     .withIndex("by_userId", (q: any) => q.eq("userId", userId))
     .unique();
-  return (record?.tier as Tier) ?? "free";
+  return effectiveTier(record);
 }
 
 type CheckInterval = "5m" | "15m" | "30m" | "1h" | "6h" | "24h";

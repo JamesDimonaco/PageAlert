@@ -39,7 +39,7 @@ type SettingsTab = (typeof VALID_TABS)[number];
 export default function SettingsPage() {
   const { user, signOut } = useAuth();
   const { monitors } = useMonitors();
-  const { tier, maxMonitors, description: tierDescription, isLoading: tierLoading, refetch: refetchTier, isCancelled, daysRemaining, periodEnd } = useTier();
+  const { tier, maxMonitors, description: tierDescription, isLoading: tierLoading, refetch: refetchTier, isCancelled, daysRemaining, periodEnd, grantUntil } = useTier();
   const [name, setName] = useState(user?.name ?? "");
   const [email, setEmail] = useState(user?.email ?? "");
 
@@ -119,6 +119,13 @@ export default function SettingsPage() {
       if (dc) setDiscordWebhook(dc.target);
     }
   }, [notifSettings]);
+
+  // A manual grant isn't a Polar subscription — the billing tab's
+  // checkout/portal gates key off this, not the raw (possibly trial) tier.
+  const paidTier = grantUntil ? "free" : tier;
+  // A trial user is offered the plan they're trialling and above, never a downgrade
+  const offerPro = paidTier === "free" && tier !== "max";
+  const offerMax = paidTier === "pro" || (!!grantUntil && tier === "max");
 
   return (
     <div className="space-y-10">
@@ -555,6 +562,18 @@ export default function SettingsPage() {
               <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
             </div>
           ) : (<>
+          {grantUntil && tier !== "free" && (
+            <Card className="border-primary/30 bg-primary/5 shadow-sm">
+              <CardContent className="p-4 sm:p-5">
+                <p className="text-sm font-semibold text-primary">
+                  You&apos;re on a free {tier.charAt(0).toUpperCase() + tier.slice(1)} trial
+                </p>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Trial ends {new Date(grantUntil).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}. Upgrade below to keep {tier.charAt(0).toUpperCase() + tier.slice(1)} after that.
+                </p>
+              </CardContent>
+            </Card>
+          )}
           {/* Cancellation banner */}
           {isCancelled && tier !== "free" && (
             <Card className="border-amber-500/30 bg-amber-500/5 shadow-sm">
@@ -613,7 +632,7 @@ export default function SettingsPage() {
                   </p>
                 </div>
                 <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-                  {tier === "free" && (
+                  {offerPro && (
                     <Button
                       className="gap-1.5 shadow-md shadow-primary/15"
                       onClick={() => handleCheckout("pro")}
@@ -622,7 +641,7 @@ export default function SettingsPage() {
                       Upgrade to Pro
                     </Button>
                   )}
-                  {tier === "pro" && (
+                  {offerMax && (
                     <Button
                       className="gap-1.5 shadow-md shadow-primary/15"
                       onClick={() => handleCheckout("max")}
@@ -631,7 +650,7 @@ export default function SettingsPage() {
                       Upgrade to Max
                     </Button>
                   )}
-                  {tier !== "free" && (
+                  {paidTier !== "free" && (
                     <Button
                       variant="outline"
                       size="sm"
@@ -650,7 +669,7 @@ export default function SettingsPage() {
                   )}
                 </div>
               </div>
-              {tier !== "free" && (
+              {paidTier !== "free" && (
                 <p className="text-xs text-muted-foreground mt-4">
                   Manage your billing, update payment method, or cancel your subscription from the Polar portal.
                   {" "}You&apos;ll be redirected to Polar — close the tab to return here.
@@ -661,7 +680,7 @@ export default function SettingsPage() {
           </Card>
 
           {/* Upgrade Options */}
-          {tier === "free" && (
+          {offerPro && (
             <div className="grid gap-4 md:grid-cols-2">
               <Card className="border-primary/30 bg-primary/5 shadow-sm">
                 <CardContent className="p-6">
@@ -706,7 +725,7 @@ export default function SettingsPage() {
           )}
 
           {/* Pro → Max upgrade */}
-          {tier === "pro" && (
+          {offerMax && (
             <Card className="border-border/30 bg-card/50 shadow-sm">
               <CardContent className="p-6">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">

@@ -1,6 +1,6 @@
 "use client";
 
-import { Radar, LogOut, Settings } from "lucide-react";
+import { Radar, LogOut, Settings, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { NotificationBell } from "@/components/prowl/notification-bell";
 import {
@@ -16,11 +16,14 @@ import { useAuth } from "@/hooks/use-auth";
 import { useTier } from "@/hooks/use-tier";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useQuery } from "convex/react";
+import { api } from "@/convex/_generated/api";
 
 export function Navbar() {
   const router = useRouter();
   const { user, signOut } = useAuth();
-  const { tier } = useTier();
+  const { tier, grantUntil } = useTier();
+  const isAdmin = useQuery(api.admin.isAdmin) === true;
 
   const initials = user?.name?.charAt(0)?.toUpperCase() ?? user?.email?.charAt(0)?.toUpperCase() ?? "?";
 
@@ -55,7 +58,7 @@ export function Navbar() {
                 ? "bg-primary/10 text-primary border-primary/20"
                 : "bg-muted text-muted-foreground border-border/50"
           }`}>
-            {tier === "max" ? "Max" : tier === "pro" ? "Pro" : "Free"}
+            {tier === "max" ? "Max" : tier === "pro" ? "Pro" : "Free"}{grantUntil && tier !== "free" ? " trial" : ""}
           </Badge>
 
           <NotificationBell />
@@ -92,6 +95,12 @@ export function Navbar() {
                 <Settings className="mr-2 h-4 w-4" />
                 Settings
               </DropdownMenuItem>
+              {isAdmin && (
+                <DropdownMenuItem onClick={() => router.push("/admin")}>
+                  <ShieldCheck className="mr-2 h-4 w-4" />
+                  Admin
+                </DropdownMenuItem>
+              )}
               <DropdownMenuSeparator />
               <DropdownMenuItem className="text-destructive" onClick={() => signOut()}>
                 <LogOut className="mr-2 h-4 w-4" />

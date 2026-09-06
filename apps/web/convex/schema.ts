@@ -210,6 +210,16 @@ export default defineSchema({
   })
     .index("by_userId_createdAt", ["userId", "createdAt"]),
 
+  // Audit log of bulk emails sent from the super-admin dashboard
+  adminEmails: defineTable({
+    sentBy: v.string(), // admin's email
+    subject: v.string(),
+    body: v.string(),
+    recipients: v.array(v.string()),
+    failedRecipients: v.array(v.string()),
+    sentAt: v.number(),
+  }).index("by_sentAt", ["sentAt"]),
+
   // Onboarding email scheduler — one row per (user, step). The four steps
   // are scheduled at signup time and processed by an hourly cron. See
   // PROWL-038 Phase 4. The day1/day3/day7 rows are queued from day one but

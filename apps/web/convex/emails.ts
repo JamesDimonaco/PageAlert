@@ -8,7 +8,7 @@ const FROM_EMAIL = "PageAlert <alerts@pagealert.io>";
 // PROWL-038 Phase 4.
 export const HELLO_FROM_EMAIL = "PageAlert <hello@pagealert.io>";
 export const APP_URL = process.env.SITE_URL ?? "https://pagealert.io";
-const RESEND_TIMEOUT = 10_000;
+export const RESEND_TIMEOUT = 10_000;
 
 /** HTML-escape untrusted strings to prevent injection */
 export function esc(str: string): string {
@@ -18,6 +18,17 @@ export function esc(str: string): string {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
+}
+
+/** Blank-line-separated plain text → escaped `<p>` paragraphs, single newlines as `<br>`, bare URLs linked. */
+export function textToHtmlParagraphs(text: string, paragraphStyle?: string): string {
+  const styleAttr = paragraphStyle ? ` style="${paragraphStyle}"` : "";
+  return text
+    .split(/\n\s*\n/)
+    .map((p) => p.trim())
+    .filter(Boolean)
+    .map((p) => `<p${styleAttr}>${esc(p).replace(/\n/g, "<br>").replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1">$1</a>')}</p>`)
+    .join("");
 }
 
 function safeHostname(url: string): string {

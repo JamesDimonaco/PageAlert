@@ -3,22 +3,36 @@ import { internalMutation, mutation, query } from "./_generated/server";
 
 const tierValidator = v.union(v.literal("free"), v.literal("pro"), v.literal("max"));
 
+/** The tier a user is actually on right now: "free" once a manual grant has lapsed, else the stored tier. */
+export function effectiveTier(
+  record: { tier: "free" | "pro" | "max"; grantUntil?: number } | null | undefined,
+  now = Date.now(),
+): "free" | "pro" | "max" {
+  if (!record) return "free";
+  if (record.grantUntil && record.grantUntil <= now) return "free";
+  return record.tier;
+}
+
 /** Get the current user's tier and cancellation status */
 export const get = query({
   args: {},
   handler: async (ctx) => {
     const identity = await ctx.auth.getUserIdentity();
-    if (!identity) return { tier: "free" as const, isCancelled: false, periodEnd: null };
+    if (!identity) return { tier: "free" as const, isCancelled: false, periodEnd: null, grantUntil: null };
 
     const record = await ctx.db
       .query("userTiers")
       .withIndex("by_userId", (q) => q.eq("userId", identity.subject))
       .unique();
 
+    const now = Date.now();
+    const grantLapsed = !!record?.grantUntil && record.grantUntil <= now;
+
     return {
-      tier: (record?.tier ?? "free") as "free" | "pro" | "max",
+      tier: effectiveTier(record, now),
       isCancelled: !!record?.cancelledAt,
       periodEnd: record?.periodEnd ?? null,
+      grantUntil: grantLapsed ? null : (record?.grantUntil ?? null),
     };
   },
 });
@@ -38,11 +52,15 @@ export const update = internalMutation({
       .unique();
 
     if (existing) {
+      // A revoke must not wipe a manual grant that outlives the subscription
+      // (e.g. a late-delivered webhook for an old sub after an admin trial).
+      const keepGrant = args.tier === "free" && !!existing.grantUntil && existing.grantUntil > Date.now();
       const patch: Record<string, unknown> = {
-        tier: args.tier,
-        // Clear cancellation — this is called on new sub or revoke, both are definitive
+        tier: keepGrant ? existing.tier : args.tier,
+        // Clear cancellation, and the manual grant when a real sub replaces it
         cancelledAt: undefined,
         periodEnd: undefined,
+        grantUntil: keepGrant ? existing.grantUntil : undefined,
         updatedAt: Date.now(),
       };
       if (args.polarCustomerId != null) patch.polarCustomerId = args.polarCustomerId;
@@ -104,7 +122,7 @@ export const canScan = query({
       .withIndex("by_userId", (q) => q.eq("userId", userId))
       .unique();
 
-    const tier = (record?.tier ?? "free") as "free" | "pro" | "max";
+    const tier = effectiveTier(record);
     const limit = DAILY_SCAN_LIMITS[tier];
 
     const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD UTC
@@ -127,7 +145,7 @@ export const consumeScan = mutation({
       .withIndex("by_userId", (q) => q.eq("userId", userId))
       .unique();
 
-    const tier = (record?.tier ?? "free") as "free" | "pro" | "max";
+    const tier = effectiveTier(record);
     const limit = DAILY_SCAN_LIMITS[tier];
     const today = new Date().toISOString().slice(0, 10);
 
