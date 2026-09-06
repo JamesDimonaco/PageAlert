@@ -7,7 +7,7 @@ const FROM_EMAIL = "PageAlert <alerts@pagealert.io>";
 // signed up for. Resend / DNS for hello@ is set up by James as part of
 // PROWL-038 Phase 4.
 export const HELLO_FROM_EMAIL = "PageAlert <hello@pagealert.io>";
-const APP_URL = process.env.SITE_URL ?? "https://pagealert.io";
+export const APP_URL = process.env.SITE_URL ?? "https://pagealert.io";
 const RESEND_TIMEOUT = 10_000;
 
 /** HTML-escape untrusted strings to prevent injection */

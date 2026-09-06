@@ -13,7 +13,7 @@ import { v } from "convex/values";
 import { internalAction, internalMutation, internalQuery } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
-import { esc, HELLO_FROM_EMAIL } from "./emails";
+import { APP_URL, esc, HELLO_FROM_EMAIL } from "./emails";
 import { displayHost, isBlockedError } from "./shared";
 
 const HOUR = 60 * 60 * 1000;
@@ -257,6 +257,8 @@ function apologyText(monitors: MonitorSummary[]): string {
     "",
     ...monitors.map((m) => `- ${monitorLine(m)}`),
     "",
+    `Your dashboard: ${APP_URL}/dashboard`,
+    "",
     "Your account now has Pro for the next 30 days, free. No card, nothing to cancel; it just drops back to the free plan afterwards.",
     "",
     "If you no longer need a monitor, delete it from your dashboard. If something looks wrong, reply to this email and I'll look at it myself.",
@@ -271,6 +273,9 @@ export const sendApologyEmails = internalAction({
   handler: async (ctx, { dryRun, onlyTo }) => {
     const apiKey = process.env.RESEND_API_KEY;
     if (!apiKey) throw new Error("RESEND_API_KEY not configured");
+    // hello@ is send-only, so replies need somewhere real to land
+    const replyTo = process.env.ADMIN_EMAIL;
+    if (!replyTo) throw new Error("ADMIN_EMAIL not configured");
     let recipients: { email: string; monitors: MonitorSummary[] }[] = await ctx.runQuery(internal.admin.listApologyRecipients, {});
     if (onlyTo) recipients = recipients.filter((r) => r.email === onlyTo);
     if (dryRun) {
@@ -282,7 +287,7 @@ export const sendApologyEmails = internalAction({
       const text = apologyText(r.monitors);
       const html = `<div style="font-family:sans-serif;line-height:1.5;max-width:600px">${text
         .split("\n\n")
-        .map((p) => `<p>${esc(p).replace(/\n/g, "<br>")}</p>`)
+        .map((p) => `<p>${esc(p).replace(/\n/g, "<br>").replace(/(https?:\/\/\S+)/g, '<a href="$1">$1</a>')}</p>`)
         .join("")}</div>`;
       const res = await fetch("https://api.resend.com/emails", {
         method: "POST",
@@ -290,6 +295,7 @@ export const sendApologyEmails = internalAction({
         body: JSON.stringify({
           from: HELLO_FROM_EMAIL,
           to: [r.email],
+          reply_to: replyTo,
           subject: "PageAlert was down. Your monitors are back, with a free month of Pro",
           html,
           text,
