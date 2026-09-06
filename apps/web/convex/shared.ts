@@ -2,6 +2,15 @@
 export const MAX_RETRIES = 3;
 
 /**
+ * Confirmed Scrapfly blocks (proxy, asp=true) before a monitor stops being
+ * rescheduled entirely. Scrapfly is the specialist for anti-bot pages — if it
+ * gets blocked this many times, the site has genuinely beaten it and further
+ * 6-hourly attempts are pure spend. Two rather than one so a transient
+ * Cloudflare spike doesn't kill a live monitor.
+ */
+export const MAX_PROXY_BLOCKS = 2;
+
+/**
  * How often an errored monitor retries. Slow enough not to burn scrapes on a
  * permanently dead URL, fast enough to self-heal within a day of a fix.
  */
