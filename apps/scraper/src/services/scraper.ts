@@ -171,8 +171,10 @@ export async function scrapeUrl(
 
       const title = (await page.title()).slice(0, 500);
 
-      // Check for anti-bot challenges before extracting content
-      const botCheck = await detectAntiBot(page);
+      // Scrapfly only returns success once its anti-bot pass got a real page,
+      // and real pages embed captcha widgets in forms, so only run our own
+      // detector on direct fetches.
+      const botCheck = unblockedHtml !== null ? { blocked: false as const } : await detectAntiBot(page);
 
       const html = await getCleanHtml(page);
       const text = await getTextWithLinks(page);
