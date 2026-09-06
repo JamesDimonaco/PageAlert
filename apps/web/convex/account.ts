@@ -12,17 +12,25 @@ export async function isBanned(ctx: QueryCtx | MutationCtx, userId: string): Pro
 /**
  * Deletes every row this app owns for a user: monitors and their scrape
  * results/notifications, notification settings, remaining notifications,
- * channel claims, the tier record, the creation-rate-limit log, and any
- * ban record. Shared by the user's own deleteAccount and the admin
- * dashboard's forced delete, so both paths agree on what "all data"
- * means — a userTiers row surviving account deletion was a known gap
- * this closes for both callers.
+ * channel claims, the tier record, and the creation-rate-limit log.
+ * Shared by the user's own deleteAccount and the admin dashboard's
+ * forced delete, so both paths agree on what "all data" means — a
+ * userTiers row surviving account deletion was a known gap this closes
+ * for both callers.
  *
  * monitorCreations rows are kept across *monitor* deletion (see
  * monitors.ts) to stop a delete-and-remake bypassing the creation rate
  * limit, but a full account delete gets a fresh userId on re-signup
  * regardless, so retaining them here serves no anti-abuse purpose —
  * they're just orphaned personal data at that point.
+ *
+ * Deliberately does NOT touch bannedUsers: deleteAccount (self-service)
+ * doesn't remove the caller's Better Auth session, so the same still-
+ * logged-in identity would remain — dropping the ban row here would let
+ * a banned user delete their way back to an unbanned session. Only
+ * admin.deleteUser removes the ban record, because that path also
+ * destroys the Better Auth session/account/user rows the ban was
+ * blocking, so the userId can never come back to use it.
  */
 export async function deleteAllUserData(ctx: MutationCtx, userId: string): Promise<void> {
   const monitors = await ctx.db
@@ -87,12 +95,6 @@ export async function deleteAllUserData(ctx: MutationCtx, userId: string): Promi
   for (const creation of creations) {
     await ctx.db.delete(creation._id);
   }
-
-  const ban = await ctx.db
-    .query("bannedUsers")
-    .withIndex("by_userId", (q) => q.eq("userId", userId))
-    .unique();
-  if (ban) await ctx.db.delete(ban._id);
 }
 
 export const deleteAccount = mutation({

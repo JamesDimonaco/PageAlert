@@ -878,6 +878,14 @@ export const deleteUser = mutation({
       input: { model: "user", where: [{ field: "_id", operator: "eq", value: userId }] },
     });
 
+    // Safe to drop the ban record here (unlike self-service deleteAccount):
+    // the identity it was blocking no longer exists to reuse it.
+    const banned = await ctx.db
+      .query("bannedUsers")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .unique();
+    if (banned) await ctx.db.delete(banned._id);
+
     await ctx.scheduler.runAfter(0, internal.admin.notify, {
       text: `PageAlert: ${adminEmail} deleted the account for ${email} (${userId}) from the admin dashboard.`,
     });
