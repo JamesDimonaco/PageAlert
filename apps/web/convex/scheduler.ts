@@ -2,7 +2,7 @@ import { v } from "convex/values";
 import { effectiveTier } from "./tiers";
 import { internalAction, internalMutation, internalQuery } from "./_generated/server";
 import { internal } from "./_generated/api";
-import { displayHost, isBlockedError, ERROR_RECOVERY_INTERVAL_MS, intervalToMs, MAX_RETRIES } from "./shared";
+import { displayHost, isBlockedError, ERROR_RECOVERY_INTERVAL_MS, intervalToMs, MAX_RETRIES, MAX_PROXY_BLOCKS } from "./shared";
 
 /** Filter out blacklisted items from a matches array based on item title/url keys */
 function filterBlacklisted(matches: Record<string, unknown>[], blacklist: string[]): Record<string, unknown>[] {
@@ -120,6 +120,9 @@ export const recordCheckResult = internalMutation({
     items: v.optional(v.array(v.any())),
     schema: v.optional(v.any()),
     error: v.optional(v.string()),
+    // Set when this failure was a Scrapfly-confirmed anti-bot block (not an
+    // outage or spent credit budget) — see MAX_PROXY_BLOCKS in shared.ts
+    confirmedProxyBlock: v.optional(v.boolean()),
     // Fingerprint of the page content this check observed
     contentFingerprint: v.optional(v.string()),
     // Page content identical to last scan — bookkeeping only, no result row
@@ -133,11 +136,30 @@ export const recordCheckResult = internalMutation({
 
     if (args.error) {
       const retryCount = (monitor.retryCount ?? 0) + 1;
+      const proxyBlockCount = (monitor.proxyBlockCount ?? 0) + (args.confirmedProxyBlock ? 1 : 0);
+
+      // Scrapfly has genuinely beaten this site — stop rescheduling instead of
+      // paying for another blocked attempt every 6 hours. nextCheckAt: undefined
+      // sorts before getMonitorsDue's .gte("nextCheckAt", 0) bound, so this
+      // monitor is parked until the user retries it by hand.
+      if (args.confirmedProxyBlock && proxyBlockCount >= MAX_PROXY_BLOCKS) {
+        await ctx.db.patch(args.monitorId, {
+          status: "error",
+          lastError: "Checks have stopped: this site blocks automated access even through our proxy. Use Retry to try again.",
+          retryCount,
+          proxyBlockCount,
+          nextCheckAt: undefined,
+          updatedAt: now,
+        });
+        return;
+      }
+
       if (retryCount >= MAX_RETRIES) {
         await ctx.db.patch(args.monitorId, {
           status: "error",
           lastError: args.error,
           retryCount,
+          proxyBlockCount,
           // Keep it scheduled, slowly. A monitor that dies during an outage
           // has to be able to come back on its own once the outage ends.
           nextCheckAt: now + ERROR_RECOVERY_INTERVAL_MS,
@@ -148,6 +170,7 @@ export const recordCheckResult = internalMutation({
         await ctx.db.patch(args.monitorId, {
           lastError: args.error,
           retryCount,
+          proxyBlockCount,
           nextCheckAt: now + backoffMs,
           updatedAt: now,
         });
@@ -161,6 +184,7 @@ export const recordCheckResult = internalMutation({
       matchCount: args.matchCount,
       checkCount: (monitor.checkCount ?? 0) + 1,
       retryCount: 0,
+      proxyBlockCount: 0,
       lastCheckedAt: now,
       nextCheckAt: now + intervalToMs(monitor.checkInterval),
       updatedAt: now,
@@ -538,7 +562,12 @@ export const runScheduledChecks = internalAction({
 
           // Log failed check
           const isBlocked = isBlockedError(msg);
-          if (msg.startsWith("Fallback provider error")) {
+          const isFallbackProviderError = msg.startsWith("Fallback provider error");
+          // A block only counts against the monitor when Scrapfly itself
+          // confirmed it (ERR::ASP::* via useProxy) — a Scrapfly outage or a
+          // spent credit budget must never park a user's monitor.
+          const confirmedProxyBlock = useProxy && isBlocked && !isFallbackProviderError;
+          if (isFallbackProviderError) {
             const send = await ctx.runMutation(internal.admin.claimAlertSlot, { key: "admin:fallback-provider", minIntervalMs: 60 * 60 * 1000 });
             if (send) await ctx.scheduler.runAfter(0, internal.admin.notify, { text: `Scrapfly is failing: ${msg.slice(0, 300)}` });
           }
@@ -574,6 +603,7 @@ export const runScheduledChecks = internalAction({
             totalItems: 0,
             matches: [],
             error: msg,
+            confirmedProxyBlock,
           });
 
           // Send error notifications when retries exhausted — re-fetch for fresh muted/channel state

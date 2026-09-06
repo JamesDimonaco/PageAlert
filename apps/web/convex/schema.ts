@@ -36,6 +36,8 @@ export default defineSchema({
     matchCount: v.number(),
     checkCount: v.optional(v.number()),
     retryCount: v.optional(v.number()),
+    // Confirmed Scrapfly (proxy) blocks in a row — see MAX_PROXY_BLOCKS in shared.ts
+    proxyBlockCount: v.optional(v.number()),
     nextCheckAt: v.optional(v.number()),
     notificationChannels: v.optional(v.array(v.union(
       v.literal("email"),

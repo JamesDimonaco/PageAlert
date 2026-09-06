@@ -254,6 +254,7 @@ export const saveScanResult = mutation({
       matchCount,
       checkCount: (monitor.checkCount ?? 0) + 1,
       retryCount: 0,
+      proxyBlockCount: 0,
       lastCheckedAt: now,
       lastMatchAt: matchCount > 0 ? now : undefined,
       nextCheckAt: now + intervalToMs(monitor.checkInterval),
@@ -305,6 +306,9 @@ export const saveScanError = mutation({
         status: "active",
         lastError: error,
         retryCount: 1,
+        // A manual retry always gets a fresh proxy-block budget, whether this
+        // scan is the monitor's first ever or a rescan of a parked one.
+        proxyBlockCount: 0,
         nextCheckAt: now + 30_000, // first retry in 30s
         updatedAt: now,
       });
@@ -316,6 +320,7 @@ export const saveScanError = mutation({
         // scheduled check does. A lower count would replay the fast backoff
         // ladder (and the paid-tier AI attempt) on a URL already known dead.
         retryCount: MAX_RETRIES,
+        proxyBlockCount: 0,
         nextCheckAt: now + ERROR_RECOVERY_INTERVAL_MS,
         updatedAt: now,
       });
