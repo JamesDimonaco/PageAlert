@@ -417,6 +417,10 @@ export const update = mutation({
     // Recompute nextCheckAt when interval changes so it takes effect immediately
     if (fields.checkInterval !== undefined) {
       updates.nextCheckAt = now + intervalToMs(fields.checkInterval);
+      // This un-parks a monitor parked for repeated proxy blocks. Give it a
+      // fresh budget, or the next single block re-parks it and sends a second
+      // "checks stopped" email.
+      updates.proxyBlockCount = 0;
     }
 
     await ctx.db.patch(id, updates);

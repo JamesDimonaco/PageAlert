@@ -151,7 +151,7 @@ export const recordCheckResult = internalMutation({
           nextCheckAt: undefined,
           updatedAt: now,
         });
-        return;
+        return { parked: true };
       }
 
       if (retryCount >= MAX_RETRIES) {
@@ -175,7 +175,7 @@ export const recordCheckResult = internalMutation({
           updatedAt: now,
         });
       }
-      return;
+      return { parked: false };
     }
 
     // Success
@@ -566,7 +566,12 @@ export const runScheduledChecks = internalAction({
           // A block only counts against the monitor when Scrapfly itself
           // confirmed it (ERR::ASP::* via useProxy) — a Scrapfly outage or a
           // spent credit budget must never park a user's monitor.
-          const confirmedProxyBlock = useProxy && isBlocked && !isFallbackProviderError;
+          // Only counted on the 6h recovery lane. The fast ladder retries at 2min
+          // and 8min, so counting there would park a monitor inside a single
+          // Cloudflare spike — both blocks have to be hours apart to mean
+          // anything.
+          const confirmedProxyBlock =
+            useProxy && isBlocked && !isFallbackProviderError && retryCount >= MAX_RETRIES;
           if (isFallbackProviderError) {
             const send = await ctx.runMutation(internal.admin.claimAlertSlot, { key: "admin:fallback-provider", minIntervalMs: 60 * 60 * 1000 });
             if (send) await ctx.scheduler.runAfter(0, internal.admin.notify, { text: `Scrapfly is failing: ${msg.slice(0, 300)}` });
@@ -596,7 +601,7 @@ export const runScheduledChecks = internalAction({
           const nextRetryCount = (monitor.retryCount ?? 0) + 1;
           const willError = nextRetryCount >= MAX_RETRIES && monitor.status !== "error";
 
-          await ctx.runMutation(internal.scheduler.recordCheckResult, {
+          const outcome = await ctx.runMutation(internal.scheduler.recordCheckResult, {
             monitorId: monitor._id,
             hasNewMatches: false,
             matchCount: 0,
@@ -605,42 +610,71 @@ export const runScheduledChecks = internalAction({
             error: msg,
             confirmedProxyBlock,
           });
+          // Parking almost always happens while the monitor is already in
+          // "error", which willError deliberately stays quiet about. Without
+          // this the monitor stops being checked and nobody is told.
+          const parked = outcome?.parked === true;
 
-          // Send error notifications when retries exhausted — re-fetch for fresh muted/channel state
-          if (willError) {
+          // Re-fetch for fresh muted/channel state
+          if (parked || willError) {
             const freshErrMonitor = await ctx.runQuery(internal.monitors.getInternal, { id: monitor._id });
             if (freshErrMonitor && !freshErrMonitor.muted) {
               const monitorChannels = (freshErrMonitor as any).notificationChannels as string[] | undefined;
               const shouldSend = (channel: string) => !monitorChannels || monitorChannels.includes(channel);
               const hasAnyChannel = !monitorChannels || monitorChannels.length > 0;
 
+              // Looked up before the sends so the email knows whether to nudge
+              // the user towards Telegram. Not gated on shouldSend: a user who
+              // already has Telegram must not be told to go connect it.
+              const telegramSetting = await ctx.runQuery(internal.scheduler.getNotificationSetting, {
+                userId: freshErrMonitor.userId,
+                channel: "telegram",
+              });
+              const telegramConnected = !!(telegramSetting?.enabled && telegramSetting.target);
+
               // In-app notification (unless all channels explicitly disabled)
-              if (hasAnyChannel) await ctx.runMutation(internal.userNotifications.create, {
+              if (parked || hasAnyChannel) await ctx.runMutation(internal.userNotifications.create, {
                 userId: freshErrMonitor.userId,
                 monitorId: freshErrMonitor._id,
                 channel: "in_app",
-                title: `${freshErrMonitor.name} — Error`,
-                message: msg,
+                title: `${freshErrMonitor.name} — ${parked ? "Checks stopped" : "Error"}`,
+                message: parked ? (freshErrMonitor.lastError ?? msg) : msg,
               }).catch(() => {});
 
-              // Email
-              if (shouldSend("email") && freshErrMonitor.userEmail) {
-                await ctx.runAction(internal.emails.sendErrorAlert, {
-                  to: freshErrMonitor.userEmail,
-                  monitorName: freshErrMonitor.name,
-                  monitorId: freshErrMonitor._id,
-                  url: freshErrMonitor.url,
-                  error: msg,
-                }).catch(() => {});
+              // Email is the one channel a park overrides selection on: it is the
+              // only one every user has. Telegram and Discord stay opt-in below,
+              // so a park still reaches everyone without spamming a channel
+              // someone deliberately turned off for this monitor.
+              if ((parked || shouldSend("email")) && freshErrMonitor.userEmail) {
+                if (parked) {
+                  await ctx.runAction(internal.emails.sendMonitorStoppedAlert, {
+                    to: freshErrMonitor.userEmail,
+                    monitorName: freshErrMonitor.name,
+                    monitorId: freshErrMonitor._id,
+                    url: freshErrMonitor.url,
+                    telegramConnected,
+                  }).catch(() => {});
+                } else {
+                  await ctx.runAction(internal.emails.sendErrorAlert, {
+                    to: freshErrMonitor.userEmail,
+                    monitorName: freshErrMonitor.name,
+                    monitorId: freshErrMonitor._id,
+                    url: freshErrMonitor.url,
+                    error: msg,
+                  }).catch(() => {});
+                }
               }
 
               // Telegram
-              if (shouldSend("telegram")) {
-                const telegramSetting = await ctx.runQuery(internal.scheduler.getNotificationSetting, {
-                  userId: freshErrMonitor.userId,
-                  channel: "telegram",
-                });
-                if (telegramSetting?.enabled && telegramSetting.target) {
+              if (shouldSend("telegram") && telegramSetting?.enabled && telegramSetting.target) {
+                if (parked) {
+                  await ctx.runAction(internal.telegram.sendMonitorStoppedAlert, {
+                    chatId: telegramSetting.target,
+                    monitorName: freshErrMonitor.name,
+                    monitorId: freshErrMonitor._id,
+                    url: freshErrMonitor.url,
+                  }).catch(() => {});
+                } else {
                   await ctx.runAction(internal.telegram.sendErrorAlert, {
                     chatId: telegramSetting.target,
                     monitorName: freshErrMonitor.name,
@@ -658,13 +692,22 @@ export const runScheduledChecks = internalAction({
                   channel: "discord",
                 });
                 if (discordSetting?.enabled && discordSetting.target) {
-                  await ctx.runAction(internal.discord.sendErrorAlert, {
-                    webhookUrl: discordSetting.target,
-                    monitorName: freshErrMonitor.name,
-                    monitorId: freshErrMonitor._id,
-                    url: freshErrMonitor.url,
-                    error: msg,
-                  }).catch(() => {});
+                  if (parked) {
+                    await ctx.runAction(internal.discord.sendMonitorStoppedAlert, {
+                      webhookUrl: discordSetting.target,
+                      monitorName: freshErrMonitor.name,
+                      monitorId: freshErrMonitor._id,
+                      url: freshErrMonitor.url,
+                    }).catch(() => {});
+                  } else {
+                    await ctx.runAction(internal.discord.sendErrorAlert, {
+                      webhookUrl: discordSetting.target,
+                      monitorName: freshErrMonitor.name,
+                      monitorId: freshErrMonitor._id,
+                      url: freshErrMonitor.url,
+                      error: msg,
+                    }).catch(() => {});
+                  }
                 }
               }
             }
