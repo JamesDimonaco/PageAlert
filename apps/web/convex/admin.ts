@@ -451,7 +451,7 @@ export const overview = query({
       tieredUsers.add(t.userId);
       const eff = effectiveTier(t);
       tierCounts[eff]++;
-      if (t.grantUntil) trials++;
+      if (t.grantUntil && t.grantUntil > now) trials++;
       if (isPayingRecord(t)) {
         mrrCents += TIER_PRICE_CENTS[eff];
         if (t.cancelledAt) cancelling++;
@@ -511,6 +511,7 @@ export const listUsers = query({
   args: {},
   handler: async (ctx) => {
     await requireAdmin(ctx);
+    const now = Date.now();
     const [users, tiers, monitors] = await Promise.all([
       fetchAllUsers(ctx),
       ctx.db.query("userTiers").collect(),
@@ -539,7 +540,7 @@ export const listUsers = query({
           name: u.name,
           createdAt: u.createdAt,
           tier,
-          grantUntil: t?.grantUntil ?? null,
+          grantUntil: t?.grantUntil && t.grantUntil > now ? t.grantUntil : null,
           isPaying: t ? isPayingRecord(t) : false,
           cancelledAt: t?.cancelledAt ?? null,
           periodEnd: t?.periodEnd ?? null,
@@ -689,10 +690,16 @@ export const sendBulkEmail = action({
     if (args.testOnly) {
       recipients = [{ email: adminEmail, name: "" }];
     } else {
-      const wanted = new Set(args.userIds);
-      recipients = (await fetchAllUsers(ctx))
-        .filter((u) => wanted.has(u.id) && u.email)
-        .map((u) => ({ email: u.email, name: u.name }));
+      const ids = [...new Set(args.userIds)];
+      if (ids.length > 1000) throw new Error("Select at most 1000 users per send");
+      const page: PaginationResult<Record<string, unknown>> = await ctx.runQuery(components.betterAuth.adapter.findMany, {
+        model: "user",
+        where: [{ field: "_id", operator: "in", value: ids }],
+        paginationOpts: { numItems: ids.length, cursor: null },
+      });
+      recipients = page.page
+        .filter((u) => typeof u.email === "string" && u.email)
+        .map((u) => ({ email: String(u.email), name: String(u.name ?? "") }));
     }
     if (recipients.length === 0) throw new Error("No recipients");
 

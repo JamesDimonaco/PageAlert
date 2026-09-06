@@ -123,6 +123,9 @@ export default function SettingsPage() {
   // A manual grant isn't a Polar subscription — the billing tab's
   // checkout/portal gates key off this, not the raw (possibly trial) tier.
   const paidTier = grantUntil ? "free" : tier;
+  // A trial user is offered the plan they're trialling and above, never a downgrade
+  const offerPro = paidTier === "free" && tier !== "max";
+  const offerMax = paidTier === "pro" || (!!grantUntil && tier === "max");
 
   return (
     <div className="space-y-10">
@@ -629,7 +632,7 @@ export default function SettingsPage() {
                   </p>
                 </div>
                 <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-                  {paidTier === "free" && (
+                  {offerPro && (
                     <Button
                       className="gap-1.5 shadow-md shadow-primary/15"
                       onClick={() => handleCheckout("pro")}
@@ -638,7 +641,7 @@ export default function SettingsPage() {
                       Upgrade to Pro
                     </Button>
                   )}
-                  {paidTier === "pro" && (
+                  {offerMax && (
                     <Button
                       className="gap-1.5 shadow-md shadow-primary/15"
                       onClick={() => handleCheckout("max")}
@@ -677,7 +680,7 @@ export default function SettingsPage() {
           </Card>
 
           {/* Upgrade Options */}
-          {paidTier === "free" && (
+          {offerPro && (
             <div className="grid gap-4 md:grid-cols-2">
               <Card className="border-primary/30 bg-primary/5 shadow-sm">
                 <CardContent className="p-6">
@@ -722,7 +725,7 @@ export default function SettingsPage() {
           )}
 
           {/* Pro → Max upgrade */}
-          {paidTier === "pro" && (
+          {offerMax && (
             <Card className="border-border/30 bg-card/50 shadow-sm">
               <CardContent className="p-6">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">

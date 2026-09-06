@@ -34,17 +34,17 @@ export default function AdminPage() {
           </TabsTrigger>
         </TabsList>
 
-        <TabsContent value="overview" className="mt-6">
+        <TabsContent value="overview" className="mt-6" keepMounted>
           <AdminOverview />
         </TabsContent>
-        <TabsContent value="users" className="mt-6">
+        <TabsContent value="users" className="mt-6" keepMounted>
           <AdminUsersTable
             selectedIds={selectedIds}
             onSelectionChange={setSelectedIds}
             onEmailSelected={() => setTab("email")}
           />
         </TabsContent>
-        <TabsContent value="email" className="mt-6">
+        <TabsContent value="email" className="mt-6" keepMounted>
           <AdminEmailComposer
             selectedIds={selectedIds}
             onClearSelection={() => setSelectedIds(new Set())}

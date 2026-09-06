@@ -52,13 +52,15 @@ export const update = internalMutation({
       .unique();
 
     if (existing) {
+      // A revoke must not wipe a manual grant that outlives the subscription
+      // (e.g. a late-delivered webhook for an old sub after an admin trial).
+      const keepGrant = args.tier === "free" && !!existing.grantUntil && existing.grantUntil > Date.now();
       const patch: Record<string, unknown> = {
-        tier: args.tier,
-        // Clear cancellation and any manual grant — this is called on
-        // new sub or revoke, both are definitive
+        tier: keepGrant ? existing.tier : args.tier,
+        // Clear cancellation, and the manual grant when a real sub replaces it
         cancelledAt: undefined,
         periodEnd: undefined,
-        grantUntil: undefined,
+        grantUntil: keepGrant ? existing.grantUntil : undefined,
         updatedAt: Date.now(),
       };
       if (args.polarCustomerId != null) patch.polarCustomerId = args.polarCustomerId;

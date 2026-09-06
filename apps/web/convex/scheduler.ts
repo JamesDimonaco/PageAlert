@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import { effectiveTier } from "./tiers";
 import { internalAction, internalMutation, internalQuery } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { displayHost, isBlockedError, ERROR_RECOVERY_INTERVAL_MS, intervalToMs, MAX_RETRIES } from "./shared";
@@ -911,7 +912,7 @@ export const getUserTier = internalQuery({
       .query("userTiers")
       .withIndex("by_userId", (q) => q.eq("userId", args.userId))
       .unique();
-    return (record?.tier as "free" | "pro" | "max" | undefined) ?? "free";
+    return effectiveTier(record);
   },
 });
 
