@@ -34,14 +34,20 @@ export function BanUserDialog({
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
 
+  // Clears the draft reason on any close (cancel, escape, backdrop, or a
+  // successful ban) so re-opening for a different user starts blank.
+  function handleOpenChange(next: boolean) {
+    if (!next) setReason("");
+    onOpenChange(next);
+  }
+
   async function submit() {
     if (busy) return;
     setBusy(true);
     try {
       const result = await banUser({ userId, email, reason: reason.trim() || undefined });
       toast.success(`Banned ${email}${result.paused > 0 ? ` and paused ${result.paused} monitor${result.paused === 1 ? "" : "s"}` : ""}`);
-      setReason("");
-      onOpenChange(false);
+      handleOpenChange(false);
       onDone?.();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to ban user");
@@ -51,7 +57,7 @@ export function BanUserDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Ban {email}</DialogTitle>
@@ -72,7 +78,7 @@ export function BanUserDialog({
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>Cancel</Button>
+          <Button variant="outline" onClick={() => handleOpenChange(false)} disabled={busy}>Cancel</Button>
           <Button variant="destructive" onClick={submit} disabled={busy}>
             {busy && <Loader2 className="h-4 w-4 animate-spin" />}
             Ban user

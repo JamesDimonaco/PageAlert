@@ -35,14 +35,20 @@ export function DeleteUserDialog({
   const [busy, setBusy] = useState(false);
   const canDelete = confirmText.trim().toLowerCase() === email.toLowerCase();
 
+  // Clears the confirmation text on any close so re-opening for a
+  // different user doesn't start pre-filled with the last one's email.
+  function handleOpenChange(next: boolean) {
+    if (!next) setConfirmText("");
+    onOpenChange(next);
+  }
+
   async function submit() {
     if (!canDelete || busy) return;
     setBusy(true);
     try {
       await deleteUser({ userId, email });
       toast.success(`Deleted ${email} and all their data`);
-      setConfirmText("");
-      onOpenChange(false);
+      handleOpenChange(false);
       onDone?.();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to delete user");
@@ -52,7 +58,7 @@ export function DeleteUserDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={(next) => { if (!next) setConfirmText(""); onOpenChange(next); }}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Delete {email}</DialogTitle>
@@ -72,7 +78,7 @@ export function DeleteUserDialog({
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>Cancel</Button>
+          <Button variant="outline" onClick={() => handleOpenChange(false)} disabled={busy}>Cancel</Button>
           <Button variant="destructive" onClick={submit} disabled={!canDelete || busy}>
             {busy && <Loader2 className="h-4 w-4 animate-spin" />}
             Delete permanently

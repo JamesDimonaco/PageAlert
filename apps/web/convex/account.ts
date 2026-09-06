@@ -12,10 +12,17 @@ export async function isBanned(ctx: QueryCtx | MutationCtx, userId: string): Pro
 /**
  * Deletes every row this app owns for a user: monitors and their scrape
  * results/notifications, notification settings, remaining notifications,
- * channel claims, and the tier record. Shared by the user's own
- * deleteAccount and the admin dashboard's forced delete, so both paths
- * agree on what "all data" means — a userTiers row surviving account
- * deletion was a known gap this closes for both callers.
+ * channel claims, the tier record, the creation-rate-limit log, and any
+ * ban record. Shared by the user's own deleteAccount and the admin
+ * dashboard's forced delete, so both paths agree on what "all data"
+ * means — a userTiers row surviving account deletion was a known gap
+ * this closes for both callers.
+ *
+ * monitorCreations rows are kept across *monitor* deletion (see
+ * monitors.ts) to stop a delete-and-remake bypassing the creation rate
+ * limit, but a full account delete gets a fresh userId on re-signup
+ * regardless, so retaining them here serves no anti-abuse purpose —
+ * they're just orphaned personal data at that point.
  */
 export async function deleteAllUserData(ctx: MutationCtx, userId: string): Promise<void> {
   const monitors = await ctx.db
@@ -72,6 +79,20 @@ export async function deleteAllUserData(ctx: MutationCtx, userId: string): Promi
     .withIndex("by_userId", (q) => q.eq("userId", userId))
     .unique();
   if (tier) await ctx.db.delete(tier._id);
+
+  const creations = await ctx.db
+    .query("monitorCreations")
+    .withIndex("by_userId_createdAt", (q) => q.eq("userId", userId))
+    .collect();
+  for (const creation of creations) {
+    await ctx.db.delete(creation._id);
+  }
+
+  const ban = await ctx.db
+    .query("bannedUsers")
+    .withIndex("by_userId", (q) => q.eq("userId", userId))
+    .unique();
+  if (ban) await ctx.db.delete(ban._id);
 }
 
 export const deleteAccount = mutation({

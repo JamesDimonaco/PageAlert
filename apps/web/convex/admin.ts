@@ -871,12 +871,6 @@ export const deleteUser = mutation({
 
     await deleteAllUserData(ctx, userId);
 
-    const banned = await ctx.db
-      .query("bannedUsers")
-      .withIndex("by_userId", (q) => q.eq("userId", userId))
-      .unique();
-    if (banned) await ctx.db.delete(banned._id);
-
     const idFilter: UserIdRow[] = [{ field: "userId", operator: "eq", value: userId }];
     await deleteAllRowsByUser(ctx, { model: "session", where: idFilter });
     await deleteAllRowsByUser(ctx, { model: "account", where: idFilter });

@@ -38,9 +38,11 @@ export default function DashboardLayout({
     }
   }, [isLoading, isAuthenticated, router, pathname, searchParams]);
 
-  // Transfer anonymous monitors on first dashboard load
+  // Transfer anonymous monitors on first dashboard load. Waits for banStatus
+  // to resolve so a banned account never fires this — the mutation already
+  // guards it server-side, but there's no reason to call it at all here.
   useEffect(() => {
-    if (isAuthenticated && !claimedRef.current) {
+    if (isAuthenticated && banStatus && !banStatus.banned && !claimedRef.current) {
       claimedRef.current = true; // Prevent concurrent runs
       let monitorId: string | undefined;
       let anonId: string | undefined;
@@ -65,7 +67,7 @@ export default function DashboardLayout({
         claimedRef.current = false; // Allow retry on next render
       });
     }
-  }, [isAuthenticated, claimAnonymous]);
+  }, [isAuthenticated, banStatus, claimAnonymous]);
 
   if (isLoading) {
     return (
@@ -76,6 +78,14 @@ export default function DashboardLayout({
   }
 
   if (!isAuthenticated) return null;
+
+  if (banStatus === undefined) {
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
 
   if (banStatus?.banned) {
     return (
