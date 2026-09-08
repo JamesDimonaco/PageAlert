@@ -36,6 +36,8 @@ const HOUR = 60 * 60 * 1000;
 
 type MonitorSummary = { name: string; url: string; status: string; lastError?: string };
 type NeverScanned = { _id: Id<"monitors">; name: string; url: string; status: string; userEmail?: string; lastError?: string };
+/** Cap on the delivery sample in `overview` — see the comment at its read. */
+const EMAIL_SAMPLE_SIZE = 500;
 const DOWN_SINCE = "admin:scraper-down-since";
 const DOWN_ALERTED = "admin:scraper-down-alerted";
 
@@ -482,6 +484,20 @@ export const overview = query({
       if (log.blocked) scans.blocked++;
     }
 
+    // Delivery outcomes for a sample of recent sends. Bounded like the scan
+    // sample above: this is a reactive query that re-runs on every insert, and
+    // an unbounded read would take the whole dashboard down with it once
+    // volume grows. "sent" means Resend accepted it and no webhook has landed
+    // yet — a large standing figure there means the webhook is not wired up,
+    // not that mail is stuck.
+    const sends = await ctx.db
+      .query("emailSends")
+      .withIndex("by_createdAt")
+      .order("desc")
+      .take(EMAIL_SAMPLE_SIZE);
+    const emails = { sampled: sends.length, sent: 0, failed: 0, delivered: 0, bounced: 0, complained: 0 };
+    for (const s of sends) emails[s.status]++;
+
     return {
       users: {
         total: users.length,
@@ -489,6 +505,7 @@ export const overview = query({
         new30d,
         signupsByDay: [...signupsByDay.entries()].map(([day, count]) => ({ day, count })),
       },
+      emails,
       tiers: { ...tierCounts, trials, cancelling, mrrCents },
       monitors: {
         total: monitors.length,
@@ -702,6 +719,24 @@ export const sendBulkEmail = action({
     }
     if (recipients.length === 0) throw new Error("No recipients");
 
+    const recordChunk = async (
+      chunk: { email: string }[],
+      ids: { id?: string }[],
+      error?: string
+    ) => {
+      for (const [i, r] of chunk.entries()) {
+        await ctx
+          .runMutation(internal.emailEvents.recordSend, {
+            to: r.email,
+            kind: "bulk",
+            resendId: ids[i]?.id,
+            ok: !error,
+            error,
+          })
+          .catch((e) => console.error("[admin] could not record bulk send:", e));
+      }
+    };
+
     let sent = 0;
     const failedRecipients: string[] = [];
     for (let i = 0; i < recipients.length; i += RESEND_BATCH_SIZE) {
@@ -727,12 +762,20 @@ export const sendBulkEmail = action({
           const detail = await res.text().catch(() => "");
           console.error("[admin] Resend batch failed:", res.status, detail);
           failedRecipients.push(...chunk.map((r) => r.email));
+          await recordChunk(chunk, [], `Resend ${res.status}: ${detail.slice(0, 200)}`);
           continue;
         }
+        // Batch replies carry one id per recipient, in the order they were
+        // sent. Recording them is what lets the delivery webhook say whether a
+        // blast actually landed.
+        const data = (await res.json().catch(() => ({}))) as { data?: { id?: string }[] };
+        await recordChunk(chunk, data.data ?? []);
         sent += chunk.length;
       } catch (e) {
-        console.error("[admin] Resend batch error:", e instanceof Error ? e.message : e);
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error("[admin] Resend batch error:", msg);
         failedRecipients.push(...chunk.map((r) => r.email));
+        await recordChunk(chunk, [], msg);
       }
       // Resend's default rate limit is 2 requests per second
       await new Promise((resolve) => setTimeout(resolve, 600));

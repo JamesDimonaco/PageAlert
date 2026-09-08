@@ -1,5 +1,6 @@
 import { v } from "convex/values";
-import { internalAction } from "./_generated/server";
+import { internalAction, type ActionCtx } from "./_generated/server";
+import { internal } from "./_generated/api";
 
 const FROM_EMAIL = "PageAlert <alerts@pagealert.io>";
 // Onboarding/welcome emails come from a separate address so users can
@@ -46,6 +47,76 @@ function safeHref(url: string): string {
   return "#";
 }
 
+/**
+ * The one place an email leaves this file. Every send is recorded in
+ * `emailSends` with the id Resend hands back, which is what the delivery
+ * webhook later matches on — without the row a bounce is invisible.
+ *
+ * Callers swallow failures by default; `throwOnError` is for the onboarding
+ * queue, which needs the throw to mark its row failed.
+ */
+async function send(
+  ctx: ActionCtx,
+  opts: {
+    to: string;
+    subject: string;
+    html: string;
+    text: string;
+    kind: string;
+    from?: string;
+    userId?: string;
+    monitorId?: string;
+    throwOnError?: boolean;
+  }
+): Promise<void> {
+  const { to, subject, html, text, kind, from = FROM_EMAIL, userId, monitorId, throwOnError } = opts;
+  const record = (ok: boolean, resendId?: string, error?: string) =>
+    ctx
+      .runMutation(internal.emailEvents.recordSend, { to, kind, userId, monitorId, resendId, ok, error })
+      .catch((e) => console.error("[email] could not record send:", e));
+
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) {
+    console.error("[email] RESEND_API_KEY not configured, skipping", kind);
+    await record(false, undefined, "RESEND_API_KEY not configured");
+    // Throwing matters here: without it the onboarding queue marks the row
+    // sent, and a missing or badly rotated key silently burns the backlog.
+    if (throwOnError) throw new Error(`${kind} email failed: RESEND_API_KEY not configured`);
+    return;
+  }
+
+  let res: Response;
+  try {
+    res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({ from, to: [to], subject, html, text }),
+      signal: AbortSignal.timeout(RESEND_TIMEOUT),
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error("[email] send failed:", kind, monitorId ?? userId ?? "", msg);
+    await record(false, undefined, msg);
+    if (throwOnError) throw e;
+    return;
+  }
+
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    console.error("[email] Resend API error:", res.status, kind, monitorId ?? userId ?? "", detail);
+    await record(false, undefined, `Resend ${res.status}: ${detail.slice(0, 200)}`);
+    if (throwOnError) throw new Error(`${kind} email failed: ${res.status}`);
+    return;
+  }
+
+  const data = (await res.json().catch(() => ({}))) as { id?: string };
+  await record(true, data.id);
+  console.log("[email] sent", kind, monitorId ?? userId ?? "", "resend_id:", data.id ?? "-");
+}
+
 /** Send a match alert email */
 export const sendMatchAlert = internalAction({
   args: {
@@ -58,13 +129,7 @@ export const sendMatchAlert = internalAction({
     totalItems: v.number(),
     tracksPrices: v.optional(v.boolean()),
   },
-  handler: async (_ctx, args) => {
-    const apiKey = process.env.RESEND_API_KEY;
-    if (!apiKey) {
-      console.error("[email] RESEND_API_KEY not configured, skipping");
-      return;
-    }
-
+  handler: async (ctx, args) => {
     const safeName = esc(args.monitorName);
     const safeHost = esc(safeHostname(args.url));
 
@@ -154,33 +219,14 @@ export const sendMatchAlert = internalAction({
       ? `Match Found — ${args.monitorName}\n\nYour monitor detected matching keywords on ${safeHostname(args.url)}.\n\nView on site: ${viewOnSiteUrl}\nView in PageAlert: ${APP_URL}/dashboard/monitors/${args.monitorId}` + priceDiscoveryText
       : `Match Found — ${args.monitorName}\n\nYour monitor found ${args.matchCount} match${args.matchCount !== 1 ? "es" : ""}${plainItemsText} on ${safeHostname(args.url)}.\n\n${args.matches.slice(0, 5).map((m: Record<string, unknown>) => `• ${String(m.title ?? m.name ?? "Item")}${m.price != null ? ` — $${Number(m.price)}` : ""}`).join("\n")}\n${args.matchCount > 5 ? `+${args.matchCount - 5} more` : ""}\n\nView on site: ${viewOnSiteUrl}\nView in PageAlert: ${APP_URL}/dashboard/monitors/${args.monitorId}` + priceDiscoveryText;
 
-    try {
-      const res = await fetch("https://api.resend.com/emails", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          from: FROM_EMAIL,
-          to: [args.to],
-          subject: `Match found: ${args.monitorName}`,
-          html,
-          text,
-        }),
-        signal: AbortSignal.timeout(RESEND_TIMEOUT),
-      });
-
-      if (!res.ok) {
-        console.error("[email] Resend API error:", res.status, "monitor:", args.monitorId);
-        return;
-      }
-
-      const data = await res.json();
-      console.log("[email] Match alert sent, monitor:", args.monitorId, "resend_id:", data.id);
-    } catch (e) {
-      console.error("[email] Failed to send, monitor:", args.monitorId, e instanceof Error ? e.message : "");
-    }
+    await send(ctx, {
+      to: args.to,
+      subject: `Match found: ${args.monitorName}`,
+      html,
+      text,
+      kind: "match",
+      monitorId: args.monitorId,
+    });
   },
 });
 
@@ -193,13 +239,7 @@ export const sendErrorAlert = internalAction({
     url: v.string(),
     error: v.string(),
   },
-  handler: async (_ctx, args) => {
-    const apiKey = process.env.RESEND_API_KEY;
-    if (!apiKey) {
-      console.error("[email] RESEND_API_KEY not configured, skipping");
-      return;
-    }
-
+  handler: async (ctx, args) => {
     const safeName = esc(args.monitorName);
     const safeHost = esc(safeHostname(args.url));
     const safeError = esc(args.error);
@@ -233,31 +273,14 @@ export const sendErrorAlert = internalAction({
 </body>
 </html>`;
 
-    try {
-      const res = await fetch("https://api.resend.com/emails", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          from: FROM_EMAIL,
-          to: [args.to],
-          subject: `Monitor error: ${args.monitorName}`,
-          html,
-          text: `Monitor Error — ${args.monitorName}\n\n${args.error}\n\nCheck your monitor: ${APP_URL}/dashboard/monitors/${args.monitorId}`,
-        }),
-        signal: AbortSignal.timeout(RESEND_TIMEOUT),
-      });
-
-      if (!res.ok) {
-        console.error("[email] Resend API error:", res.status, "monitor:", args.monitorId);
-        return;
-      }
-      console.log("[email] Error alert sent, monitor:", args.monitorId);
-    } catch (e) {
-      console.error("[email] Error alert failed, monitor:", args.monitorId, e instanceof Error ? e.message : "");
-    }
+    await send(ctx, {
+      to: args.to,
+      subject: `Monitor error: ${args.monitorName}`,
+      html,
+      text: `Monitor Error — ${args.monitorName}\n\n${args.error}\n\nCheck your monitor: ${APP_URL}/dashboard/monitors/${args.monitorId}`,
+      kind: "error",
+      monitorId: args.monitorId,
+    });
   },
 });
 
@@ -274,13 +297,7 @@ export const sendMonitorStoppedAlert = internalAction({
     url: v.string(),
     telegramConnected: v.boolean(),
   },
-  handler: async (_ctx, args) => {
-    const apiKey = process.env.RESEND_API_KEY;
-    if (!apiKey) {
-      console.error("[email] RESEND_API_KEY not configured, skipping");
-      return;
-    }
-
+  handler: async (ctx, args) => {
     const safeName = esc(args.monitorName);
     const safeHost = esc(safeHostname(args.url));
     const monitorHref = `${APP_URL}/dashboard/monitors/${args.monitorId}`;
@@ -328,31 +345,14 @@ export const sendMonitorStoppedAlert = internalAction({
       ? ""
       : `\n\nWant alerts the moment they happen? Connect Telegram: ${APP_URL}/dashboard/settings?tab=notifications`;
 
-    try {
-      const res = await fetch("https://api.resend.com/emails", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          from: FROM_EMAIL,
-          to: [args.to],
-          subject: `Checks stopped: ${args.monitorName}`,
-          html,
-          text: `Checks stopped — ${args.monitorName}\n\nWe've stopped checking ${safeHostname(args.url)}. The site blocks automated access even through our proxy.\n\nYou won't get any more alerts for this monitor until you start it again.\n\nRetry: ${monitorHref}${textNudge}`,
-        }),
-        signal: AbortSignal.timeout(RESEND_TIMEOUT),
-      });
-
-      if (!res.ok) {
-        console.error("[email] Resend API error:", res.status, "monitor:", args.monitorId);
-        return;
-      }
-      console.log("[email] Stopped alert sent, monitor:", args.monitorId);
-    } catch (e) {
-      console.error("[email] Stopped alert failed, monitor:", args.monitorId, e instanceof Error ? e.message : "");
-    }
+    await send(ctx, {
+      to: args.to,
+      subject: `Checks stopped: ${args.monitorName}`,
+      html,
+      text: `Checks stopped — ${args.monitorName}\n\nWe've stopped checking ${safeHostname(args.url)}. The site blocks automated access even through our proxy.\n\nYou won't get any more alerts for this monitor until you start it again.\n\nRetry: ${monitorHref}${textNudge}`,
+      kind: "monitor-stopped",
+      monitorId: args.monitorId,
+    });
   },
 });
 
@@ -366,10 +366,7 @@ export const sendAnonymousScanComplete = internalAction({
     matchCount: v.number(),
     totalItems: v.number(),
   },
-  handler: async (_ctx, args) => {
-    const apiKey = process.env.RESEND_API_KEY;
-    if (!apiKey) return;
-
+  handler: async (ctx, args) => {
     const html = `
 <!DOCTYPE html>
 <html>
@@ -409,26 +406,14 @@ export const sendAnonymousScanComplete = internalAction({
 </body>
 </html>`;
 
-    const res = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        from: FROM_EMAIL,
-        to: [args.to],
-        subject: `PageAlert — Your scan of ${args.monitorName} is ready`,
-        html,
-        text: `Your scan is ready!\n\nWe found ${args.totalItems} items${args.matchCount > 0 ? ` with ${args.matchCount} matches` : ""} on ${args.monitorName}.\n\nView results: ${APP_URL}/try/${args.monitorId}\n\nWe'll check every 24 hours and email you when new matches appear.\n\nCreate a free account for more: ${APP_URL}/login`,
-      }),
-      signal: AbortSignal.timeout(RESEND_TIMEOUT),
+    await send(ctx, {
+      to: args.to,
+      subject: `PageAlert — Your scan of ${args.monitorName} is ready`,
+      html,
+      text: `Your scan is ready!\n\nWe found ${args.totalItems} items${args.matchCount > 0 ? ` with ${args.matchCount} matches` : ""} on ${args.monitorName}.\n\nView results: ${APP_URL}/try/${args.monitorId}\n\nWe'll check every 24 hours and email you when new matches appear.\n\nCreate a free account for more: ${APP_URL}/login`,
+      kind: "anonymous-scan",
+      monitorId: args.monitorId,
     });
-
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      console.error("[emails] Anonymous scan email failed:", res.status, body);
-    }
   },
 });
 
@@ -465,13 +450,7 @@ export const sendPriceAlert = internalAction({
     })),
     trackedItemCount: v.number(),
   },
-  handler: async (_ctx, args) => {
-    const apiKey = process.env.RESEND_API_KEY;
-    if (!apiKey) {
-      console.error("[email] RESEND_API_KEY not configured, skipping");
-      return;
-    }
-
+  handler: async (ctx, args) => {
     const fmt = (n: number) => `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
     const pct = (n: number) => `${Math.abs(n).toFixed(1)}%`;
     const manageUrl = `${APP_URL}/dashboard/monitors/${args.monitorId}?section=price-alerts`;
@@ -571,24 +550,14 @@ export const sendPriceAlert = internalAction({
     }
     const text = `${headerTitle} — ${args.monitorName}\n\n${textBody}View on site: ${args.url}\nView in PageAlert: ${APP_URL}/dashboard/monitors/${args.monitorId}\nManage price alerts: ${manageUrl}`;
 
-    try {
-      const res = await fetch("https://api.resend.com/emails", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({ from: FROM_EMAIL, to: [args.to], subject, html, text }),
-        signal: AbortSignal.timeout(RESEND_TIMEOUT),
-      });
-      if (!res.ok) {
-        console.error("[email] Resend API error:", res.status, "monitor:", args.monitorId);
-        return;
-      }
-      console.log(`[email] Price alert sent, monitor: ${args.monitorId}, variant: ${args.variant}`);
-    } catch (e) {
-      console.error("[email] Failed to send price alert, monitor:", args.monitorId, e instanceof Error ? e.message : "");
-    }
+    await send(ctx, {
+      to: args.to,
+      subject,
+      html,
+      text,
+      kind: `price-${args.variant}`,
+      monitorId: args.monitorId,
+    });
   },
 });
 
@@ -607,13 +576,7 @@ export const sendPriceAlert = internalAction({
  */
 export const sendOnboardingDay0 = internalAction({
   args: { to: v.string(), userId: v.string() },
-  handler: async (_ctx, args) => {
-    const apiKey = process.env.RESEND_API_KEY;
-    if (!apiKey) {
-      console.error("[onboarding] RESEND_API_KEY not configured, skipping");
-      return;
-    }
-
+  handler: async (ctx, args) => {
     // The "try this monitor" deep-link. Apple's refurbished Mac Mini
     // page has volatile stock — items appear and sell out fast, which
     // makes it a perfect, relatable monitoring use case. Currently
@@ -694,37 +657,17 @@ ${dashboardHref}
 — PageAlert
 ${APP_URL}`;
 
-    // Unlike the notification senders (sendMatchAlert etc.) which swallow
-    // errors, this function intentionally rethrows so the caller
-    // (processDueEmails) can mark the row as "failed" with the error
-    // message. Network errors, timeouts, and non-OK responses all
-    // propagate as thrown errors for consistent failure handling.
-    try {
-      const res = await fetch("https://api.resend.com/emails", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          from: HELLO_FROM_EMAIL,
-          to: [args.to],
-          subject,
-          html,
-          text,
-        }),
-        signal: AbortSignal.timeout(RESEND_TIMEOUT),
-      });
-
-      if (!res.ok) {
-        const body = await res.text().catch(() => "");
-        console.error("[onboarding] day0 email failed:", res.status, body, "user:", args.userId);
-        throw new Error(`Day0 email failed: ${res.status}`);
-      }
-      console.log("[onboarding] day0 email sent, user:", args.userId);
-    } catch (e) {
-      console.error("[onboarding] day0 email network error:", e, "user:", args.userId);
-      throw e;
-    }
+    // Unlike the notification senders, this one rethrows so processDueEmails
+    // can mark the queue row failed with the error message.
+    await send(ctx, {
+      to: args.to,
+      subject,
+      html,
+      text,
+      kind: "onboarding-day0",
+      from: HELLO_FROM_EMAIL,
+      userId: args.userId,
+      throwOnError: true,
+    });
   },
 });
