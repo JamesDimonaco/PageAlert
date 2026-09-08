@@ -246,6 +246,8 @@ export default defineSchema({
     error: v.optional(v.string()),
   })
     .index("by_userId", ["userId"])
-    .index("by_status_scheduledFor", ["status", "scheduledFor"])
+    // Step comes first so the processor can ask for one step's queue. Without
+    // it, steps it doesn't send yet sit pending and crowd out the ones it does.
+    .index("by_step_status_scheduledFor", ["step", "status", "scheduledFor"])
     .index("by_userId_step", ["userId", "step"]),
 });
