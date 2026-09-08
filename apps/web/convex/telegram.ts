@@ -27,7 +27,7 @@ export const sendMatchAlert = internalAction({
     const text = [
       `🔔 *${escMd(args.monitorName)}*`,
       ``,
-      `${args.matchCount} match${args.matchCount !== 1 ? "es" : ""} found out of ${args.totalItems} items`,
+      `${args.matchCount} new match${args.matchCount !== 1 ? "es" : ""} out of ${args.totalItems} items`,
       ``,
       `🔗 [View on site](${escUrl(args.url)})`,
       `📊 [View in PageAlert](${escUrl(APP_URL + "/dashboard")})`,

@@ -38,6 +38,13 @@ export default defineSchema({
     retryCount: v.optional(v.number()),
     // Confirmed Scrapfly (proxy) blocks in a row — see MAX_PROXY_BLOCKS in shared.ts
     proxyBlockCount: v.optional(v.number()),
+    // Identities of the items matching last time, so a match alert can fire on
+    // genuinely new items rather than only on the zero-to-something transition.
+    // See matchKey/newMatchKeys in shared.ts. Undefined means "no baseline yet".
+    matchedKeys: v.optional(v.array(v.string())),
+    // This site only ever answers through the proxy, so skip the direct attempt
+    // that would fail anyway. Re-probed periodically — see PROXY_REPROBE_EVERY.
+    proxyPreferred: v.optional(v.boolean()),
     nextCheckAt: v.optional(v.number()),
     notificationChannels: v.optional(v.array(v.union(
       v.literal("email"),

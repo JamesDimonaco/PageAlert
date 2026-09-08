@@ -36,6 +36,8 @@ const HOUR = 60 * 60 * 1000;
 
 type MonitorSummary = { name: string; url: string; status: string; lastError?: string };
 type NeverScanned = { _id: Id<"monitors">; name: string; url: string; status: string; userEmail?: string; lastError?: string };
+/** Matches the scraper-health cron in crons.ts. */
+const SCRAPER_HEALTH_INTERVAL_MS = 10 * 60 * 1000;
 /** Cap on the delivery sample in `overview` — see the comment at its read. */
 const EMAIL_SAMPLE_SIZE = 500;
 const DOWN_SINCE = "admin:scraper-down-since";
@@ -78,31 +80,107 @@ export const claimAlertSlot = internalMutation({
 
 // ---- Blocked-site fallback budget ----
 
-/** Monthly ceiling on fallback calls. 6,000 is the Scrapfly Discovery plan at the worst-case 30 credits each. */
-const FALLBACK_MONTHLY_CALLS = Number(process.env.FALLBACK_MONTHLY_CALLS ?? 6000);
+/** Monthly ceiling on fallback calls. 10,000 is ~135k Scrapfly credits at the observed 13.5 per call. */
+const FALLBACK_MONTHLY_CALLS = Number(process.env.FALLBACK_MONTHLY_CALLS ?? 10000);
 
-/** Counts a fallback call against this month's budget. False, with one alert per month, when it is spent. */
+/**
+ * Hourly ceiling on *escalations* — a monitor reaching for the proxy after a
+ * block. The monthly cap cannot see a burst, and a burst is the shape the real
+ * incident took: on 2026-09-05 a scraper fault made 67 monitors escalate inside
+ * one hour, 113 calls. Escalation peaks at 26/hour in normal operation.
+ *
+ * Deliberately not applied to proxyPreferred checks. Those are steady, planned
+ * traffic that scales with how many monitors sit on protected sites, so
+ * counting them here would make an ordinary Tuesday look like a stampede — and
+ * refusing one sends the monitor to a direct attempt that is certain to fail.
+ * They still count against the monthly budget, which is the one about money.
+ */
+const FALLBACK_HOURLY_ESCALATIONS = Number(process.env.FALLBACK_HOURLY_ESCALATIONS ?? 60);
+
+/**
+ * Counts a fallback call against the budgets. False, with one operator alert
+ * per period, when a budget is spent.
+ */
 export const reserveFallbackCall = internalMutation({
-  args: {},
-  handler: async (ctx) => {
-    const month = new Date().toISOString().slice(0, 7);
-    const key = `fallback:calls:${month}`;
-    const row = await ctx.db.query("counters").withIndex("by_name", (q) => q.eq("name", key)).unique();
-    const used = row?.value ?? 0;
-    if (used >= FALLBACK_MONTHLY_CALLS) {
-      const alertKey = `fallback:cap-alerted:${month}`;
-      const alerted = await ctx.db.query("counters").withIndex("by_name", (q) => q.eq("name", alertKey)).unique();
-      if (!alerted) {
-        await ctx.db.insert("counters", { name: alertKey, value: Date.now() });
-        await ctx.scheduler.runAfter(0, internal.admin.notify, {
-          text: `PageAlert: fallback call budget for ${month} is spent (${FALLBACK_MONTHLY_CALLS}). Blocked sites will not be retried through Scrapfly until next month.`,
-        });
-      }
+  args: {
+    /** A reach for the proxy after a block, rather than a known-protected site's routine check. */
+    escalation: v.boolean(),
+  },
+  handler: async (ctx, { escalation }) => {
+    const now = new Date();
+    const month = now.toISOString().slice(0, 7);
+    const hour = now.toISOString().slice(0, 13);
+    const prevHour = new Date(now.getTime() - 60 * 60 * 1000).toISOString().slice(0, 13);
+    const get = (name: string) =>
+      ctx.db.query("counters").withIndex("by_name", (q) => q.eq("name", name)).unique();
+
+    const alertOnce = async (alertKey: string, text: string) => {
+      const alerted = await get(alertKey);
+      if (alerted) return;
+      await ctx.db.insert("counters", { name: alertKey, value: Date.now() });
+      await ctx.scheduler.runAfter(0, internal.admin.notify, { text });
+    };
+
+    const monthRow = await get(`fallback:calls:${month}`);
+    const monthUsed = monthRow?.value ?? 0;
+    if (monthUsed >= FALLBACK_MONTHLY_CALLS) {
+      await alertOnce(
+        `fallback:cap-alerted:${month}`,
+        `PageAlert: fallback call budget for ${month} is spent (${FALLBACK_MONTHLY_CALLS}). Blocked sites will not be retried through Scrapfly until next month.`
+      );
       return false;
     }
-    if (row) await ctx.db.patch(row._id, { value: used + 1 });
-    else await ctx.db.insert("counters", { name: key, value: 1 });
+
+    let hourRow = null;
+    if (escalation) {
+      hourRow = await get(`fallback:escalations:${hour}`);
+      const hourUsed = hourRow?.value ?? 0;
+      if (hourUsed >= FALLBACK_HOURLY_ESCALATIONS) {
+        await alertOnce(
+          `fallback:hour-alerted:${hour}`,
+          `PageAlert: ${FALLBACK_HOURLY_ESCALATIONS} proxy escalations in the hour to ${hour}:00Z — escalation paused until the next hour. Something is failing fleet-wide.`
+        );
+        return false;
+      }
+    }
+
+    if (monthRow) await ctx.db.patch(monthRow._id, { value: monthUsed + 1 });
+    else await ctx.db.insert("counters", { name: `fallback:calls:${month}`, value: 1 });
+
+    if (escalation) {
+      if (hourRow) await ctx.db.patch(hourRow._id, { value: hourRow.value + 1 });
+      else {
+        await ctx.db.insert("counters", { name: `fallback:escalations:${hour}`, value: 1 });
+        // Rolling window of one hour, so the hour before it is finished with.
+        // Left alone these rows accumulate at ~17k a year.
+        for (const stale of [`fallback:escalations:${prevHour}`, `fallback:hour-alerted:${prevHour}`]) {
+          const row = await get(stale);
+          if (row) await ctx.db.delete(row._id);
+        }
+      }
+    }
     return true;
+  },
+});
+
+/**
+ * True once the scraper has failed two consecutive health polls. One blip must
+ * not disable proxy escalation fleet-wide, and recordScraperHealth sets
+ * DOWN_SINCE on the very first failure.
+ *
+ * This only catches the scraper being unreachable. It has been known to answer
+ * /health with a 200 while every scrape failed (a missing Playwright browser
+ * after a deps bump), and that shape is caught by the hourly escalation cap
+ * instead.
+ */
+export const isScraperDown = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const row = await ctx.db
+      .query("counters")
+      .withIndex("by_name", (q) => q.eq("name", DOWN_SINCE))
+      .unique();
+    return row !== null && Date.now() - row.value >= SCRAPER_HEALTH_INTERVAL_MS;
   },
 });
 
