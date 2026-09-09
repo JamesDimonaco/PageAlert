@@ -20,7 +20,7 @@ export const sendMatchAlert = internalAction({
       embeds: [
         {
           title: `🔔 ${args.monitorName}`,
-          description: `**${args.matchCount}** match${args.matchCount !== 1 ? "es" : ""} found out of ${args.totalItems} items`,
+          description: `**${args.matchCount}** new match${args.matchCount !== 1 ? "es" : ""} out of ${args.totalItems} items`,
           color: 0x3b82f6,
           fields: [
             { name: "Website", value: `[Open](${args.url})`, inline: true },

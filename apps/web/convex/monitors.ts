@@ -258,6 +258,12 @@ export const saveScanResult = mutation({
       lastCheckedAt: now,
       lastMatchAt: matchCount > 0 ? now : undefined,
       nextCheckAt: now + intervalToMs(monitor.checkInterval),
+      // A scan reports its own matches to the user, and only carries a count,
+      // not the matched items. Drop the baseline so the next scheduled extract
+      // re-seeds it silently rather than re-announcing what the scan just
+      // showed. The cost is the other half of that trade: anything appearing
+      // between the scan and that extract goes unannounced.
+      matchedKeys: undefined,
       updatedAt: now,
     });
 

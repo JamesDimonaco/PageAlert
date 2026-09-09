@@ -2,7 +2,17 @@ import { v } from "convex/values";
 import { effectiveTier } from "./tiers";
 import { internalAction, internalMutation, internalQuery } from "./_generated/server";
 import { internal } from "./_generated/api";
-import { displayHost, isBlockedError, ERROR_RECOVERY_INTERVAL_MS, intervalToMs, MAX_RETRIES, MAX_PROXY_BLOCKS } from "./shared";
+import {
+  displayHost,
+  isBlockedError,
+  matchKey,
+  newMatchKeys,
+  ERROR_RECOVERY_INTERVAL_MS,
+  intervalToMs,
+  MAX_RETRIES,
+  MAX_PROXY_BLOCKS,
+  PROXY_REPROBE_EVERY,
+} from "./shared";
 
 /** Filter out blacklisted items from a matches array based on item title/url keys */
 function filterBlacklisted(matches: Record<string, unknown>[], blacklist: string[]): Record<string, unknown>[] {
@@ -127,10 +137,17 @@ export const recordCheckResult = internalMutation({
     contentFingerprint: v.optional(v.string()),
     // Page content identical to last scan — bookkeeping only, no result row
     unchanged: v.optional(v.boolean()),
+    // Set only by the full-extract path, where matches are real items with
+    // identities. The quick-check path has no per-item data to diff.
+    trackMatchKeys: v.optional(v.boolean()),
+    // Whether this check went through the proxy — drives proxyPreferred.
+    usedProxy: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const monitor = await ctx.db.get(args.monitorId);
-    if (!monitor || (monitor.status !== "active" && monitor.status !== "error")) return;
+    if (!monitor || (monitor.status !== "active" && monitor.status !== "error")) {
+      return { parked: false, newMatchKeys: [] as string[] };
+    }
 
     const now = Date.now();
 
@@ -151,7 +168,7 @@ export const recordCheckResult = internalMutation({
           nextCheckAt: undefined,
           updatedAt: now,
         });
-        return { parked: true };
+        return { parked: true, newMatchKeys: [] as string[] };
       }
 
       if (retryCount >= MAX_RETRIES) {
@@ -175,7 +192,7 @@ export const recordCheckResult = internalMutation({
           updatedAt: now,
         });
       }
-      return { parked: false };
+      return { parked: false, newMatchKeys: [] as string[] };
     }
 
     // Success
@@ -203,11 +220,38 @@ export const recordCheckResult = internalMutation({
       updates.contentFingerprint = args.contentFingerprint;
     }
 
+    // Remember whether this site needs the proxy at all. A direct success
+    // clears the flag, which is also how the periodic re-probe takes effect.
+    const nextProxyPreferred =
+      args.usedProxy === true
+        ? isBlockedError(monitor.lastError ?? "") || monitor.proxyPreferred === true
+        : args.usedProxy === false
+          ? false
+          : monitor.proxyPreferred;
+    if (nextProxyPreferred !== monitor.proxyPreferred) {
+      updates.proxyPreferred = nextProxyPreferred;
+    }
+
+    // Which of this check's matches the user has not been told about. Computed
+    // here because this is the last point that still holds the pre-check
+    // monitor doc.
+    let newKeys: string[] = [];
+    // An extract that saw no items at all is a render that went wrong, not a
+    // page that emptied. Keeping the old baseline there stops the items coming
+    // back as "12 new matches" the user has already been told about. A page
+    // that genuinely holds items but matches none of them does clear it, and
+    // a later reappearance is a real event worth an alert.
+    if (args.trackMatchKeys && (args.matches.length > 0 || args.totalItems > 0)) {
+      const currentKeys = (args.matches as Record<string, unknown>[]).map(matchKey);
+      newKeys = newMatchKeys(monitor.matchedKeys, currentKeys);
+      updates.matchedKeys = [...new Set(currentKeys.filter(Boolean))];
+    }
+
     await ctx.db.patch(args.monitorId, updates);
 
     // Unchanged page: monitor bookkeeping is done, skip the scrapeResults
     // insert — no new data to record and no changes to detect
-    if (args.unchanged) return;
+    if (args.unchanged) return { parked: false, newMatchKeys: [] as string[] };
 
     // Compute changes from the previous scrape result
     let changes;
@@ -235,6 +279,8 @@ export const recordCheckResult = internalMutation({
       scrapedAt: now,
       changes,
     });
+
+    return { parked: false, newMatchKeys: newKeys };
   },
 });
 
@@ -263,13 +309,30 @@ export const runScheduledChecks = internalAction({
         // scraper rejects retryAttempt > 10 with a 400, which would park the
         // monitor for good, and forceFullExtract below keys off the exact value.
         const retryCount = Math.min(monitor.retryCount ?? 0, MAX_RETRIES);
-        // Use proxy on retry 1+ to bypass anti-bot IP blocking
-        // Pay for the fallback only when the last failure looked like a block,
-        // and only while this month's call budget lasts.
+        // This site has only ever answered through the proxy, so the direct
+        // attempt is a guaranteed failure plus a wasted 2-minute backoff before
+        // the alert. Probe direct occasionally in case the site drops its WAF.
+        const reprobeDirect = ((monitor.checkCount ?? 0) + 1) % PROXY_REPROBE_EVERY === 0;
+        const wantProxy =
+          (monitor.proxyPreferred === true && !reprobeDirect) ||
+          (retryCount >= 1 && isBlockedError(monitor.lastError ?? ""));
+
+        // A fleet-wide failure is ours, not the sites'. Escalating during a
+        // scraper outage bought 113 proxy calls in one hour on 2026-09-05 and
+        // fixed nothing.
+        const scraperDown = wantProxy
+          ? await ctx.runQuery(internal.admin.isScraperDown, {})
+          : false;
+
+        // An escalation is a reach for the proxy after a block; a
+        // proxy-preferred check is routine traffic for a site we already know
+        // needs it. Only the first kind counts against the burst cap.
         const useProxy =
-          retryCount >= 1 &&
-          isBlockedError(monitor.lastError ?? "") &&
-          (await ctx.runMutation(internal.admin.reserveFallbackCall, {}));
+          wantProxy &&
+          !scraperDown &&
+          (await ctx.runMutation(internal.admin.reserveFallbackCall, {
+            escalation: monitor.proxyPreferred !== true || reprobeDirect,
+          }));
         let strategyLabel = "quick-check";
         try {
           const tier = await ctx.runQuery(internal.scheduler.getUserTier, { userId: monitor.userId });
@@ -324,13 +387,26 @@ export const runScheduledChecks = internalAction({
             const shouldSend = (channel: string) => !monitorChannels || monitorChannels.includes(channel);
             const hasAnyChannel = !monitorChannels || monitorChannels.length > 0;
 
-            // Only notify on NEW matches (not when the same match persists across checks)
-            const previouslyHadMatches = (monitor.matchCount ?? 0) > 0;
-            const isNewMatch = checkResult.hasMatch && !previouslyHadMatches;
+            // The full-extract path knows which items are new, so use that.
+            // The quick-check path has no item identity — its matchCount is a
+            // consecutive-hit streak, so the old zero-to-something transition
+            // is still the only signal available there.
+            const isNewMatch = checkResult.newMatchKeys
+              ? checkResult.newMatchKeys.length > 0
+              : checkResult.hasMatch && (monitor.matchCount ?? 0) === 0;
+            const newCount = checkResult.newMatchKeys?.length ?? checkResult.matchCount;
 
             if (isNewMatch) {
+              // Only the items the user has not seen. On the quick-check path
+              // there is nothing to narrow to, so this is the whole match set.
+              const newKeys = new Set(checkResult.newMatchKeys ?? []);
+              const newMatches = checkResult.newMatchKeys
+                ? (checkResult.matches as Record<string, unknown>[]).filter((m) => newKeys.has(matchKey(m)))
+                : (checkResult.matches as Record<string, unknown>[]);
+              const plural = newCount !== 1 ? "es" : "";
+
               await ctx.scheduler.runAfter(0, internal.admin.notify, {
-                text: `Match: ${freshMonitor.name} found ${checkResult.matchCount} on ${displayHost(freshMonitor.url)} (${freshMonitor.userEmail ?? "no email"})`,
+                text: `Match: ${freshMonitor.name} found ${newCount} new on ${displayHost(freshMonitor.url)} (${freshMonitor.userEmail ?? "no email"})`,
               });
 
               // Create in-app notification (unless all channels explicitly disabled)
@@ -338,8 +414,8 @@ export const runScheduledChecks = internalAction({
                 userId: freshMonitor.userId,
                 monitorId: freshMonitor._id,
                 channel: "in_app",
-                title: `${freshMonitor.name} — ${checkResult.matchCount} match${checkResult.matchCount !== 1 ? "es" : ""}`,
-                message: `Found ${checkResult.matchCount} match${checkResult.matchCount !== 1 ? "es" : ""} out of ${displayTotalItems} items on ${freshMonitor.url}`,
+                title: `${freshMonitor.name} — ${newCount} new match${plural}`,
+                message: `Found ${newCount} new match${plural} out of ${displayTotalItems} items on ${freshMonitor.url}`,
               }).catch(() => {});
 
               // Send email
@@ -349,8 +425,8 @@ export const runScheduledChecks = internalAction({
                   monitorName: freshMonitor.name,
                   monitorId: freshMonitor._id,
                   url: freshMonitor.url,
-                  matchCount: checkResult.matchCount,
-                  matches: checkResult.matches,
+                  matchCount: newCount,
+                  matches: newMatches,
                   totalItems: displayTotalItems,
                   tracksPrices: !!(freshMonitor.schema as any)?.insights?.tracksPrices,
                 }).catch(() => {});
@@ -368,7 +444,7 @@ export const runScheduledChecks = internalAction({
                     monitorName: freshMonitor.name,
                     monitorId: freshMonitor._id,
                     url: freshMonitor.url,
-                    matchCount: checkResult.matchCount,
+                    matchCount: newCount,
                     totalItems: displayTotalItems,
                   }).catch(() => {});
                 }
@@ -386,7 +462,7 @@ export const runScheduledChecks = internalAction({
                     monitorName: freshMonitor.name,
                     monitorId: freshMonitor._id,
                     url: freshMonitor.url,
-                    matchCount: checkResult.matchCount,
+                    matchCount: newCount,
                     totalItems: displayTotalItems,
                   }).catch(() => {});
                 }
@@ -730,6 +806,12 @@ type CheckOutcome = {
   matches: unknown[];
   totalItems: number | null;
   strategy: string;
+  /**
+   * Matched items the user has not been told about, from the full-extract
+   * path. Undefined on the quick-check path, whose "matches" carry no item
+   * identity — that path still notifies on the no-match-to-match transition.
+   */
+  newMatchKeys?: string[];
 };
 
 async function runQuickCheck(
@@ -799,6 +881,7 @@ async function runQuickCheck(
       totalItems: 0,
       matches: [],
       unchanged: true,
+      usedProxy: useProxy,
     });
     console.log(`[scheduler] Quick check ${monitor._id}: content unchanged, skipping`);
     return { hasMatch: false, matchCount: monitor.matchCount ?? 0, matches: [], totalItems: null, strategy: "unchanged" };
@@ -827,6 +910,7 @@ async function runQuickCheck(
       ? [{ quickCheck: true, keywordResults: result.keywordResults, priceResults: result.priceResults }]
       : [],
     contentFingerprint: contentHash,
+    usedProxy: useProxy,
   });
 
   console.log(`[scheduler] Quick check ${monitor._id}: ${hasMatch ? "MATCH" : "no match"}`);
@@ -961,7 +1045,7 @@ async function runFullExtract(
   const filteredMatches = filterBlacklisted(allMatches as Record<string, unknown>[], blacklist);
   const matchCount = filteredMatches.length;
 
-  await ctx.runMutation(internal.scheduler.recordCheckResult, {
+  const outcome = await ctx.runMutation(internal.scheduler.recordCheckResult, {
     monitorId: monitor._id,
     hasNewMatches: matchCount > 0,
     matchCount,
@@ -970,11 +1054,20 @@ async function runFullExtract(
     items: result.schema?.items ?? [],
     schema: result.schema,
     contentFingerprint: contentHash,
+    trackMatchKeys: true,
+    usedProxy: useProxy,
   });
 
   console.log(`[scheduler] Full re-extract ${monitor._id}: ${totalItems} items, ${matchCount} matches (${allMatches.length - matchCount} blacklisted)`);
 
-  return { hasMatch: matchCount > 0, matchCount, matches: filteredMatches, totalItems, strategy };
+  return {
+    hasMatch: matchCount > 0,
+    matchCount,
+    matches: filteredMatches,
+    totalItems,
+    strategy,
+    newMatchKeys: outcome?.newMatchKeys ?? [],
+  };
 }
 
 /** Internal: resolve a user's tier — gates the post-failure full extract */

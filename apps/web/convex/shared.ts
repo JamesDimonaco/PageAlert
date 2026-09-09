@@ -20,9 +20,47 @@ export const MAX_PROXY_BLOCKS = 2;
  */
 export const ERROR_RECOVERY_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
+/**
+ * How often a proxy-preferred monitor tries direct again. Without this a site
+ * that drops its anti-bot protection keeps costing Scrapfly credits forever.
+ * One wasted check in 20 is a cheap price for noticing.
+ */
+export const PROXY_REPROBE_EVERY = 20;
+
 /** One classifier for "the site refused us" across scheduler, scan errors, and operator tooling. */
 export function isBlockedError(message: string): boolean {
   return /blocking automated access|anti-bot|CAPTCHA|Cloudflare|Access denied|blocked/i.test(message);
+}
+
+/**
+ * Identity of a matched item, for deciding whether a match is new.
+ *
+ * Deliberately not `getItemKey` from @prowl/shared, which falls back to
+ * `title-price`. That key exists so the blacklist can pin an exact listing;
+ * here a price move on the same product must not read as a new match, or every
+ * repricing would email the user. Price changes have their own alert path.
+ */
+export function matchKey(item: Record<string, unknown>): string {
+  const url = item.url ? String(item.url).trim() : "";
+  if (url) return url;
+  return String(item.title ?? item.name ?? "").trim().toLowerCase();
+}
+
+/**
+ * Keys present now that were not present last time.
+ *
+ * `previous` being undefined means this monitor has no baseline yet — it
+ * predates match tracking, or this is its first extract. Returning nothing
+ * seeds the baseline silently instead of announcing every existing match as
+ * new, which would have emailed half the fleet the moment this shipped.
+ */
+export function newMatchKeys(
+  previous: string[] | undefined,
+  current: string[]
+): string[] {
+  if (previous === undefined) return [];
+  const seen = new Set(previous);
+  return [...new Set(current.filter((k) => k && !seen.has(k)))];
 }
 
 /** Hostname without www., or the raw string if it does not parse. */
