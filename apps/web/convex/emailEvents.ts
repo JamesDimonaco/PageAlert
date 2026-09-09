@@ -132,7 +132,11 @@ const EVENT_STATUS: Record<string, "delivered" | "bounced" | "complained"> = {
 /** Five minutes, matching Svix's own replay window. */
 const MAX_SIGNATURE_AGE_MS = 5 * 60 * 1000;
 
-/** How long an unmatched event is treated as a race rather than a stranger. */
+/**
+ * How long after an event was raised an unmatched id is treated as a race
+ * rather than a stranger. Svix's first two attempts land within ~5s, so this is
+ * comfortably wide enough for the send row to appear.
+ */
 const UNKNOWN_ID_RETRY_WINDOW_MS = 60 * 1000;
 
 export const handler = httpAction(async (ctx, request) => {
@@ -158,7 +162,7 @@ export const handler = httpAction(async (ctx, request) => {
   if (verified === null) return new Response("Webhook secret is malformed", { status: 503 });
   if (!verified) return new Response("Unauthorized", { status: 401 });
 
-  let payload: { type?: string; data?: { email_id?: string } };
+  let payload: { type?: string; created_at?: string; data?: { email_id?: string } };
   try {
     payload = JSON.parse(body);
   } catch {
@@ -176,7 +180,13 @@ export const handler = httpAction(async (ctx, request) => {
     // beat it here. Ask for a retry while that is still plausible; past the
     // window the id is genuinely one we never recorded, and retrying forever
     // would just make noise.
-    const raced = Date.now() - Number(svixTimestamp) * 1000 < UNKNOWN_ID_RETRY_WINDOW_MS;
+    //
+    // Measured from the event's own created_at, not svix-timestamp: Svix signs
+    // each delivery attempt afresh, so the header is always ~now and would keep
+    // this branch true through all eight retries. An unparseable created_at
+    // means there is nothing stable to bound the retries with, so give up.
+    const eventTime = Date.parse(payload.created_at ?? "");
+    const raced = Number.isFinite(eventTime) && Date.now() - eventTime < UNKNOWN_ID_RETRY_WINDOW_MS;
     console.warn("[email-events] no send row for", resendId, raced ? "— asking for a retry" : "— giving up");
     if (raced) return new Response("Send not recorded yet", { status: 503 });
   }
