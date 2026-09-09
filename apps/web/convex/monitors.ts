@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query, internalAction, internalQuery } from "./_generated/server";
 import { internal } from "./_generated/api";
-import { ERROR_RECOVERY_INTERVAL_MS, intervalToMs, isBlockedError, MAX_RETRIES, validateMonitorUrl } from "./shared";
+import { effectiveIntervalMs, ERROR_RECOVERY_INTERVAL_MS, intervalToMs, isBlockedError, MAX_RETRIES, validateMonitorUrl } from "./shared";
 import { effectiveTier } from "./tiers";
 
 // ---- Resource Limits ----
@@ -258,7 +258,7 @@ export const saveScanResult = mutation({
       lastCheckedAt: now,
       lastMatchAt: matchCount > 0 ? now : undefined,
       lastAiExtractAt: now,
-      nextCheckAt: now + intervalToMs(monitor.checkInterval),
+      nextCheckAt: now + effectiveIntervalMs(monitor),
       // A scan reports its own matches to the user, and only carries a count,
       // not the matched items. Drop the baseline so the next scheduled extract
       // re-seeds it silently rather than re-announcing what the scan just
@@ -423,7 +423,10 @@ export const update = mutation({
 
     // Recompute nextCheckAt when interval changes so it takes effect immediately
     if (fields.checkInterval !== undefined) {
-      updates.nextCheckAt = now + intervalToMs(fields.checkInterval);
+      updates.nextCheckAt = now + effectiveIntervalMs({
+        checkInterval: fields.checkInterval,
+        proxyPreferred: existing.proxyPreferred,
+      });
       // This un-parks a monitor parked for repeated proxy blocks. Give it a
       // fresh budget, or the next single block re-parks it and sends a second
       // "checks stopped" email.

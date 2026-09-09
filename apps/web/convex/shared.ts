@@ -142,3 +142,21 @@ export function intervalToMs(interval: string): number {
   };
   return map[interval] ?? 60 * 60_000;
 }
+
+/**
+ * Slowest cadence a site that only answers through the proxy is allowed to
+ * run at. Every check on such a monitor spends a Scrapfly call, so an hourly
+ * one burns the monthly budget six times faster than a six-hourly one — and
+ * that budget is shared, so a handful of blocked sites can starve escalation
+ * for everyone. A site earns its way back off via PROXY_REPROBE_EVERY.
+ */
+export const PROXY_MIN_INTERVAL_MS = 6 * 60 * 60_000;
+
+/** How long until this monitor's next check, with the proxy floor applied */
+export function effectiveIntervalMs(monitor: {
+  checkInterval: string;
+  proxyPreferred?: boolean;
+}): number {
+  const base = intervalToMs(monitor.checkInterval);
+  return monitor.proxyPreferred === true ? Math.max(base, PROXY_MIN_INTERVAL_MS) : base;
+}
