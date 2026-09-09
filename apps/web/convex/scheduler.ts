@@ -84,9 +84,11 @@ const AI_REEXTRACT_AFTER_MS = 14 * 24 * 60 * 60 * 1000;
  * Unlike the per-tier cooldown this replaces (#49), it applies to free too.
  */
 function shouldEscalateToAI(monitor: { lastAiExtractAt?: number; _creationTime: number }): boolean {
-  // Rows written before this field was revived fall back to their creation
-  // time. Without that, an absent stamp would read as "due" and every monitor
-  // in the fleet would re-extract at once on deploy.
+  // Rows with no stamp fall back to their creation time — without that, an
+  // absent value would read as "due". Rows still carrying a stamp from the
+  // pre-#49 cooldown are months stale and do all refresh shortly after this
+  // ships; that is one AI call each, spread across their own cadences, and
+  // those schemas are four months old anyway.
   const lastExtract = monitor.lastAiExtractAt ?? monitor._creationTime;
   return Date.now() - lastExtract >= AI_REEXTRACT_AFTER_MS;
 }
@@ -148,6 +150,9 @@ export const recordCheckResult = internalMutation({
     trackMatchKeys: v.optional(v.boolean()),
     // Whether this check went through the proxy — drives proxyPreferred.
     usedProxy: v.optional(v.boolean()),
+    // The AI re-read the page on this check. Set even when the extract came
+    // back too weak to use, because the call was still paid for.
+    aiExtracted: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const monitor = await ctx.db.get(args.monitorId);
@@ -214,9 +219,11 @@ export const recordCheckResult = internalMutation({
       lastError: undefined,
     };
 
-    // A schema on this result means the AI re-read the page, whatever brought
-    // it here — drift refresh, forced retry, or rescan. Restart the clock.
-    if (args.schema) {
+    // Restart the drift clock whenever the AI read the page, whatever brought
+    // it here and whatever came back. Stamping only on a usable schema would
+    // leave a monitor that keeps extracting badly permanently past its
+    // refresh deadline, re-extracting on every single check.
+    if (args.aiExtracted) {
       updates.lastAiExtractAt = now;
     }
 
@@ -1044,6 +1051,7 @@ async function runFullExtract(
       matchCount: monitor.matchCount ?? 0,
       totalItems: 0,
       matches: [],
+      aiExtracted: true,
       // No error field — informational, not retry-worthy
     });
     return { hasMatch: false, matchCount: 0, matches: [], totalItems: null, strategy };
@@ -1068,6 +1076,7 @@ async function runFullExtract(
     contentFingerprint: contentHash,
     trackMatchKeys: true,
     usedProxy: useProxy,
+    aiExtracted: true,
   });
 
   console.log(`[scheduler] Full re-extract ${monitor._id}: ${totalItems} items, ${matchCount} matches (${allMatches.length - matchCount} blacklisted)`);
