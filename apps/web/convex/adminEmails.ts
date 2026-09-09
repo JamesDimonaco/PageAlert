@@ -15,10 +15,18 @@ const stepValidator = v.union(v.literal("day0"), v.literal("day1"), v.literal("d
 type Step = "day0" | "day1" | "day3" | "day7";
 const STEPS: Step[] = ["day0", "day1", "day3", "day7"];
 
-// Per (step, status) read cap for the queue overview. Generous relative to
-// real queue depth (four rows per signup), so hitting it at all is itself
-// a signal worth surfacing to the admin.
-const QUEUE_SAMPLE_CAP = 2000;
+/**
+ * Per (step, status) read cap for the queue overview.
+ *
+ * Counting rows means reading them, and this query reads four statuses across
+ * four steps — so the cap is really a sixteenth of a budget. Convex refuses a
+ * query past 16,384 documents, and `sent`, `skipped` and the never-processed
+ * day1/3/7 `pending` rows all grow with every signup, so a generous cap here
+ * would eventually take the whole tab down rather than degrade. 500 keeps the
+ * worst case at 8,000 and is far more depth than an operator needs to act on;
+ * `truncated` says when a column is showing a floor rather than a total.
+ */
+const QUEUE_SAMPLE_CAP = 500;
 
 export const emailQueue = query({
   args: {},
@@ -91,7 +99,9 @@ export const retireStaleQueued = mutation({
  * alert that already failed.
  */
 export const requeueFailed = mutation({
-  args: { step: stepValidator },
+  // day0 only: it is the sole step processDueEmails sends, so requeueing any
+  // other step would move a row that nothing will ever pick up.
+  args: { step: v.literal("day0") },
   handler: async (ctx, { step }) => {
     await requireAdmin(ctx);
     const found = await ctx.db
@@ -101,6 +111,9 @@ export const requeueFailed = mutation({
     const toRequeue = found.slice(0, BATCH_CAP);
     const now = Date.now();
     for (const row of toRequeue) {
+      // scheduledFor is rewritten so the row clears the staleness window and
+      // actually sends. Safe for day0, whose original time is signup time and
+      // carries no meaning once the send has already failed.
       await ctx.db.patch(row._id, { status: "pending", scheduledFor: now, error: undefined });
     }
     return { requeued: toRequeue.length, moreRemain: found.length > BATCH_CAP };

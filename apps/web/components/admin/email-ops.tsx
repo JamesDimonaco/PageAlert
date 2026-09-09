@@ -64,7 +64,9 @@ function OnboardingQueue() {
     }
   }
 
-  async function handleRequeue(step: Step) {
+  // day0 only — see requeueFailed in adminEmails.ts. Nothing sends the other
+  // steps yet, so requeueing one would move a row that never gets picked up.
+  async function handleRequeue(step: "day0") {
     const key = `requeue-${step}`;
     if (confirming !== key) {
       setConfirming(key);
@@ -139,15 +141,17 @@ function OnboardingQueue() {
                           {busy === `retire-${row.step}` && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
                           {confirming === `retire-${row.step}` ? "Confirm?" : `Retire ${row.stalePending} stale`}
                         </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          disabled={row.failed === 0 || busy !== null}
-                          onClick={() => handleRequeue(row.step)}
-                        >
-                          {busy === `requeue-${row.step}` && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                          {confirming === `requeue-${row.step}` ? "Confirm?" : `Requeue ${row.failed} failed`}
-                        </Button>
+                        {row.step === "day0" && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={row.failed === 0 || busy !== null}
+                            onClick={() => handleRequeue("day0")}
+                          >
+                            {busy === "requeue-day0" && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                            {confirming === "requeue-day0" ? "Confirm?" : `Requeue ${row.failed} failed`}
+                          </Button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -157,7 +161,7 @@ function OnboardingQueue() {
           </div>
         )}
         {data?.some((row) => row.truncated) && (
-          <p className="text-xs text-muted-foreground/70">* counts are capped at 2000 rows per status — the true number is at least this high.</p>
+          <p className="text-xs text-muted-foreground/70">* counts are capped at 500 rows per status — the true number is at least this high.</p>
         )}
       </CardContent>
     </Card>

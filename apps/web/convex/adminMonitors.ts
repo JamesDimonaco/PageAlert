@@ -21,17 +21,21 @@ export const parkedMonitors = query({
     await requireAdmin(ctx);
 
     // nextCheckAt: undefined is the parked signal, and undefined sorts before
-    // every number in the index — the same fact getMonitorsDue relies on. So
-    // parked monitors come first and the cap can only ever hide monitors that
-    // are still being retried, never the ones this page exists to show.
+    // every number in the index — the same fact getMonitorsDue relies on, so
+    // parked monitors come first.
+    //
+    // Anonymous scans sit in that same block: saveAnonymousError marks them
+    // "error" and they never had a nextCheckAt. Excluding them in the query
+    // rather than afterwards matters, because a scraper outage can leave
+    // hundreds of them and they would otherwise consume the whole take budget
+    // and hide the real parks — exactly when this page is worth opening.
     const errored = await ctx.db
       .query("monitors")
       .withIndex("by_status_nextCheckAt", (q) => q.eq("status", "error"))
+      .filter((q) => q.neq(q.field("isAnonymous"), true))
       .take(MAX_PARKED);
 
-    // Anonymous monitors also carry no nextCheckAt but were never scheduled in
-    // the first place, so they'd otherwise show up as false positives.
-    const parked = errored.filter((m) => m.nextCheckAt === undefined && !m.isAnonymous);
+    const parked = errored.filter((m) => m.nextCheckAt === undefined);
     parked.sort((a, b) => b.updatedAt - a.updatedAt);
 
     return parked.map((m) => ({
@@ -58,6 +62,10 @@ export const unparkMonitor = mutation({
     if (monitor.status !== "error" || monitor.nextCheckAt !== undefined) {
       throw new Error("This monitor is not parked");
     }
+    // An errored anonymous scan looks identical to a park. parkedMonitors
+    // filters them out, and this guard has to agree or the mutation would put
+    // an ownerless scan on the paid schedule until it expires.
+    if (monitor.isAnonymous) throw new Error("Anonymous scans cannot be un-parked");
 
     const now = Date.now();
     await ctx.db.patch(monitorId, {
