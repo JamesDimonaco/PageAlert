@@ -63,11 +63,11 @@ function detectChanges(previousItems: Record<string, unknown>[], currentItems: R
   return { added, removed, priceChanges, summary: parts.length > 0 ? parts.join(", ") : "No changes" };
 }
 
-const MAX_CONCURRENT_CHECKS = 5;
+const MAX_CONCURRENT_CHECKS = 10;
 
-// A monitor re-runs the AI extract once every this many completed checks, to
-// catch the page structure drifting away from the schema it was built from
-const AI_REEXTRACT_EVERY_N_CHECKS = 100;
+// How long a monitor's schema is trusted before the AI re-reads the page to
+// catch its structure drifting away from what the schema was built from
+const AI_REEXTRACT_AFTER_MS = 14 * 24 * 60 * 60 * 1000;
 
 /**
  * Decide whether a scheduled check should re-run the AI extract.
@@ -77,12 +77,18 @@ const AI_REEXTRACT_EVERY_N_CHECKS = 100;
  * their own triggers and do not come through here: an explicit rescan from the
  * monitor page, and the post-failure retry in runScheduledChecks. Everything
  * else waits for the drift refresh.
+ *
+ * Measured in elapsed time, not checks, so the bill doesn't scale with how
+ * often a monitor is checked — the earlier count-based rule meant an hourly
+ * monitor re-extracted six times as often as a six-hourly one for no gain.
+ * Unlike the per-tier cooldown this replaces (#49), it applies to free too.
  */
-function shouldEscalateToAI(monitor: { checkCount?: number }): boolean {
-  // checkCount is incremented by recordCheckResult after this runs, so count
-  // the check in flight or the boundary is missed
-  const completedChecks = (monitor.checkCount ?? 0) + 1;
-  return completedChecks % AI_REEXTRACT_EVERY_N_CHECKS === 0;
+function shouldEscalateToAI(monitor: { lastAiExtractAt?: number; _creationTime: number }): boolean {
+  // Rows written before this field was revived fall back to their creation
+  // time. Without that, an absent stamp would read as "due" and every monitor
+  // in the fleet would re-extract at once on deploy.
+  const lastExtract = monitor.lastAiExtractAt ?? monitor._creationTime;
+  return Date.now() - lastExtract >= AI_REEXTRACT_AFTER_MS;
 }
 
 /** Query monitors that are due for a check */
@@ -207,6 +213,12 @@ export const recordCheckResult = internalMutation({
       updatedAt: now,
       lastError: undefined,
     };
+
+    // A schema on this result means the AI re-read the page, whatever brought
+    // it here — drift refresh, forced retry, or rescan. Restart the clock.
+    if (args.schema) {
+      updates.lastAiExtractAt = now;
+    }
 
     if (args.matchCount > 0 && !args.unchanged) {
       updates.lastMatchAt = now;
@@ -890,7 +902,7 @@ async function runQuickCheck(
   // Content changed (or no fingerprint stored yet). The AI only re-reads the
   // page on the drift refresh — see shouldEscalateToAI.
   if (shouldEscalateToAI(monitor)) {
-    console.log(`[scheduler] Quick check ${monitor._id}: check ${(monitor.checkCount ?? 0) + 1}, running AI drift re-extract`);
+    console.log(`[scheduler] Quick check ${monitor._id}: schema is stale, running AI drift re-extract`);
     return runFullExtract(ctx, monitor, scraperUrl, scraperKey, retryAttempt, {
       // Page was fetched and accessible moments ago — skip the redundant pre-check
       skipQuickCheck: true,

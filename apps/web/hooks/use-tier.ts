@@ -17,10 +17,10 @@ export const TIER_LIMITS: Record<Tier, {
 }> = {
   free: {
     maxMonitors: 3,
-    minInterval: "6h",
+    minInterval: "1h",
     channels: ["email"],
-    description: "3 monitors, 6 hour checks, email only",
-    allowedIntervals: ["6h", "24h"],
+    description: "3 monitors, hourly checks, email only",
+    allowedIntervals: ["1h", "6h", "24h"],
   },
   pro: {
     maxMonitors: 25,

@@ -12,7 +12,7 @@ const MAX_RESULTS_LIMIT = 100;
 type Tier = "free" | "pro" | "max";
 
 const TIER_LIMITS: Record<Tier, { maxMonitors: number; allowedIntervals: string[] }> = {
-  free: { maxMonitors: 3, allowedIntervals: ["6h", "24h"] },
+  free: { maxMonitors: 3, allowedIntervals: ["1h", "6h", "24h"] },
   pro: { maxMonitors: 25, allowedIntervals: ["15m", "30m", "1h", "6h", "24h"] },
   max: { maxMonitors: 9999, allowedIntervals: ["5m", "15m", "30m", "1h", "6h", "24h"] },
 };
@@ -257,6 +257,7 @@ export const saveScanResult = mutation({
       proxyBlockCount: 0,
       lastCheckedAt: now,
       lastMatchAt: matchCount > 0 ? now : undefined,
+      lastAiExtractAt: now,
       nextCheckAt: now + intervalToMs(monitor.checkInterval),
       // A scan reports its own matches to the user, and only carries a count,
       // not the matched items. Drop the baseline so the next scheduled extract

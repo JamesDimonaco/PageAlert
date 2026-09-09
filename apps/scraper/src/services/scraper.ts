@@ -4,8 +4,13 @@ import { validateUrlForScraping } from "../utils/url-validation.js";
 
 let browser: Browser | null = null;
 
-/** Maximum number of concurrent browser contexts to prevent resource exhaustion */
-const MAX_CONCURRENT_CONTEXTS = 10;
+/**
+ * Maximum number of concurrent browser contexts to prevent resource exhaustion.
+ * Requests past this are rejected, not queued, so it has to stay ahead of the
+ * scheduler's MAX_CONCURRENT_CHECKS — a check can outlive the one-minute cron
+ * tick, so two dispatches can be in flight at once.
+ */
+const MAX_CONCURRENT_CONTEXTS = 20;
 let activeContexts = 0;
 
 /** Maximum response body size (5MB) to prevent memory exhaustion */
