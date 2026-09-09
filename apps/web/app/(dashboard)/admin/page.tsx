@@ -5,8 +5,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AdminOverview } from "@/components/admin/overview";
 import { AdminUsersTable } from "@/components/admin/users-table";
 import { AdminEmailComposer } from "@/components/admin/email-composer";
+import { AdminEmailOps } from "@/components/admin/email-ops";
+import { AdminMonitorOps } from "@/components/admin/monitor-ops";
 
-type AdminTab = "overview" | "users" | "email";
+type AdminTab = "overview" | "users" | "email" | "queue" | "monitors";
 
 export default function AdminPage() {
   const [tab, setTab] = useState<AdminTab>("overview");
@@ -22,7 +24,7 @@ export default function AdminPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Admin</h1>
-        <p className="text-sm text-muted-foreground mt-1">Users, revenue, monitors, and outbound email.</p>
+        <p className="text-sm text-muted-foreground mt-1">Users, revenue, monitors, outbound email, and delivery.</p>
       </div>
 
       <Tabs value={tab} onValueChange={(v) => setTab(v as AdminTab)}>
@@ -32,6 +34,8 @@ export default function AdminPage() {
           <TabsTrigger value="email">
             Email{selectedIds.size > 0 ? ` (${selectedIds.size})` : ""}
           </TabsTrigger>
+          <TabsTrigger value="queue">Delivery</TabsTrigger>
+          <TabsTrigger value="monitors">Stopped</TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview" className="mt-6" keepMounted>
@@ -54,6 +58,12 @@ export default function AdminPage() {
             onSubjectChange={setSubject}
             onBodyChange={setBody}
           />
+        </TabsContent>
+        <TabsContent value="queue" className="mt-6" keepMounted>
+          <AdminEmailOps />
+        </TabsContent>
+        <TabsContent value="monitors" className="mt-6" keepMounted>
+          <AdminMonitorOps />
         </TabsContent>
       </Tabs>
     </div>

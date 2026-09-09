@@ -434,8 +434,12 @@ async function callerAdminEmail(ctx: AnyCtx): Promise<string | null> {
   return email;
 }
 
-/** Throws unless the caller's email is in SUPER_ADMIN_EMAILS. Returns that email. */
-async function requireAdmin(ctx: AnyCtx): Promise<string> {
+/**
+ * Throws unless the caller's email is in SUPER_ADMIN_EMAILS. Returns that email.
+ * Exported so the adminEmails/adminMonitors modules gate on the same allow-list
+ * rather than each keeping its own copy of the check.
+ */
+export async function requireAdmin(ctx: AnyCtx): Promise<string> {
   const email = await callerAdminEmail(ctx);
   if (!email) throw new Error("Not authorised");
   return email;

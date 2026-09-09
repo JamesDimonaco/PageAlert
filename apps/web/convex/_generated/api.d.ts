@@ -10,6 +10,8 @@
 
 import type * as account from "../account.js";
 import type * as admin from "../admin.js";
+import type * as adminEmails from "../adminEmails.js";
+import type * as adminMonitors from "../adminMonitors.js";
 import type * as anonymous from "../anonymous.js";
 import type * as crons from "../crons.js";
 import type * as discord from "../discord.js";
@@ -38,6 +40,8 @@ import type {
 declare const fullApi: ApiFromModules<{
   account: typeof account;
   admin: typeof admin;
+  adminEmails: typeof adminEmails;
+  adminMonitors: typeof adminMonitors;
   anonymous: typeof anonymous;
   crons: typeof crons;
   discord: typeof discord;
