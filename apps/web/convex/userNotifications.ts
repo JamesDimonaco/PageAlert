@@ -77,7 +77,7 @@ export const create = internalMutation({
   args: {
     userId: v.string(),
     monitorId: v.id("monitors"),
-    channel: v.union(v.literal("in_app"), v.literal("email"), v.literal("telegram"), v.literal("discord")),
+    channel: v.union(v.literal("in_app"), v.literal("email"), v.literal("telegram"), v.literal("discord"), v.literal("push")),
     title: v.string(),
     message: v.string(),
   },

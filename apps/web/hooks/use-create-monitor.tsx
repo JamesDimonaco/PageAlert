@@ -12,6 +12,7 @@ import { useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { CreateMonitorSheet } from "@/components/prowl/create-monitor-sheet";
+import type { Channel } from "@/components/prowl/channel-selector";
 import { toast } from "sonner";
 import { trackMonitorCreated, trackScanStarted, trackScanCompleted, trackScanFailed } from "@/lib/posthog";
 
@@ -92,7 +93,7 @@ export function CreateMonitorProvider({ children }: { children: ReactNode }) {
       url: string;
       prompt: string;
       checkInterval: "5m" | "15m" | "30m" | "1h" | "6h" | "24h";
-      notificationChannels?: ("email" | "telegram" | "discord")[];
+      notificationChannels?: Channel[];
     }) => {
       if (isSubmittingRef.current) return;
       isSubmittingRef.current = true;

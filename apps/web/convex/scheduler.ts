@@ -206,6 +206,17 @@ export const recordCheckResult = internalMutation({
       return { parked: false, newMatchKeys: [] as string[] };
     }
 
+    // Remember whether this site needs the proxy at all. A direct success
+    // clears the flag, which is also how the periodic re-probe takes effect.
+    // Computed before the reschedule below, or the check that first flips a
+    // site to proxy-preferred would still book itself an un-floored slot.
+    const nextProxyPreferred =
+      args.usedProxy === true
+        ? isBlockedError(monitor.lastError ?? "") || monitor.proxyPreferred === true
+        : args.usedProxy === false
+          ? false
+          : monitor.proxyPreferred;
+
     // Success
     const updates: Record<string, unknown> = {
       status: "active",
@@ -214,10 +225,16 @@ export const recordCheckResult = internalMutation({
       retryCount: 0,
       proxyBlockCount: 0,
       lastCheckedAt: now,
-      nextCheckAt: now + effectiveIntervalMs(monitor),
+      nextCheckAt: now + effectiveIntervalMs({
+        checkInterval: monitor.checkInterval,
+        proxyPreferred: nextProxyPreferred,
+      }),
       updatedAt: now,
       lastError: undefined,
     };
+    if (nextProxyPreferred !== monitor.proxyPreferred) {
+      updates.proxyPreferred = nextProxyPreferred;
+    }
 
     // Restart the drift clock whenever the AI read the page, whatever brought
     // it here and whatever came back. Stamping only on a usable schema would
@@ -237,18 +254,6 @@ export const recordCheckResult = internalMutation({
 
     if (args.contentFingerprint) {
       updates.contentFingerprint = args.contentFingerprint;
-    }
-
-    // Remember whether this site needs the proxy at all. A direct success
-    // clears the flag, which is also how the periodic re-probe takes effect.
-    const nextProxyPreferred =
-      args.usedProxy === true
-        ? isBlockedError(monitor.lastError ?? "") || monitor.proxyPreferred === true
-        : args.usedProxy === false
-          ? false
-          : monitor.proxyPreferred;
-    if (nextProxyPreferred !== monitor.proxyPreferred) {
-      updates.proxyPreferred = nextProxyPreferred;
     }
 
     // Which of this check's matches the user has not been told about. Computed
@@ -319,6 +324,13 @@ export const runScheduledChecks = internalAction({
     if (monitors.length === 0) return;
 
     console.log(`[scheduler] ${monitors.length} monitor(s) due for check`);
+    if (monitors.length >= MAX_CONCURRENT_CHECKS) {
+      // Every slot filled means more was due than could be dispatched. Sustained,
+      // it means real intervals are stretching past what the plan promises.
+      console.warn(
+        `[scheduler] dispatch saturated at ${MAX_CONCURRENT_CHECKS}/min — checks are running late`
+      );
+    }
 
     // Run checks concurrently (up to MAX_CONCURRENT_CHECKS)
     const results = await Promise.allSettled(
@@ -436,6 +448,18 @@ export const runScheduledChecks = internalAction({
                 title: `${freshMonitor.name} — ${newCount} new match${plural}`,
                 message: `Found ${newCount} new match${plural} out of ${displayTotalItems} items on ${freshMonitor.url}`,
               }).catch(() => {});
+
+              // Push. No settings lookup — a user's devices are the target,
+              // and push.ts resolves them. Same wording as the in-app card.
+              if (shouldSend("push")) {
+                await ctx.runAction(internal.push.sendToUser, {
+                  userId: freshMonitor.userId,
+                  monitorId: freshMonitor._id,
+                  title: `${freshMonitor.name} — ${newCount} new match${plural}`,
+                  body: `${newCount} new match${plural} out of ${displayTotalItems} items on ${displayHost(freshMonitor.url)}`,
+                  kind: "match",
+                }).catch(() => {});
+              }
 
               // Send email
               if (shouldSend("email") && freshMonitor.userEmail) {
@@ -637,6 +661,18 @@ export const runScheduledChecks = internalAction({
                             title,
                             message: significantChanges.map((pc) => `${pc.title}: $${pc.oldPrice} → $${pc.newPrice}`).join(", "),
                           }).catch(() => {});
+
+                          if (shouldSend("push")) {
+                            await ctx.runAction(internal.push.sendToUser, {
+                              userId: freshMonitor.userId,
+                              monitorId: freshMonitor._id,
+                              title,
+                              body: significantChanges
+                                .map((pc) => `${pc.title}: $${pc.oldPrice} → $${pc.newPrice}`)
+                                .join(", "),
+                              kind: "price",
+                            }).catch(() => {});
+                          }
                         }
 
                         console.log(`[scheduler] Price alert sent for ${freshMonitor._id}: ${significantChanges.length} changes, variant=${variant}`);
@@ -735,6 +771,19 @@ export const runScheduledChecks = internalAction({
                 title: `${freshErrMonitor.name} — ${parked ? "Checks stopped" : "Error"}`,
                 message: parked ? (freshErrMonitor.lastError ?? msg) : msg,
               }).catch(() => {});
+
+              // A park overrides channel selection on push for the same reason
+              // it does on email below: it is the last thing we will ever say
+              // about this monitor, so it should not be silently suppressed.
+              if (parked || shouldSend("push")) {
+                await ctx.runAction(internal.push.sendToUser, {
+                  userId: freshErrMonitor.userId,
+                  monitorId: freshErrMonitor._id,
+                  title: `${freshErrMonitor.name} — ${parked ? "Checks stopped" : "Error"}`,
+                  body: parked ? (freshErrMonitor.lastError ?? msg) : msg,
+                  kind: "error",
+                }).catch(() => {});
+              }
 
               // Email is the one channel a park overrides selection on: it is the
               // only one every user has. Telegram and Discord stay opt-in below,

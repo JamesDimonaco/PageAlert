@@ -13,7 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import { ChannelSelector } from "@/components/prowl/channel-selector";
+import { ChannelSelector, type Channel } from "@/components/prowl/channel-selector";
 import { Separator } from "@/components/ui/separator";
 import { IntervalSelector } from "@/components/prowl/interval-selector";
 import {
@@ -56,7 +56,7 @@ interface CreateMonitorSheetProps {
     url: string;
     prompt: string;
     checkInterval: CheckInterval;
-    notificationChannels?: ("email" | "telegram" | "discord")[];
+    notificationChannels?: Channel[];
   }) => void;
   onCancelScan: () => void;
   onConfirm: () => void;
@@ -81,7 +81,7 @@ export function CreateMonitorSheet({
   const [url, setUrl] = useState("");
   const [prompt, setPrompt] = useState("");
   const [checkInterval, setCheckInterval] = useState<CheckInterval>("1h");
-  const [channels, setChannels] = useState<("email" | "telegram" | "discord")[]>(["email"]);
+  const [channels, setChannels] = useState<Channel[]>(["email"]);
   // Guidance only — the mode steers the prompt copy, never what gets scraped
   const [mode, setMode] = useState<MonitorModeId | null>(null);
   // True when the form was just hydrated from a saved draft, used to show
@@ -129,6 +129,7 @@ export function CreateMonitorSheet({
 
   // Default channels to all configured channels
   const notifSettings = useQuery(api.notificationSettings.list);
+  const pushDevices = useQuery(api.pushSubscriptions.deviceCount);
 
   // Reset (or hydrate from draft) when the sheet opens for a new monitor.
   // Hydration takes precedence over reset so users who navigated away
@@ -148,7 +149,11 @@ export function CreateMonitorSheet({
       } else {
         resetForm();
         // Set default channels to all configured ones
-        const configured: ("email" | "telegram" | "discord")[] = ["email"];
+        const configured: Channel[] = ["email"];
+        // Push has no settings row — a registered device is what makes it
+        // available, and a new monitor should use it without being asked
+        // twice. Leaving it out meant enabling push in Settings did nothing.
+        if ((pushDevices ?? 0) > 0) configured.push("push");
         if (notifSettings) {
           for (const s of notifSettings) {
             if (s.enabled && (s.channel === "telegram" || s.channel === "discord")) {
@@ -161,7 +166,7 @@ export function CreateMonitorSheet({
       }
     }
     prevOpenRef.current = open;
-  }, [open, activeMonitorId, isScanning, notifSettings]);
+  }, [open, activeMonitorId, isScanning, notifSettings, pushDevices]);
 
   // Debounced persistence of the draft. Only writes when the form has
   // some content; the writeMonitorDraft helper short-circuits empty drafts.

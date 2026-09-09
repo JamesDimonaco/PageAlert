@@ -23,9 +23,13 @@ export const ERROR_RECOVERY_INTERVAL_MS = 6 * 60 * 60 * 1000;
 /**
  * How often a proxy-preferred monitor tries direct again. Without this a site
  * that drops its anti-bot protection keeps costing Scrapfly credits forever.
- * One wasted check in 20 is a cheap price for noticing.
+ *
+ * Counted in checks, and proxy-preferred monitors are floored at
+ * PROXY_MIN_INTERVAL_MS, so this is really "every N x 6 hours". At 20 that was
+ * five days of paying Scrapfly for a site that may have dropped its WAF on day
+ * one; 8 brings it back to about two.
  */
-export const PROXY_REPROBE_EVERY = 20;
+export const PROXY_REPROBE_EVERY = 8;
 
 /** One classifier for "the site refused us" across scheduler, scan errors, and operator tooling. */
 export function isBlockedError(message: string): boolean {

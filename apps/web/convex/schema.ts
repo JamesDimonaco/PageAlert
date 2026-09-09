@@ -49,7 +49,8 @@ export default defineSchema({
     notificationChannels: v.optional(v.array(v.union(
       v.literal("email"),
       v.literal("telegram"),
-      v.literal("discord")
+      v.literal("discord"),
+      v.literal("push")
     ))),
     isAnonymous: v.optional(v.boolean()),
     anonymousEmail: v.optional(v.string()),
@@ -110,7 +111,8 @@ export default defineSchema({
       v.literal("in_app"),
       v.literal("email"),
       v.literal("telegram"),
-      v.literal("discord")
+      v.literal("discord"),
+      v.literal("push")
     ),
     title: v.string(),
     message: v.string(),
@@ -181,6 +183,21 @@ export default defineSchema({
     reviewDismissed: v.optional(v.boolean()),
     updatedAt: v.number(),
   }).index("by_userId", ["userId"]),
+
+  // One row per device a user has granted push permission on. Unlike the other
+  // channels there is no notificationSettings row: having a live subscription
+  // is what "push is on" means, the same way email keys off userEmail.
+  // Endpoints die silently, so a 404/410 from the push service deletes the row.
+  pushSubscriptions: defineTable({
+    userId: v.string(),
+    endpoint: v.string(),
+    p256dh: v.string(),
+    auth: v.string(),
+    userAgent: v.optional(v.string()),
+    createdAt: v.number(),
+  })
+    .index("by_userId", ["userId"])
+    .index("by_endpoint", ["endpoint"]),
 
   channelClaims: defineTable({
     channel: v.union(v.literal("telegram"), v.literal("discord")),

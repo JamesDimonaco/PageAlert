@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label";
 import { AiInsightsCard } from "@/components/prowl/ai-insights";
 import { PriceAlertCard } from "@/components/prowl/price-alert-card";
 import { IntervalSelector } from "@/components/prowl/interval-selector";
-import { ChannelSelector } from "@/components/prowl/channel-selector";
+import { ChannelSelector, type Channel } from "@/components/prowl/channel-selector";
 import {
   ExternalLink,
   Clock,
@@ -115,8 +115,8 @@ export function OverviewTab({ monitorId, monitor, matches, allItems, totalItems,
   const proxyFloored =
     monitor.proxyPreferred === true &&
     ["5m", "15m", "30m", "1h"].includes(monitor.checkInterval);
-  const [editChannels, setEditChannels] = useState<("email" | "telegram" | "discord")[]>(
-    (monitor.notificationChannels as ("email" | "telegram" | "discord")[]) ?? ["email"]
+  const [editChannels, setEditChannels] = useState<Channel[]>(
+    (monitor.notificationChannels as Channel[]) ?? ["email"]
   );
   const [channelsTouched, setChannelsTouched] = useState(false);
 
@@ -155,7 +155,7 @@ export function OverviewTab({ monitorId, monitor, matches, allItems, totalItems,
     setEditName(monitor.name);
     setEditPrompt(monitor.prompt);
     setEditInterval(monitor.checkInterval as "5m" | "15m" | "30m" | "1h" | "6h" | "24h");
-    setEditChannels((monitor.notificationChannels as ("email" | "telegram" | "discord")[]) ?? ["email"]);
+    setEditChannels((monitor.notificationChannels as Channel[]) ?? ["email"]);
     setChannelsTouched(false);
     setEditing(true);
   }
