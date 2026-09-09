@@ -1,6 +1,8 @@
-import { Zap, Globe, Bell, Shield, Github, Radar } from "lucide-react";
+import { Zap, Shield, Github, Radar } from "lucide-react";
 import Link from "next/link";
 import { PLANS } from "@/lib/plans";
+import { MONITOR_MODES } from "@/lib/monitor-modes";
+import { FAQ } from "@/lib/faq";
 import { LandingNav } from "@/components/prowl/landing-nav";
 import { HeroCTA } from "@/components/prowl/hero-cta";
 import { MonitorCountBadge } from "@/components/prowl/monitor-count-badge";
@@ -92,43 +94,26 @@ export default function LandingPage() {
         <section id="how-it-works" className="border-t border-border/30 bg-card/20 scroll-mt-20">
           <div className="mx-auto max-w-7xl px-4 sm:px-6 py-16 sm:py-28">
             <div className="mx-auto max-w-2xl text-center mb-16">
-              <h2 className="text-3xl font-bold tracking-tight leading-tight">How it works</h2>
+              <h2 className="text-3xl font-bold tracking-tight leading-tight">Three ways to watch a page</h2>
               <p className="mt-4 text-muted-foreground leading-relaxed">
-                No CSS selectors. No code. No setup that breaks when pages change.
+                Paste a URL, pick what kind of thing you&apos;re watching, and describe it in
+                plain English. No CSS selectors, no code, nothing that breaks when a site
+                redesigns. Alerts arrive by email, Telegram or Discord.
               </p>
             </div>
 
             <div className="grid gap-8 md:grid-cols-3">
-              {[
-                {
-                  icon: Globe,
-                  title: "Paste any URL",
-                  description:
-                    "Works with any website. Product pages, stock listings, job boards, classified ads — if it's on the web, PageAlert can watch it.",
-                },
-                {
-                  icon: Zap,
-                  title: "Describe in plain English",
-                  description:
-                    "No CSS selectors or XPath. Just describe what you're looking for like you'd tell a friend. AI handles the extraction.",
-                },
-                {
-                  icon: Bell,
-                  title: "Get notified instantly",
-                  description:
-                    "Telegram, Discord, or email. Choose your channel and get alerted the moment your conditions are met.",
-                },
-              ].map((feature) => (
+              {MONITOR_MODES.map((mode) => (
                 <div
-                  key={feature.title}
+                  key={mode.id}
                   className="rounded-xl border-t-2 border-t-primary/30 border border-border/30 bg-card/50 p-8 shadow-md shadow-black/5 backdrop-blur transition-all hover:shadow-lg hover:shadow-black/10 hover:border-primary/20"
                 >
                   <div className="mb-5 flex h-12 w-12 items-center justify-center rounded-lg bg-primary/10">
-                    <feature.icon className="h-6 w-6 text-primary" />
+                    <mode.icon className="h-6 w-6 text-primary" />
                   </div>
-                  <h3 className="text-lg font-semibold mb-3">{feature.title}</h3>
+                  <h3 className="text-lg font-semibold mb-3">{mode.label}</h3>
                   <p className="text-sm text-muted-foreground leading-relaxed">
-                    {feature.description}
+                    {mode.description}
                   </p>
                 </div>
               ))}
@@ -197,32 +182,7 @@ export default function LandingPage() {
               <h2 className="text-2xl sm:text-3xl font-bold tracking-tight leading-tight">Frequently asked questions</h2>
             </div>
             <div className="space-y-6">
-              {[
-                {
-                  q: "How does PageAlert work?",
-                  a: "Paste a URL, describe what you're looking for in plain English (like 'MacBook Pro under $1500'), and PageAlert uses AI to understand the page, extract products and data, and monitor it automatically. You get notified via email when your conditions are met.",
-                },
-                {
-                  q: "What kind of websites can I monitor?",
-                  a: "Any website — product pages, stock listings, job boards, classified ads, real estate, auction sites, and more. If it's on the web and has data you care about, PageAlert can watch it.",
-                },
-                {
-                  q: "Do I need to know CSS selectors or coding?",
-                  a: "No. Traditional monitoring tools like Visualping or Distill require you to select page elements that break when sites update their layout. PageAlert uses AI to re-read the page every time — no selectors to maintain, nothing breaks when a site redesigns.",
-                },
-                {
-                  q: "How often does PageAlert check my pages?",
-                  a: "Check frequency depends on your plan. Free accounts check every 6 hours, Pro every 15 minutes, and Max every 5 minutes. You choose the frequency per monitor.",
-                },
-                {
-                  q: "How will I be notified when something changes?",
-                  a: "Email notifications are included on all plans. Pro and Max plans also support Telegram and Discord notifications. You'll receive detailed alerts with what matched, prices, and direct links.",
-                },
-                {
-                  q: "Is there a free plan?",
-                  a: "Yes! The free plan includes 3 monitors with 6-hour check intervals and email notifications. No credit card required to get started.",
-                },
-              ].map((faq) => (
+              {FAQ.map((faq) => (
                 <details key={faq.q} className="group rounded-xl border border-border/30 bg-card/50 shadow-sm">
                   <summary className="flex cursor-pointer items-center justify-between p-4 sm:p-6 text-sm sm:text-base font-semibold [&::-webkit-details-marker]:hidden">
                     {faq.q}

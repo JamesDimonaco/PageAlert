@@ -8,6 +8,7 @@ import { PostHogProvider } from "@/components/posthog-provider";
 import { getToken } from "@/lib/auth-server";
 import { Suspense } from "react";
 import { buildOffersJsonLd } from "@/lib/plans";
+import { buildFaqJsonLd } from "@/lib/faq";
 import "./globals.css";
 
 const inter = Inter({
@@ -129,48 +130,7 @@ const jsonLd = {
 const faqJsonLd = {
   "@context": "https://schema.org",
   "@type": "FAQPage",
-  mainEntity: [
-    {
-      "@type": "Question",
-      name: "How does PageAlert work?",
-      acceptedAnswer: {
-        "@type": "Answer",
-        text: "Paste a URL, describe what you're looking for in plain English, and PageAlert uses AI to understand the page, extract products and data, and monitor it automatically. You get notified via email when your conditions are met.",
-      },
-    },
-    {
-      "@type": "Question",
-      name: "What kind of websites can I monitor?",
-      acceptedAnswer: {
-        "@type": "Answer",
-        text: "Any website — product pages, stock listings, job boards, classified ads, real estate, auction sites, and more. If it's on the web and has data you care about, PageAlert can watch it.",
-      },
-    },
-    {
-      "@type": "Question",
-      name: "Do I need to know CSS selectors or coding?",
-      acceptedAnswer: {
-        "@type": "Answer",
-        text: "No. Unlike traditional web monitoring tools, PageAlert uses AI to understand pages. Just describe what you want in plain English — no CSS selectors, XPath, or code required.",
-      },
-    },
-    {
-      "@type": "Question",
-      name: "How often does PageAlert check my pages?",
-      acceptedAnswer: {
-        "@type": "Answer",
-        text: "Check frequency depends on your plan. Free accounts check every 6 hours, Pro every 15 minutes, and Max every 5 minutes.",
-      },
-    },
-    {
-      "@type": "Question",
-      name: "Is there a free plan?",
-      acceptedAnswer: {
-        "@type": "Answer",
-        text: "Yes! The free plan includes 3 monitors with 6-hour check intervals and email notifications. No credit card required to get started.",
-      },
-    },
-  ],
+  mainEntity: buildFaqJsonLd(),
 };
 
 const orgJsonLd = {

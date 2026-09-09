@@ -42,6 +42,7 @@ import {
   clearMonitorDraft,
 } from "@/lib/monitor-draft";
 import { trackMonitorDraftRestored, trackMonitorDraftCleared } from "@/lib/posthog";
+import { MONITOR_MODES, type MonitorModeId } from "@/lib/monitor-modes";
 
 type CheckInterval = "5m" | "15m" | "30m" | "1h" | "6h" | "24h";
 
@@ -81,6 +82,8 @@ export function CreateMonitorSheet({
   const [prompt, setPrompt] = useState("");
   const [checkInterval, setCheckInterval] = useState<CheckInterval>("6h");
   const [channels, setChannels] = useState<("email" | "telegram" | "discord")[]>(["email"]);
+  // Guidance only — the mode steers the prompt copy, never what gets scraped
+  const [mode, setMode] = useState<MonitorModeId | null>(null);
   // True when the form was just hydrated from a saved draft, used to show
   // the "Restored from your last draft" banner. Cleared when the user
   // interacts with the form for the first time after hydration, or when
@@ -193,6 +196,8 @@ export function CreateMonitorSheet({
   const conditions = editedConditions ?? schema?.matchConditions ?? {};
   const matches = allItems.length > 0 ? applyMatchConditions(allItems, conditions) : [];
 
+  const selectedMode = MONITOR_MODES.find((m) => m.id === mode) ?? null;
+
   const updateMutation = useMutation(api.monitors.update);
 
   function resetForm() {
@@ -201,6 +206,7 @@ export function CreateMonitorSheet({
     setPrompt("");
     setCheckInterval("6h");
     setChannels(["email"]);
+    setMode(null);
     setEditedConditions(null);
   }
 
@@ -322,17 +328,38 @@ export function CreateMonitorSheet({
                   />
                 </div>
                 <div className="space-y-2">
+                  <Label className="text-sm font-medium">What are you watching?</Label>
+                  <div className="flex flex-wrap gap-2">
+                    {MONITOR_MODES.map((m) => (
+                      <button
+                        key={m.id}
+                        type="button"
+                        aria-pressed={mode === m.id}
+                        onClick={() => setMode(mode === m.id ? null : m.id)}
+                        className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
+                          mode === m.id
+                            ? "border-primary/40 bg-primary/10 text-primary"
+                            : "border-border/40 bg-card/50 text-muted-foreground hover:text-foreground hover:border-primary/20"
+                        }`}
+                      >
+                        <m.icon className="h-3.5 w-3.5" />
+                        {m.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="space-y-2">
                   <Label htmlFor="create-prompt" className="text-sm font-medium">What are you looking for?</Label>
                   <Textarea
                     id="create-prompt"
-                    placeholder="e.g. MacBook Pro 14 inch M3 gray under $1500"
+                    placeholder={selectedMode?.placeholder ?? "e.g. MacBook Pro 14 inch M3 gray under $1500"}
                     value={prompt}
                     onChange={(e) => setPrompt(e.target.value)}
                     rows={3}
                     required
                   />
                   <p className="text-xs text-muted-foreground leading-relaxed">
-                    Describe in plain English. Be as specific as you want.
+                    {selectedMode?.hint ?? "Describe in plain English. Be as specific as you want."}
                   </p>
                 </div>
                 <div className="space-y-2">
