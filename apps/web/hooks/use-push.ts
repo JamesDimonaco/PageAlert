@@ -40,16 +40,28 @@ export type PushState =
 async function detectState(): Promise<PushState> {
   if (typeof window === "undefined") return "loading";
 
-  if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
-    // On iOS this is the tab case, which the user can fix by installing.
-    // Everywhere else the browser simply can't do push.
-    return isIos() && !isStandalone() ? "needs-install" : "unsupported";
-  }
-  if (Notification.permission === "denied") return "denied";
+  // The fallback matters as much as the happy path: anything thrown here
+  // would otherwise leave the card saying "Checking this device..." forever,
+  // and the iOS install steps would never appear for the people who need them.
+  const cannot: PushState = isIos() && !isStandalone() ? "needs-install" : "unsupported";
 
-  const registration = await navigator.serviceWorker.getRegistration();
-  const existing = await registration?.pushManager.getSubscription();
-  return existing ? "on" : "off";
+  try {
+    if (
+      !("serviceWorker" in navigator) ||
+      !("PushManager" in window) ||
+      typeof Notification === "undefined"
+    ) {
+      return cannot;
+    }
+    if (Notification.permission === "denied") return "denied";
+
+    const registration = await navigator.serviceWorker.getRegistration();
+    const existing = await registration?.pushManager.getSubscription();
+    return existing ? "on" : "off";
+  } catch {
+    // Blocked site data, a locked-down webview, a rejected registration read
+    return cannot;
+  }
 }
 
 export function usePush() {
@@ -59,10 +71,6 @@ export function usePush() {
   const subscribeMutation = useMutation(api.pushSubscriptions.subscribe);
   const unsubscribeMutation = useMutation(api.pushSubscriptions.unsubscribe);
   const deviceCount = useQuery(api.pushSubscriptions.deviceCount);
-
-  const refresh = useCallback(async () => {
-    setState(await detectState());
-  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -80,14 +88,18 @@ export function usePush() {
       const vapidKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
       if (!vapidKey) throw new Error("Push is not configured on this deployment");
 
-      const registration = await navigator.serviceWorker.register("/sw.js");
-      await navigator.serviceWorker.ready;
-
+      // Permission first. Safari — including the iOS home-screen app this
+      // whole feature targets — wants the prompt raised under the user
+      // gesture, and awaiting the service worker registration first can spend
+      // that activation, leaving the prompt unshown and the call rejected.
       const permission = await Notification.requestPermission();
       if (permission !== "granted") {
         setState(permission === "denied" ? "denied" : "off");
         throw new Error("Notification permission was not granted");
       }
+
+      const registration = await navigator.serviceWorker.register("/sw.js");
+      await navigator.serviceWorker.ready;
 
       // Reuse the existing subscription if there is one — resubscribing with
       // the same key returns the same endpoint anyway, and a stored row that
@@ -131,5 +143,12 @@ export function usePush() {
     }
   }, [unsubscribeMutation]);
 
-  return { state, busy, enable, disable, deviceCount: deviceCount ?? 0, refresh };
+  // The browser's subscription and the server's rows can disagree — most
+  // obviously when someone else signed in on a device that was already
+  // subscribed. Trusting the browser alone would tell them push is on while
+  // nothing ever arrives.
+  const reconciled: PushState =
+    state === "on" && deviceCount === 0 ? "off" : state;
+
+  return { state: reconciled, busy, enable, disable, deviceCount: deviceCount ?? 0 };
 }

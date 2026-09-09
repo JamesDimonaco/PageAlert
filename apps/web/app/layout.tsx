@@ -105,7 +105,9 @@ export const metadata: Metadata = {
   appleWebApp: {
     capable: true,
     title: SITE_NAME,
-    statusBarStyle: "black-translucent",
+    // Not black-translucent: that draws under the status bar, and nothing
+    // in the app pads for the safe area.
+    statusBarStyle: "default",
   },
   ...(process.env.GOOGLE_SITE_VERIFICATION ? {
     other: { "google-site-verification": process.env.GOOGLE_SITE_VERIFICATION },

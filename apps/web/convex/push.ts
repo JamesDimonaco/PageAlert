@@ -16,6 +16,12 @@ import { internal } from "./_generated/api";
 
 const APP_URL = process.env.SITE_URL ?? "https://pagealert.io";
 
+class PushNotConfiguredError extends Error {
+  constructor() {
+    super("Push isn't configured on this deployment yet");
+  }
+}
+
 function configure(): boolean {
   const publicKey = process.env.VAPID_PUBLIC_KEY;
   const privateKey = process.env.VAPID_PRIVATE_KEY;
@@ -92,16 +98,17 @@ export const sendToUser = internalAction({
     title: v.string(),
     body: v.string(),
     monitorId: v.string(),
-    // Collapses repeat alerts for one monitor into a single notification
-    // instead of stacking them up on the lock screen.
-    tag: v.optional(v.string()),
+    // Collapses repeat alerts of the same kind for one monitor instead of
+    // stacking them on the lock screen. Kinds are kept apart: a match and a
+    // price change from one check are two things the user wants to see.
+    kind: v.optional(v.union(v.literal("match"), v.literal("price"), v.literal("error"))),
   },
   handler: async (ctx, args) => {
     await deliver(ctx, args.userId, {
       title: args.title,
       body: args.body,
       url: `${APP_URL}/dashboard/monitors/${args.monitorId}`,
-      tag: args.tag ?? args.monitorId,
+      tag: `${args.monitorId}:${args.kind ?? "alert"}`,
     });
   },
 });
@@ -112,6 +119,10 @@ export const sendTestMessage = action({
   handler: async (ctx): Promise<{ delivered: number }> => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Not authenticated");
+
+    if (!process.env.VAPID_PUBLIC_KEY || !process.env.VAPID_PRIVATE_KEY) {
+      throw new PushNotConfiguredError();
+    }
 
     const delivered = await deliver(ctx, identity.subject, {
       title: "PageAlert",

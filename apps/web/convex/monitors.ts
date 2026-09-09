@@ -567,6 +567,7 @@ export const sendInitialScanNotifications = internalAction({
         monitorId: args.monitorId,
         title: `${monitor.name} — ${args.matchCount} match${args.matchCount !== 1 ? "es" : ""} found`,
         body: `Initial scan found ${args.matchCount} match${args.matchCount !== 1 ? "es" : ""} out of ${args.totalItems} items`,
+        kind: "match",
       }).catch((e) => console.error("[monitors] Notification failed:", e));
     }
 

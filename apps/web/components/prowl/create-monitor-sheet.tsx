@@ -129,6 +129,7 @@ export function CreateMonitorSheet({
 
   // Default channels to all configured channels
   const notifSettings = useQuery(api.notificationSettings.list);
+  const pushDevices = useQuery(api.pushSubscriptions.deviceCount);
 
   // Reset (or hydrate from draft) when the sheet opens for a new monitor.
   // Hydration takes precedence over reset so users who navigated away
@@ -149,6 +150,10 @@ export function CreateMonitorSheet({
         resetForm();
         // Set default channels to all configured ones
         const configured: Channel[] = ["email"];
+        // Push has no settings row — a registered device is what makes it
+        // available, and a new monitor should use it without being asked
+        // twice. Leaving it out meant enabling push in Settings did nothing.
+        if ((pushDevices ?? 0) > 0) configured.push("push");
         if (notifSettings) {
           for (const s of notifSettings) {
             if (s.enabled && (s.channel === "telegram" || s.channel === "discord")) {
@@ -161,7 +166,7 @@ export function CreateMonitorSheet({
       }
     }
     prevOpenRef.current = open;
-  }, [open, activeMonitorId, isScanning, notifSettings]);
+  }, [open, activeMonitorId, isScanning, notifSettings, pushDevices]);
 
   // Debounced persistence of the draft. Only writes when the form has
   // some content; the writeMonitorDraft helper short-circuits empty drafts.

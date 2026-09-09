@@ -206,6 +206,17 @@ export const recordCheckResult = internalMutation({
       return { parked: false, newMatchKeys: [] as string[] };
     }
 
+    // Remember whether this site needs the proxy at all. A direct success
+    // clears the flag, which is also how the periodic re-probe takes effect.
+    // Computed before the reschedule below, or the check that first flips a
+    // site to proxy-preferred would still book itself an un-floored slot.
+    const nextProxyPreferred =
+      args.usedProxy === true
+        ? isBlockedError(monitor.lastError ?? "") || monitor.proxyPreferred === true
+        : args.usedProxy === false
+          ? false
+          : monitor.proxyPreferred;
+
     // Success
     const updates: Record<string, unknown> = {
       status: "active",
@@ -214,10 +225,16 @@ export const recordCheckResult = internalMutation({
       retryCount: 0,
       proxyBlockCount: 0,
       lastCheckedAt: now,
-      nextCheckAt: now + effectiveIntervalMs(monitor),
+      nextCheckAt: now + effectiveIntervalMs({
+        checkInterval: monitor.checkInterval,
+        proxyPreferred: nextProxyPreferred,
+      }),
       updatedAt: now,
       lastError: undefined,
     };
+    if (nextProxyPreferred !== monitor.proxyPreferred) {
+      updates.proxyPreferred = nextProxyPreferred;
+    }
 
     // Restart the drift clock whenever the AI read the page, whatever brought
     // it here and whatever came back. Stamping only on a usable schema would
@@ -237,18 +254,6 @@ export const recordCheckResult = internalMutation({
 
     if (args.contentFingerprint) {
       updates.contentFingerprint = args.contentFingerprint;
-    }
-
-    // Remember whether this site needs the proxy at all. A direct success
-    // clears the flag, which is also how the periodic re-probe takes effect.
-    const nextProxyPreferred =
-      args.usedProxy === true
-        ? isBlockedError(monitor.lastError ?? "") || monitor.proxyPreferred === true
-        : args.usedProxy === false
-          ? false
-          : monitor.proxyPreferred;
-    if (nextProxyPreferred !== monitor.proxyPreferred) {
-      updates.proxyPreferred = nextProxyPreferred;
     }
 
     // Which of this check's matches the user has not been told about. Computed
@@ -319,6 +324,13 @@ export const runScheduledChecks = internalAction({
     if (monitors.length === 0) return;
 
     console.log(`[scheduler] ${monitors.length} monitor(s) due for check`);
+    if (monitors.length >= MAX_CONCURRENT_CHECKS) {
+      // Every slot filled means more was due than could be dispatched. Sustained,
+      // it means real intervals are stretching past what the plan promises.
+      console.warn(
+        `[scheduler] dispatch saturated at ${MAX_CONCURRENT_CHECKS}/min — checks are running late`
+      );
+    }
 
     // Run checks concurrently (up to MAX_CONCURRENT_CHECKS)
     const results = await Promise.allSettled(
@@ -445,6 +457,7 @@ export const runScheduledChecks = internalAction({
                   monitorId: freshMonitor._id,
                   title: `${freshMonitor.name} — ${newCount} new match${plural}`,
                   body: `${newCount} new match${plural} out of ${displayTotalItems} items on ${displayHost(freshMonitor.url)}`,
+                  kind: "match",
                 }).catch(() => {});
               }
 
@@ -657,6 +670,7 @@ export const runScheduledChecks = internalAction({
                               body: significantChanges
                                 .map((pc) => `${pc.title}: $${pc.oldPrice} → $${pc.newPrice}`)
                                 .join(", "),
+                              kind: "price",
                             }).catch(() => {});
                           }
                         }
@@ -767,6 +781,7 @@ export const runScheduledChecks = internalAction({
                   monitorId: freshErrMonitor._id,
                   title: `${freshErrMonitor.name} — ${parked ? "Checks stopped" : "Error"}`,
                   body: parked ? (freshErrMonitor.lastError ?? msg) : msg,
+                  kind: "error",
                 }).catch(() => {});
               }
 

@@ -586,9 +586,46 @@ export default function SettingsPage() {
                       try {
                         await push.enable();
                         trackNotificationChannelToggled({ channel: "push", enabled: true });
-                        toast.success("Push notifications on", {
-                          description: "Send a test to check it reaches you.",
+
+                        // Existing monitors carry an explicit channel list, so
+                        // turning push on here reaches none of them until they
+                        // are updated. Same offer the Telegram card makes.
+                        const needsPush = monitors.filter((m) => {
+                          const existing = (m as { notificationChannels?: NotificationChannel[] })
+                            .notificationChannels;
+                          return existing !== undefined && !existing.includes("push");
                         });
+
+                        if (needsPush.length > 0) {
+                          toast.success("Push notifications on", {
+                            description: `Turn push on for your ${needsPush.length} existing monitor${needsPush.length !== 1 ? "s" : ""} too?`,
+                            action: {
+                              label: "Enable all",
+                              onClick: async () => {
+                                try {
+                                  await Promise.all(
+                                    needsPush.map((m) => {
+                                      const existing = (m as { notificationChannels?: NotificationChannel[] })
+                                        .notificationChannels!;
+                                      return updateMonitor({
+                                        id: m._id,
+                                        notificationChannels: [...existing, "push"],
+                                      });
+                                    })
+                                  );
+                                  toast.success("Push enabled on all monitors");
+                                } catch {
+                                  toast.error("Failed to update monitors");
+                                }
+                              },
+                            },
+                            duration: 10000,
+                          });
+                        } else {
+                          toast.success("Push notifications on", {
+                            description: "Send a test to check it reaches you.",
+                          });
+                        }
                       } catch (e) {
                         toast.error("Couldn't turn on push", {
                           description: e instanceof Error ? e.message : "Try again",

@@ -24,7 +24,10 @@ export const MONITOR_DRAFT_KEY = "pagealert_monitor_draft";
 const DRAFT_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 const VALID_INTERVALS: MonitorDraftCheckInterval[] = ["5m", "15m", "30m", "1h", "6h", "24h"];
-const VALID_CHANNELS: MonitorDraftChannel[] = ["email", "telegram", "discord"];
+// Runtime twin of MonitorDraftChannel. A channel missing here fails
+// isValidDraft, and readMonitorDraft throws the whole draft away — so adding a
+// channel to the type without adding it here silently eats the user's form.
+const VALID_CHANNELS: MonitorDraftChannel[] = ["email", "telegram", "discord", "push"];
 
 function isValidDraft(value: unknown): value is MonitorDraft {
   if (!value || typeof value !== "object") return false;
