@@ -23,7 +23,7 @@ export const FAQ: FaqEntry[] = [
   },
   {
     q: "How often does PageAlert check my pages?",
-    a: "Free accounts check every 6 hours, Pro every 15 minutes, and Max every 5 minutes. You pick the frequency per monitor, so a page that rarely changes doesn't have to be checked as often as one that does.",
+    a: "Free accounts check every hour, Pro every 15 minutes, and Max every 5 minutes. You pick the frequency per monitor, so a page that rarely changes doesn't have to be checked as often as one that does.",
   },
   {
     q: "How will I be notified when something changes?",
@@ -31,7 +31,7 @@ export const FAQ: FaqEntry[] = [
   },
   {
     q: "Is there a free plan?",
-    a: "Yes — 3 monitors, 6-hour checks, email notifications, no credit card.",
+    a: "Yes — 3 monitors, hourly checks, email notifications, no credit card.",
   },
   {
     q: "What happens when my plan ends?",

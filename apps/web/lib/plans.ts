@@ -20,7 +20,7 @@ export const PLANS: Plan[] = [
     description: "Get started with basic monitoring",
     features: [
       { text: "3 monitors" },
-      { text: "6 hour check interval" },
+      { text: "1 hour check interval" },
       { text: "Email notifications" },
       { text: "Full check history" },
       { text: "AI-powered extraction" },

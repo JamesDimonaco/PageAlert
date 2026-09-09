@@ -61,7 +61,7 @@ export default function TermsPage() {
 
           <h2>Subscriptions and billing</h2>
           <ul className="list-disc pl-6 space-y-2">
-            <li>Free accounts have limited features (3 monitors, 6-hour checks)</li>
+            <li>Free accounts have limited features (3 monitors, hourly checks)</li>
             <li>Paid subscriptions are billed monthly via Polar</li>
             <li>You can cancel at any time — access continues until the end of the billing period</li>
             <li>Refunds are handled on a case-by-case basis — contact us</li>

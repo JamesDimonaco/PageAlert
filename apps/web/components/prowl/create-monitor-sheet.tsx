@@ -80,7 +80,7 @@ export function CreateMonitorSheet({
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
   const [prompt, setPrompt] = useState("");
-  const [checkInterval, setCheckInterval] = useState<CheckInterval>("6h");
+  const [checkInterval, setCheckInterval] = useState<CheckInterval>("1h");
   const [channels, setChannels] = useState<("email" | "telegram" | "discord")[]>(["email"]);
   // Guidance only — the mode steers the prompt copy, never what gets scraped
   const [mode, setMode] = useState<MonitorModeId | null>(null);
@@ -204,7 +204,7 @@ export function CreateMonitorSheet({
     setName("");
     setUrl("");
     setPrompt("");
-    setCheckInterval("6h");
+    setCheckInterval("1h");
     setChannels(["email"]);
     setMode(null);
     setEditedConditions(null);

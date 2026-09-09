@@ -27,8 +27,8 @@ export default defineSchema({
     // SHA-256 of the page text from the last completed scan — used to skip
     // all downstream work (and AI) when the page hasn't changed
     contentFingerprint: v.optional(v.string()),
-    // No longer written; kept so rows from before the check-count drift
-    // refresh still validate
+    // When the AI last re-read this page. Drives the drift refresh — see
+    // AI_REEXTRACT_AFTER_MS in scheduler.ts. Absent on rows predating it.
     lastAiExtractAt: v.optional(v.number()),
     lastCheckedAt: v.optional(v.number()),
     lastMatchAt: v.optional(v.number()),
