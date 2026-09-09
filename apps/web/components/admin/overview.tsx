@@ -41,7 +41,7 @@ export function AdminOverview() {
     );
   }
 
-  const { users, tiers, monitors, scans } = data;
+  const { users, tiers, monitors, scans, emails } = data;
   const paying = tiers.pro + tiers.max - tiers.trials;
   const maxSignups = Math.max(1, ...users.signupsByDay.map((d) => d.count));
   const scanSuccessPct = scans.sampled > 0 ? Math.round((scans.success / scans.sampled) * 100) : null;
@@ -129,6 +129,19 @@ export function AdminOverview() {
             <Row label="Error" value={scans.error} />
             <Row label="Timeout" value={scans.timeout} />
             <Row label="Blocked by site" value={scans.blocked} />
+          </CardContent>
+        </Card>
+
+        <Card className="border-border/30 bg-card/50 shadow-sm shadow-black/5">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-semibold">Email delivery, last {emails.sampled} sends</CardTitle>
+          </CardHeader>
+          <CardContent className="divide-y divide-border/30">
+                        <Row label="Delivered" value={emails.delivered} />
+            <Row label="Bounced" value={emails.bounced} />
+            <Row label="Spam reports" value={emails.complained} />
+            <Row label="Rejected by Resend" value={emails.failed} />
+            <Row label="Awaiting webhook" value={emails.sent} />
           </CardContent>
         </Card>
       </div>

@@ -13,6 +13,7 @@ import type * as admin from "../admin.js";
 import type * as anonymous from "../anonymous.js";
 import type * as crons from "../crons.js";
 import type * as discord from "../discord.js";
+import type * as emailEvents from "../emailEvents.js";
 import type * as emails from "../emails.js";
 import type * as http from "../http.js";
 import type * as logs from "../logs.js";
@@ -40,6 +41,7 @@ declare const fullApi: ApiFromModules<{
   anonymous: typeof anonymous;
   crons: typeof crons;
   discord: typeof discord;
+  emailEvents: typeof emailEvents;
   emails: typeof emails;
   http: typeof http;
   logs: typeof logs;

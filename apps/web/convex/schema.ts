@@ -212,6 +212,31 @@ export default defineSchema({
   })
     .index("by_userId_createdAt", ["userId", "createdAt"]),
 
+  // One row per email we hand to Resend. Without it a bounce and a delivery
+  // look identical from inside the product: the sends are fire-and-forget and
+  // the prod Resend key is send-only, so its API can't be asked either.
+  // `status` starts at sent/failed and is advanced by the Resend webhook.
+  emailSends: defineTable({
+    to: v.string(),
+    kind: v.string(), // match | error | monitor-stopped | price | anonymous-scan | onboarding-day0 | bulk
+    userId: v.optional(v.string()),
+    monitorId: v.optional(v.string()),
+    resendId: v.optional(v.string()),
+    status: v.union(
+      v.literal("sent"),
+      v.literal("failed"),
+      v.literal("delivered"),
+      v.literal("bounced"),
+      v.literal("complained")
+    ),
+    error: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_resendId", ["resendId"])
+    .index("by_createdAt", ["createdAt"])
+    .index("by_status_createdAt", ["status", "createdAt"]),
+
   // Audit log of bulk emails sent from the super-admin dashboard
   adminEmails: defineTable({
     sentBy: v.string(), // admin's email
