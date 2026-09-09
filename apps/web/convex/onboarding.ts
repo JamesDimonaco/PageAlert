@@ -73,15 +73,60 @@ export const queueWelcomeSequence = internalMutation({
   },
 });
 
+/**
+ * A queued email this far past its scheduled time is stale. Send it and the
+ * user gets "welcome to PageAlert" months after signing up, so mark it skipped
+ * instead. Also stops a long processor outage from blasting a backlog the
+ * moment it recovers.
+ */
+const MAX_SEND_LATENESS_MS = 3 * 24 * 60 * 60 * 1000;
+
+/**
+ * Rows that are due and still fresh enough to send.
+ *
+ * The lower bound matters as much as the upper one: stale rows are excluded by
+ * the query rather than skipped inside the loop, so a backlog can never occupy
+ * the window and starve a new signup. That is the same shape as the bug this
+ * file is fixing, one level down.
+ */
 export const listDue = internalQuery({
-  args: {},
-  handler: async (ctx) => {
+  args: { step: v.union(v.literal("day0"), v.literal("day1"), v.literal("day3"), v.literal("day7")) },
+  handler: async (ctx, { step }) => {
+    const now = Date.now();
     return await ctx.db
       .query("onboardingEmails")
-      .withIndex("by_status_scheduledFor", (q) =>
-        q.eq("status", "pending").lte("scheduledFor", Date.now())
+      .withIndex("by_step_status_scheduledFor", (q) =>
+        q
+          .eq("step", step)
+          .eq("status", "pending")
+          .gte("scheduledFor", now - MAX_SEND_LATENESS_MS)
+          .lte("scheduledFor", now)
       )
       .take(50);
+  },
+});
+
+/**
+ * Retire rows too old to send. Separate from the send path so the two can
+ * never compete for the same budget, and generous enough to clear a real
+ * backlog in one pass.
+ */
+export const sweepStale = internalMutation({
+  args: { step: v.union(v.literal("day0"), v.literal("day1"), v.literal("day3"), v.literal("day7")) },
+  handler: async (ctx, { step }) => {
+    const stale = await ctx.db
+      .query("onboardingEmails")
+      .withIndex("by_step_status_scheduledFor", (q) =>
+        q
+          .eq("step", step)
+          .eq("status", "pending")
+          .lt("scheduledFor", Date.now() - MAX_SEND_LATENESS_MS)
+      )
+      .take(500);
+    for (const row of stale) {
+      await ctx.db.patch(row._id, { status: "skipped", error: "Too late to send" });
+    }
+    return stale.length;
   },
 });
 
@@ -102,13 +147,8 @@ export const markFailed = internalMutation({
 /**
  * Hourly processor. Walks the pending queue and dispatches due emails.
  *
- * KILL SWITCH: gated by ONBOARDING_EMAILS_ENABLED. When unset (the
- * default during Phase 4 development) the queue still fills up but
- * nothing actually sends. Set to "true" in the Convex environment
- * once the day0 template is approved.
- *
- * Phase 4 only sends day0 — day1/3/7 are queued but skipped. Remove
- * the step guard in Phase 7.
+ * KILL SWITCH: gated by ONBOARDING_EMAILS_ENABLED. When unset the queue
+ * still fills up but nothing actually sends.
  */
 export const processDueEmails = internalAction({
   args: {},
@@ -121,13 +161,14 @@ export const processDueEmails = internalAction({
       return;
     }
 
-    const due = await ctx.runQuery(internal.onboarding.listDue, {});
-    for (const row of due) {
-      // Phase 4 ships day0 only. day1/3/7 are queued but the processor
-      // skips them. They sit as `pending` until Phase 7 ships and the
-      // guard below is removed.
-      if (row.step !== "day0") continue;
+    // day0 only. day1/3/7 are queued at signup so the schema stays stable,
+    // but nothing sends them until Phase 7 — asking for one step at a time is
+    // what stops an unsent step crowding out a sent one.
+    const swept = await ctx.runMutation(internal.onboarding.sweepStale, { step: "day0" });
+    if (swept > 0) console.log(`[onboarding] retired ${swept} stale day0 row(s)`);
 
+    const due = await ctx.runQuery(internal.onboarding.listDue, { step: "day0" });
+    for (const row of due) {
       try {
         await ctx.runAction(internal.emails.sendOnboardingDay0, {
           to: row.email,
