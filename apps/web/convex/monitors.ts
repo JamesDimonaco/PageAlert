@@ -449,6 +449,17 @@ export const update = mutation({
       updates.proxyBlockCount = 0;
     }
 
+    // A parked monitor has no nextCheckAt, and getMonitorsDue bounds both lanes
+    // with .gte("nextCheckAt", 0), which undefined fails. Without this, pausing
+    // and resuming a parked monitor leaves it status "active" and unscheduled:
+    // never checked again, shown as healthy, and past the status === "error"
+    // guard that renders the "Checks stopped" card. Silently dead.
+    const willBeActive = (updates.status ?? existing.status) === "active";
+    if (willBeActive && updates.nextCheckAt === undefined && existing.nextCheckAt === undefined) {
+      updates.nextCheckAt = now;
+      updates.proxyBlockCount = 0;
+    }
+
     await ctx.db.patch(id, updates);
     return id;
   },
