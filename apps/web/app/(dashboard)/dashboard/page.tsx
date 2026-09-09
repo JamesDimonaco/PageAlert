@@ -8,6 +8,7 @@ import { MonitorCard } from "@/components/prowl/monitor-card";
 import { StatsCards } from "@/components/prowl/stats-cards";
 import { DeleteDialog } from "@/components/prowl/delete-dialog";
 import { ReviewPrompt } from "@/components/prowl/review-prompt";
+import { OnboardingChecklist } from "@/components/prowl/onboarding-checklist";
 import { useMonitors } from "@/hooks/use-monitors";
 import { useCreateMonitor } from "@/hooks/use-create-monitor";
 import { useTier } from "@/hooks/use-tier";
@@ -245,6 +246,8 @@ export default function DashboardPage() {
       </div>
 
       <StatsCards monitors={monitors} />
+
+      <OnboardingChecklist />
 
       {scanBudget && (
         <p className="text-xs text-muted-foreground">
