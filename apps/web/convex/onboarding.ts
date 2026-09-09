@@ -79,7 +79,7 @@ export const queueWelcomeSequence = internalMutation({
  * instead. Also stops a long processor outage from blasting a backlog the
  * moment it recovers.
  */
-const MAX_SEND_LATENESS_MS = 3 * 24 * 60 * 60 * 1000;
+export const MAX_SEND_LATENESS_MS = 3 * 24 * 60 * 60 * 1000;
 
 /**
  * Rows that are due and still fresh enough to send.

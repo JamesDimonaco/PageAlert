@@ -20,6 +20,11 @@ export function useOneShotQuery<Query extends FunctionReference<"query">>(
   const [nonce, setNonce] = useState(0);
   // `api.x.y` is a fresh proxy on every render; the name is the stable identity
   const queryName = getFunctionName(query);
+  // Args are usually a fresh `{}` literal each render, so they cannot go in the
+  // dep array directly. Serialising them means a caller that varies its args
+  // (a filter, a limit) actually refetches, while the constant-`{}` callers
+  // keep the same key and are unaffected.
+  const argsKey = JSON.stringify(args);
 
   useEffect(() => {
     let cancelled = false;
@@ -39,10 +44,10 @@ export function useOneShotQuery<Query extends FunctionReference<"query">>(
     return () => {
       cancelled = true;
     };
-    // query/args intentionally excluded: refresh() (via nonce) is the only
-    // re-run trigger; both are captured from the render that scheduled this effect.
+    // query/args intentionally excluded in favour of queryName/argsKey, which
+    // are their stable identities; refresh() bumps nonce to force a re-run.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [convex, queryName, nonce]);
+  }, [convex, queryName, argsKey, nonce]);
 
   const refresh = useCallback(() => setNonce((n) => n + 1), []);
 
