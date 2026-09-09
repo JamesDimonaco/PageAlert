@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { mutation, query, internalMutation, internalAction } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { validateMonitorUrl } from "./shared";
+import { isBanned } from "./account";
 
 const DAILY_CAP = 20;
 const EXPIRY_NO_EMAIL = 7 * 24 * 60 * 60 * 1000; // 7 days
@@ -239,6 +240,8 @@ export const claimMyAnonymousMonitors = mutation({
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) return { transferred: 0 };
+    // A banned account shouldn't gain a freshly-scanning monitor via the claim flow
+    if (await isBanned(ctx, identity.subject)) return { transferred: 0 };
 
     const toTransfer: Array<{ _id: any }> = [];
 

@@ -3,6 +3,7 @@ import { mutation, query, internalAction, internalQuery } from "./_generated/ser
 import { internal } from "./_generated/api";
 import { effectiveIntervalMs, ERROR_RECOVERY_INTERVAL_MS, intervalToMs, isBlockedError, MAX_RETRIES, validateMonitorUrl } from "./shared";
 import { effectiveTier, type Tier } from "./tiers";
+import { isBanned } from "./account";
 
 // ---- Resource Limits ----
 const MAX_NAME_LENGTH = 200;
@@ -161,6 +162,8 @@ export const create = mutation({
     if (!identity) throw new Error("Not authenticated");
     const userId = identity.subject;
     const userEmail = identity.email ?? undefined;
+
+    if (await isBanned(ctx, userId)) throw new Error("This account has been suspended.");
 
     // Dynamic tier-based enforcement
     const tier = await getUserTier(ctx, userId);
@@ -372,6 +375,7 @@ export const update = mutation({
     const userId = await getAuthUserId(ctx);
     const existing = await ctx.db.get(id);
     if (!existing || existing.userId !== userId) throw new Error("Monitor not found");
+    if (await isBanned(ctx, userId)) throw new Error("This account has been suspended.");
 
     if (fields.name !== undefined) validateName(fields.name);
     if (fields.url !== undefined) validateMonitorUrl(fields.url);
