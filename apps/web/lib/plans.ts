@@ -21,7 +21,7 @@ export const PLANS: Plan[] = [
     features: [
       { text: "3 monitors" },
       { text: "1 hour check interval" },
-      { text: "Email notifications" },
+      { text: "Email, plus Telegram or Discord on one monitor" },
       { text: "Full check history" },
       { text: "AI-powered extraction" },
       { text: "Change detection" },
