@@ -57,6 +57,7 @@ interface OverviewTabProps {
     proxyBlockCount?: number;
     nextCheckAt?: number;
     notificationChannels?: string[];
+    proxyPreferred?: boolean;
   };
   matches: ExtractedItem[];
   allItems: ExtractedItem[];
@@ -109,6 +110,11 @@ export function OverviewTab({ monitorId, monitor, matches, allItems, totalItems,
   const [editName, setEditName] = useState(monitor.name);
   const [editPrompt, setEditPrompt] = useState(monitor.prompt);
   const [editInterval, setEditInterval] = useState(monitor.checkInterval as "5m" | "15m" | "30m" | "1h" | "6h" | "24h");
+  // Mirrors effectiveIntervalMs in convex/shared.ts — a blocked site is held
+  // at 6h however often the user asked for it
+  const proxyFloored =
+    monitor.proxyPreferred === true &&
+    ["5m", "15m", "30m", "1h"].includes(monitor.checkInterval);
   const [editChannels, setEditChannels] = useState<("email" | "telegram" | "discord")[]>(
     (monitor.notificationChannels as ("email" | "telegram" | "discord")[]) ?? ["email"]
   );
@@ -302,6 +308,12 @@ export function OverviewTab({ monitorId, monitor, matches, allItems, totalItems,
               <div className="space-y-2">
                 <Label className="text-sm font-medium">Check frequency</Label>
                 <IntervalSelector value={editInterval} onValueChange={setEditInterval} />
+                {monitor.proxyPreferred && (
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    This site blocks direct access. Anything faster than every 6
+                    hours is held at 6 hours until it stops blocking us.
+                  </p>
+                )}
               </div>
               <ChannelSelector value={editChannels} onChange={(c) => { setEditChannels(c); setChannelsTouched(true); }} monitorId={monitorId} />
               <div className="flex items-center gap-2 pt-2">
@@ -350,8 +362,14 @@ export function OverviewTab({ monitorId, monitor, matches, allItems, totalItems,
             <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-1.5">Interval</p>
             <p className="text-sm font-semibold flex items-center gap-1.5">
               <Clock className="h-3.5 w-3.5 text-muted-foreground" />
-              Every {monitor.checkInterval}
+              Every {proxyFloored ? "6h" : monitor.checkInterval}
             </p>
+            {proxyFloored && (
+              <p className="mt-1.5 text-xs text-muted-foreground leading-relaxed">
+                This site only answers through our proxy, so checks run every 6
+                hours rather than the {monitor.checkInterval} you picked.
+              </p>
+            )}
           </CardContent>
         </Card>
         <Card className="border-border/30 bg-card/50 shadow-sm shadow-black/5">

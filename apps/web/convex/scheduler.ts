@@ -8,7 +8,7 @@ import {
   matchKey,
   newMatchKeys,
   ERROR_RECOVERY_INTERVAL_MS,
-  intervalToMs,
+  effectiveIntervalMs,
   MAX_RETRIES,
   MAX_PROXY_BLOCKS,
   PROXY_REPROBE_EVERY,
@@ -214,7 +214,7 @@ export const recordCheckResult = internalMutation({
       retryCount: 0,
       proxyBlockCount: 0,
       lastCheckedAt: now,
-      nextCheckAt: now + intervalToMs(monitor.checkInterval),
+      nextCheckAt: now + effectiveIntervalMs(monitor),
       updatedAt: now,
       lastError: undefined,
     };
