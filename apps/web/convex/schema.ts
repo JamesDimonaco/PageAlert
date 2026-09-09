@@ -171,13 +171,16 @@ export default defineSchema({
 
   userTiers: defineTable({
     userId: v.string(),
-    tier: v.union(v.literal("free"), v.literal("pro"), v.literal("max")),
+    tier: v.union(v.literal("free"), v.literal("sprint"), v.literal("pro"), v.literal("max")),
     polarCustomerId: v.optional(v.string()),
     polarSubscriptionId: v.optional(v.string()),
     cancelledAt: v.optional(v.number()),
     periodEnd: v.optional(v.number()),
-    // Manual free-period grant (not a Polar subscription); expireGrants reverts it
+    // Time-boxed access that is not a Polar subscription; expireGrants reverts
+    // it. Either an admin trial or a bought pass — grantSource says which, and
+    // the billing UI and isPayingRecord both need to know.
     grantUntil: v.optional(v.number()),
+    grantSource: v.optional(v.union(v.literal("admin"), v.literal("pass"))),
     dailyScans: v.optional(v.number()),
     dailyScansDate: v.optional(v.string()),
     reviewDismissed: v.optional(v.boolean()),
@@ -198,6 +201,15 @@ export default defineSchema({
   })
     .index("by_userId", ["userId"])
     .index("by_endpoint", ["endpoint"]),
+
+  // Polar order ids already applied as a pass. Polar retries on any non-2xx
+  // and can redeliver, and grantPass extends rather than replaces, so without
+  // this one payment could buy two months.
+  appliedOrders: defineTable({
+    orderId: v.string(),
+    userId: v.string(),
+    appliedAt: v.number(),
+  }).index("by_orderId", ["orderId"]),
 
   channelClaims: defineTable({
     channel: v.union(v.literal("telegram"), v.literal("discord")),

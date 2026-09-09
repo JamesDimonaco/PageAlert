@@ -131,7 +131,7 @@ export default function LandingPage() {
               <p className="mt-4 text-muted-foreground leading-relaxed">Start free, upgrade when you need more</p>
             </div>
 
-            <div className="grid gap-8 md:grid-cols-3 max-w-4xl mx-auto">
+            <div className="grid gap-8 sm:grid-cols-2 lg:grid-cols-4 max-w-6xl mx-auto">
               {PLANS.map((plan) => (
                 <div
                   key={plan.name}
@@ -149,7 +149,9 @@ export default function LandingPage() {
                   <h3 className="text-lg font-semibold">{plan.name}</h3>
                   <p className="mt-3">
                     <span className="text-4xl font-bold tracking-tight">${plan.price}</span>
-                    <span className="text-sm text-muted-foreground font-medium">/mo</span>
+                    <span className="text-sm text-muted-foreground font-medium">
+                      {plan.period === "forever" ? "/forever" : plan.period === "once" ? " for 30 days" : "/mo"}
+                    </span>
                   </p>
                   <ul className="mt-8 space-y-3">
                     {plan.features.filter((f) => !f.comingSoon).slice(0, 4).map((f) => (

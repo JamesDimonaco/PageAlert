@@ -43,7 +43,7 @@ export default function SettingsPage() {
   const sendPushTest = useAction(api.push.sendTestMessage);
   const [pushTesting, setPushTesting] = useState(false);
   const { monitors } = useMonitors();
-  const { tier, maxMonitors, description: tierDescription, isLoading: tierLoading, refetch: refetchTier, isCancelled, daysRemaining, periodEnd, grantUntil } = useTier();
+  const { tier, maxMonitors, description: tierDescription, isLoading: tierLoading, refetch: refetchTier, isCancelled, daysRemaining, periodEnd, grantUntil, grantSource } = useTier();
   const [name, setName] = useState(user?.name ?? "");
   const [email, setEmail] = useState(user?.email ?? "");
 
@@ -79,7 +79,7 @@ export default function SettingsPage() {
 
   const [isCheckingOut, setIsCheckingOut] = useState(false);
 
-  async function handleCheckout(slug: "pro" | "max") {
+  async function handleCheckout(slug: "sprint" | "pro" | "max") {
     if (isCheckingOut) return;
     setIsCheckingOut(true);
     trackUpgradePromptClicked({ plan: slug, currentTier: tier });
@@ -124,12 +124,17 @@ export default function SettingsPage() {
     }
   }, [notifSettings]);
 
-  // A manual grant isn't a Polar subscription — the billing tab's
-  // checkout/portal gates key off this, not the raw (possibly trial) tier.
-  const paidTier = grantUntil ? "free" : tier;
+  const isPass = grantSource === "pass" && !!grantUntil;
+  // A grant isn't a Polar subscription, so the portal has nothing to manage —
+  // the checkout/portal gates key off this, not the raw (possibly granted)
+  // tier. A bought pass is still a purchase, so it doesn't read as free.
+  const paidTier = grantUntil && !isPass ? "free" : tier;
   // A trial user is offered the plan they're trialling and above, never a downgrade
-  const offerPro = paidTier === "free" && tier !== "max";
+  // A pass is a purchase but not a subscription, so its holder should still be
+  // offered Pro (and has nothing for the Polar portal to manage).
+  const offerPro = (paidTier === "free" || isPass) && tier !== "max";
   const offerMax = paidTier === "pro" || (!!grantUntil && tier === "max");
+  const hasSubscription = paidTier !== "free" && !grantUntil;
 
   return (
     <div className="space-y-10">
@@ -744,10 +749,22 @@ export default function SettingsPage() {
             <Card className="border-primary/30 bg-primary/5 shadow-sm">
               <CardContent className="p-4 sm:p-5">
                 <p className="text-sm font-semibold text-primary">
-                  You&apos;re on a free {tier.charAt(0).toUpperCase() + tier.slice(1)} trial
+                  {isPass
+                    ? "Your Sprint pass is running"
+                    : `You're on a free ${tier.charAt(0).toUpperCase() + tier.slice(1)} trial`}
                 </p>
                 <p className="text-sm text-muted-foreground mt-1">
-                  Trial ends {new Date(grantUntil).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}. Upgrade below to keep {tier.charAt(0).toUpperCase() + tier.slice(1)} after that.
+                  {isPass ? (
+                    <>
+                      It ends on {new Date(grantUntil).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })} and
+                      nothing renews — you go back to free unless you buy another
+                      pass or subscribe.
+                    </>
+                  ) : (
+                    <>
+                      Trial ends {new Date(grantUntil).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}. Upgrade below to keep {tier.charAt(0).toUpperCase() + tier.slice(1)} after that.
+                    </>
+                  )}
                 </p>
               </CardContent>
             </Card>
@@ -828,7 +845,7 @@ export default function SettingsPage() {
                       Upgrade to Max
                     </Button>
                   )}
-                  {paidTier !== "free" && (
+                  {hasSubscription && (
                     <Button
                       variant="outline"
                       size="sm"
@@ -847,7 +864,7 @@ export default function SettingsPage() {
                   )}
                 </div>
               </div>
-              {paidTier !== "free" && (
+              {hasSubscription && (
                 <p className="text-xs text-muted-foreground mt-4">
                   Manage your billing, update payment method, or cancel your subscription from the Polar portal.
                   {" "}You&apos;ll be redirected to Polar — close the tab to return here.
@@ -859,7 +876,30 @@ export default function SettingsPage() {
 
           {/* Upgrade Options */}
           {offerPro && (
-            <div className="grid gap-4 md:grid-cols-2">
+            <div className="grid gap-4 md:grid-cols-3">
+              {!isPass && (
+                <Card className="border-border/30 bg-card/50 shadow-sm">
+                  <CardContent className="p-6">
+                    <h3 className="text-lg font-bold mb-3">Sprint pass</h3>
+                    <p className="text-3xl font-bold">
+                      $4<span className="text-sm font-normal text-muted-foreground"> once</span>
+                    </p>
+                    <ul className="mt-4 space-y-2 text-sm text-muted-foreground">
+                      <li>10 monitors</li>
+                      <li>30 minute checks</li>
+                      <li>30 days, then it stops</li>
+                    </ul>
+                    <Button
+                      variant="outline"
+                      className="w-full mt-4"
+                      disabled={isCheckingOut}
+                      onClick={() => handleCheckout("sprint")}
+                    >
+                      Buy a pass
+                    </Button>
+                  </CardContent>
+                </Card>
+              )}
               <Card className="border-primary/30 bg-primary/5 shadow-sm">
                 <CardContent className="p-6">
                   <div className="flex items-center gap-2 mb-3">

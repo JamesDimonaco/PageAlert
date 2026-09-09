@@ -6,7 +6,7 @@ import { api } from "@/convex/_generated/api";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { setUserProperties } from "@/lib/posthog";
 
-export type Tier = "free" | "pro" | "max";
+export type Tier = "free" | "sprint" | "pro" | "max";
 
 export const TIER_LIMITS: Record<Tier, {
   maxMonitors: number;
@@ -19,6 +19,12 @@ export const TIER_LIMITS: Record<Tier, {
     minInterval: "1h",
     description: "3 monitors, hourly checks",
     allowedIntervals: ["1h", "6h", "24h"],
+  },
+  sprint: {
+    maxMonitors: 10,
+    minInterval: "30m",
+    description: "10 monitors, 30 min checks, all channels",
+    allowedIntervals: ["30m", "1h", "6h", "24h"],
   },
   pro: {
     maxMonitors: 25,
@@ -55,13 +61,15 @@ interface TierInfo {
   isCancelled: boolean;
   periodEnd: number | null;
   daysRemaining: number | null;
-  /** Set when an admin granted a free pro/max trial */
+  /** Set while time-boxed access is live — an admin trial or a bought pass */
   grantUntil: number | null;
+  /** Which of those it is; null when there is no live grant */
+  grantSource: "admin" | "pass" | null;
   refetch: () => void;
 }
 
 // Pick the higher-privilege tier between two sources
-const TIER_RANK: Record<Tier, number> = { free: 0, pro: 1, max: 2 };
+const TIER_RANK: Record<Tier, number> = { free: 0, sprint: 1, pro: 2, max: 3 };
 function higherTier(a: Tier, b: Tier): Tier {
   return TIER_RANK[a] >= TIER_RANK[b] ? a : b;
 }
@@ -146,6 +154,7 @@ export function useTier(): TierInfo {
   const isCancelled = convexTier?.isCancelled ?? false;
   const periodEnd = convexTier?.periodEnd ?? null;
   const grantUntil = convexTier?.grantUntil ?? null;
+  const grantSource = convexTier?.grantSource ?? null;
 
   // Compute daysRemaining client-side only to avoid SSR hydration mismatch
   const [daysRemaining, setDaysRemaining] = useState<number | null>(null);
@@ -164,6 +173,7 @@ export function useTier(): TierInfo {
     periodEnd,
     daysRemaining,
     grantUntil,
+    grantSource,
     refetch: fetchAndSync,
     ...TIER_LIMITS[tier],
   };

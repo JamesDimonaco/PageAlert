@@ -52,13 +52,14 @@ export default function PricingPage() {
             Simple, transparent pricing
           </h1>
           <p className="mt-4 text-lg text-muted-foreground leading-relaxed">
-            Start free. Upgrade when you need faster checks and more monitors.
+            Start free. Buy a 30-day pass when you need one, or subscribe when
+            you&apos;re watching things all the time.
             <br />
-            No credit card required.
+            No credit card required to start.
           </p>
         </div>
 
-        <div className="grid gap-8 md:grid-cols-3 max-w-5xl mx-auto">
+        <div className="grid gap-8 sm:grid-cols-2 lg:grid-cols-4 max-w-6xl mx-auto">
           {PLANS.map((plan) => (
             <div
               key={plan.name}
@@ -78,7 +79,7 @@ export default function PricingPage() {
               <p className="mt-4">
                 <span className="text-4xl font-bold tracking-tight">${plan.price}</span>
                 <span className="text-sm text-muted-foreground font-medium">
-                  /{plan.period === "forever" ? "forever" : "mo"}
+                  {plan.period === "forever" ? "/forever" : plan.period === "once" ? " for 30 days" : "/mo"}
                 </span>
               </p>
               <ul className="mt-8 space-y-3">
@@ -99,7 +100,7 @@ export default function PricingPage() {
                   className: `w-full mt-8 ${plan.popular ? "shadow-md shadow-primary/20" : ""}`,
                 })}
               >
-                {plan.period === "forever" ? "Start for free" : `Get ${plan.name}`}
+                {plan.period === "forever" ? "Start for free" : plan.period === "once" ? "Buy a Sprint pass" : `Get ${plan.name}`}
               </Link>
             </div>
           ))}
