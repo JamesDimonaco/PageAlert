@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { Card, CardContent } from "@/components/ui/card";
-import { Check, Bell, Plus, Radar, X } from "lucide-react";
+import { Check, Radar, X } from "lucide-react";
 import { useMonitors } from "@/hooks/use-monitors";
 import { useCreateMonitor } from "@/hooks/use-create-monitor";
 import { useQuery } from "convex/react";
@@ -22,7 +22,7 @@ interface ChecklistItem {
 /**
  * Lightweight onboarding checklist shown at the top of the dashboard for
  * new users (≤ 2 monitors). Guides them through: create a monitor, set up
- * notifications (Telegram/Discord), create a second monitor.
+ * notifications (push/Telegram/Discord), create a second monitor.
  *
  * All state is derived from existing Convex queries — no new tables or
  * fields needed. Dismissible via X button (localStorage).
@@ -34,6 +34,7 @@ export function OnboardingChecklist() {
   const { monitors } = useMonitors();
   const { open: openCreate } = useCreateMonitor();
   const notifSettings = useQuery(api.notificationSettings.list);
+  const pushDevices = useQuery(api.pushSubscriptions.deviceCount);
 
   // Don't render until we have data to avoid layout shift
   const [dismissed, setDismissed] = useState(true); // default hidden
@@ -43,15 +44,20 @@ export function OnboardingChecklist() {
 
   // Checklist conditions
   const hasMonitor = monitors.length >= 1;
-  const hasNotifications = (notifSettings ?? []).some(
-    (s) => s.enabled && (s.channel === "telegram" || s.channel === "discord")
-  );
+  // Push counts, and has no notificationSettings row to count from — a
+  // registered device is what makes it on. Without this the step is
+  // uncompletable for anyone who picks push, which on free is most people.
+  const hasNotifications =
+    (pushDevices ?? 0) > 0 ||
+    (notifSettings ?? []).some(
+      (s) => s.enabled && (s.channel === "telegram" || s.channel === "discord")
+    );
   const hasSecondMonitor = monitors.length >= 2;
 
   const allDone = hasMonitor && hasNotifications && hasSecondMonitor;
 
   // Don't show if: dismissed, all done, power user (>2 monitors), or still loading
-  if (dismissed || monitors.length > 2 || notifSettings === undefined) return null;
+  if (dismissed || monitors.length > 2 || notifSettings === undefined || pushDevices === undefined) return null;
 
   // Auto-dismiss when all items complete — show a brief "all set" then hide
   if (allDone) {
@@ -78,7 +84,7 @@ export function OnboardingChecklist() {
     },
     {
       id: "setup_notifications",
-      label: "Set up Telegram or Discord",
+      label: "Turn on push, Telegram or Discord",
       checked: hasNotifications,
       onClick: () => router.push("/dashboard/settings?tab=notifications"),
     },
