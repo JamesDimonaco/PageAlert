@@ -130,8 +130,11 @@ export default function SettingsPage() {
   // tier. A bought pass is still a purchase, so it doesn't read as free.
   const paidTier = grantUntil && !isPass ? "free" : tier;
   // A trial user is offered the plan they're trialling and above, never a downgrade
-  const offerPro = paidTier === "free" && tier !== "max";
+  // A pass is a purchase but not a subscription, so its holder should still be
+  // offered Pro (and has nothing for the Polar portal to manage).
+  const offerPro = (paidTier === "free" || isPass) && tier !== "max";
   const offerMax = paidTier === "pro" || (!!grantUntil && tier === "max");
+  const hasSubscription = paidTier !== "free" && !grantUntil;
 
   return (
     <div className="space-y-10">
@@ -842,7 +845,7 @@ export default function SettingsPage() {
                       Upgrade to Max
                     </Button>
                   )}
-                  {paidTier !== "free" && (
+                  {hasSubscription && (
                     <Button
                       variant="outline"
                       size="sm"
@@ -861,7 +864,7 @@ export default function SettingsPage() {
                   )}
                 </div>
               </div>
-              {paidTier !== "free" && (
+              {hasSubscription && (
                 <p className="text-xs text-muted-foreground mt-4">
                   Manage your billing, update payment method, or cancel your subscription from the Polar portal.
                   {" "}You&apos;ll be redirected to Polar — close the tab to return here.
@@ -873,7 +876,30 @@ export default function SettingsPage() {
 
           {/* Upgrade Options */}
           {offerPro && (
-            <div className="grid gap-4 md:grid-cols-2">
+            <div className="grid gap-4 md:grid-cols-3">
+              {!isPass && (
+                <Card className="border-border/30 bg-card/50 shadow-sm">
+                  <CardContent className="p-6">
+                    <h3 className="text-lg font-bold mb-3">Sprint pass</h3>
+                    <p className="text-3xl font-bold">
+                      $4<span className="text-sm font-normal text-muted-foreground"> once</span>
+                    </p>
+                    <ul className="mt-4 space-y-2 text-sm text-muted-foreground">
+                      <li>10 monitors</li>
+                      <li>30 minute checks</li>
+                      <li>30 days, then it stops</li>
+                    </ul>
+                    <Button
+                      variant="outline"
+                      className="w-full mt-4"
+                      disabled={isCheckingOut}
+                      onClick={() => handleCheckout("sprint")}
+                    >
+                      Buy a pass
+                    </Button>
+                  </CardContent>
+                </Card>
+              )}
               <Card className="border-primary/30 bg-primary/5 shadow-sm">
                 <CardContent className="p-6">
                   <div className="flex items-center gap-2 mb-3">

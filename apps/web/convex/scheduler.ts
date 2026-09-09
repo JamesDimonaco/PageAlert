@@ -65,6 +65,13 @@ function detectChanges(previousItems: Record<string, unknown>[], currentItems: R
 
 const MAX_CONCURRENT_CHECKS = 10;
 
+// Web push payloads are capped around 4KB once encrypted, and going over makes
+// the send throw rather than truncate — the alert would vanish silently.
+const MAX_PUSH_BODY = 500;
+function truncateForPush(body: string): string {
+  return body.length <= MAX_PUSH_BODY ? body : `${body.slice(0, MAX_PUSH_BODY - 1)}…`;
+}
+
 // How long a monitor's schema is trusted before the AI re-reads the page to
 // catch its structure drifting away from what the schema was built from
 const AI_REEXTRACT_AFTER_MS = 14 * 24 * 60 * 60 * 1000;
@@ -164,6 +171,10 @@ export const recordCheckResult = internalMutation({
 
     if (args.error) {
       const retryCount = (monitor.retryCount ?? 0) + 1;
+      // Stamped on the failure path too: the AI was asked, whatever came back.
+      // Without it a monitor whose extract always fails stays permanently past
+      // its refresh deadline and re-attempts on every recovery check.
+      const aiStamp = args.aiExtracted ? { lastAiExtractAt: now } : {};
       const proxyBlockCount = (monitor.proxyBlockCount ?? 0) + (args.confirmedProxyBlock ? 1 : 0);
 
       // Scrapfly has genuinely beaten this site — stop rescheduling instead of
@@ -178,6 +189,7 @@ export const recordCheckResult = internalMutation({
           proxyBlockCount,
           nextCheckAt: undefined,
           updatedAt: now,
+          ...aiStamp,
         });
         return { parked: true, newMatchKeys: [] as string[] };
       }
@@ -192,6 +204,7 @@ export const recordCheckResult = internalMutation({
           // has to be able to come back on its own once the outage ends.
           nextCheckAt: now + ERROR_RECOVERY_INTERVAL_MS,
           updatedAt: now,
+          ...aiStamp,
         });
       } else {
         const backoffMs = Math.pow(4, retryCount) * 30_000;
@@ -201,6 +214,7 @@ export const recordCheckResult = internalMutation({
           proxyBlockCount,
           nextCheckAt: now + backoffMs,
           updatedAt: now,
+          ...aiStamp,
         });
       }
       return { parked: false, newMatchKeys: [] as string[] };
@@ -667,9 +681,11 @@ export const runScheduledChecks = internalAction({
                               userId: freshMonitor.userId,
                               monitorId: freshMonitor._id,
                               title,
-                              body: significantChanges
-                                .map((pc) => `${pc.title}: $${pc.oldPrice} → $${pc.newPrice}`)
-                                .join(", "),
+                              body: truncateForPush(
+                                significantChanges
+                                  .map((pc) => `${pc.title}: $${pc.oldPrice} → $${pc.newPrice}`)
+                                  .join(", ")
+                              ),
                               kind: "price",
                             }).catch(() => {});
                           }
@@ -780,7 +796,7 @@ export const runScheduledChecks = internalAction({
                   userId: freshErrMonitor.userId,
                   monitorId: freshErrMonitor._id,
                   title: `${freshErrMonitor.name} — ${parked ? "Checks stopped" : "Error"}`,
-                  body: parked ? (freshErrMonitor.lastError ?? msg) : msg,
+                  body: truncateForPush(parked ? (freshErrMonitor.lastError ?? msg) : msg),
                   kind: "error",
                 }).catch(() => {});
               }

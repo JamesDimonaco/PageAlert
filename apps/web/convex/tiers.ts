@@ -66,16 +66,48 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  * UI words differently and which isPayingRecord treats differently.
  */
 export const grantPass = internalMutation({
-  args: { userId: v.string(), tier: tierValidator, days: v.number(), polarCustomerId: v.optional(v.string()) },
+  args: {
+    userId: v.string(),
+    tier: tierValidator,
+    days: v.number(),
+    /** Polar order id, so a redelivered webhook is applied once */
+    orderId: v.string(),
+    polarCustomerId: v.optional(v.string()),
+  },
   handler: async (ctx, args) => {
     const now = Date.now();
+
+    const alreadyApplied = await ctx.db
+      .query("appliedOrders")
+      .withIndex("by_orderId", (q) => q.eq("orderId", args.orderId))
+      .unique();
+    if (alreadyApplied) {
+      console.log(`[tiers] Order ${args.orderId} already applied, ignoring redelivery`);
+      return;
+    }
+
     const existing = await ctx.db
       .query("userTiers")
       .withIndex("by_userId", (q) => q.eq("userId", args.userId))
       .unique();
 
-    // Buying a pass must never cost someone a better plan they already pay
-    // for. Extend the window, keep the higher tier.
+    // A pass must never be written onto a live subscription. grantUntil is
+    // what makes access expire, so stamping one on a subscriber's row would
+    // drop them to free 30 days later — still paying, no webhook coming to
+    // put them back. Refuse, loudly, and leave the row alone.
+    const hasLiveSubscription =
+      !!existing?.polarSubscriptionId &&
+      !existing.grantUntil &&
+      effectiveTier(existing, now) !== "free";
+    if (hasLiveSubscription) {
+      console.error(
+        `[tiers] Pass purchased by ${args.userId} who already holds subscription ` +
+          `${existing!.polarSubscriptionId}. Not applied — refund it.`
+      );
+      return;
+    }
+
+    // Otherwise never hand someone less than they already have.
     const current = effectiveTier(existing, now);
     const tier = TIER_RANK[current] > TIER_RANK[args.tier] ? current : args.tier;
 
@@ -99,6 +131,11 @@ export const grantPass = internalMutation({
     } else {
       await ctx.db.insert("userTiers", { userId: args.userId, ...patch });
     }
+    await ctx.db.insert("appliedOrders", {
+      orderId: args.orderId,
+      userId: args.userId,
+      appliedAt: now,
+    });
   },
 });
 

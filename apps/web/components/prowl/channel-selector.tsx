@@ -97,11 +97,14 @@ export function ChannelSelector({ value, onChange, monitorId, disabled }: Channe
             label: "Switch",
             onClick: async () => {
               try {
-                // Remove non-email channels from the other monitor
+                // Move only the rationed channels off the other monitor.
+                // Push is never rationed, so it stays where it is.
                 const otherChannels = ((freeMonitorWithChannels as any).notificationChannels ?? []) as string[];
                 await updateMonitor({
                   id: otherId,
-                  notificationChannels: otherChannels.filter((c) => c === "email") as any,
+                  notificationChannels: otherChannels.filter(
+                    (c) => c === "email" || c === "push"
+                  ) as any,
                 });
                 // Enable on this monitor
                 onChange([...value, channel]);

@@ -296,19 +296,38 @@ export const grantProMonth = internalMutation({
   },
 });
 
-/** Daily cron: drop expired manual grants back to free. Rows without a grant are untouched. */
+/**
+ * Daily cron: drop expired grants back to free. Rows without a grant are
+ * untouched.
+ *
+ * Also slows any monitor left on an interval the free tier can't pick.
+ * Interval limits are enforced when a monitor is written, never when it is
+ * checked, so without this a lapsed £4 pass would keep ten monitors running
+ * at 30 minutes forever — 480 checks a day, bought once.
+ */
 export const expireGrants = internalMutation({
   args: {},
   handler: async (ctx) => {
     const now = Date.now();
     const rows = await ctx.db.query("userTiers").collect();
     let expired = 0;
+    let slowed = 0;
     for (const r of rows) {
       if (!r.grantUntil || r.grantUntil > now) continue;
       await ctx.db.patch(r._id, { tier: "free", grantUntil: undefined, grantSource: undefined, updatedAt: now });
       expired++;
+
+      const monitors = await ctx.db
+        .query("monitors")
+        .withIndex("by_userId", (q) => q.eq("userId", r.userId))
+        .collect();
+      for (const m of monitors) {
+        if (FREE_INTERVALS.includes(m.checkInterval)) continue;
+        await ctx.db.patch(m._id, { checkInterval: FREE_SLOWEST_ALLOWED, updatedAt: now });
+        slowed++;
+      }
     }
-    return { expired };
+    return { expired, slowed };
   },
 });
 
@@ -410,6 +429,10 @@ export const sendApologyEmails = internalAction({
 
 
 const DAY_MS = 24 * HOUR;
+
+// Mirrors TIER_LIMITS.free.allowedIntervals in convex/monitors.ts
+const FREE_INTERVALS = ["1h", "6h", "24h"];
+const FREE_SLOWEST_ALLOWED = "1h" as const;
 
 // Monthly price in USD cents. Keep in step with lib/plans.ts (whole-dollar
 // marketing prices); integer minor units here so MRR never touches a float.

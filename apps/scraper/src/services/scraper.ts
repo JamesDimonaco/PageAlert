@@ -5,16 +5,37 @@ import { validateUrlForScraping } from "../utils/url-validation.js";
 let browser: Browser | null = null;
 
 /**
- * Maximum number of concurrent browser contexts to prevent resource exhaustion.
- * Requests past this are rejected, not queued, and a rejection reaches the
- * scheduler as a check error, so this has to stay clear of the worst case
- * rather than the average. A full extract runs up to 120s against a
- * one-minute cron tick, so three of the scheduler's dispatches can be in
- * flight at once — 3x its MAX_CONCURRENT_CHECKS, plus room for the manual
- * scans and rescans that share this pool.
+ * Maximum number of concurrent browser contexts. Each one is a live renderer,
+ * so this is a memory ceiling and raising it to cover peaks is the wrong
+ * trade: a rejection costs one check, an OOM kills the browser and every
+ * check in flight with it.
+ *
+ * Bursts are absorbed by waiting instead. A full extract runs up to 120s
+ * against a one-minute cron tick, so several of the scheduler's dispatches
+ * overlap, and manual scans share this pool — but they overlap in bursts, not
+ * steadily, and a caller that waits a few seconds for a slot beats one that
+ * gets an error the scheduler records as a failed check.
  */
-const MAX_CONCURRENT_CONTEXTS = 36;
+const MAX_CONCURRENT_CONTEXTS = 20;
+/** Well inside the caller's 90s quick-check and 120s extract timeouts */
+const SLOT_WAIT_MS = 20_000;
 let activeContexts = 0;
+
+/**
+ * Wait for a free context slot, giving up rather than queueing forever.
+ * The check and the increment share a tick, so two callers can't take the
+ * same slot.
+ */
+async function acquireContextSlot(): Promise<void> {
+  const deadline = Date.now() + SLOT_WAIT_MS;
+  while (activeContexts >= MAX_CONCURRENT_CONTEXTS) {
+    if (Date.now() >= deadline) {
+      throw new Error("Too many concurrent scraping requests. Please try again later.");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  activeContexts++;
+}
 
 /** Maximum response body size (5MB) to prevent memory exhaustion */
 const MAX_RESPONSE_SIZE = 5 * 1024 * 1024;
@@ -113,10 +134,7 @@ export async function scrapeUrl(
   const unblockedHtml = useProxy ? await fetchViaUnblocker(url, timeout) : null;
 
   // Resource exhaustion protection: limit concurrent contexts
-  if (activeContexts >= MAX_CONCURRENT_CONTEXTS) {
-    throw new Error("Too many concurrent scraping requests. Please try again later.");
-  }
-  activeContexts++;
+  await acquireContextSlot();
 
   try {
     const b = await getBrowser();

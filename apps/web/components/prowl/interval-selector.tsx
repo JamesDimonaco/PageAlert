@@ -26,6 +26,8 @@ const INTERVALS: { value: CheckInterval; label: string; tier: Tier }[] = [
 // at or above the one that unlocks it.
 const TIER_RANK: Record<Tier, number> = { free: 0, sprint: 1, pro: 2, max: 3 };
 
+const TIER_LABELS: Record<Tier, string> = { free: "Free", sprint: "Sprint", pro: "Pro", max: "Max" };
+
 function isAvailable(intervalTier: string, currentTier: Tier): boolean {
   return TIER_RANK[currentTier] >= TIER_RANK[intervalTier as Tier];
 }
@@ -67,7 +69,7 @@ export function IntervalSelector({ value, onValueChange, disabled }: IntervalSel
                 {!available && (
                   <Badge variant="outline" className="text-[10px] gap-1 px-1.5 py-0">
                     <Lock className="h-2.5 w-2.5" />
-                    {interval.tier === "pro" ? "Pro" : "Max"}
+                    {TIER_LABELS[interval.tier]}
                   </Badge>
                 )}
               </span>

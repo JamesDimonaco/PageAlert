@@ -202,6 +202,15 @@ export default defineSchema({
     .index("by_userId", ["userId"])
     .index("by_endpoint", ["endpoint"]),
 
+  // Polar order ids already applied as a pass. Polar retries on any non-2xx
+  // and can redeliver, and grantPass extends rather than replaces, so without
+  // this one payment could buy two months.
+  appliedOrders: defineTable({
+    orderId: v.string(),
+    userId: v.string(),
+    appliedAt: v.number(),
+  }).index("by_orderId", ["orderId"]),
+
   channelClaims: defineTable({
     channel: v.union(v.literal("telegram"), v.literal("discord")),
     target: v.string(),

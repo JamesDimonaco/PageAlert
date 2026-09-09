@@ -181,6 +181,7 @@ export const createAuthOptions = (ctx: GenericCtx<DataModel>) => {
                 userId,
                 tier: "sprint" as const,
                 days: SPRINT_DAYS,
+                orderId: String(order.id),
                 polarCustomerId: (order.customerId ?? order.customer_id) as string | undefined,
               });
               console.log("[polar] Sprint pass granted to", userId, "for", SPRINT_DAYS, "days");
