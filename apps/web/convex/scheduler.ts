@@ -437,6 +437,17 @@ export const runScheduledChecks = internalAction({
                 message: `Found ${newCount} new match${plural} out of ${displayTotalItems} items on ${freshMonitor.url}`,
               }).catch(() => {});
 
+              // Push. No settings lookup — a user's devices are the target,
+              // and push.ts resolves them. Same wording as the in-app card.
+              if (shouldSend("push")) {
+                await ctx.runAction(internal.push.sendToUser, {
+                  userId: freshMonitor.userId,
+                  monitorId: freshMonitor._id,
+                  title: `${freshMonitor.name} — ${newCount} new match${plural}`,
+                  body: `${newCount} new match${plural} out of ${displayTotalItems} items on ${displayHost(freshMonitor.url)}`,
+                }).catch(() => {});
+              }
+
               // Send email
               if (shouldSend("email") && freshMonitor.userEmail) {
                 await ctx.runAction(internal.emails.sendMatchAlert, {
@@ -637,6 +648,17 @@ export const runScheduledChecks = internalAction({
                             title,
                             message: significantChanges.map((pc) => `${pc.title}: $${pc.oldPrice} → $${pc.newPrice}`).join(", "),
                           }).catch(() => {});
+
+                          if (shouldSend("push")) {
+                            await ctx.runAction(internal.push.sendToUser, {
+                              userId: freshMonitor.userId,
+                              monitorId: freshMonitor._id,
+                              title,
+                              body: significantChanges
+                                .map((pc) => `${pc.title}: $${pc.oldPrice} → $${pc.newPrice}`)
+                                .join(", "),
+                            }).catch(() => {});
+                          }
                         }
 
                         console.log(`[scheduler] Price alert sent for ${freshMonitor._id}: ${significantChanges.length} changes, variant=${variant}`);
@@ -735,6 +757,18 @@ export const runScheduledChecks = internalAction({
                 title: `${freshErrMonitor.name} — ${parked ? "Checks stopped" : "Error"}`,
                 message: parked ? (freshErrMonitor.lastError ?? msg) : msg,
               }).catch(() => {});
+
+              // A park overrides channel selection on push for the same reason
+              // it does on email below: it is the last thing we will ever say
+              // about this monitor, so it should not be silently suppressed.
+              if (parked || shouldSend("push")) {
+                await ctx.runAction(internal.push.sendToUser, {
+                  userId: freshErrMonitor.userId,
+                  monitorId: freshErrMonitor._id,
+                  title: `${freshErrMonitor.name} — ${parked ? "Checks stopped" : "Error"}`,
+                  body: parked ? (freshErrMonitor.lastError ?? msg) : msg,
+                }).catch(() => {});
+              }
 
               // Email is the one channel a park overrides selection on: it is the
               // only one every user has. Telegram and Discord stay opt-in below,

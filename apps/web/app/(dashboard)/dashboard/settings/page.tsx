@@ -21,6 +21,7 @@ import {
 import { useAuth } from "@/hooks/use-auth";
 import { useMonitors } from "@/hooks/use-monitors";
 import { useTier } from "@/hooks/use-tier";
+import { usePush } from "@/hooks/use-push";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { authClient } from "@/lib/auth-client";
@@ -31,13 +32,16 @@ import {
   trackNotificationChannelToggled,
 } from "@/lib/posthog";
 
-type NotificationChannel = "email" | "telegram" | "discord";
+type NotificationChannel = "email" | "telegram" | "discord" | "push";
 
 const VALID_TABS = ["profile", "notifications", "billing"] as const;
 type SettingsTab = (typeof VALID_TABS)[number];
 
 export default function SettingsPage() {
   const { user, signOut } = useAuth();
+  const push = usePush();
+  const sendPushTest = useAction(api.push.sendTestMessage);
+  const [pushTesting, setPushTesting] = useState(false);
   const { monitors } = useMonitors();
   const { tier, maxMonitors, description: tierDescription, isLoading: tierLoading, refetch: refetchTier, isCancelled, daysRemaining, periodEnd, grantUntil } = useTier();
   const [name, setName] = useState(user?.name ?? "");
@@ -242,7 +246,7 @@ export default function SettingsPage() {
             <p className="text-sm text-muted-foreground leading-relaxed">
               Notifications are sent for <strong className="text-foreground">all your monitors </strong>when new matches are found or errors occur.
               Enable any channels below and they&apos;ll all receive alerts.
-              {tier === "free" && " Upgrade to Pro for Telegram and Discord."}
+              {tier === "free" && " On free, one monitor can use Telegram or Discord — upgrade to Pro for all of them."}
             </p>
           </div>
 
@@ -521,6 +525,143 @@ export default function SettingsPage() {
                   {telegramSaving ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null}
                   Connect & Test
                 </Button>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card className="border-border/30 bg-card/50 shadow-sm shadow-black/5">
+            <CardHeader className="pb-4">
+              <CardTitle className="flex items-center gap-2 text-lg font-semibold">
+                <Bell className="h-5 w-5 text-muted-foreground" />
+                Push notifications
+              </CardTitle>
+              <CardDescription className="text-sm">
+                Alerts on your phone or desktop the moment a match lands, without waiting on email
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              {push.state === "loading" && (
+                <p className="text-sm text-muted-foreground">Checking this device...</p>
+              )}
+
+              {push.state === "unsupported" && (
+                <p className="text-sm text-muted-foreground leading-relaxed">
+                  This browser can&apos;t do push notifications. Chrome, Edge, Firefox and
+                  Safari all can — or keep using email, which works everywhere.
+                </p>
+              )}
+
+              {push.state === "needs-install" && (
+                <div className="space-y-3">
+                  <p className="text-sm text-muted-foreground leading-relaxed">
+                    On iPhone and iPad, notifications only work once PageAlert is on your
+                    home screen. It takes a moment:
+                  </p>
+                  <ol className="space-y-1.5 text-sm text-muted-foreground list-decimal list-inside">
+                    <li>Tap the Share button at the bottom of Safari</li>
+                    <li>Scroll down and tap <strong className="text-foreground">Add to Home Screen</strong></li>
+                    <li>Open PageAlert from your home screen and come back here</li>
+                  </ol>
+                </div>
+              )}
+
+              {push.state === "denied" && (
+                <p className="text-sm text-muted-foreground leading-relaxed">
+                  Notifications are blocked for this site, so we can&apos;t ask again from
+                  here. Allow them in your browser&apos;s site settings, then reload.
+                </p>
+              )}
+
+              {push.state === "off" && (
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <p className="text-sm text-muted-foreground leading-relaxed">
+                    Your browser will ask permission once. Enable it on every device you
+                    want alerts on.
+                  </p>
+                  <Button
+                    size="sm"
+                    className="shrink-0"
+                    disabled={push.busy}
+                    onClick={async () => {
+                      try {
+                        await push.enable();
+                        trackNotificationChannelToggled({ channel: "push", enabled: true });
+                        toast.success("Push notifications on", {
+                          description: "Send a test to check it reaches you.",
+                        });
+                      } catch (e) {
+                        toast.error("Couldn't turn on push", {
+                          description: e instanceof Error ? e.message : "Try again",
+                        });
+                      }
+                    }}
+                  >
+                    {push.busy ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null}
+                    Enable on this device
+                  </Button>
+                </div>
+              )}
+
+              {push.state === "on" && (
+                <>
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                      <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
+                      <p className="text-sm">
+                        On for this device
+                        {push.deviceCount > 1 && (
+                          <span className="text-muted-foreground">
+                            {" "}and {push.deviceCount - 1} other
+                            {push.deviceCount - 1 !== 1 ? "s" : ""}
+                          </span>
+                        )}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={pushTesting}
+                        onClick={async () => {
+                          setPushTesting(true);
+                          try {
+                            await sendPushTest({});
+                            toast.success("Test sent");
+                          } catch (e) {
+                            toast.error("Test failed", {
+                              description: e instanceof Error ? e.message : "Try again",
+                            });
+                          } finally {
+                            setPushTesting(false);
+                          }
+                        }}
+                      >
+                        {pushTesting ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Send className="h-3.5 w-3.5 mr-1" />}
+                        Send test
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        disabled={push.busy}
+                        onClick={async () => {
+                          try {
+                            await push.disable();
+                            trackNotificationChannelToggled({ channel: "push", enabled: false });
+                            toast.success("Push turned off for this device");
+                          } catch {
+                            toast.error("Couldn't turn off push");
+                          }
+                        }}
+                      >
+                        Turn off
+                      </Button>
+                    </div>
+                  </div>
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    Turning it off here only affects this device. Your other devices keep
+                    getting alerts.
+                  </p>
+                </>
               )}
             </CardContent>
           </Card>

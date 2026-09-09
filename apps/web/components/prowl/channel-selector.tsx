@@ -1,7 +1,7 @@
 "use client";
 
 import { Badge } from "@/components/ui/badge";
-import { Mail, MessageCircle, Hash, Check, Settings } from "lucide-react";
+import { Mail, MessageCircle, Hash, Bell, Check, Settings } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useTier } from "@/hooks/use-tier";
 import { useCreateMonitor } from "@/hooks/use-create-monitor";
@@ -10,12 +10,13 @@ import { api } from "@/convex/_generated/api";
 import { useMonitors } from "@/hooks/use-monitors";
 import { toast } from "sonner";
 
-type Channel = "email" | "telegram" | "discord";
+export type Channel = "email" | "telegram" | "discord" | "push";
 
 const CHANNEL_CONFIG: Record<Channel, { label: string; icon: typeof Mail }> = {
   email: { label: "Email", icon: Mail },
   telegram: { label: "Telegram", icon: MessageCircle },
   discord: { label: "Discord", icon: Hash },
+  push: { label: "Push", icon: Bell },
 };
 
 interface ChannelSelectorProps {
@@ -31,6 +32,7 @@ export function ChannelSelector({ value, onChange, monitorId, disabled }: Channe
   const { close: closeSheet } = useCreateMonitor();
   const { tier } = useTier();
   const notifSettings = useQuery(api.notificationSettings.list);
+  const pushDevices = useQuery(api.pushSubscriptions.deviceCount);
   const { monitors } = useMonitors();
   const updateMonitor = useMutation(api.monitors.update);
 
@@ -42,6 +44,8 @@ export function ChannelSelector({ value, onChange, monitorId, disabled }: Channe
   );
   // Email is always "configured"
   configuredChannels.add("email");
+  // Push has no settings row: it is configured once any device is registered
+  if ((pushDevices ?? 0) > 0) configuredChannels.add("push");
 
   // For free tier: find if another monitor already uses non-email channels
   const freeMonitorWithChannels = tier === "free"
@@ -54,8 +58,9 @@ export function ChannelSelector({ value, onChange, monitorId, disabled }: Channe
   function isChannelAvailable(channel: Channel): boolean {
     if (!configuredChannels.has(channel)) return false;
     if (tier !== "free") return true;
-    // Free tier: non-email channels only if no other monitor is using them
-    if (channel === "email") return true;
+    // Free tier rations Telegram and Discord to one monitor. Email and push
+    // are unrestricted — see isRestrictedChannel in convex/monitors.ts.
+    if (channel === "email" || channel === "push") return true;
     if (freeMonitorWithChannels) return false;
     return true;
   }
@@ -122,7 +127,7 @@ export function ChannelSelector({ value, onChange, monitorId, disabled }: Channe
     <div className="space-y-2">
       <p className="text-xs font-medium text-muted-foreground">Notification channels</p>
       <div className="flex flex-wrap gap-2">
-        {(["email", "telegram", "discord"] as Channel[]).map((channel) => {
+        {(["email", "push", "telegram", "discord"] as Channel[]).map((channel) => {
           const config = CHANNEL_CONFIG[channel];
           const Icon = config.icon;
           const isActive = value.includes(channel);

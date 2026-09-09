@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import { Analytics } from "@vercel/analytics/next";
 import { SpeedInsights } from "@vercel/speed-insights/next";
@@ -99,9 +99,21 @@ export const metadata: Metadata = {
   alternates: {
     canonical: SITE_URL,
   },
+  manifest: "/manifest.webmanifest",
+  // iOS only delivers push to a site added to the home screen, so it has to
+  // be installable before the notification settings are worth offering.
+  appleWebApp: {
+    capable: true,
+    title: SITE_NAME,
+    statusBarStyle: "black-translucent",
+  },
   ...(process.env.GOOGLE_SITE_VERIFICATION ? {
     other: { "google-site-verification": process.env.GOOGLE_SITE_VERIFICATION },
   } : {}),
+};
+
+export const viewport: Viewport = {
+  themeColor: "#3b82f6",
 };
 
 // JSON-LD structured data for rich search results
@@ -120,7 +132,7 @@ const jsonLd = {
     "Natural language search — describe what you want",
     "Price tracking and drop alerts",
     "Stock availability notifications",
-    "Email, Telegram, and Discord notifications",
+    "Email, push, Telegram, and Discord notifications",
     "Visual change detection",
     "Works with any website",
   ],

@@ -36,6 +36,15 @@ async function getUserTier(ctx: { db: any }, userId: string): Promise<Tier> {
 
 type CheckInterval = "5m" | "15m" | "30m" | "1h" | "6h" | "24h";
 
+/**
+ * Channels the free tier is rationed on. Email and push are always available:
+ * email is the account's own address, and push goes to a device the user has
+ * already granted permission on, at no cost per message to us.
+ */
+function isRestrictedChannel(channel: string): boolean {
+  return channel === "telegram" || channel === "discord";
+}
+
 function clampInterval(interval: string, tier: Tier): CheckInterval {
   const allowed = TIER_LIMITS[tier].allowedIntervals;
   return (allowed.includes(interval) ? interval : allowed[0]) as CheckInterval;
@@ -134,7 +143,8 @@ export const get = query({
 const channelValidator = v.array(v.union(
   v.literal("email"),
   v.literal("telegram"),
-  v.literal("discord")
+  v.literal("discord"),
+  v.literal("push")
 ));
 
 /** Create a monitor in "scanning" state. The scan runs client-side, then saveScanResult is called. */
@@ -182,17 +192,18 @@ export const create = mutation({
       throw new Error(`Your ${tier} plan allows ${limits.maxMonitors} monitors. Upgrade for more.`);
     }
 
-    // Server-side enforcement: free tier can only have one monitor with non-email channels
+    // Server-side enforcement: free tier can only have one monitor on the
+    // restricted channels. Push is not one of them — it costs us nothing per
+    // message and a subscription is bound to a device the user already owns,
+    // so there is nothing here to ration or to abuse.
     let channels = args.notificationChannels;
     if (tier === "free" && channels) {
-      const hasNonEmail = channels.some((c) => c !== "email");
-      if (hasNonEmail) {
+      if (channels.some(isRestrictedChannel)) {
         const existingWithChannels = existingMonitors.find((m) =>
-          (m as any).notificationChannels?.some((c: string) => c === "telegram" || c === "discord")
+          (m as any).notificationChannels?.some(isRestrictedChannel)
         );
         if (existingWithChannels) {
-          // Strip non-email channels — free user already has one monitor with them
-          channels = channels.filter((c) => c === "email");
+          channels = channels.filter((c) => !isRestrictedChannel(c));
         }
       }
     }
@@ -375,20 +386,21 @@ export const update = mutation({
       fields.checkInterval = clampInterval(fields.checkInterval, tier) as typeof fields.checkInterval;
     }
 
-    // Free tier: only one monitor can have non-email channels
+    // Free tier: only one monitor can use the restricted channels — see create
     if (fields.notificationChannels !== undefined && tier === "free") {
-      const hasNonEmail = fields.notificationChannels.some((c) => c !== "email");
-      if (hasNonEmail) {
+      if (fields.notificationChannels.some(isRestrictedChannel)) {
         const otherMonitors = await ctx.db
           .query("monitors")
           .withIndex("by_userId", (q) => q.eq("userId", userId))
           .collect();
         const otherWithChannels = otherMonitors.find((m) =>
           m._id !== id &&
-          (m as any).notificationChannels?.some((c: string) => c === "telegram" || c === "discord")
+          (m as any).notificationChannels?.some(isRestrictedChannel)
         );
         if (otherWithChannels) {
-          fields.notificationChannels = fields.notificationChannels.filter((c) => c === "email") as typeof fields.notificationChannels;
+          fields.notificationChannels = fields.notificationChannels.filter(
+            (c) => !isRestrictedChannel(c)
+          ) as typeof fields.notificationChannels;
         }
       }
     }
@@ -545,6 +557,16 @@ export const sendInitialScanNotifications = internalAction({
         channel: "in_app",
         title: `${monitor.name} — ${args.matchCount} match${args.matchCount !== 1 ? "es" : ""} found`,
         message: `Initial scan found ${args.matchCount} match${args.matchCount !== 1 ? "es" : ""} out of ${args.totalItems} items on ${monitor.url}`,
+      }).catch((e) => console.error("[monitors] Notification failed:", e));
+    }
+
+    // Push
+    if (shouldSend("push")) {
+      await ctx.runAction(internal.push.sendToUser, {
+        userId: monitor.userId,
+        monitorId: args.monitorId,
+        title: `${monitor.name} — ${args.matchCount} match${args.matchCount !== 1 ? "es" : ""} found`,
+        body: `Initial scan found ${args.matchCount} match${args.matchCount !== 1 ? "es" : ""} out of ${args.totalItems} items`,
       }).catch((e) => console.error("[monitors] Notification failed:", e));
     }
 

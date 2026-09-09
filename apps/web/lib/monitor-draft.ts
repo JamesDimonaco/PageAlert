@@ -8,7 +8,7 @@
  * See PROWL-038 Phase 3.
  */
 
-export type MonitorDraftChannel = "email" | "telegram" | "discord";
+export type MonitorDraftChannel = "email" | "telegram" | "discord" | "push";
 export type MonitorDraftCheckInterval = "5m" | "15m" | "30m" | "1h" | "6h" | "24h";
 
 export interface MonitorDraft {
