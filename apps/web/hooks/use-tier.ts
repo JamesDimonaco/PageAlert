@@ -11,28 +11,24 @@ export type Tier = "free" | "pro" | "max";
 export const TIER_LIMITS: Record<Tier, {
   maxMonitors: number;
   minInterval: string;
-  channels: string[];
   description: string;
   allowedIntervals: string[];
 }> = {
   free: {
     maxMonitors: 3,
-    minInterval: "6h",
-    channels: ["email"],
-    description: "3 monitors, 6 hour checks, email only",
-    allowedIntervals: ["6h", "24h"],
+    minInterval: "1h",
+    description: "3 monitors, hourly checks",
+    allowedIntervals: ["1h", "6h", "24h"],
   },
   pro: {
     maxMonitors: 25,
     minInterval: "15m",
-    channels: ["email", "telegram", "discord"],
     description: "25 monitors, 15 min checks, all channels",
     allowedIntervals: ["15m", "30m", "1h", "6h", "24h"],
   },
   max: {
     maxMonitors: 9999,
     minInterval: "5m",
-    channels: ["email", "telegram", "discord", "webhook"],
     description: "Unlimited monitors, 5 min checks, API access",
     allowedIntervals: ["5m", "15m", "30m", "1h", "6h", "24h"],
   },
@@ -54,7 +50,6 @@ interface TierInfo {
   isLoading: boolean;
   maxMonitors: number;
   minInterval: string;
-  channels: string[];
   description: string;
   allowedIntervals: string[];
   isCancelled: boolean;

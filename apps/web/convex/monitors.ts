@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query, internalAction, internalQuery } from "./_generated/server";
 import { internal } from "./_generated/api";
-import { ERROR_RECOVERY_INTERVAL_MS, intervalToMs, isBlockedError, MAX_RETRIES, validateMonitorUrl } from "./shared";
+import { effectiveIntervalMs, ERROR_RECOVERY_INTERVAL_MS, intervalToMs, isBlockedError, MAX_RETRIES, validateMonitorUrl } from "./shared";
 import { effectiveTier } from "./tiers";
 
 // ---- Resource Limits ----
@@ -12,7 +12,7 @@ const MAX_RESULTS_LIMIT = 100;
 type Tier = "free" | "pro" | "max";
 
 const TIER_LIMITS: Record<Tier, { maxMonitors: number; allowedIntervals: string[] }> = {
-  free: { maxMonitors: 3, allowedIntervals: ["6h", "24h"] },
+  free: { maxMonitors: 3, allowedIntervals: ["1h", "6h", "24h"] },
   pro: { maxMonitors: 25, allowedIntervals: ["15m", "30m", "1h", "6h", "24h"] },
   max: { maxMonitors: 9999, allowedIntervals: ["5m", "15m", "30m", "1h", "6h", "24h"] },
 };
@@ -257,7 +257,8 @@ export const saveScanResult = mutation({
       proxyBlockCount: 0,
       lastCheckedAt: now,
       lastMatchAt: matchCount > 0 ? now : undefined,
-      nextCheckAt: now + intervalToMs(monitor.checkInterval),
+      lastAiExtractAt: now,
+      nextCheckAt: now + effectiveIntervalMs(monitor),
       // A scan reports its own matches to the user, and only carries a count,
       // not the matched items. Drop the baseline so the next scheduled extract
       // re-seeds it silently rather than re-announcing what the scan just
@@ -422,7 +423,10 @@ export const update = mutation({
 
     // Recompute nextCheckAt when interval changes so it takes effect immediately
     if (fields.checkInterval !== undefined) {
-      updates.nextCheckAt = now + intervalToMs(fields.checkInterval);
+      updates.nextCheckAt = now + effectiveIntervalMs({
+        checkInterval: fields.checkInterval,
+        proxyPreferred: existing.proxyPreferred,
+      });
       // This un-parks a monitor parked for repeated proxy blocks. Give it a
       // fresh budget, or the next single block re-parks it and sends a second
       // "checks stopped" email.

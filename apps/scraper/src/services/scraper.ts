@@ -4,8 +4,16 @@ import { validateUrlForScraping } from "../utils/url-validation.js";
 
 let browser: Browser | null = null;
 
-/** Maximum number of concurrent browser contexts to prevent resource exhaustion */
-const MAX_CONCURRENT_CONTEXTS = 10;
+/**
+ * Maximum number of concurrent browser contexts to prevent resource exhaustion.
+ * Requests past this are rejected, not queued, and a rejection reaches the
+ * scheduler as a check error, so this has to stay clear of the worst case
+ * rather than the average. A full extract runs up to 120s against a
+ * one-minute cron tick, so three of the scheduler's dispatches can be in
+ * flight at once — 3x its MAX_CONCURRENT_CHECKS, plus room for the manual
+ * scans and rescans that share this pool.
+ */
+const MAX_CONCURRENT_CONTEXTS = 36;
 let activeContexts = 0;
 
 /** Maximum response body size (5MB) to prevent memory exhaustion */
