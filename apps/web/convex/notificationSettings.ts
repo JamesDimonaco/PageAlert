@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { effectiveTier } from "./tiers";
+import { effectiveTier, type Tier } from "./tiers";
 import { mutation, query } from "./_generated/server";
 
 const channelValidator = v.union(
@@ -8,10 +8,10 @@ const channelValidator = v.union(
   v.literal("discord")
 );
 
-type Tier = "free" | "pro" | "max";
 // All tiers can connect channels — per-monitor limits are enforced in monitors.create/update
 const TIER_CHANNELS: Record<Tier, string[]> = {
   free: ["email", "telegram", "discord"],
+  sprint: ["email", "telegram", "discord"],
   pro: ["email", "telegram", "discord"],
   max: ["email", "telegram", "discord"],
 };

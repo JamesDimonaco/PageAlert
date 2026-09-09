@@ -171,13 +171,16 @@ export default defineSchema({
 
   userTiers: defineTable({
     userId: v.string(),
-    tier: v.union(v.literal("free"), v.literal("pro"), v.literal("max")),
+    tier: v.union(v.literal("free"), v.literal("sprint"), v.literal("pro"), v.literal("max")),
     polarCustomerId: v.optional(v.string()),
     polarSubscriptionId: v.optional(v.string()),
     cancelledAt: v.optional(v.number()),
     periodEnd: v.optional(v.number()),
-    // Manual free-period grant (not a Polar subscription); expireGrants reverts it
+    // Time-boxed access that is not a Polar subscription; expireGrants reverts
+    // it. Either an admin trial or a bought pass — grantSource says which, and
+    // the billing UI and isPayingRecord both need to know.
     grantUntil: v.optional(v.number()),
+    grantSource: v.optional(v.union(v.literal("admin"), v.literal("pass"))),
     dailyScans: v.optional(v.number()),
     dailyScansDate: v.optional(v.string()),
     reviewDismissed: v.optional(v.boolean()),

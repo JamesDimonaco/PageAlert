@@ -218,19 +218,21 @@ function PlanBadge({
   cancelledAt,
   periodEnd,
 }: {
-  tier: "free" | "pro" | "max";
+  tier: "free" | "sprint" | "pro" | "max";
   grantUntil: number | null;
   cancelledAt: number | null;
   periodEnd: number | null;
 }) {
   if (tier === "free") return <Badge variant="outline" className="text-[10px]">Free</Badge>;
-  const label = tier === "max" ? "Max" : "Pro";
+  const label = tier === "max" ? "Max" : tier === "sprint" ? "Sprint" : "Pro";
   const colour = tier === "max"
     ? "bg-amber-500/10 text-amber-400 border-amber-500/20"
-    : "bg-primary/10 text-primary border-primary/20";
+    : tier === "sprint"
+      ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+      : "bg-primary/10 text-primary border-primary/20";
   return (
     <div className="flex flex-col gap-0.5">
-      <Badge className={`text-[10px] w-fit ${colour}`}>{label}{grantUntil ? " trial" : ""}</Badge>
+      <Badge className={`text-[10px] w-fit ${colour}`}>{label}{grantUntil && tier !== "sprint" ? " trial" : ""}</Badge>
       {grantUntil && <span className="text-[11px] text-muted-foreground">until {formatDate(grantUntil)}</span>}
       {cancelledAt && !grantUntil && (
         <span className="text-[11px] text-amber-400">cancelling{periodEnd ? `, ends ${formatDate(periodEnd)}` : ""}</span>

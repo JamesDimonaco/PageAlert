@@ -30,7 +30,7 @@ import type { Id } from "./_generated/dataModel";
 import { authComponent } from "./betterAuth/auth";
 import { APP_URL, HELLO_FROM_EMAIL, RESEND_TIMEOUT, textToHtmlParagraphs } from "./emails";
 import { displayHost, isBlockedError } from "./shared";
-import { effectiveTier } from "./tiers";
+import { effectiveTier, TIER_RANK, type Tier } from "./tiers";
 
 const HOUR = 60 * 60 * 1000;
 
@@ -305,7 +305,7 @@ export const expireGrants = internalMutation({
     let expired = 0;
     for (const r of rows) {
       if (!r.grantUntil || r.grantUntil > now) continue;
-      await ctx.db.patch(r._id, { tier: "free", grantUntil: undefined, updatedAt: now });
+      await ctx.db.patch(r._id, { tier: "free", grantUntil: undefined, grantSource: undefined, updatedAt: now });
       expired++;
     }
     return { expired };
@@ -408,13 +408,15 @@ export const sendApologyEmails = internalAction({
 // Super-admin dashboard (/admin)
 // ---------------------------------------------------------------------------
 
-type Tier = "free" | "pro" | "max";
 
 const DAY_MS = 24 * HOUR;
 
 // Monthly price in USD cents. Keep in step with lib/plans.ts (whole-dollar
 // marketing prices); integer minor units here so MRR never touches a float.
-const TIER_PRICE_CENTS: Record<Tier, number> = { free: 0, pro: 900, max: 2900 };
+// A Sprint pass is a single $4 payment for 30 days, not a subscription, so it
+// contributes nothing to a figure called MRR. It shows in the tier counts
+// instead, and the users table renders "–" against it rather than a monthly.
+const TIER_PRICE_CENTS: Record<Tier, number> = { free: 0, sprint: 0, pro: 900, max: 2900 };
 
 function adminAllowList(): Set<string> {
   return new Set(
@@ -474,8 +476,15 @@ async function fetchAllUsers(ctx: QueryCtx | ActionCtx): Promise<AuthUser[]> {
   return users;
 }
 
-function isPayingRecord(t: { tier: Tier; grantUntil?: number }): boolean {
-  return effectiveTier(t) !== "free" && !t.grantUntil;
+/**
+ * Has this user paid for what they currently have? True for a live
+ * subscription, and for a bought pass — a pass is a purchase, so an admin
+ * trial must not quietly overwrite one. An admin-granted trial is not.
+ */
+function isPayingRecord(t: { tier: Tier; grantUntil?: number; grantSource?: "admin" | "pass" }): boolean {
+  if (effectiveTier(t) === "free") return false;
+  if (!t.grantUntil) return true;
+  return t.grantSource === "pass";
 }
 
 /**
@@ -522,7 +531,7 @@ export const overview = query({
     // Sum the buckets rather than re-filtering users, so this can never exceed the bars
     const new30d = [...signupsByDay.values()].reduce((sum, count) => sum + count, 0);
 
-    const tierCounts: Record<Tier, number> = { free: 0, pro: 0, max: 0 };
+    const tierCounts: Record<Tier, number> = { free: 0, sprint: 0, pro: 0, max: 0 };
     let trials = 0;
     let cancelling = 0;
     let mrrCents = 0;
@@ -651,7 +660,6 @@ export const listUsers = query({
 
 const paidTierValidator = v.union(v.literal("pro"), v.literal("max"));
 
-const TIER_RANK: Record<Tier, number> = { free: 0, pro: 1, max: 2 };
 
 /**
  * Grant (or extend) a free trial via grantUntil (the same field
@@ -696,6 +704,7 @@ export const grantTrial = mutation({
         await ctx.db.patch(existing._id, {
           tier,
           grantUntil,
+          grantSource: "admin" as const,
           cancelledAt: undefined,
           periodEnd: undefined,
           updatedAt: now,

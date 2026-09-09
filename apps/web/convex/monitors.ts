@@ -2,17 +2,16 @@ import { v } from "convex/values";
 import { mutation, query, internalAction, internalQuery } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { effectiveIntervalMs, ERROR_RECOVERY_INTERVAL_MS, intervalToMs, isBlockedError, MAX_RETRIES, validateMonitorUrl } from "./shared";
-import { effectiveTier } from "./tiers";
+import { effectiveTier, type Tier } from "./tiers";
 
 // ---- Resource Limits ----
 const MAX_NAME_LENGTH = 200;
 const MAX_PROMPT_LENGTH = 2000;
 const MAX_RESULTS_LIMIT = 100;
 
-type Tier = "free" | "pro" | "max";
-
 const TIER_LIMITS: Record<Tier, { maxMonitors: number; allowedIntervals: string[] }> = {
   free: { maxMonitors: 3, allowedIntervals: ["1h", "6h", "24h"] },
+  sprint: { maxMonitors: 10, allowedIntervals: ["30m", "1h", "6h", "24h"] },
   pro: { maxMonitors: 25, allowedIntervals: ["15m", "30m", "1h", "6h", "24h"] },
   max: { maxMonitors: 9999, allowedIntervals: ["5m", "15m", "30m", "1h", "6h", "24h"] },
 };
@@ -22,6 +21,7 @@ const TIER_LIMITS: Record<Tier, { maxMonitors: number; allowedIntervals: string[
 const CREATION_WINDOW_MS = 5 * 60 * 60 * 1000; // 5 hours
 const CREATION_LIMITS: Record<Tier, number> = {
   free: 3,
+  sprint: 10,
   pro: 20,
   max: 100,
 };

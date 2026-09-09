@@ -43,7 +43,7 @@ export default function SettingsPage() {
   const sendPushTest = useAction(api.push.sendTestMessage);
   const [pushTesting, setPushTesting] = useState(false);
   const { monitors } = useMonitors();
-  const { tier, maxMonitors, description: tierDescription, isLoading: tierLoading, refetch: refetchTier, isCancelled, daysRemaining, periodEnd, grantUntil } = useTier();
+  const { tier, maxMonitors, description: tierDescription, isLoading: tierLoading, refetch: refetchTier, isCancelled, daysRemaining, periodEnd, grantUntil, grantSource } = useTier();
   const [name, setName] = useState(user?.name ?? "");
   const [email, setEmail] = useState(user?.email ?? "");
 
@@ -79,7 +79,7 @@ export default function SettingsPage() {
 
   const [isCheckingOut, setIsCheckingOut] = useState(false);
 
-  async function handleCheckout(slug: "pro" | "max") {
+  async function handleCheckout(slug: "sprint" | "pro" | "max") {
     if (isCheckingOut) return;
     setIsCheckingOut(true);
     trackUpgradePromptClicked({ plan: slug, currentTier: tier });
@@ -124,9 +124,11 @@ export default function SettingsPage() {
     }
   }, [notifSettings]);
 
-  // A manual grant isn't a Polar subscription — the billing tab's
-  // checkout/portal gates key off this, not the raw (possibly trial) tier.
-  const paidTier = grantUntil ? "free" : tier;
+  const isPass = grantSource === "pass" && !!grantUntil;
+  // A grant isn't a Polar subscription, so the portal has nothing to manage —
+  // the checkout/portal gates key off this, not the raw (possibly granted)
+  // tier. A bought pass is still a purchase, so it doesn't read as free.
+  const paidTier = grantUntil && !isPass ? "free" : tier;
   // A trial user is offered the plan they're trialling and above, never a downgrade
   const offerPro = paidTier === "free" && tier !== "max";
   const offerMax = paidTier === "pro" || (!!grantUntil && tier === "max");
@@ -744,10 +746,22 @@ export default function SettingsPage() {
             <Card className="border-primary/30 bg-primary/5 shadow-sm">
               <CardContent className="p-4 sm:p-5">
                 <p className="text-sm font-semibold text-primary">
-                  You&apos;re on a free {tier.charAt(0).toUpperCase() + tier.slice(1)} trial
+                  {isPass
+                    ? "Your Sprint pass is running"
+                    : `You're on a free ${tier.charAt(0).toUpperCase() + tier.slice(1)} trial`}
                 </p>
                 <p className="text-sm text-muted-foreground mt-1">
-                  Trial ends {new Date(grantUntil).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}. Upgrade below to keep {tier.charAt(0).toUpperCase() + tier.slice(1)} after that.
+                  {isPass ? (
+                    <>
+                      It ends on {new Date(grantUntil).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })} and
+                      nothing renews — you go back to free unless you buy another
+                      pass or subscribe.
+                    </>
+                  ) : (
+                    <>
+                      Trial ends {new Date(grantUntil).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}. Upgrade below to keep {tier.charAt(0).toUpperCase() + tier.slice(1)} after that.
+                    </>
+                  )}
                 </p>
               </CardContent>
             </Card>

@@ -6,7 +6,10 @@ export interface PlanFeature {
 export interface Plan {
   name: string;
   price: number;
-  period: "forever" | "month";
+  /** "once" is the 30-day pass — a single payment, nothing to cancel */
+  period: "forever" | "month" | "once";
+  /** Polar checkout slug; absent on the free plan */
+  slug?: "sprint" | "pro" | "max";
   popular?: boolean;
   description: string;
   features: PlanFeature[];
@@ -21,22 +24,38 @@ export const PLANS: Plan[] = [
     features: [
       { text: "3 monitors" },
       { text: "1 hour check interval" },
-      { text: "Email, plus Telegram or Discord on one monitor" },
+      { text: "Email and push, plus Telegram or Discord on one monitor" },
       { text: "Full check history" },
       { text: "AI-powered extraction" },
       { text: "Change detection" },
     ],
   },
   {
+    name: "Sprint",
+    price: 4,
+    period: "once",
+    slug: "sprint",
+    description: "30 days, then it just stops",
+    features: [
+      { text: "10 monitors" },
+      { text: "30 minute check interval" },
+      { text: "Email, push, Telegram & Discord" },
+      { text: "Full check history" },
+      { text: "AI-powered extraction" },
+      { text: "No subscription — expires on its own" },
+    ],
+  },
+  {
     name: "Pro",
     price: 9,
     period: "month",
+    slug: "pro",
     popular: true,
     description: "For power users who need faster checks",
     features: [
       { text: "25 monitors" },
       { text: "15 minute check interval" },
-      { text: "Email, Telegram & Discord" },
+      { text: "Email, push, Telegram & Discord" },
       { text: "Full check history" },
       { text: "Priority scraping" },
       { text: "AI-powered extraction" },
@@ -48,6 +67,7 @@ export const PLANS: Plan[] = [
     name: "Max",
     price: 29,
     period: "month",
+    slug: "max",
     description: "Unlimited monitoring with everything",
     features: [
       { text: "Unlimited monitors" },
@@ -78,7 +98,8 @@ export function buildOffersJsonLd() {
       price: String(plan.price),
       priceCurrency: "USD",
       unitCode: "MON",
-      ...(plan.period !== "forever" && { billingDuration: "P1M" }),
+      ...(plan.period === "month" && { billingDuration: "P1M" }),
+      ...(plan.period === "once" && { billingDuration: "P30D" }),
     },
   }));
 }

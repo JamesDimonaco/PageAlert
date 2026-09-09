@@ -63,6 +63,10 @@ const polarClient = process.env.POLAR_ACCESS_TOKEN
 
 const PRO_PRODUCT_ID = process.env.POLAR_PRO_PRODUCT_ID;
 const MAX_PRODUCT_ID = process.env.POLAR_MAX_PRODUCT_ID;
+// One-off 30-day pass. Sold as a Polar order, not a subscription, so it
+// arrives through onOrderPaid rather than onSubscriptionCreated.
+const SPRINT_PRODUCT_ID = process.env.POLAR_SPRINT_PRODUCT_ID;
+const SPRINT_DAYS = 30;
 
 function productIdToTier(productId: string): "pro" | "max" | null {
   if (productId === MAX_PRODUCT_ID) return "max";
@@ -83,6 +87,7 @@ export const createAuthOptions = (ctx: GenericCtx<DataModel>) => {
             products: [
               ...(PRO_PRODUCT_ID ? [{ productId: PRO_PRODUCT_ID, slug: "pro" }] : []),
               ...(MAX_PRODUCT_ID ? [{ productId: MAX_PRODUCT_ID, slug: "max" }] : []),
+              ...(SPRINT_PRODUCT_ID ? [{ productId: SPRINT_PRODUCT_ID, slug: "sprint" }] : []),
             ],
             successUrl: `${process.env.SITE_URL ?? "https://pagealert.io"}/dashboard/settings?upgraded=true`,
             authenticatedUsersOnly: true,
@@ -151,8 +156,34 @@ export const createAuthOptions = (ctx: GenericCtx<DataModel>) => {
               }
             },
 
+            // Fires for every paid order, including subscription renewals, so
+            // the product check is what makes this the pass handler and not a
+            // second path into the subscription tiers.
             onOrderPaid: async (payload) => {
-              console.log("[polar] Order paid:", payload.data.id);
+              const order = payload.data as Record<string, unknown>;
+              const productId = (order.productId ?? order.product_id) as string | undefined;
+              console.log("[polar] Order paid:", order.id, "product:", productId);
+
+              if (!SPRINT_PRODUCT_ID || productId !== SPRINT_PRODUCT_ID) return;
+
+              const customer = order.customer as Record<string, unknown> | undefined;
+              const userId = (customer?.externalId ??
+                customer?.external_id ??
+                order.customerExternalId ??
+                order.customer_external_id) as string | undefined;
+
+              if (!userId) {
+                console.error("[polar] Sprint pass paid but no external user id on order", order.id);
+                return;
+              }
+
+              await (ctx as any).runMutation(internal.tiers.grantPass, {
+                userId,
+                tier: "sprint" as const,
+                days: SPRINT_DAYS,
+                polarCustomerId: (order.customerId ?? order.customer_id) as string | undefined,
+              });
+              console.log("[polar] Sprint pass granted to", userId, "for", SPRINT_DAYS, "days");
             },
           })] : []),
         ],

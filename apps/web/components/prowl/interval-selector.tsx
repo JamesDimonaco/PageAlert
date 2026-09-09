@@ -16,16 +16,18 @@ type CheckInterval = "5m" | "15m" | "30m" | "1h" | "6h" | "24h";
 const INTERVALS: { value: CheckInterval; label: string; tier: Tier }[] = [
   { value: "5m", label: "Every 5 minutes", tier: "max" },
   { value: "15m", label: "Every 15 minutes", tier: "pro" },
-  { value: "30m", label: "Every 30 minutes", tier: "pro" },
+  { value: "30m", label: "Every 30 minutes", tier: "sprint" },
   { value: "1h", label: "Every hour", tier: "free" },
   { value: "6h", label: "Every 6 hours", tier: "free" },
   { value: "24h", label: "Every 24 hours", tier: "free" },
 ];
 
+// Mirrors TIER_RANK in convex/tiers.ts — an interval is available to any tier
+// at or above the one that unlocks it.
+const TIER_RANK: Record<Tier, number> = { free: 0, sprint: 1, pro: 2, max: 3 };
+
 function isAvailable(intervalTier: string, currentTier: Tier): boolean {
-  if (currentTier === "max") return true;
-  if (currentTier === "pro") return intervalTier !== "max";
-  return intervalTier === "free";
+  return TIER_RANK[currentTier] >= TIER_RANK[intervalTier as Tier];
 }
 
 interface IntervalSelectorProps {
