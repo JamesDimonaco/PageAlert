@@ -1,101 +1,124 @@
-import posthog from "posthog-js";
+import type { PostHog } from "posthog-js";
 
 export const POSTHOG_KEY = process.env.NEXT_PUBLIC_POSTHOG_KEY;
 export const POSTHOG_HOST = process.env.NEXT_PUBLIC_POSTHOG_HOST ?? "https://us.i.posthog.com";
 
-let initialized = false;
-let pendingPageView: string | null = null;
+// posthog-js is ~100KB gzipped. Importing it lazily keeps it out of the
+// initial bundle; `ph` stays null until the chunk lands, and every helper
+// below no-ops (or queues) until then.
+let ph: PostHog | null = null;
+let initStarted = false;
+let pendingPageViews: string[] = [];
 let pendingIdentify: { userId: string; properties?: Record<string, unknown> } | null = null;
+let pendingUserProperties: Record<string, unknown> | null = null;
 
 export function initPostHog() {
   if (typeof window === "undefined") return;
   if (!POSTHOG_KEY) return;
-  if (initialized) return;
+  if (initStarted) return;
+  initStarted = true;
 
-  posthog.init(POSTHOG_KEY, {
-    api_host: "/ingest",
-    ui_host: POSTHOG_HOST,
-    capture_pageview: false,
-    capture_pageleave: true,
-    autocapture: true,
-    capture_exceptions: true,
-    persistence: "localStorage+cookie",
-    person_profiles: "identified_only",
-    disable_session_recording: true,
-    session_recording: {
-      maskAllInputs: true,
-      maskTextSelector: "[data-ph-mask]",
-    },
+  void import("posthog-js").then(({ default: posthog }) => {
+    posthog.init(POSTHOG_KEY, {
+      api_host: "/ingest",
+      ui_host: POSTHOG_HOST,
+      capture_pageview: false,
+      capture_pageleave: true,
+      autocapture: true,
+      capture_exceptions: true,
+      persistence: "localStorage+cookie",
+      person_profiles: "identified_only",
+      disable_session_recording: true,
+      session_recording: {
+        maskAllInputs: true,
+        maskTextSelector: "[data-ph-mask]",
+      },
+    });
+    ph = posthog;
+
+    // Identify before flushing, so queued pageviews and properties attach to
+    // the right person.
+    if (pendingIdentify) {
+      posthog.identify(pendingIdentify.userId, pendingIdentify.properties);
+      pendingIdentify = null;
+    }
+
+    if (pendingUserProperties) {
+      posthog.people.set(pendingUserProperties);
+      pendingUserProperties = null;
+    }
+
+    for (const url of pendingPageViews) {
+      posthog.capture("$pageview", { $current_url: url });
+    }
+    pendingPageViews = [];
+
+    // Lazily start session recording after main thread is idle
+    if ("requestIdleCallback" in window) {
+      requestIdleCallback(() => posthog.startSessionRecording());
+    } else {
+      setTimeout(() => posthog.startSessionRecording(), 3000);
+    }
+  }).catch(() => {
+    // Chunk failed to load (stale tab across a deploy, flaky network).
+    // Allow a later initPostHog() to retry rather than killing analytics
+    // for the whole session.
+    initStarted = false;
   });
-  initialized = true;
-
-  // Fire any pageview that was queued before init
-  if (pendingPageView) {
-    posthog.capture("$pageview", { $current_url: pendingPageView });
-    pendingPageView = null;
-  }
-
-  // Fire any identify that was queued before init
-  if (pendingIdentify) {
-    posthog.identify(pendingIdentify.userId, pendingIdentify.properties);
-    pendingIdentify = null;
-  }
-
-  // Lazily start session recording after main thread is idle
-  if ("requestIdleCallback" in window) {
-    requestIdleCallback(() => posthog.startSessionRecording());
-  } else {
-    setTimeout(() => posthog.startSessionRecording(), 3000);
-  }
 }
 
 export function getPostHog() {
-  return initialized ? posthog : null;
+  return ph;
 }
 
 // ---- Core helpers ----
 
 export function identifyUser(userId: string, properties?: Record<string, unknown>) {
-  if (!initialized) {
+  if (!ph) {
     pendingIdentify = { userId, properties };
     return;
   }
-  posthog.identify(userId, properties);
+  ph.identify(userId, properties);
 }
 
 export function setUserProperties(properties: Record<string, unknown>) {
-  if (!initialized) return;
-  posthog.people.set(properties);
+  if (!ph) {
+    pendingUserProperties = { ...pendingUserProperties, ...properties };
+    return;
+  }
+  ph.people.set(properties);
 }
 
 export function resetUser() {
-  if (!initialized) return;
-  posthog.reset();
+  pendingIdentify = null;
+  pendingUserProperties = null;
+  if (!ph) return;
+  ph.reset();
 }
 
 export function trackEvent(event: string, properties?: Record<string, unknown>) {
-  if (!initialized) return;
-  posthog.capture(event, properties);
+  if (!ph) return;
+  ph.capture(event, properties);
 }
 
 export function trackPageView(url: string) {
-  if (!initialized) {
-    pendingPageView = url;
+  if (!ph) {
+    pendingPageViews.push(url);
     return;
   }
-  posthog.capture("$pageview", { $current_url: url });
+  ph.capture("$pageview", { $current_url: url });
 }
 
 // ---- Feature flags ----
 
 export function isFeatureEnabled(flag: string): boolean {
-  if (!initialized) return false;
-  return posthog.isFeatureEnabled(flag) ?? false;
+  if (!ph) return false;
+  return ph.isFeatureEnabled(flag) ?? false;
 }
 
 export function getFeatureFlag(flag: string): string | boolean | undefined {
-  if (!initialized) return undefined;
-  return posthog.getFeatureFlag(flag);
+  if (!ph) return undefined;
+  return ph.getFeatureFlag(flag);
 }
 
 // ---- Revenue / Billing events ----
@@ -253,9 +276,9 @@ export function trackSignOut() {
 // ---- Error tracking ----
 
 export function captureException(error: unknown, context?: Record<string, unknown>) {
-  if (!initialized) return;
+  if (!ph) return;
   const err = error instanceof Error ? error : new Error(String(error));
-  posthog.captureException(err, context);
+  ph.captureException(err, context);
 }
 
 // ---- Helpers ----

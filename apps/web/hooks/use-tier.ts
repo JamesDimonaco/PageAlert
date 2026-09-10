@@ -68,6 +68,40 @@ interface TierInfo {
   refetch: () => void;
 }
 
+// useTier mounts more than once per page (navbar + page body), and each mount
+// used to fire its own Polar round trip on load. Share the in-flight read so
+// they make one request between them.
+let inflightPolarTier: Promise<Tier | null | undefined> | null = null;
+
+/** Resolves to the Polar tier, null if there is none, or undefined if the call failed. */
+function fetchPolarTier(force = false): Promise<Tier | null | undefined> {
+  if (inflightPolarTier && !force) return inflightPolarTier;
+  const p = (async (): Promise<Tier | null | undefined> => {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const client = authClient as any;
+      // Guard: customer.state() may not exist on all versions of @polar-sh/better-auth
+      if (typeof client.customer?.state !== "function") return null;
+      const state = await client.customer.state();
+
+      // Server returned an error (e.g. Polar not configured in dev)
+      if (state?.error || !state?.data) return null;
+
+      const subs = state.data.activeSubscriptions ?? state.data.subscriptions ?? [];
+      if (Array.isArray(subs) && subs.length > 0) return detectTier(subs);
+      return "free";
+    } catch {
+      // Polar fallback is non-critical — Convex tier is the primary source
+      return undefined;
+    }
+  })();
+  inflightPolarTier = p;
+  void p.finally(() => {
+    if (inflightPolarTier === p) inflightPolarTier = null;
+  });
+  return p;
+}
+
 // Pick the higher-privilege tier between two sources
 const TIER_RANK: Record<Tier, number> = { free: 0, sprint: 1, pro: 2, max: 3 };
 function higherTier(a: Tier, b: Tier): Tier {
@@ -91,32 +125,11 @@ export function useTier(): TierInfo {
   const isLoading = convexTier === undefined || polarLoading;
 
   // Fetch tier from Polar as a fallback/fresh read
-  const fetchAndSync = useCallback(async () => {
+  const fetchAndSync = useCallback(async (force = false) => {
     setPolarLoading(true);
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const client = authClient as any;
-      // Guard: customer.state() may not exist on all versions of @polar-sh/better-auth
-      if (typeof client.customer?.state !== "function") {
-        setPolarTier(null);
-        return;
-      }
-      const state = await client.customer.state();
-
-      // Server returned an error (e.g. Polar not configured in dev)
-      if (state?.error || !state?.data) {
-        setPolarTier(null);
-        return;
-      }
-
-      const subs = state.data.activeSubscriptions ?? state.data.subscriptions ?? [];
-      if (Array.isArray(subs) && subs.length > 0) {
-        setPolarTier(detectTier(subs));
-      } else {
-        setPolarTier("free");
-      }
-    } catch {
-      // Polar fallback is non-critical — Convex tier is the primary source
+      const result = await fetchPolarTier(force);
+      if (result !== undefined) setPolarTier(result);
     } finally {
       setPolarLoading(false);
     }
@@ -127,9 +140,12 @@ export function useTier(): TierInfo {
     fetchAndSync();
   }, [fetchAndSync]);
 
+  // Stable identity: callers hold refetch in dependency arrays.
+  const refetch = useCallback(() => { void fetchAndSync(true); }, [fetchAndSync]);
+
   // Refetch on window focus (user returns from checkout)
   useEffect(() => {
-    function onFocus() { fetchAndSync(); }
+    function onFocus() { fetchAndSync(true); }
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
   }, [fetchAndSync]);
@@ -137,7 +153,7 @@ export function useTier(): TierInfo {
   // Refetch on ?upgraded=true
   useEffect(() => {
     if (typeof window !== "undefined" && window.location.search.includes("upgraded=true")) {
-      const timer = setTimeout(() => fetchAndSync(), 1500);
+      const timer = setTimeout(() => fetchAndSync(true), 1500);
       return () => clearTimeout(timer);
     }
   }, [fetchAndSync]);
@@ -174,7 +190,7 @@ export function useTier(): TierInfo {
     daysRemaining,
     grantUntil,
     grantSource,
-    refetch: fetchAndSync,
+    refetch,
     ...TIER_LIMITS[tier],
   };
 }
