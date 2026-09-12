@@ -87,6 +87,10 @@ export default defineSchema({
     monitorId: v.id("monitors"),
     matches: v.array(v.any()),
     items: v.optional(v.array(v.any())),
+    // Entries judged on this check, each carrying its score and the one-line
+    // reason. Separate from `items` (the AI's model of the page, which change
+    // detection diffs) because a routine check only ever judges a handful.
+    scoredCandidates: v.optional(v.array(v.any())),
     totalItems: v.number(),
     hasNewMatches: v.boolean(),
     scrapedAt: v.number(),

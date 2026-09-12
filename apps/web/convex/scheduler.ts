@@ -11,7 +11,7 @@ import {
   effectiveIntervalMs,
   MAX_RETRIES,
   MAX_PROXY_BLOCKS,
-  MATCH_SCORE_THRESHOLD,
+  alertsOnScore,
   PROXY_REPROBE_EVERY,
 } from "./shared";
 
@@ -161,6 +161,9 @@ export const recordCheckResult = internalMutation({
     trackMatchKeys: v.optional(v.boolean()),
     // Every entry the keyword filter picked this check, judged or not.
     candidateKeys: v.optional(v.array(v.string())),
+    // Entries judged on this check, verdict included. Kept apart from `items`,
+    // which is the AI's model of the page and is what change detection diffs.
+    scoredCandidates: v.optional(v.array(v.any())),
     // Whether this check went through the proxy — drives proxyPreferred.
     usedProxy: v.optional(v.boolean()),
     // The AI re-read the page on this check. Set even when the extract came
@@ -264,7 +267,11 @@ export const recordCheckResult = internalMutation({
       updates.lastAiExtractAt = now;
     }
 
-    if (args.matchCount > 0 && !args.unchanged) {
+    // Keyed off new matches, not the running count. The count is "entries on
+    // the page meeting your conditions", which stays non-zero for as long as
+    // the listing is up — reading it as a fresh match reset "last match" to
+    // now on every single check.
+    if (args.hasNewMatches && !args.unchanged) {
       updates.lastMatchAt = now;
     }
 
@@ -322,6 +329,7 @@ export const recordCheckResult = internalMutation({
       monitorId: args.monitorId,
       matches: args.matches,
       items: args.items,
+      scoredCandidates: args.scoredCandidates,
       totalItems: args.totalItems,
       hasNewMatches: args.hasNewMatches,
       scrapedAt: now,
@@ -910,12 +918,13 @@ type QuickCheckCandidate = {
 };
 
 type ScoredCandidate = QuickCheckCandidate & {
-  matchScore: number;
+  /** Null means the judgement never came back — distinct from having scored badly. */
+  matchScore: number | null;
   matchReason: string;
 };
 
-/** Score an entry keeps when the judgement did not come back. Mirrors the scraper's own default. */
-const NEUTRAL_MATCH_SCORE = 50;
+/** Entries judged in one check. The rest keep their place in the seen set and wait their turn. */
+const MAX_SCORED_PER_CHECK = 25;
 
 /**
  * Entries named individually in a Telegram alert. Each one carries its own
@@ -1023,59 +1032,76 @@ async function runQuickCheck(
 
   // Entries the keyword filter picked, each one a single listing rather than
   // the whole page. See matchPageSegments in @prowl/shared.
+  if (!Array.isArray(result.candidates)) {
+    // An older scraper still answering the previous response shape. Alerting
+    // on nothing is the silent failure, so say so loudly.
+    console.error(`[scheduler] Quick check ${monitor._id}: scraper returned no candidates field — deploy the scraper before Convex`);
+  }
   const candidates = (result.candidates ?? []) as QuickCheckCandidate[];
+  const totalEntries = typeof result.totalEntries === "number" ? result.totalEntries : candidates.length;
   const blacklist = (monitor.blacklistedItems ?? []) as string[];
-  const visible = filterBlacklisted(candidates, blacklist) as QuickCheckCandidate[];
+  const visible = filterBlacklisted(candidates, blacklist);
 
   const candidateKeys = visible.map(matchKey).filter(Boolean);
   // Entries already seen last check are not worth judging again, whatever the
   // verdict was. Seeding on a monitor with no baseline returns nothing, so
   // this shipping does not alert anyone about listings already on the page.
   const unseenKeys = new Set(newMatchKeys(monitor.candidateKeys, candidateKeys));
-  const unseen = visible.filter((c) => unseenKeys.has(matchKey(c)));
+  const unseen = visible
+    .filter((c) => unseenKeys.has(matchKey(c)))
+    .slice(0, MAX_SCORED_PER_CHECK);
+
+  // New entries past the per-check cap stay out of the seen set so the next
+  // check picks them up. Recording them as seen alongside the ones actually
+  // judged would drop them silently and for good.
+  const judged = new Set(unseen.map(matchKey));
+  const seenAfterCheck = candidateKeys.filter((k) => !unseenKeys.has(k) || judged.has(k));
 
   if (unseen.length === 0) {
     await ctx.runMutation(internal.scheduler.recordCheckResult, {
       monitorId: monitor._id,
       hasNewMatches: false,
       matchCount: visible.length,
-      totalItems: candidates.length,
+      totalItems: totalEntries,
       matches: [],
       contentFingerprint: contentHash,
-      candidateKeys,
+      candidateKeys: seenAfterCheck,
       usedProxy: useProxy,
     });
-    console.log(`[scheduler] Quick check ${monitor._id}: ${candidates.length} candidate(s), none new`);
-    return { hasMatch: false, matchCount: visible.length, matches: [], totalItems: candidates.length, strategy: "quick-check", newMatchKeys: [] };
+    console.log(`[scheduler] Quick check ${monitor._id}: ${visible.length} candidate(s), none new`);
+    return { hasMatch: false, matchCount: visible.length, matches: [], totalItems: totalEntries, strategy: "quick-check", newMatchKeys: [] };
   }
 
   // Only the new entries reach the AI, and only their own text does. A page
   // that has not changed, or whose changes are all old news, costs nothing.
   const scored = await scoreQuickCheckCandidates(unseen, monitor, scraperUrl, scraperKey);
-  const matches = scored.filter((c) => c.matchScore >= MATCH_SCORE_THRESHOLD);
+  const matches = scored.filter((c) => alertsOnScore(c.matchScore));
 
   const outcome = await ctx.runMutation(internal.scheduler.recordCheckResult, {
     monitorId: monitor._id,
     hasNewMatches: matches.length > 0,
-    matchCount: matches.length,
-    totalItems: candidates.length,
+    matchCount: visible.length,
+    totalItems: totalEntries,
     matches,
-    items: scored,
+    // Deliberately not `items`: that field is the AI's model of the whole
+    // page, and change detection diffs it against the previous check. Handing
+    // it this check's handful of new entries would read as the rest of the
+    // page having been removed.
+    scoredCandidates: scored,
     contentFingerprint: contentHash,
-    candidateKeys,
+    candidateKeys: seenAfterCheck,
     usedProxy: useProxy,
-    aiExtracted: true,
   });
 
   console.log(
-    `[scheduler] Quick check ${monitor._id}: ${candidates.length} candidate(s), ${unseen.length} new, ${matches.length} above threshold`
+    `[scheduler] Quick check ${monitor._id}: ${visible.length} candidate(s), ${unseen.length} new, ${matches.length} above threshold`
   );
 
   return {
     hasMatch: matches.length > 0,
-    matchCount: matches.length,
+    matchCount: visible.length,
     matches,
-    totalItems: candidates.length,
+    totalItems: totalEntries,
     strategy: "quick-check",
     newMatchKeys: matches.map(matchKey),
     resultId: outcome?.resultId ?? null,
@@ -1085,9 +1111,10 @@ async function runQuickCheck(
 /**
  * Ask the scraper to judge entries against the user's own words.
  *
- * A scoring failure must not silence a monitor, so entries come back at the
- * neutral score and still alert. The keyword filter already vouched for them;
- * the judgement is what narrows further, not what grants the match.
+ * A scoring failure must not silence a monitor, so entries come back with a
+ * null score, which the caller lets through. The keyword filter already
+ * vouched for them; the judgement narrows further, it does not grant the
+ * match.
  */
 async function scoreQuickCheckCandidates(
   candidates: QuickCheckCandidate[],
@@ -1096,7 +1123,7 @@ async function scoreQuickCheckCandidates(
   scraperUrl: string,
   scraperKey: string
 ): Promise<ScoredCandidate[]> {
-  const unscored = candidates.map((c) => ({ ...c, matchScore: NEUTRAL_MATCH_SCORE, matchReason: "" }));
+  const unscored: ScoredCandidate[] = candidates.map((c) => ({ ...c, matchScore: null, matchReason: "" }));
   try {
     const res = await fetch(`${scraperUrl}/api/score`, {
       method: "POST",

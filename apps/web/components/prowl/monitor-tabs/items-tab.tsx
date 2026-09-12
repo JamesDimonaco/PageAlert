@@ -69,6 +69,7 @@ export function ItemsTab({ monitorId, allItems, schema, blacklist }: ItemsTabPro
 
   const updateBlacklist = useMutation(api.monitors.updateBlacklist);
   const submitFeedback = useMutation(api.feedback.submit);
+  const clearFeedback = useMutation(api.feedback.clear);
   const feedback = useQuery(api.feedback.forMonitor, { monitorId }) ?? {};
   const scores = useQuery(api.monitors.latestScores, { monitorId }) ?? {};
 
@@ -186,9 +187,11 @@ export function ItemsTab({ monitorId, allItems, schema, blacklist }: ItemsTabPro
     } catch { toast.error("Failed to dismiss"); }
   }
 
+  /** Restoring an entry retracts the verdict that hid it, so the thumbs data keeps no answer the user took back. */
   async function unblacklistItem(key: string) {
     try {
       await updateBlacklist({ id: monitorId, blacklistedItems: blacklist.filter((t) => t !== key) });
+      await clearFeedback({ monitorId, itemKey: key }).catch(() => {});
       trackItemRestored();
       toast.success("Item restored");
     } catch { toast.error("Failed to restore"); }
@@ -382,7 +385,7 @@ export function ItemsTab({ monitorId, allItems, schema, blacklist }: ItemsTabPro
                     {origPrice}
                   </span>
                 )}
-                {isMatch && !isBlacklisted && (
+                {(isMatch || isBlacklisted) && (
                   <div className="flex items-center gap-0.5" title={reason || undefined}>
                     <Button
                       variant="ghost" size="sm"

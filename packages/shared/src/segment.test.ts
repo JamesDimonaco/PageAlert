@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { applyMatchConditions } from "./match";
-import { findPrices, matchPageSegments, segmentPage } from "./segment";
+import { alertsOnScore, findPrices, matchPageSegments, segmentPage } from "./segment";
 
 /**
  * A listing page holding one cheap accessory and one expensive laptop — the
@@ -102,6 +102,25 @@ describe("matchPageSegments", () => {
     expect(matches).toHaveLength(1);
   });
 
+  it("attributes prices correctly when the price sits above the title", () => {
+    const page = [
+      "£10.00",
+      "[Cheap Thing](https://shop.test/cheap)",
+      "Free delivery",
+      "£2,000.00",
+      "[Pricey Thing](https://shop.test/pricey)",
+      "Free delivery",
+    ].join("\n");
+
+    // The old split handed Cheap Thing the £2,000 sitting below it.
+    expect(matchPageSegments(page, { mustInclude: ["cheap"], priceMax: 50 }))
+      .toHaveLength(1);
+    expect(matchPageSegments(page, { mustInclude: ["pricey"], priceMax: 50 }))
+      .toEqual([]);
+    expect(matchPageSegments(page, { mustInclude: ["pricey"], priceMax: 3000 })[0]!.pricesInRange)
+      .toEqual([2000]);
+  });
+
   it("honours excludes within the entry", () => {
     const matches = matchPageSegments(LISTING, {
       mustInclude: ["thinkpad"],
@@ -122,5 +141,20 @@ describe("applyMatchConditions", () => {
     const items = [{ title: "Mystery box", price: null, url: "https://shop.test/x" }];
     expect(applyMatchConditions(items, { priceMax: 50 })).toEqual([]);
     expect(applyMatchConditions(items, {})).toEqual(items);
+  });
+});
+
+describe("alertsOnScore", () => {
+  it("lets an unjudged entry through", () => {
+    // A scoring outage must not retire a real restock into the seen set.
+    expect(alertsOnScore(null)).toBe(true);
+    expect(alertsOnScore(undefined)).toBe(true);
+  });
+
+  it("holds back an entry the judge rejected", () => {
+    expect(alertsOnScore(0)).toBe(false);
+    expect(alertsOnScore(59)).toBe(false);
+    expect(alertsOnScore(60)).toBe(true);
+    expect(alertsOnScore(98)).toBe(true);
   });
 });

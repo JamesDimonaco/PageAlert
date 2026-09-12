@@ -1,4 +1,4 @@
-export { MATCH_SCORE_THRESHOLD, matchConfidence, MATCH_CONFIDENCE_LABEL } from "@prowl/shared";
+export { MATCH_SCORE_THRESHOLD, alertsOnScore, matchConfidence, MATCH_CONFIDENCE_LABEL } from "@prowl/shared";
 
 /** Maximum retry attempts before marking a monitor as error */
 export const MAX_RETRIES = 3;

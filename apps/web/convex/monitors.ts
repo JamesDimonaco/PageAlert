@@ -540,6 +540,9 @@ export const getResults = query({
  * rather than written into the schema, which would mix two different views of
  * the page.
  */
+/** Checks looked back through for verdicts. Enough to outlast a quiet spell without paging history. */
+const SCORE_LOOKBACK_RESULTS = 20;
+
 export const latestScores = query({
   args: { monitorId: v.id("monitors") },
   handler: async (ctx, { monitorId }) => {
@@ -548,22 +551,28 @@ export const latestScores = query({
     const monitor = await ctx.db.get(monitorId);
     if (!monitor || monitor.userId !== identity.subject) return {};
 
-    const latest = await ctx.db
+    // Not simply the newest row: a check that found nothing new judges nothing
+    // and stores no verdicts, so reading only the latest would blank every
+    // score on the tab one check after a match arrived.
+    const recent = await ctx.db
       .query("scrapeResults")
       .withIndex("by_monitorId_scrapedAt", (q) => q.eq("monitorId", monitorId))
       .order("desc")
-      .first();
+      .take(SCORE_LOOKBACK_RESULTS);
 
     const scored: Record<string, { matchScore: number; matchReason: string }> = {};
-    for (const item of (latest?.items ?? []) as Record<string, unknown>[]) {
-      if (typeof item.matchScore !== "number") continue;
-      const key = item.url
-        ? String(item.url)
-        : `${String(item.title ?? "")}-${String(item.price ?? "")}`;
-      scored[key] = {
-        matchScore: item.matchScore,
-        matchReason: typeof item.matchReason === "string" ? item.matchReason : "",
-      };
+    // Oldest first, so a newer verdict on the same entry wins.
+    for (const result of [...recent].reverse()) {
+      for (const item of (result.scoredCandidates ?? []) as Record<string, unknown>[]) {
+        if (typeof item.matchScore !== "number") continue;
+        const key = item.url
+          ? String(item.url)
+          : `${String(item.title ?? "")}-${String(item.price ?? "")}`;
+        scored[key] = {
+          matchScore: item.matchScore,
+          matchReason: typeof item.matchReason === "string" ? item.matchReason : "",
+        };
+      }
     }
     return scored;
   },

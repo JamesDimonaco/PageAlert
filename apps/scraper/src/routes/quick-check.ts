@@ -1,14 +1,21 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
-import { matchPageSegments } from "@prowl/shared";
+import { matchPageSegments, segmentPage } from "@prowl/shared";
 import { FALLBACK_PROVIDER_ERROR, scrapeUrl } from "../services/scraper.js";
 import { MAX_URL_LENGTH } from "../utils/url-validation.js";
 import { hashContent } from "../utils/content-hash.js";
 
 const MAX_KEYWORD_LENGTH = 200;
-/** Entries returned per check. Beyond this the user is watching a page too broad to alert on. */
-const MAX_CANDIDATES = 25;
+/**
+ * Entries returned per check.
+ *
+ * Held well above the number anyone would be judged or alerted on, because
+ * the caller diffs this list to decide what is new. Truncating it tighter
+ * makes entries drop out of the seen set as page order shifts and then
+ * re-announce themselves as new arrivals.
+ */
+const MAX_CANDIDATES = 100;
 /** Per-entry text handed on for AI scoring — a listing card, not a page. */
 const MAX_SNIPPET_LENGTH = 600;
 const MAX_STRING_ARRAY_ITEMS = 20;
@@ -68,6 +75,7 @@ quickCheckRoutes.post("/", zValidator("json", quickCheckSchema), async (c) => {
     // this replaced asked only whether the keywords and a price in range
     // appeared somewhere, so two unrelated products could satisfy one
     // condition set between them.
+    const entries = segmentPage(text);
     const candidates = matchPageSegments(text, matchConditions)
       .slice(0, MAX_CANDIDATES)
       .map((segment) => ({
@@ -83,6 +91,9 @@ quickCheckRoutes.post("/", zValidator("json", quickCheckSchema), async (c) => {
       accessible: true,
       contentHash: hashContent(text),
       candidates,
+      // Listing entries on the page, not just the matching ones — this is the
+      // "out of N items" a user reads in an alert.
+      totalEntries: entries.length,
       hasNewMatches: candidates.length > 0,
       totalTextLength: text.length,
       scrapedAt: scraped.scrapedAt,

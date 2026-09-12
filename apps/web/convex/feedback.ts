@@ -1,6 +1,6 @@
 import { v } from "convex/values";
 import { internalMutation, mutation, query } from "./_generated/server";
-import type { Doc, Id } from "./_generated/dataModel";
+import type { Doc } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
 
 const verdictValidator = v.union(v.literal("good"), v.literal("bad"));
@@ -88,6 +88,32 @@ export const submit = mutation({
   },
 });
 
+/**
+ * Drop a verdict.
+ *
+ * Restoring an entry that a thumbs-down hid has to retract the verdict too,
+ * or the thumbs data keeps an answer the user visibly took back — and that
+ * data is what the score threshold gets calibrated against.
+ */
+export const clear = mutation({
+  args: { monitorId: v.id("monitors"), itemKey: v.string() },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Not authenticated");
+
+    const monitor = await ctx.db.get(args.monitorId);
+    if (!monitor || monitor.userId !== identity.subject) return;
+
+    const existing = await ctx.db
+      .query("matchFeedback")
+      .withIndex("by_monitor_item", (q) =>
+        q.eq("monitorId", args.monitorId).eq("itemKey", args.itemKey)
+      )
+      .unique();
+    if (existing) await ctx.db.delete(existing._id);
+  },
+});
+
 export const forMonitor = query({
   args: { monitorId: v.id("monitors") },
   handler: async (ctx, args) => {
@@ -130,7 +156,12 @@ export const submitFromTelegram = internalMutation({
       .unique();
     if (!setting) return { ok: false };
 
-    const result = await ctx.db.get(args.resultId as Id<"scrapeResults">).catch(() => null);
+    // normalizeId, not a cast: a callback payload is attacker-controlled, and
+    // db.get throws on a malformed id before the promise exists, so the throw
+    // escapes any .catch and the button spins forever on the user's phone.
+    const resultId = ctx.db.normalizeId("scrapeResults", args.resultId);
+    if (!resultId) return { ok: false };
+    const result = await ctx.db.get(resultId);
     if (!result) return { ok: false };
 
     const monitor = await ctx.db.get(result.monitorId);

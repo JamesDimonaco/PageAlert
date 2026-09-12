@@ -26,9 +26,6 @@ const getClient = (): AnthropicOriginal => {
   return new AnthropicOriginal();
 };
 
-/** Score kept when the model could not judge an entry — neither trusted nor silenced. */
-const NEUTRAL_SCORE = 50;
-
 const EXTRACTION_PROMPT = `You are a web data extraction assistant. Given:
 - The text content of a web page (with links as [text](url))
 - A monitor name (context about what the user named this search)
@@ -318,8 +315,11 @@ export interface ScoreCandidate {
 }
 
 export interface ScoredCandidate extends ScoreCandidate {
-  /** 0-100: how well this entry meets what the user actually asked for. */
-  matchScore: number;
+  /**
+   * 0-100: how well this entry meets what the user actually asked for.
+   * Null means the judgement did not come back — never "scored zero".
+   */
+  matchScore: number | null;
   /** One line the user can read to see why. */
   matchReason: string;
 }
@@ -346,8 +346,9 @@ Return one entry per input index, in any order. Keep each reason under 20 words.
  *
  * Runs on the entries the keyword filter already picked, not the page, so it
  * costs a fraction of a full extract and sees no surrounding noise. An entry
- * the model cannot score keeps a neutral 50 rather than being dropped: a
- * scoring wobble must not silence a real restock.
+ * the model does not come back on scores null rather than zero — callers must
+ * be able to tell "judged poorly" from "not judged", or a scoring wobble
+ * silences a real restock.
  */
 export async function scoreCandidates(
   candidates: ScoreCandidate[],
@@ -410,7 +411,7 @@ export async function scoreCandidates(
     const scored = scores.get(i + 1);
     return {
       ...candidate,
-      matchScore: scored?.matchScore ?? NEUTRAL_SCORE,
+      matchScore: scored?.matchScore ?? null,
       matchReason: scored?.matchReason ?? "",
     };
   });
