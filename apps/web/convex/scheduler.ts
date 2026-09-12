@@ -11,11 +11,15 @@ import {
   effectiveIntervalMs,
   MAX_RETRIES,
   MAX_PROXY_BLOCKS,
+  MATCH_SCORE_THRESHOLD,
   PROXY_REPROBE_EVERY,
 } from "./shared";
 
+/** The fields both check paths agree on. Everything item-shaped in here satisfies it. */
+type ItemLike = { title?: unknown; name?: unknown; url?: unknown; price?: unknown };
+
 /** Filter out blacklisted items from a matches array based on item title/url keys */
-function filterBlacklisted(matches: Record<string, unknown>[], blacklist: string[]): Record<string, unknown>[] {
+function filterBlacklisted<T extends ItemLike>(matches: T[], blacklist: string[]): T[] {
   if (!blacklist || blacklist.length === 0) return matches;
   const blacklistSet = new Set(blacklist);
   return matches.filter((m) => {
@@ -153,8 +157,10 @@ export const recordCheckResult = internalMutation({
     // Page content identical to last scan — bookkeeping only, no result row
     unchanged: v.optional(v.boolean()),
     // Set only by the full-extract path, where matches are real items with
-    // identities. The quick-check path has no per-item data to diff.
+    // identities. The quick-check path diffs on candidateKeys instead.
     trackMatchKeys: v.optional(v.boolean()),
+    // Every entry the keyword filter picked this check, judged or not.
+    candidateKeys: v.optional(v.array(v.string())),
     // Whether this check went through the proxy — drives proxyPreferred.
     usedProxy: v.optional(v.boolean()),
     // The AI re-read the page on this check. Set even when the extract came
@@ -164,7 +170,7 @@ export const recordCheckResult = internalMutation({
   handler: async (ctx, args) => {
     const monitor = await ctx.db.get(args.monitorId);
     if (!monitor || (monitor.status !== "active" && monitor.status !== "error")) {
-      return { parked: false, newMatchKeys: [] as string[] };
+      return { parked: false, newMatchKeys: [] as string[], resultId: null };
     }
 
     const now = Date.now();
@@ -191,7 +197,7 @@ export const recordCheckResult = internalMutation({
           updatedAt: now,
           ...aiStamp,
         });
-        return { parked: true, newMatchKeys: [] as string[] };
+        return { parked: true, newMatchKeys: [] as string[], resultId: null };
       }
 
       if (retryCount >= MAX_RETRIES) {
@@ -217,7 +223,7 @@ export const recordCheckResult = internalMutation({
           ...aiStamp,
         });
       }
-      return { parked: false, newMatchKeys: [] as string[] };
+      return { parked: false, newMatchKeys: [] as string[], resultId: null };
     }
 
     // Remember whether this site needs the proxy at all. A direct success
@@ -279,6 +285,10 @@ export const recordCheckResult = internalMutation({
     // back as "12 new matches" the user has already been told about. A page
     // that genuinely holds items but matches none of them does clear it, and
     // a later reappearance is a real event worth an alert.
+    if (args.candidateKeys) {
+      updates.candidateKeys = args.candidateKeys;
+    }
+
     if (args.trackMatchKeys && (args.matches.length > 0 || args.totalItems > 0)) {
       const currentKeys = (args.matches as Record<string, unknown>[]).map(matchKey);
       newKeys = newMatchKeys(monitor.matchedKeys, currentKeys);
@@ -289,7 +299,7 @@ export const recordCheckResult = internalMutation({
 
     // Unchanged page: monitor bookkeeping is done, skip the scrapeResults
     // insert — no new data to record and no changes to detect
-    if (args.unchanged) return { parked: false, newMatchKeys: [] as string[] };
+    if (args.unchanged) return { parked: false, newMatchKeys: [] as string[], resultId: null };
 
     // Compute changes from the previous scrape result
     let changes;
@@ -308,7 +318,7 @@ export const recordCheckResult = internalMutation({
       }
     }
 
-    await ctx.db.insert("scrapeResults", {
+    const resultId = await ctx.db.insert("scrapeResults", {
       monitorId: args.monitorId,
       matches: args.matches,
       items: args.items,
@@ -318,7 +328,7 @@ export const recordCheckResult = internalMutation({
       changes,
     });
 
-    return { parked: false, newMatchKeys: newKeys };
+    return { parked: false, newMatchKeys: newKeys, resultId };
   },
 });
 
@@ -432,22 +442,23 @@ export const runScheduledChecks = internalAction({
             const shouldSend = (channel: string) => !monitorChannels || monitorChannels.includes(channel);
             const hasAnyChannel = !monitorChannels || monitorChannels.length > 0;
 
-            // The full-extract path knows which items are new, so use that.
-            // The quick-check path has no item identity — its matchCount is a
-            // consecutive-hit streak, so the old zero-to-something transition
-            // is still the only signal available there.
-            const isNewMatch = checkResult.newMatchKeys
-              ? checkResult.newMatchKeys.length > 0
-              : checkResult.hasMatch && (monitor.matchCount ?? 0) === 0;
-            const newCount = checkResult.newMatchKeys?.length ?? checkResult.matchCount;
+            // Both paths now name the entries the user has not been told
+            // about, so an alert means a genuinely new listing rather than a
+            // page that merely still says what it said last time.
+            const isNewMatch = (checkResult.newMatchKeys?.length ?? 0) > 0;
+            const newCount = checkResult.newMatchKeys?.length ?? 0;
 
             if (isNewMatch) {
               // Only the items the user has not seen. On the quick-check path
               // there is nothing to narrow to, so this is the whole match set.
               const newKeys = new Set(checkResult.newMatchKeys ?? []);
-              const newMatches = checkResult.newMatchKeys
-                ? (checkResult.matches as Record<string, unknown>[]).filter((m) => newKeys.has(matchKey(m)))
-                : (checkResult.matches as Record<string, unknown>[]);
+              // Positions are kept because a feedback button carries an index
+              // into the stored result row, not the entry itself — the filter
+              // below would otherwise renumber them.
+              const newWithIndex = (checkResult.matches as Record<string, unknown>[])
+                .map((m, index) => ({ m, index }))
+                .filter(({ m }) => newKeys.has(matchKey(m)));
+              const newMatches = newWithIndex.map(({ m }) => m);
               const plural = newCount !== 1 ? "es" : "";
 
               await ctx.scheduler.runAfter(0, internal.admin.notify, {
@@ -503,6 +514,12 @@ export const runScheduledChecks = internalAction({
                     url: freshMonitor.url,
                     matchCount: newCount,
                     totalItems: displayTotalItems,
+                    matches: newWithIndex.slice(0, TELEGRAM_ALERT_ITEMS).map(({ m, index }) => ({
+                      index,
+                      title: String(m.title ?? m.name ?? "Item"),
+                      matchScore: typeof m.matchScore === "number" ? m.matchScore : undefined,
+                    })),
+                    resultId: checkResult.resultId ?? undefined,
                   }).catch(() => {});
                 }
               }
@@ -884,18 +901,39 @@ export const runScheduledChecks = internalAction({
   },
 });
 
+/** One listing entry the scraper's keyword filter picked out of the page. */
+type QuickCheckCandidate = {
+  title: string;
+  url: string | null;
+  price: number | null;
+  snippet: string;
+};
+
+type ScoredCandidate = QuickCheckCandidate & {
+  matchScore: number;
+  matchReason: string;
+};
+
+/** Score an entry keeps when the judgement did not come back. Mirrors the scraper's own default. */
+const NEUTRAL_MATCH_SCORE = 50;
+
+/**
+ * Entries named individually in a Telegram alert. Each one carries its own
+ * pair of feedback buttons, and a keyboard taller than this stops being
+ * something anyone reads on a phone.
+ */
+const TELEGRAM_ALERT_ITEMS = 3;
+
 type CheckOutcome = {
   hasMatch: boolean;
   matchCount: number;
   matches: unknown[];
   totalItems: number | null;
   strategy: string;
-  /**
-   * Matched items the user has not been told about, from the full-extract
-   * path. Undefined on the quick-check path, whose "matches" carry no item
-   * identity — that path still notifies on the no-match-to-match transition.
-   */
+  /** Matched entries the user has not been told about. Both check paths supply it. */
   newMatchKeys?: string[];
+  /** The stored result row these matches live in — what a feedback button points at. */
+  resultId?: string | null;
 };
 
 async function runQuickCheck(
@@ -983,26 +1021,101 @@ async function runQuickCheck(
     });
   }
 
-  const hasMatch = result.hasNewMatches;
+  // Entries the keyword filter picked, each one a single listing rather than
+  // the whole page. See matchPageSegments in @prowl/shared.
+  const candidates = (result.candidates ?? []) as QuickCheckCandidate[];
+  const blacklist = (monitor.blacklistedItems ?? []) as string[];
+  const visible = filterBlacklisted(candidates, blacklist) as QuickCheckCandidate[];
 
-  await ctx.runMutation(internal.scheduler.recordCheckResult, {
+  const candidateKeys = visible.map(matchKey).filter(Boolean);
+  // Entries already seen last check are not worth judging again, whatever the
+  // verdict was. Seeding on a monitor with no baseline returns nothing, so
+  // this shipping does not alert anyone about listings already on the page.
+  const unseenKeys = new Set(newMatchKeys(monitor.candidateKeys, candidateKeys));
+  const unseen = visible.filter((c) => unseenKeys.has(matchKey(c)));
+
+  if (unseen.length === 0) {
+    await ctx.runMutation(internal.scheduler.recordCheckResult, {
+      monitorId: monitor._id,
+      hasNewMatches: false,
+      matchCount: visible.length,
+      totalItems: candidates.length,
+      matches: [],
+      contentFingerprint: contentHash,
+      candidateKeys,
+      usedProxy: useProxy,
+    });
+    console.log(`[scheduler] Quick check ${monitor._id}: ${candidates.length} candidate(s), none new`);
+    return { hasMatch: false, matchCount: visible.length, matches: [], totalItems: candidates.length, strategy: "quick-check", newMatchKeys: [] };
+  }
+
+  // Only the new entries reach the AI, and only their own text does. A page
+  // that has not changed, or whose changes are all old news, costs nothing.
+  const scored = await scoreQuickCheckCandidates(unseen, monitor, scraperUrl, scraperKey);
+  const matches = scored.filter((c) => c.matchScore >= MATCH_SCORE_THRESHOLD);
+
+  const outcome = await ctx.runMutation(internal.scheduler.recordCheckResult, {
     monitorId: monitor._id,
-    hasNewMatches: hasMatch,
-    matchCount: hasMatch ? (monitor.matchCount ?? 0) + 1 : 0,
-    totalItems: 0,
-    matches: hasMatch
-      ? [{ quickCheck: true, keywordResults: result.keywordResults, priceResults: result.priceResults }]
-      : [],
+    hasNewMatches: matches.length > 0,
+    matchCount: matches.length,
+    totalItems: candidates.length,
+    matches,
+    items: scored,
     contentFingerprint: contentHash,
+    candidateKeys,
     usedProxy: useProxy,
+    aiExtracted: true,
   });
 
-  console.log(`[scheduler] Quick check ${monitor._id}: ${hasMatch ? "MATCH" : "no match"}`);
+  console.log(
+    `[scheduler] Quick check ${monitor._id}: ${candidates.length} candidate(s), ${unseen.length} new, ${matches.length} above threshold`
+  );
 
-  const matchData = hasMatch
-    ? [{ quickCheck: true, keywordResults: result.keywordResults, priceResults: result.priceResults }]
-    : [];
-  return { hasMatch, matchCount: hasMatch ? 1 : 0, matches: matchData, totalItems: null, strategy: "quick-check" };
+  return {
+    hasMatch: matches.length > 0,
+    matchCount: matches.length,
+    matches,
+    totalItems: candidates.length,
+    strategy: "quick-check",
+    newMatchKeys: matches.map(matchKey),
+    resultId: outcome?.resultId ?? null,
+  };
+}
+
+/**
+ * Ask the scraper to judge entries against the user's own words.
+ *
+ * A scoring failure must not silence a monitor, so entries come back at the
+ * neutral score and still alert. The keyword filter already vouched for them;
+ * the judgement is what narrows further, not what grants the match.
+ */
+async function scoreQuickCheckCandidates(
+  candidates: QuickCheckCandidate[],
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  monitor: any,
+  scraperUrl: string,
+  scraperKey: string
+): Promise<ScoredCandidate[]> {
+  const unscored = candidates.map((c) => ({ ...c, matchScore: NEUTRAL_MATCH_SCORE, matchReason: "" }));
+  try {
+    const res = await fetch(`${scraperUrl}/api/score`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-api-key": scraperKey },
+      body: JSON.stringify({ prompt: monitor.prompt, name: monitor.name, candidates }),
+      signal: AbortSignal.timeout(60_000),
+    });
+    if (!res.ok) {
+      console.warn(`[scheduler] Scoring failed for ${monitor._id} (${res.status}) — alerting unscored`);
+      return unscored;
+    }
+    const body = await res.json();
+    return Array.isArray(body.scored) && body.scored.length === candidates.length
+      ? (body.scored as ScoredCandidate[])
+      : unscored;
+  } catch (e) {
+    console.warn(`[scheduler] Scoring errored for ${monitor._id}: ${(e as Error).message} — alerting unscored`);
+    return unscored;
+  }
 }
 
 async function runFullExtract(
@@ -1153,6 +1266,7 @@ async function runFullExtract(
     totalItems,
     strategy,
     newMatchKeys: outcome?.newMatchKeys ?? [],
+    resultId: outcome?.resultId ?? null,
   };
 }
 

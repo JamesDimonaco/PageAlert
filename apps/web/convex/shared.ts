@@ -1,3 +1,5 @@
+export { MATCH_SCORE_THRESHOLD, matchConfidence, MATCH_CONFIDENCE_LABEL } from "@prowl/shared";
+
 /** Maximum retry attempts before marking a monitor as error */
 export const MAX_RETRIES = 3;
 
@@ -44,7 +46,7 @@ export function isBlockedError(message: string): boolean {
  * here a price move on the same product must not read as a new match, or every
  * repricing would email the user. Price changes have their own alert path.
  */
-export function matchKey(item: Record<string, unknown>): string {
+export function matchKey(item: { url?: unknown; title?: unknown; name?: unknown }): string {
   const url = item.url ? String(item.url).trim() : "";
   if (url) return url;
   return String(item.title ?? item.name ?? "").trim().toLowerCase();

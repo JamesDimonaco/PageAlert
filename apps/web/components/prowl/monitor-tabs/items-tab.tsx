@@ -27,11 +27,13 @@ import {
   ArrowUpDown,
   TrendingDown,
   TrendingUp,
+  ThumbsDown,
+  ThumbsUp,
 } from "lucide-react";
 import type { Id } from "@/convex/_generated/dataModel";
 import type { ExtractedItem, MatchConditions, ExtractionSchema } from "@prowl/shared";
-import { applyMatchConditions, getItemKey } from "@prowl/shared";
-import { useMutation } from "convex/react";
+import { applyMatchConditions, getItemKey, MATCH_CONFIDENCE_LABEL, matchConfidence } from "@prowl/shared";
+import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { toast } from "sonner";
 import { trackFilterSaved, trackItemDismissed, trackItemRestored } from "@/lib/posthog";
@@ -42,6 +44,14 @@ interface ItemsTabProps {
   allItems: ExtractedItem[];
   schema: ExtractionSchema | undefined;
   blacklist: string[];
+}
+
+/** Bands, not raw percentages — the judged score is the model's own estimate and is not calibrated. */
+function confidenceStyle(score: number): string {
+  const band = matchConfidence(score);
+  if (band === "strong") return "bg-emerald-500/10 text-emerald-400 border-emerald-500/20";
+  if (band === "likely") return "bg-amber-500/10 text-amber-400 border-amber-500/20";
+  return "bg-muted text-muted-foreground border-border";
 }
 
 type StatusFilter = "all" | "matches" | "non-matches" | "dismissed";
@@ -58,6 +68,24 @@ export function ItemsTab({ monitorId, allItems, schema, blacklist }: ItemsTabPro
   const [priceMax, setPriceMax] = useState("");
 
   const updateBlacklist = useMutation(api.monitors.updateBlacklist);
+  const submitFeedback = useMutation(api.feedback.submit);
+  const feedback = useQuery(api.feedback.forMonitor, { monitorId }) ?? {};
+
+  async function rate(item: ExtractedItem, verdict: "good" | "bad") {
+    const key = getItemKey(item);
+    try {
+      await submitFeedback({
+        monitorId,
+        itemKey: key,
+        itemTitle: String(item.title ?? item.name ?? key),
+        verdict,
+        matchScore: typeof item.matchScore === "number" ? item.matchScore : undefined,
+      });
+      toast.success(verdict === "good" ? "Marked as a good match" : "Hidden — it won't alert you again");
+    } catch {
+      toast.error("Could not save that");
+    }
+  }
   const updateMutation = useMutation(api.monitors.update);
 
   const conditions = editedConditions ?? schema?.matchConditions ?? {};
@@ -307,6 +335,9 @@ export function ItemsTab({ monitorId, allItems, schema, blacklist }: ItemsTabPro
           const isBlacklisted = blacklistKeys.has(key);
           const safeUrl = toSafeUrl(item.url);
           const price = formatPrice(item.price, item.currency);
+          const score = typeof item.matchScore === "number" ? item.matchScore : null;
+          const reason = typeof item.matchReason === "string" ? item.matchReason : "";
+          const verdict = feedback[key];
           const origPrice = formatPrice(item.originalPrice, item.currency);
 
           return (
@@ -322,6 +353,11 @@ export function ItemsTab({ monitorId, allItems, schema, blacklist }: ItemsTabPro
             >
               <div className="flex-1 min-w-0 flex items-center gap-2">
                 {isMatch && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400 shrink-0" />}
+                {score != null && (
+                  <Badge variant="outline" className={`text-[10px] shrink-0 ${confidenceStyle(score)}`}>
+                    {MATCH_CONFIDENCE_LABEL[matchConfidence(score)]}
+                  </Badge>
+                )}
                 {safeUrl ? (
                   <a href={safeUrl} target="_blank" rel="noopener noreferrer"
                     className="font-medium hover:text-primary hover:underline transition-colors break-words sm:truncate">
@@ -332,6 +368,9 @@ export function ItemsTab({ monitorId, allItems, schema, blacklist }: ItemsTabPro
                 )}
                 {safeUrl && <ExternalLink className="h-3 w-3 text-muted-foreground shrink-0" />}
               </div>
+              {reason && (
+                <p className="text-xs text-muted-foreground sm:hidden">{reason}</p>
+              )}
               <div className="flex items-center gap-3 shrink-0 self-end sm:self-auto">
                 {price && (
                   <span className="font-semibold tabular-nums">{price}</span>
@@ -340,6 +379,26 @@ export function ItemsTab({ monitorId, allItems, schema, blacklist }: ItemsTabPro
                   <span className="text-xs text-muted-foreground line-through tabular-nums">
                     {origPrice}
                   </span>
+                )}
+                {isMatch && !isBlacklisted && (
+                  <div className="flex items-center gap-0.5" title={reason || undefined}>
+                    <Button
+                      variant="ghost" size="sm"
+                      className={`h-6 w-6 p-0 ${verdict === "good" ? "text-emerald-400" : "text-muted-foreground"}`}
+                      aria-label="Good match" aria-pressed={verdict === "good"}
+                      onClick={() => rate(item, "good")}
+                    >
+                      <ThumbsUp className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button
+                      variant="ghost" size="sm"
+                      className={`h-6 w-6 p-0 ${verdict === "bad" ? "text-red-400" : "text-muted-foreground"}`}
+                      aria-label="Bad match" aria-pressed={verdict === "bad"}
+                      onClick={() => rate(item, "bad")}
+                    >
+                      <ThumbsDown className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
                 )}
                 {isBlacklisted ? (
                   <Button variant="ghost" size="sm" className="h-6 text-xs px-2" onClick={() => unblacklistItem(key)}>

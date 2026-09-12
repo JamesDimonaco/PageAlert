@@ -1,11 +1,16 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
+import { matchPageSegments } from "@prowl/shared";
 import { FALLBACK_PROVIDER_ERROR, scrapeUrl } from "../services/scraper.js";
 import { MAX_URL_LENGTH } from "../utils/url-validation.js";
 import { hashContent } from "../utils/content-hash.js";
 
 const MAX_KEYWORD_LENGTH = 200;
+/** Entries returned per check. Beyond this the user is watching a page too broad to alert on. */
+const MAX_CANDIDATES = 25;
+/** Per-entry text handed on for AI scoring — a listing card, not a page. */
+const MAX_SNIPPET_LENGTH = 600;
 const MAX_STRING_ARRAY_ITEMS = 20;
 
 const quickCheckSchema = z.object({
@@ -29,10 +34,7 @@ quickCheckRoutes.post("/", zValidator("json", quickCheckSchema), async (c) => {
   try {
     const scraped = await scrapeUrl(url, { timeout, retryAttempt, useProxy });
 
-    // Simple text-based item extraction: split by common patterns
-    // and apply match conditions without calling the AI
     const text = scraped.text;
-    const textLower = text.toLowerCase();
 
     // Check for anti-bot blocking
     if (scraped.blocked) {
@@ -62,52 +64,26 @@ quickCheckRoutes.post("/", zValidator("json", quickCheckSchema), async (c) => {
       });
     }
 
-    // Apply match conditions against the full page text
-    // For quick checks, we treat the entire page as one "item" and check keywords
-    const mustInclude = matchConditions.mustInclude ?? [];
-    const mustExclude = matchConditions.mustExclude ?? [];
-
-    const includeMatches = mustInclude.filter((kw) =>
-      textLower.includes(kw.toLowerCase())
-    );
-    const excludeMatches = mustExclude.filter((kw) =>
-      textLower.includes(kw.toLowerCase())
-    );
-
-    const allIncluded = mustInclude.length === 0 || includeMatches.length === mustInclude.length;
-    const noneExcluded = excludeMatches.length === 0;
-    const keywordsMatch = allIncluded && noneExcluded;
-
-    // Price check: look for price patterns in the text
-    const pricePattern = /\$[\d,]+(?:\.\d{2})?/g;
-    const prices = [...text.matchAll(pricePattern)].map((m) =>
-      parseFloat(m[0].replace(/[$,]/g, ""))
-    ).filter((p) => Number.isFinite(p));
-
-    const pricesInRange = prices.filter((p) => {
-      if (matchConditions.priceMin != null && p < matchConditions.priceMin) return false;
-      if (matchConditions.priceMax != null && p > matchConditions.priceMax) return false;
-      return true;
-    });
-
-    const hasMatch = keywordsMatch && (prices.length === 0 || pricesInRange.length > 0);
+    // Match per listing entry rather than against the whole page. The scan
+    // this replaced asked only whether the keywords and a price in range
+    // appeared somewhere, so two unrelated products could satisfy one
+    // condition set between them.
+    const candidates = matchPageSegments(text, matchConditions)
+      .slice(0, MAX_CANDIDATES)
+      .map((segment) => ({
+        title: segment.title || segment.url || "Item",
+        url: segment.url,
+        price: segment.pricesInRange.length > 0 ? Math.min(...segment.pricesInRange) : null,
+        // Enough of the entry for the AI to judge it without re-reading the page.
+        snippet: segment.text.trim().slice(0, MAX_SNIPPET_LENGTH),
+      }));
 
     return c.json({
       url,
       accessible: true,
       contentHash: hashContent(text),
-      hasNewMatches: hasMatch,
-      keywordResults: {
-        included: includeMatches,
-        excluded: excludeMatches,
-        allIncluded,
-        noneExcluded,
-      },
-      priceResults: {
-        found: prices.length,
-        inRange: pricesInRange.length,
-        lowestInRange: pricesInRange.length > 0 ? Math.min(...pricesInRange) : null,
-      },
+      candidates,
+      hasNewMatches: candidates.length > 0,
       totalTextLength: text.length,
       scrapedAt: scraped.scrapedAt,
     });
