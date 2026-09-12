@@ -70,6 +70,7 @@ export function ItemsTab({ monitorId, allItems, schema, blacklist }: ItemsTabPro
   const updateBlacklist = useMutation(api.monitors.updateBlacklist);
   const submitFeedback = useMutation(api.feedback.submit);
   const feedback = useQuery(api.feedback.forMonitor, { monitorId }) ?? {};
+  const scores = useQuery(api.monitors.latestScores, { monitorId }) ?? {};
 
   async function rate(item: ExtractedItem, verdict: "good" | "bad") {
     const key = getItemKey(item);
@@ -79,7 +80,7 @@ export function ItemsTab({ monitorId, allItems, schema, blacklist }: ItemsTabPro
         itemKey: key,
         itemTitle: String(item.title ?? item.name ?? key),
         verdict,
-        matchScore: typeof item.matchScore === "number" ? item.matchScore : undefined,
+        matchScore: scores[key]?.matchScore,
       });
       toast.success(verdict === "good" ? "Marked as a good match" : "Hidden — it won't alert you again");
     } catch {
@@ -335,8 +336,9 @@ export function ItemsTab({ monitorId, allItems, schema, blacklist }: ItemsTabPro
           const isBlacklisted = blacklistKeys.has(key);
           const safeUrl = toSafeUrl(item.url);
           const price = formatPrice(item.price, item.currency);
-          const score = typeof item.matchScore === "number" ? item.matchScore : null;
-          const reason = typeof item.matchReason === "string" ? item.matchReason : "";
+          const judged = scores[key];
+          const score = judged?.matchScore ?? null;
+          const reason = judged?.matchReason ?? "";
           const verdict = feedback[key];
           const origPrice = formatPrice(item.originalPrice, item.currency);
 

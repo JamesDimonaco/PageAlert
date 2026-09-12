@@ -531,6 +531,44 @@ export const getResults = query({
   },
 });
 
+/**
+ * Judged scores from the most recent check, keyed by entry.
+ *
+ * The items tab renders `monitor.schema.items`, which is the AI's model of the
+ * page and is only rewritten on a full extract. Scores come from the routine
+ * checks in between, so they live on the result row and are joined back here
+ * rather than written into the schema, which would mix two different views of
+ * the page.
+ */
+export const latestScores = query({
+  args: { monitorId: v.id("monitors") },
+  handler: async (ctx, { monitorId }) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return {};
+    const monitor = await ctx.db.get(monitorId);
+    if (!monitor || monitor.userId !== identity.subject) return {};
+
+    const latest = await ctx.db
+      .query("scrapeResults")
+      .withIndex("by_monitorId_scrapedAt", (q) => q.eq("monitorId", monitorId))
+      .order("desc")
+      .first();
+
+    const scored: Record<string, { matchScore: number; matchReason: string }> = {};
+    for (const item of (latest?.items ?? []) as Record<string, unknown>[]) {
+      if (typeof item.matchScore !== "number") continue;
+      const key = item.url
+        ? String(item.url)
+        : `${String(item.title ?? "")}-${String(item.price ?? "")}`;
+      scored[key] = {
+        matchScore: item.matchScore,
+        matchReason: typeof item.matchReason === "string" ? item.matchReason : "",
+      };
+    }
+    return scored;
+  },
+});
+
 /** Internal: get a monitor by ID without auth check (for internal actions) */
 export const getInternal = internalQuery({
   args: { id: v.id("monitors") },
