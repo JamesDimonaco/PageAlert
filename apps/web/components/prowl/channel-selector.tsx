@@ -16,7 +16,7 @@ const CHANNEL_CONFIG: Record<Channel, { label: string; icon: typeof Mail }> = {
   email: { label: "Email", icon: Mail },
   telegram: { label: "Telegram", icon: MessageCircle },
   discord: { label: "Discord", icon: Hash },
-  push: { label: "Push", icon: Bell },
+  push: { label: "Browser", icon: Bell },
 };
 
 interface ChannelSelectorProps {

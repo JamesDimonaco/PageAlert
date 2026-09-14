@@ -15,15 +15,21 @@ self.addEventListener("push", (event) => {
     payload = { title: "PageAlert", body: event.data.text() };
   }
 
+  const options = {
+    body: payload.body ?? "",
+    icon: "/icon-192.png",
+    badge: "/icon-192.png",
+    vibrate: [200, 100, 200],
+    // Repeat alerts for one monitor replace each other rather than stacking
+    tag: payload.tag,
+    data: { url: payload.url ?? "/dashboard" },
+  };
+  // renotify makes a repeat alert re-vibrate instead of swapping silently,
+  // but it throws a TypeError without a tag to renotify against.
+  if (payload.tag) options.renotify = true;
+
   event.waitUntil(
-    self.registration.showNotification(payload.title ?? "PageAlert", {
-      body: payload.body ?? "",
-      icon: "/icon-192.png",
-      badge: "/icon-192.png",
-      // Repeat alerts for one monitor replace each other rather than stacking
-      tag: payload.tag,
-      data: { url: payload.url ?? "/dashboard" },
-    })
+    self.registration.showNotification(payload.title ?? "PageAlert", options)
   );
 });
 
