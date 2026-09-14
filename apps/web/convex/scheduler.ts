@@ -1030,14 +1030,28 @@ async function runQuickCheck(
     });
   }
 
+  // A scraper still answering the previous response shape — this Convex
+  // deploy landing before the scraper's. Reading that as "no entries match"
+  // would blank the seen set, and every listing on the page would then read
+  // as a new arrival the moment the scraper caught up, alerting on all of
+  // them. Record the check and change nothing.
+  if (!Array.isArray(result.candidates)) {
+    console.error(`[scheduler] Quick check ${monitor._id}: scraper returned no candidates field — deploy the scraper before Convex`);
+    await ctx.runMutation(internal.scheduler.recordCheckResult, {
+      monitorId: monitor._id,
+      hasNewMatches: false,
+      matchCount: monitor.matchCount ?? 0,
+      totalItems: 0,
+      matches: [],
+      unchanged: true,
+      usedProxy: useProxy,
+    });
+    return { hasMatch: false, matchCount: monitor.matchCount ?? 0, matches: [], totalItems: null, strategy: "awaiting-scraper" };
+  }
+
   // Entries the keyword filter picked, each one a single listing rather than
   // the whole page. See matchPageSegments in @prowl/shared.
-  if (!Array.isArray(result.candidates)) {
-    // An older scraper still answering the previous response shape. Alerting
-    // on nothing is the silent failure, so say so loudly.
-    console.error(`[scheduler] Quick check ${monitor._id}: scraper returned no candidates field — deploy the scraper before Convex`);
-  }
-  const candidates = (result.candidates ?? []) as QuickCheckCandidate[];
+  const candidates = result.candidates as QuickCheckCandidate[];
   const totalEntries = typeof result.totalEntries === "number" ? result.totalEntries : candidates.length;
   const blacklist = (monitor.blacklistedItems ?? []) as string[];
   const visible = filterBlacklisted(candidates, blacklist);
