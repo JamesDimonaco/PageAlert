@@ -17,6 +17,7 @@ import type * as crons from "../crons.js";
 import type * as discord from "../discord.js";
 import type * as emailEvents from "../emailEvents.js";
 import type * as emails from "../emails.js";
+import type * as feedback from "../feedback.js";
 import type * as http from "../http.js";
 import type * as logs from "../logs.js";
 import type * as monitors from "../monitors.js";
@@ -49,6 +50,7 @@ declare const fullApi: ApiFromModules<{
   discord: typeof discord;
   emailEvents: typeof emailEvents;
   emails: typeof emails;
+  feedback: typeof feedback;
   http: typeof http;
   logs: typeof logs;
   monitors: typeof monitors;

@@ -9,6 +9,10 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "lint": "eslint src/"
+    "lint": "eslint src/",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "vitest": "^5.0.0"
   }
 }

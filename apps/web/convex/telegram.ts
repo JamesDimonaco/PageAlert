@@ -1,6 +1,6 @@
 import { v } from "convex/values";
 import { internalAction, action } from "./_generated/server";
-import { displayHost } from "./shared";
+import { displayHost, MATCH_CONFIDENCE_LABEL, matchConfidence } from "./shared";
 
 const APP_URL = process.env.SITE_URL ?? "https://pagealert.io";
 const TIMEOUT = 10_000;
@@ -20,22 +20,52 @@ export const sendMatchAlert = internalAction({
     url: v.string(),
     matchCount: v.number(),
     totalItems: v.number(),
+    /** The entries named in the message, each with its position in the stored result row. */
+    matches: v.optional(v.array(v.object({
+      index: v.number(),
+      title: v.string(),
+      matchScore: v.optional(v.number()),
+    }))),
+    /** The result row the buttons point at. Without it the alert carries no buttons. */
+    resultId: v.optional(v.string()),
   },
   handler: async (_ctx, args) => {
     const token = getBotToken();
+    const matches = args.matches ?? [];
+
+    const itemLines = matches.map((m) => {
+      const band = m.matchScore != null
+        ? ` — _${escMd(MATCH_CONFIDENCE_LABEL[matchConfidence(m.matchScore)])}_`
+        : "";
+      return `• ${escMd(truncate(m.title, 80))}${band}`;
+    });
 
     const text = [
       `🔔 *${escMd(args.monitorName)}*`,
       ``,
       `${args.matchCount} new match${args.matchCount !== 1 ? "es" : ""} out of ${args.totalItems} items`,
+      ...(itemLines.length > 0 ? [``, ...itemLines] : []),
       ``,
       `🔗 [View on site](${escUrl(args.url)})`,
       `📊 [View in PageAlert](${escUrl(APP_URL + "/dashboard")})`,
     ].join("\n");
 
-    await sendMessage(token, args.chatId, text);
+    // Feedback is only worth asking for where the answer can be tied back to
+    // the entry it is about, which needs the stored row.
+    const keyboard = args.resultId
+      ? matches.map((m) => [
+          { text: `👍 ${truncate(m.title, 20)}`, callback_data: `fb:g:${args.resultId}:${m.index}` },
+          { text: "👎", callback_data: `fb:b:${args.resultId}:${m.index}` },
+        ])
+      : [];
+
+    await sendMessage(token, args.chatId, text, keyboard);
   },
 });
+
+function truncate(str: string, max: number): string {
+  return str.length > max ? `${str.slice(0, max - 1)}…` : str;
+}
 
 /** Send an error alert via Telegram */
 export const sendErrorAlert = internalAction({
@@ -235,7 +265,14 @@ export const sendTestMessage = action({
 
 // ---- Helpers ----
 
-async function sendMessage(token: string, chatId: string, text: string) {
+type InlineButton = { text: string; callback_data: string };
+
+async function sendMessage(
+  token: string,
+  chatId: string,
+  text: string,
+  keyboard: InlineButton[][] = []
+) {
   const res = await fetch(
     `https://api.telegram.org/bot${token}/sendMessage`,
     {
@@ -246,6 +283,7 @@ async function sendMessage(token: string, chatId: string, text: string) {
         text,
         parse_mode: "MarkdownV2",
         disable_web_page_preview: true,
+        ...(keyboard.length > 0 ? { reply_markup: { inline_keyboard: keyboard } } : {}),
       }),
       signal: AbortSignal.timeout(TIMEOUT),
     }

@@ -304,3 +304,115 @@ function getNumber(obj: unknown, key: string): number | undefined {
   if (typeof val === "number") return val;
   return undefined;
 }
+
+/** One entry the deterministic pre-filter thinks might match. */
+export interface ScoreCandidate {
+  title: string;
+  url: string | null;
+  price: number | null;
+  /** The entry's own text from the page, not the whole page. */
+  snippet: string;
+}
+
+export interface ScoredCandidate extends ScoreCandidate {
+  /**
+   * 0-100: how well this entry meets what the user actually asked for.
+   * Null means the judgement did not come back — never "scored zero".
+   */
+  matchScore: number | null;
+  /** One line the user can read to see why. */
+  matchReason: string;
+}
+
+const SCORING_PROMPT = `You judge whether listing entries match what a user asked to be alerted about.
+
+You get the user's request and a numbered list of entries taken from one page. Each entry is the text of a single listing — not the whole page.
+
+Score each entry 0-100 for how well it meets the user's request:
+- 90-100: meets every stated criterion, confirmed by the entry's own text.
+- 70-89: meets the criteria that are visible, but the entry does not show them all.
+- 40-69: plausibly related, but a stated criterion is contradicted or missing.
+- 0-39: wrong item, wrong variant, or the entry is navigation/promotional rather than a listing.
+
+Judge only against what the user asked for. A keyword appearing in the text is not a match if the entry is the wrong product, the wrong variant, out of stock when the user wants stock, or outside a stated price range. Say so in the reason.
+
+Respond with ONLY valid JSON, no markdown fences:
+{"scores": [{"index": 1, "matchScore": 95, "matchReason": "One short sentence, addressed to the user."}]}
+
+Return one entry per input index, in any order. Keep each reason under 20 words.`;
+
+/**
+ * Score pre-filtered entries against the user's request.
+ *
+ * Runs on the entries the keyword filter already picked, not the page, so it
+ * costs a fraction of a full extract and sees no surrounding noise. An entry
+ * the model does not come back on scores null rather than zero — callers must
+ * be able to tell "judged poorly" from "not judged", or a scoring wobble
+ * silences a real restock.
+ */
+export async function scoreCandidates(
+  candidates: ScoreCandidate[],
+  prompt: string,
+  monitorName?: string
+): Promise<ScoredCandidate[]> {
+  if (candidates.length === 0) return [];
+
+  const listed = candidates
+    .map((candidate, i) => {
+      const price = candidate.price != null ? `\nPrice: ${candidate.price}` : "";
+      return `[${i + 1}] ${candidate.title}${price}\n${candidate.snippet}`;
+    })
+    .join("\n\n---\n\n");
+
+  const client = getClient();
+  const message = await client.messages.create({
+    model: "claude-sonnet-5",
+    max_tokens: 2048,
+    // A short judging task; the reasoning tokens would come out of max_tokens.
+    thinking: { type: "disabled" },
+    system: SCORING_PROMPT,
+    messages: [
+      {
+        role: "user",
+        content: `${monitorName ? `Monitor name: ${monitorName}\n` : ""}User is looking for: ${prompt}\n\nEntries:\n\n${listed}`,
+      },
+    ],
+  });
+
+  const responseText = message.content
+    .filter((block): block is AnthropicOriginal.TextBlock => block.type === "text")
+    .map((block) => block.text)
+    .join("");
+
+  const scores = new Map<number, { matchScore: number; matchReason: string }>();
+  const jsonString = extractJson(responseText);
+  if (jsonString) {
+    try {
+      const parsed = JSON.parse(jsonString) as { scores?: unknown };
+      if (Array.isArray(parsed.scores)) {
+        for (const entry of parsed.scores as Record<string, unknown>[]) {
+          const index = typeof entry.index === "number" ? entry.index : NaN;
+          const score = typeof entry.matchScore === "number" ? entry.matchScore : NaN;
+          if (!Number.isFinite(index) || !Number.isFinite(score)) continue;
+          scores.set(index, {
+            matchScore: Math.max(0, Math.min(100, Math.round(score))),
+            matchReason: typeof entry.matchReason === "string" ? entry.matchReason : "",
+          });
+        }
+      }
+    } catch (e) {
+      console.warn("[extractor] Candidate scoring returned unparseable JSON:", (e as Error).message);
+    }
+  } else {
+    console.warn("[extractor] Candidate scoring returned no JSON");
+  }
+
+  return candidates.map((candidate, i) => {
+    const scored = scores.get(i + 1);
+    return {
+      ...candidate,
+      matchScore: scored?.matchScore ?? null,
+      matchReason: scored?.matchReason ?? "",
+    };
+  });
+}

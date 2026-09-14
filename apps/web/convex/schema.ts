@@ -42,6 +42,11 @@ export default defineSchema({
     // genuinely new items rather than only on the zero-to-something transition.
     // See matchKey/newMatchKeys in shared.ts. Undefined means "no baseline yet".
     matchedKeys: v.optional(v.array(v.string())),
+    // Entries the keyword filter picked on the last check, scored or not.
+    // Tracked apart from matchedKeys so an entry the AI judged a poor match is
+    // still remembered as seen — otherwise it reads as new every check and
+    // buys another scoring call forever.
+    candidateKeys: v.optional(v.array(v.string())),
     // This site only ever answers through the proxy, so skip the direct attempt
     // that would fail anyway. Re-probed periodically — see PROXY_REPROBE_EVERY.
     proxyPreferred: v.optional(v.boolean()),
@@ -82,6 +87,10 @@ export default defineSchema({
     monitorId: v.id("monitors"),
     matches: v.array(v.any()),
     items: v.optional(v.array(v.any())),
+    // Entries judged on this check, each carrying its score and the one-line
+    // reason. Separate from `items` (the AI's model of the page, which change
+    // detection diffs) because a routine check only ever judges a handful.
+    scoredCandidates: v.optional(v.array(v.any())),
     totalItems: v.number(),
     hasNewMatches: v.boolean(),
     scrapedAt: v.number(),
@@ -154,6 +163,28 @@ export default defineSchema({
     .index("by_userId", ["userId"])
     .index("by_createdAt", ["createdAt"])
     .index("by_status", ["status"]),
+
+  // A user's verdict on one alerted entry. The thumbs are the only ground
+  // truth there is about whether the judged scores are any good, and they
+  // cannot be reconstructed later, so the score and the prompt that produced
+  // the match are stored alongside the verdict rather than looked up.
+  matchFeedback: defineTable({
+    userId: v.string(),
+    monitorId: v.id("monitors"),
+    /** The entry's identity — its URL, or its title where it has no link. */
+    itemKey: v.string(),
+    itemTitle: v.string(),
+    verdict: v.union(v.literal("good"), v.literal("bad")),
+    /** What the judge said at alert time. Absent on entries that were never scored. */
+    matchScore: v.optional(v.number()),
+    /** The monitor's prompt when the alert fired — it can be edited afterwards. */
+    prompt: v.string(),
+    source: v.union(v.literal("dashboard"), v.literal("telegram")),
+    createdAt: v.number(),
+  })
+    .index("by_monitorId", ["monitorId"])
+    .index("by_monitor_item", ["monitorId", "itemKey"])
+    .index("by_createdAt", ["createdAt"]),
 
   notificationSettings: defineTable({
     userId: v.string(),

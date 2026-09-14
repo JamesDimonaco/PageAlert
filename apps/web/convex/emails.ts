@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { internalAction, type ActionCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
+import { MATCH_CONFIDENCE_LABEL, MATCH_SCORE_THRESHOLD, matchConfidence } from "./shared";
 
 const FROM_EMAIL = "PageAlert <alerts@pagealert.io>";
 // Onboarding/welcome emails come from a separate address so users can
@@ -30,6 +31,13 @@ export function textToHtmlParagraphs(text: string, paragraphStyle?: string): str
     .filter(Boolean)
     .map((p) => `<p${styleAttr}>${esc(p).replace(/\n/g, "<br>").replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1">$1</a>')}</p>`)
     .join("");
+}
+
+/** A judged score as a readable band. Raw numbers are not calibrated enough to show alone. */
+function confidenceNote(score: number): string {
+  const label = MATCH_CONFIDENCE_LABEL[matchConfidence(score)];
+  const colour = score >= 85 ? "#047857" : score >= MATCH_SCORE_THRESHOLD ? "#b45309" : "#6b7280";
+  return `<span style="color:${colour};font-size:12px;margin-left:6px">${label}</span>`;
 }
 
 function safeHostname(url: string): string {
@@ -133,41 +141,26 @@ export const sendMatchAlert = internalAction({
     const safeName = esc(args.monitorName);
     const safeHost = esc(safeHostname(args.url));
 
-    // Determine if this is a quick check (keyword-based) or full extraction
-    const isQuickCheck = args.matches.length > 0 && (args.matches[0] as Record<string, unknown>)?.quickCheck === true;
-
     // Use the first matched item's URL if available, otherwise fall back to the monitor URL
-    const firstItemUrl = !isQuickCheck
-      ? args.matches.find((m: Record<string, unknown>) => typeof m.url === "string" && m.url.length > 0)?.url as string | undefined
-      : undefined;
+    const firstItemUrl = args.matches.find((m: Record<string, unknown>) => typeof m.url === "string" && m.url.length > 0)?.url as string | undefined;
     const viewOnSiteUrl = firstItemUrl ?? args.url;
 
-    let matchList = "";
-    let summaryText = "";
+    const matchList = args.matches
+      .slice(0, 5)
+      .map((m: Record<string, unknown>) => {
+        const title = esc(String(m.title ?? m.name ?? "Item"));
+        const price = m.price != null ? ` — $${esc(Number(m.price).toLocaleString())}` : "";
+        const score = typeof m.matchScore === "number" ? confidenceNote(m.matchScore) : "";
+        const reason = typeof m.matchReason === "string" && m.matchReason
+          ? `<div style="color:#666;font-size:12px;margin-top:2px">${esc(m.matchReason)}</div>`
+          : "";
+        return `<li style="padding:8px 0;border-bottom:1px solid #eee">${title}${price}${score}${reason}</li>`;
+      })
+      .join("");
+    const itemsText = args.totalItems > 0 ? ` out of ${args.totalItems} items` : "";
+    const summaryText = `Your monitor found <strong>${args.matchCount} new match${args.matchCount !== 1 ? "es" : ""}</strong>${itemsText} on <a href="${safeHref(args.url)}" style="color:#4f46e5;text-decoration:none">${safeHost}</a>.`;
 
-    if (isQuickCheck) {
-      // Quick check: just say keywords were found on the page
-      const kr = (args.matches[0] as Record<string, unknown>)?.keywordResults as Record<string, unknown> | undefined;
-      const pr = (args.matches[0] as Record<string, unknown>)?.priceResults as Record<string, unknown> | undefined;
-      const keywords = Array.isArray(kr?.included) ? (kr.included as string[]).join(", ") : "your keywords";
-      const lowestPrice = pr?.lowestInRange != null ? Number(pr.lowestInRange) : NaN;
-      const priceInfo = Number.isFinite(lowestPrice) ? ` Prices from $${esc(lowestPrice.toLocaleString("en-US"))}.` : "";
-      summaryText = `Your monitor detected <strong>${esc(keywords)}</strong> on the page.${priceInfo}`;
-    } else {
-      // Full extraction: show matched items
-      matchList = args.matches
-        .slice(0, 5)
-        .map((m: Record<string, unknown>) => {
-          const title = esc(String(m.title ?? m.name ?? "Item"));
-          const price = m.price != null ? ` — $${esc(Number(m.price).toLocaleString())}` : "";
-          return `<li style="padding:8px 0;border-bottom:1px solid #eee">${title}${price}</li>`;
-        })
-        .join("");
-      const itemsText = args.totalItems > 0 ? ` out of ${args.totalItems} items` : "";
-      summaryText = `Your monitor found <strong>${args.matchCount} new match${args.matchCount !== 1 ? "es" : ""}</strong>${itemsText} on <a href="${safeHref(args.url)}" style="color:#4f46e5;text-decoration:none">${safeHost}</a>.`;
-    }
-
-    const moreText = !isQuickCheck && args.matchCount > 5 ? `<p style="color:#666;font-size:14px">+${args.matchCount - 5} more new matches</p>` : "";
+    const moreText = args.matchCount > 5 ? `<p style="color:#666;font-size:14px">+${args.matchCount - 5} more new matches</p>` : "";
 
     const priceDiscovery = args.tracksPrices
       ? `<div style="margin-top:24px;padding-top:24px;border-top:1px solid #eee">
@@ -215,9 +208,15 @@ export const sendMatchAlert = internalAction({
     const priceDiscoveryText = args.tracksPrices
       ? "\n\nThis page has prices — set up price tracking to get notified when prices change.\nSet up price alerts: " + `${APP_URL}/dashboard/monitors/${args.monitorId}?section=price-alerts`
       : "";
-    const text = isQuickCheck
-      ? `Match Found — ${args.monitorName}\n\nYour monitor detected matching keywords on ${safeHostname(args.url)}.\n\nView on site: ${viewOnSiteUrl}\nView in PageAlert: ${APP_URL}/dashboard/monitors/${args.monitorId}` + priceDiscoveryText
-      : `Match Found — ${args.monitorName}\n\nYour monitor found ${args.matchCount} new match${args.matchCount !== 1 ? "es" : ""}${plainItemsText} on ${safeHostname(args.url)}.\n\n${args.matches.slice(0, 5).map((m: Record<string, unknown>) => `• ${String(m.title ?? m.name ?? "Item")}${m.price != null ? ` — $${Number(m.price)}` : ""}`).join("\n")}\n${args.matchCount > 5 ? `+${args.matchCount - 5} more` : ""}\n\nView on site: ${viewOnSiteUrl}\nView in PageAlert: ${APP_URL}/dashboard/monitors/${args.monitorId}` + priceDiscoveryText;
+    const plainMatches = args.matches
+      .slice(0, 5)
+      .map((m: Record<string, unknown>) => {
+        const price = m.price != null ? ` — $${Number(m.price)}` : "";
+        const band = typeof m.matchScore === "number" ? ` [${MATCH_CONFIDENCE_LABEL[matchConfidence(m.matchScore)]}]` : "";
+        return `• ${String(m.title ?? m.name ?? "Item")}${price}${band}`;
+      })
+      .join("\n");
+    const text = `Match Found — ${args.monitorName}\n\nYour monitor found ${args.matchCount} new match${args.matchCount !== 1 ? "es" : ""}${plainItemsText} on ${safeHostname(args.url)}.\n\n${plainMatches}\n${args.matchCount > 5 ? `+${args.matchCount - 5} more` : ""}\n\nView on site: ${viewOnSiteUrl}\nView in PageAlert: ${APP_URL}/dashboard/monitors/${args.monitorId}` + priceDiscoveryText;
 
     await send(ctx, {
       to: args.to,
