@@ -44,6 +44,9 @@ interface ItemsTabProps {
   allItems: ExtractedItem[];
   schema: ExtractionSchema | undefined;
   blacklist: string[];
+  scores: Record<string, { matchScore: number; matchReason: string }>;
+  showFilters: boolean;
+  onShowFiltersChange: (v: boolean) => void;
 }
 
 /** Bands, not raw percentages — the judged score is the model's own estimate and is not calibrated. */
@@ -57,11 +60,10 @@ function confidenceStyle(score: number): string {
 type StatusFilter = "all" | "matches" | "non-matches" | "dismissed";
 type SortOption = "default" | "price-asc" | "price-desc" | "name-asc" | "name-desc";
 
-export function ItemsTab({ monitorId, allItems, schema, blacklist }: ItemsTabProps) {
+export function ItemsTab({ monitorId, allItems, schema, blacklist, scores, showFilters, onShowFiltersChange }: ItemsTabProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [editedConditions, setEditedConditions] = useState<MatchConditions | null>(null);
   const [saving, setSaving] = useState(false);
-  const [showFilters, setShowFilters] = useState(false);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [sortBy, setSortBy] = useState<SortOption>("default");
   const [priceMin, setPriceMin] = useState("");
@@ -71,7 +73,6 @@ export function ItemsTab({ monitorId, allItems, schema, blacklist }: ItemsTabPro
   const submitFeedback = useMutation(api.feedback.submit);
   const clearFeedback = useMutation(api.feedback.clear);
   const feedback = useQuery(api.feedback.forMonitor, { monitorId }) ?? {};
-  const scores = useQuery(api.monitors.latestScores, { monitorId }) ?? {};
 
   async function rate(item: ExtractedItem, verdict: "good" | "bad") {
     const key = getItemKey(item);
@@ -231,7 +232,7 @@ export function ItemsTab({ monitorId, allItems, schema, blacklist }: ItemsTabPro
             variant={showFilters ? "default" : "outline"}
             size="sm"
             className="gap-1.5 h-8 shrink-0"
-            onClick={() => setShowFilters(!showFilters)}
+            onClick={() => onShowFiltersChange(!showFilters)}
           >
             <Filter className="h-3.5 w-3.5" />
             Filters
