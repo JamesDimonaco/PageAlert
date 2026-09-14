@@ -13,6 +13,7 @@ import { IntervalSelector } from "@/components/prowl/interval-selector";
 import { ChannelSelector, type Channel } from "@/components/prowl/channel-selector";
 import {
   ExternalLink,
+  List,
   CheckCircle2,
   ChevronDown,
   ChevronUp,
@@ -71,6 +72,7 @@ interface OverviewTabProps {
   settingsOpen: boolean;
   onSettingsOpenChange: (open: boolean) => void;
   onAdjustFilters: () => void;
+  onViewItems: () => void;
   /** Check interval as the header shows it, already proxy-floored */
   displayInterval: string;
 }
@@ -79,7 +81,7 @@ const RETRY_LIMIT = 3;
 const RETRY_WINDOW_MS = 60 * 60 * 1000; // 1 hour
 const ROWS_SHOWN = 8;
 
-export function OverviewTab({ monitorId, monitor, matches, allItems, totalItems, results, scores, onRescan, onToggleMute, settingsOpen, onSettingsOpenChange, onAdjustFilters, displayInterval }: OverviewTabProps) {
+export function OverviewTab({ monitorId, monitor, matches, allItems, totalItems, results, scores, onRescan, onToggleMute, settingsOpen, onSettingsOpenChange, onAdjustFilters, onViewItems, displayInterval }: OverviewTabProps) {
   const [insightsOpen, setInsightsOpen] = useState(false);
   const [showAll, setShowAll] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -165,9 +167,13 @@ export function OverviewTab({ monitorId, monitor, matches, allItems, totalItems,
   // there is no previous result to diff, and everything really is new.
   const titleKey = (item: ExtractedItem) =>
     String(item.title ?? item.name ?? "").toLowerCase();
+  // On a first scan everything is new, but 28 badges teaches the reader the
+  // badge means nothing. Say it once above the list instead, so the badge only
+  // ever means "appeared since your last alert".
+  const isFirstScan = results.length <= 1;
   const newTitles = new Set<string>(
-    results.length <= 1
-      ? matches.map(titleKey)
+    isFirstScan
+      ? []
       : ((results[0]?.changes?.added ?? []) as ExtractedItem[]).map(titleKey),
   );
 
@@ -265,14 +271,26 @@ export function OverviewTab({ monitorId, monitor, matches, allItems, totalItems,
             Watching {totalItems} items, checking every {displayInterval}.
             {next && ` Next check ${next}.`}
           </p>
-          <Button
-            variant="link"
-            size="sm"
-            className="mt-2 h-auto p-0 text-xs"
-            onClick={() => { trackEvent("empty_state_adjust_filters"); onAdjustFilters(); }}
-          >
-            Not what you expected? Adjust filters
-          </Button>
+          <div className="mt-4 flex flex-col sm:flex-row items-center justify-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5 w-full sm:w-auto"
+              onClick={() => { trackEvent("empty_state_view_items"); onViewItems(); }}
+            >
+              <List className="h-3.5 w-3.5" />
+              See the {totalItems} items we&apos;re watching
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="gap-1.5 w-full sm:w-auto"
+              onClick={() => { trackEvent("empty_state_adjust_filters"); onAdjustFilters(); }}
+            >
+              <SlidersHorizontal className="h-3.5 w-3.5" />
+              Adjust filters
+            </Button>
+          </div>
         </div>
       );
     }
@@ -451,6 +469,10 @@ export function OverviewTab({ monitorId, monitor, matches, allItems, totalItems,
             <span className="text-xs text-muted-foreground">Last found {timeAgo(monitor.lastMatchAt)}</span>
           )}
         </div>
+
+        {isFirstScan && matches.length > 0 && (
+          <p className="mb-2 text-xs text-emerald-400">First scan — all of these are new to you.</p>
+        )}
 
         <div className="rounded-xl border border-border/40 bg-card/40 divide-y divide-border/40 overflow-hidden">
           {visibleMatches.length > 0 ? (

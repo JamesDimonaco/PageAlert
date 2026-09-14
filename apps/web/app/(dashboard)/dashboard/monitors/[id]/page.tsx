@@ -374,6 +374,7 @@ export default function MonitorDetailPage({
             settingsOpen={settingsOpen}
             onSettingsOpenChange={setSettingsOpen}
             onAdjustFilters={() => { setFiltersOpen(true); setTab("items"); }}
+            onViewItems={() => setTab("items")}
             displayInterval={proxyFloored ? "6h" : monitor.checkInterval}
           />
         </TabsContent>
