@@ -21,11 +21,11 @@
     "@prowl/shared": "workspace:*",
     "hono": "^4.13.7",
     "playwright": "1.63.0",
-    "posthog-node": "^5.51.6",
+    "posthog-node": "^5.52.1",
     "zod": "^3.25.76"
   },
   "devDependencies": {
-    "@types/node": "^22.20.1",
+    "@types/node": "^22.20.2",
     "tsup": "^8.5.1",
     "tsx": "^4.23.13",
     "typescript": "^5.9.3"
