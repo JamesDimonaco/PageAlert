@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { mutation, query, internalAction, internalQuery } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { effectiveIntervalMs, ERROR_RECOVERY_INTERVAL_MS, intervalToMs, isBlockedError, MAX_RETRIES, validateMonitorUrl } from "./shared";
+import { itemIdentity } from "@prowl/shared";
 import { effectiveTier, type Tier } from "./tiers";
 import { isBanned } from "./account";
 
@@ -565,10 +566,7 @@ export const latestScores = query({
     for (const result of [...recent].reverse()) {
       for (const item of (result.scoredCandidates ?? []) as Record<string, unknown>[]) {
         if (typeof item.matchScore !== "number") continue;
-        const key = item.url
-          ? String(item.url)
-          : `${String(item.title ?? "")}-${String(item.price ?? "")}`;
-        scored[key] = {
+        scored[itemIdentity(item)] = {
           matchScore: item.matchScore,
           matchReason: typeof item.matchReason === "string" ? item.matchReason : "",
         };

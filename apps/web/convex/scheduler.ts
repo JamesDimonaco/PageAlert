@@ -12,21 +12,48 @@ import {
   MAX_RETRIES,
   MAX_PROXY_BLOCKS,
   alertsOnScore,
+  canonicalUrl,
   PROXY_REPROBE_EVERY,
 } from "./shared";
 
 /** The fields both check paths agree on. Everything item-shaped in here satisfies it. */
 type ItemLike = { title?: unknown; name?: unknown; url?: unknown; price?: unknown };
 
+/**
+ * One row per entry.
+ *
+ * Canonical identity made duplicate links to one listing collapse, which is
+ * routine — Amazon shows the same product as both a sponsored and an organic
+ * result. Left in, the same product is judged twice, burns two of the
+ * per-check scoring slots, and an alert saying "1 new match" lists it twice.
+ */
+function dedupeByKey<T extends ItemLike>(items: T[]): T[] {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    const key = matchKey(item);
+    if (!key) return true;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 /** Filter out blacklisted items from a matches array based on item title/url keys */
 function filterBlacklisted<T extends ItemLike>(matches: T[], blacklist: string[]): T[] {
   if (!blacklist || blacklist.length === 0) return matches;
-  const blacklistSet = new Set(blacklist);
+  // Both forms of every stored key. A blacklist entry saved from a listing
+  // whose URL carries a per-request token would otherwise stop matching the
+  // moment the page was scraped again, and the hidden item would come back.
+  const blacklistSet = new Set<string>();
+  for (const key of blacklist) {
+    blacklistSet.add(key);
+    blacklistSet.add(canonicalUrl(key));
+  }
   return matches.filter((m) => {
     // Match the same key logic as getItemKey in @prowl/shared
     const url = m.url ? String(m.url) : null;
     const key = url ?? `${String(m.title ?? "")}-${String(m.price ?? "")}`;
-    return !blacklistSet.has(key);
+    return !blacklistSet.has(key) && !blacklistSet.has(canonicalUrl(key));
   });
 }
 
@@ -1054,7 +1081,7 @@ async function runQuickCheck(
   const candidates = result.candidates as QuickCheckCandidate[];
   const totalEntries = typeof result.totalEntries === "number" ? result.totalEntries : candidates.length;
   const blacklist = (monitor.blacklistedItems ?? []) as string[];
-  const visible = filterBlacklisted(candidates, blacklist);
+  const visible = dedupeByKey(filterBlacklisted(candidates, blacklist));
 
   const candidateKeys = visible.map(matchKey).filter(Boolean);
   // Entries already seen last check are not worth judging again, whatever the
@@ -1281,7 +1308,7 @@ async function runFullExtract(
 
   // Filter out blacklisted items so they don't count as matches or trigger emails
   const blacklist = monitor.blacklistedItems ?? [];
-  const filteredMatches = filterBlacklisted(allMatches as Record<string, unknown>[], blacklist);
+  const filteredMatches = dedupeByKey(filterBlacklisted(allMatches as Record<string, unknown>[], blacklist));
   const matchCount = filteredMatches.length;
 
   const outcome = await ctx.runMutation(internal.scheduler.recordCheckResult, {

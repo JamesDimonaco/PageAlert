@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { applyMatchConditions } from "./match";
 import { alertsOnScore, findPrices, matchPageSegments, segmentPage } from "./segment";
+import { canonicalUrl } from "./url-identity";
 
 /**
  * A listing page holding one cheap accessory and one expensive laptop — the
@@ -156,5 +157,71 @@ describe("alertsOnScore", () => {
     expect(alertsOnScore(59)).toBe(false);
     expect(alertsOnScore(60)).toBe(true);
     expect(alertsOnScore(98)).toBe(true);
+  });
+});
+
+describe("canonicalUrl", () => {
+  it("collapses two scrapes of the same Amazon listing to one identity", () => {
+    // Real shape: `qid` is a timestamp and `dib` a per-request token, so these
+    // two are the same product seen a minute apart.
+    const a =
+      "https://www.amazon.co.uk/Crucial-Internal/dp/B0DC8RVRBZ/ref=sr_1_6?dib=eyJ2IjoiMSJ9.AAA&dib_tag=se&keywords=ssd&qid=1789400936&sr=8-6";
+    const b =
+      "https://www.amazon.co.uk/Crucial-Internal/dp/B0DC8RVRBZ/ref=sr_1_9?dib=eyJ2IjoiMSJ9.ZZZ&dib_tag=se&keywords=ssd&qid=1789400999&sr=8-9";
+    expect(canonicalUrl(a)).toBe(canonicalUrl(b));
+    expect(canonicalUrl(a)).toBe("amazon.co.uk/Crucial-Internal/dp/B0DC8RVRBZ");
+  });
+
+  it("collapses a facet link whose token is regenerated per request", () => {
+    // Amazon's sidebar filters carry a `ds` token that changes every scrape
+    // while the filter they describe stays put.
+    const a = "https://www.amazon.co.uk/s?dc=&ds=v1%3aAAAA&k=ssd&rh=p_6%3aA11MV5";
+    const b = "https://www.amazon.co.uk/s?dc=&ds=v1%3aZZZZ&k=ssd&rh=p_6%3aA11MV5";
+    expect(canonicalUrl(a)).toBe(canonicalUrl(b));
+  });
+
+  it("does not merge ids that differ only in case", () => {
+    // Folding case would make the second entry read as already seen.
+    expect(canonicalUrl("https://shop.test/i?id=aB3")).not.toBe(
+      canonicalUrl("https://shop.test/i?id=Ab3")
+    );
+  });
+
+  it("keeps two different facets apart", () => {
+    const a = "https://www.amazon.co.uk/s?ds=v1%3aAAAA&k=ssd&rh=p_6%3aA11MV5";
+    const b = "https://www.amazon.co.uk/s?ds=v1%3aAAAA&k=ssd&rh=p_6%3aB99XYZ";
+    expect(canonicalUrl(a)).not.toBe(canonicalUrl(b));
+  });
+
+  it("keeps a fragment-only difference from splitting one entry in two", () => {
+    expect(canonicalUrl("https://shop.test/a?x=1#reviews")).toBe(canonicalUrl("https://shop.test/a?x=1"));
+  });
+
+  it("does not merge genuinely different products", () => {
+    expect(canonicalUrl("https://shop.test/dp/AAA")).not.toBe(canonicalUrl("https://shop.test/dp/BBB"));
+  });
+
+  it("keeps parameters that identify the thing", () => {
+    // A listing whose id lives in the query, not the path.
+    expect(canonicalUrl("https://shop.test/item?id=42&utm_source=x")).toBe("shop.test/item?id=42");
+  });
+
+  it("leaves anything that is not an http URL alone", () => {
+    // A key built from a title, not a link. `new URL` reads "Sony:" as a
+    // scheme, which handed every brand with the same model one identity.
+    expect(canonicalUrl("Sony: WH-1000XM5-249")).toBe("Sony: WH-1000XM5-249");
+    expect(canonicalUrl("Sony: WH-1000XM5-249")).not.toBe(canonicalUrl("Bose: WH-1000XM5-249"));
+    expect(canonicalUrl("not a url")).toBe("not a url");
+    expect(canonicalUrl("")).toBe("");
+  });
+
+  it("keeps a parameter that is load-bearing off Amazon", () => {
+    expect(canonicalUrl("https://shop.test/list?tag=sale")).not.toBe(
+      canonicalUrl("https://shop.test/list?tag=clearance")
+    );
+  });
+
+  it("keeps the path tail when ref sits mid-path", () => {
+    expect(canonicalUrl("https://shop.test/a/ref=x/B0PRODUCT")).toBe("shop.test/a/B0PRODUCT");
   });
 });
