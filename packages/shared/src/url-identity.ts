@@ -1,37 +1,43 @@
 /**
  * Query parameters that change without the page changing.
  *
- * Amazon stamps a `qid` timestamp and a per-request `dib` token onto every
- * product link, so two scrapes of one unchanged listing page share not a
- * single URL between them. Identity is the URL, so without this every entry
- * reads as a new arrival on every check: the same product alerts hourly, and
- * a blacklisted one never stays hidden.
+ * Split by blast radius. The general list holds names that are tracking
+ * everywhere; the Amazon list holds names Amazon uses as request noise but
+ * that carry real meaning elsewhere — `tag` is an affiliate code on Amazon
+ * and a category filter on half the web, and stripping it globally would give
+ * `?tag=sale` and `?tag=clearance` one identity.
  */
 const VOLATILE_PARAMS = [
   /^utm_/,
   /^pd_rd_/,
   /^pf_rd_/,
-  /^_?(dib|dib_tag|qid|sr|sprefix|crid|psc|th|smid|sbo|content-id|keywords|encoding)$/,
-  // Amazon's facet links carry a per-request `ds` token; `dc` rides along empty.
-  /^(ds|dc|rnid)$/,
-  /^(ref|ref_|tag|linkCode|linkId|creative|creativeASIN|ascsubtag|camp)$/,
-  /^(fbclid|gclid|msclkid|igshid|mc_cid|mc_eid|spm|scm|_gl|si)$/,
-  /^(session|sessionid|sid|jsessionid|phpsessid)$/i,
+  /^(fbclid|gclid|msclkid|igshid|mc_cid|mc_eid|_gl|spm|scm)$/,
+  /^(ascsubtag|linkCode|linkId|creative|creativeASIN)$/,
+  /^(session|sessionid|jsessionid|phpsessid)$/i,
 ];
 
-/** Amazon buries a session id in the path after a `/ref=` segment. */
-const PATH_NOISE = /\/ref=[^/]*(\/.*)?$/i;
+const AMAZON_VOLATILE_PARAMS = [
+  /^_?(dib|dib_tag|qid|sr|sprefix|crid|psc|th|smid|sbo|content-id|keywords|encoding)$/,
+  // Sidebar facet links carry a `ds` token regenerated per request; `dc` rides along empty.
+  /^(ds|dc|rnid)$/,
+  /^(ref|ref_|tag)$/,
+];
 
-function isVolatile(name: string): boolean {
-  return VOLATILE_PARAMS.some((re) => re.test(name));
+/** Amazon hangs a `ref=` marker and a session id off the end of the path. */
+const REF_SEGMENT = /^ref=/i;
+const SESSION_SEGMENT = /^\d{3}-\d{7}-\d{7}$/;
+
+function isAmazon(host: string): boolean {
+  return /(^|\.)amazon\.[a-z.]+$/i.test(host);
 }
 
 /**
  * A URL reduced to what identifies the thing it points at.
  *
- * Falls back to the trimmed original whenever parsing fails, so a malformed
- * link keeps a stable identity of its own rather than collapsing into a
- * shared empty key.
+ * Anything that is not an http(s) URL comes back untouched, so a key built
+ * from a title rather than a link keeps its own identity. `new URL` would
+ * otherwise read "Sony: WH-1000XM5" as the scheme `sony:` and hand every
+ * brand the same key.
  */
 export function canonicalUrl(raw: string): string {
   const trimmed = (raw ?? "").trim();
@@ -41,21 +47,32 @@ export function canonicalUrl(raw: string): string {
   try {
     parsed = new URL(trimmed);
   } catch {
-    return trimmed.toLowerCase();
+    return trimmed;
   }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return trimmed;
+
+  // Host is case-insensitive by spec and folds; path and query do not. Folding
+  // those would merge entries whose ids differ only in case — a real shape
+  // wherever an id is a base64-ish token — and suppress the second as seen.
+  const host = parsed.hostname.toLowerCase().replace(/^www\./, "");
+  const volatile = isAmazon(host)
+    ? [...VOLATILE_PARAMS, ...AMAZON_VOLATILE_PARAMS]
+    : VOLATILE_PARAMS;
 
   parsed.hash = "";
   for (const name of [...parsed.searchParams.keys()]) {
-    if (isVolatile(name)) parsed.searchParams.delete(name);
+    if (volatile.some((re) => re.test(name))) parsed.searchParams.delete(name);
   }
   parsed.searchParams.sort();
 
-  // Host is case-insensitive by spec and is lowercased; path and query are
-  // not. Folding those too would merge two entries whose ids differ only in
-  // case — a real risk wherever an id is a base64-ish token — and the second
-  // one would then be suppressed as already seen.
-  const host = parsed.hostname.toLowerCase().replace(/^www\./, "");
-  const path = parsed.pathname.replace(PATH_NOISE, "").replace(/\/+$/, "");
+  // Drop the noise segments themselves, not the rest of the path with them: a
+  // site with `ref=` mid-path would otherwise lose the part that identifies
+  // the listing.
+  const path = parsed.pathname
+    .split("/")
+    .filter((segment) => !REF_SEGMENT.test(segment) && !SESSION_SEGMENT.test(segment))
+    .join("/")
+    .replace(/\/+$/, "");
   const query = parsed.searchParams.toString();
 
   return `${host}${path}${query ? `?${query}` : ""}`;

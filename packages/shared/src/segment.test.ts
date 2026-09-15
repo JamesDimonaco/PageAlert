@@ -206,8 +206,22 @@ describe("canonicalUrl", () => {
     expect(canonicalUrl("https://shop.test/item?id=42&utm_source=x")).toBe("shop.test/item?id=42");
   });
 
-  it("gives an unparseable link an identity of its own", () => {
+  it("leaves anything that is not an http URL alone", () => {
+    // A key built from a title, not a link. `new URL` reads "Sony:" as a
+    // scheme, which handed every brand with the same model one identity.
+    expect(canonicalUrl("Sony: WH-1000XM5-249")).toBe("Sony: WH-1000XM5-249");
+    expect(canonicalUrl("Sony: WH-1000XM5-249")).not.toBe(canonicalUrl("Bose: WH-1000XM5-249"));
     expect(canonicalUrl("not a url")).toBe("not a url");
     expect(canonicalUrl("")).toBe("");
+  });
+
+  it("keeps a parameter that is load-bearing off Amazon", () => {
+    expect(canonicalUrl("https://shop.test/list?tag=sale")).not.toBe(
+      canonicalUrl("https://shop.test/list?tag=clearance")
+    );
+  });
+
+  it("keeps the path tail when ref sits mid-path", () => {
+    expect(canonicalUrl("https://shop.test/a/ref=x/B0PRODUCT")).toBe("shop.test/a/B0PRODUCT");
   });
 });
