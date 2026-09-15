@@ -77,6 +77,8 @@ interface OverviewTabProps {
   displayInterval: string;
 }
 
+type CheckInterval = "5m" | "15m" | "30m" | "1h" | "6h" | "24h";
+
 const RETRY_LIMIT = 3;
 const RETRY_WINDOW_MS = 60 * 60 * 1000; // 1 hour
 const ROWS_SHOWN = 8;
@@ -84,7 +86,6 @@ const ROWS_SHOWN = 8;
 export function OverviewTab({ monitorId, monitor, matches, allItems, totalItems, results, scores, onRescan, onToggleMute, settingsOpen, onSettingsOpenChange, onAdjustFilters, onViewItems, displayInterval }: OverviewTabProps) {
   const [insightsOpen, setInsightsOpen] = useState(false);
   const [showAll, setShowAll] = useState(false);
-  const [saving, setSaving] = useState(false);
   const [retrying, setRetrying] = useState(false);
 
   // Dismissing the low-confidence banner is per-monitor and sticky — a
@@ -132,16 +133,6 @@ export function OverviewTab({ monitorId, monitor, matches, allItems, totalItems,
     }
   }
 
-  // Edit state
-  const [editName, setEditName] = useState(monitor.name);
-  const [editPrompt, setEditPrompt] = useState(monitor.prompt);
-  const [editInterval, setEditInterval] = useState(monitor.checkInterval as "5m" | "15m" | "30m" | "1h" | "6h" | "24h");
-  const [editChannels, setEditChannels] = useState<Channel[]>(
-    (monitor.notificationChannels as Channel[]) ?? ["email"]
-  );
-  const [channelsTouched, setChannelsTouched] = useState(false);
-
-  const updateMutation = useMutation(api.monitors.update);
   const schema = monitor.schema as ExtractionSchema | undefined;
 
   const insights = schema?.insights;
@@ -196,51 +187,6 @@ export function OverviewTab({ monitorId, monitor, matches, allItems, totalItems,
   });
   const visibleMatches = showAll ? sortedMatches : sortedMatches.slice(0, ROWS_SHOWN);
   const hiddenCount = sortedMatches.length - visibleMatches.length;
-
-  function startEditing() {
-    setEditName(monitor.name);
-    setEditPrompt(monitor.prompt);
-    setEditInterval(monitor.checkInterval as "5m" | "15m" | "30m" | "1h" | "6h" | "24h");
-    setEditChannels((monitor.notificationChannels as Channel[]) ?? ["email"]);
-    setChannelsTouched(false);
-  }
-
-  function toggleSettings() {
-    if (!settingsOpen) startEditing();
-    onSettingsOpenChange(!settingsOpen);
-  }
-
-  // The meta-line channel button opens settings directly (settingsOpen turns
-  // true without going through toggleSettings), so hydrate the edit fields
-  // here too — otherwise it shows whatever the last render left behind.
-  useEffect(() => {
-    if (settingsOpen) startEditing();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [settingsOpen]);
-
-  async function saveEdits() {
-    setSaving(true);
-    try {
-      const payload: Record<string, unknown> = {
-        id: monitorId,
-        name: editName.trim(),
-        prompt: editPrompt.trim(),
-      };
-      if (channelsTouched) {
-        payload.notificationChannels = editChannels;
-      }
-      if (editInterval !== monitor.checkInterval) {
-        payload.checkInterval = editInterval;
-      }
-      await updateMutation(payload as Parameters<typeof updateMutation>[0]);
-      onSettingsOpenChange(false);
-      toast.success("Monitor updated");
-    } catch (e) {
-      toast.error("Failed to update", { description: e instanceof Error ? e.message : "" });
-    } finally {
-      setSaving(false);
-    }
-  }
 
   function renderDelta(item: ExtractedItem, title: string, price: string | null) {
     const pc = priceChangeByTitle.get(title.toLowerCase());
@@ -571,7 +517,7 @@ export function OverviewTab({ monitorId, monitor, matches, allItems, totalItems,
       {/* Monitor settings — collapsible */}
       <div>
         <button
-          onClick={toggleSettings}
+          onClick={() => onSettingsOpenChange(!settingsOpen)}
           className="flex w-full items-center gap-2 text-sm font-semibold text-muted-foreground hover:text-foreground transition-colors"
         >
           <Settings2 className="h-4 w-4" />
@@ -579,47 +525,11 @@ export function OverviewTab({ monitorId, monitor, matches, allItems, totalItems,
           {settingsOpen ? <ChevronUp className="h-4 w-4 ml-auto" /> : <ChevronDown className="h-4 w-4 ml-auto" />}
         </button>
         {settingsOpen && (
-          <Card className="mt-4 border-border/30 bg-card/50 shadow-sm shadow-black/5">
-            <CardContent className="p-4 sm:p-6">
-              <div className="space-y-4">
-                <div className="space-y-2">
-                  <Label className="text-sm font-medium">Name</Label>
-                  <Input value={editName} onChange={(e) => setEditName(e.target.value)} />
-                </div>
-                <div className="space-y-2">
-                  <Label className="text-sm font-medium">What are you looking for?</Label>
-                  <Textarea
-                    value={editPrompt}
-                    onChange={(e) => setEditPrompt(e.target.value)}
-                    rows={3}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Note: changing the prompt won&apos;t rescan automatically. You&apos;ll need to rescan to apply changes.
-                  </p>
-                </div>
-                <div className="space-y-2">
-                  <Label className="text-sm font-medium">Check frequency</Label>
-                  <IntervalSelector value={editInterval} onValueChange={setEditInterval} />
-                  {monitor.proxyPreferred && (
-                    <p className="text-xs text-muted-foreground leading-relaxed">
-                      This site blocks direct access. Anything faster than every 6
-                      hours is held at 6 hours until it stops blocking us.
-                    </p>
-                  )}
-                </div>
-                <ChannelSelector value={editChannels} onChange={(c) => { setEditChannels(c); setChannelsTouched(true); }} monitorId={monitorId} />
-                <div className="flex items-center gap-2 pt-2">
-                  <Button size="sm" className="gap-1.5" onClick={saveEdits} disabled={saving}>
-                    {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
-                    Save
-                  </Button>
-                  <Button size="sm" variant="ghost" onClick={() => onSettingsOpenChange(false)} disabled={saving}>
-                    <X className="h-3.5 w-3.5 mr-1" /> Cancel
-                  </Button>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+          <MonitorSettingsForm
+            monitorId={monitorId}
+            monitor={monitor}
+            onClose={() => onSettingsOpenChange(false)}
+          />
         )}
       </div>
 
@@ -650,5 +560,94 @@ export function OverviewTab({ monitorId, monitor, matches, allItems, totalItems,
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * Mounted only while the disclosure is open, so its fields seed from the
+ * monitor on mount. That is what keeps both entry points — the disclosure
+ * header and the meta-line channel button — hydrated without an effect.
+ */
+function MonitorSettingsForm({
+  monitorId,
+  monitor,
+  onClose,
+}: {
+  monitorId: Id<"monitors">;
+  monitor: OverviewTabProps["monitor"];
+  onClose: () => void;
+}) {
+  const [name, setName] = useState(monitor.name);
+  const [prompt, setPrompt] = useState(monitor.prompt);
+  const [checkInterval, setCheckInterval] = useState(monitor.checkInterval as CheckInterval);
+  const [channels, setChannels] = useState<Channel[]>(
+    (monitor.notificationChannels as Channel[]) ?? ["email"]
+  );
+  const [channelsTouched, setChannelsTouched] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const updateMutation = useMutation(api.monitors.update);
+
+  async function save() {
+    setSaving(true);
+    try {
+      const payload: Record<string, unknown> = {
+        id: monitorId,
+        name: name.trim(),
+        prompt: prompt.trim(),
+      };
+      if (channelsTouched) payload.notificationChannels = channels;
+      if (checkInterval !== monitor.checkInterval) payload.checkInterval = checkInterval;
+      await updateMutation(payload as Parameters<typeof updateMutation>[0]);
+      onClose();
+      toast.success("Monitor updated");
+    } catch (e) {
+      toast.error("Failed to update", { description: e instanceof Error ? e.message : "" });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Card className="mt-4 border-border/30 bg-card/50 shadow-sm shadow-black/5">
+      <CardContent className="p-4 sm:p-6">
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <Label className="text-sm font-medium">Name</Label>
+            <Input value={name} onChange={(e) => setName(e.target.value)} />
+          </div>
+          <div className="space-y-2">
+            <Label className="text-sm font-medium">What are you looking for?</Label>
+            <Textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={3} />
+            <p className="text-xs text-muted-foreground">
+              Note: changing the prompt won&apos;t rescan automatically. You&apos;ll need to rescan to apply changes.
+            </p>
+          </div>
+          <div className="space-y-2">
+            <Label className="text-sm font-medium">Check frequency</Label>
+            <IntervalSelector value={checkInterval} onValueChange={setCheckInterval} />
+            {monitor.proxyPreferred && (
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                This site blocks direct access. Anything faster than every 6
+                hours is held at 6 hours until it stops blocking us.
+              </p>
+            )}
+          </div>
+          <ChannelSelector
+            value={channels}
+            onChange={(c) => { setChannels(c); setChannelsTouched(true); }}
+            monitorId={monitorId}
+          />
+          <div className="flex items-center gap-2 pt-2">
+            <Button size="sm" className="gap-1.5" onClick={save} disabled={saving}>
+              {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+              Save
+            </Button>
+            <Button size="sm" variant="ghost" onClick={onClose} disabled={saving}>
+              <X className="h-3.5 w-3.5 mr-1" /> Cancel
+            </Button>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
   );
 }

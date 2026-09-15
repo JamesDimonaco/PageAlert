@@ -199,7 +199,6 @@ export function CreateMonitorSheet({
     setCheckInterval("1h");
     setChannels(["email"]);
     setMode(null);
-    toastedRef.current = false;
   }
 
   // Lands the user on the monitor once the scan finishes: navigates straight
@@ -302,6 +301,9 @@ export function CreateMonitorSheet({
                   // an activeMonitorId the form is no longer in a "draft" state.
                   clearMonitorDraft();
                   setHydratedFromDraft(false);
+                  // Every scan gets its own completion toast, including one
+                  // started from a restored draft (which skips resetForm).
+                  toastedRef.current = false;
                   onStartScan({
                     name: name || `Monitor ${new URL(url).hostname}`,
                     url,

@@ -196,7 +196,7 @@ export default function MonitorDetailPage({
     monitor.proxyPreferred === true &&
     ["5m", "15m", "30m", "1h"].includes(monitor.checkInterval);
 
-  const CHANNEL_NAMES: Record<string, string> = { email: "email", push: "push", telegram: "Telegram", discord: "Discord" };
+  const CHANNEL_NAMES: Record<string, string> = { email: "email", push: "browser", telegram: "Telegram", discord: "Discord" };
   // An unset list means "send on every configured channel" (scheduler.ts:450),
   // not "send on none" — monitors created before the field existed have no list.
   const explicitChannels = monitor.notificationChannels;
