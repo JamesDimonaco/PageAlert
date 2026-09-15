@@ -50,11 +50,15 @@ export function canonicalUrl(raw: string): string {
   }
   parsed.searchParams.sort();
 
+  // Host is case-insensitive by spec and is lowercased; path and query are
+  // not. Folding those too would merge two entries whose ids differ only in
+  // case — a real risk wherever an id is a base64-ish token — and the second
+  // one would then be suppressed as already seen.
   const host = parsed.hostname.toLowerCase().replace(/^www\./, "");
   const path = parsed.pathname.replace(PATH_NOISE, "").replace(/\/+$/, "");
   const query = parsed.searchParams.toString();
 
-  return `${host}${path}${query ? `?${query}` : ""}`.toLowerCase();
+  return `${host}${path}${query ? `?${query}` : ""}`;
 }
 
 /**

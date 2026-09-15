@@ -169,7 +169,7 @@ describe("canonicalUrl", () => {
     const b =
       "https://www.amazon.co.uk/Crucial-Internal/dp/B0DC8RVRBZ/ref=sr_1_9?dib=eyJ2IjoiMSJ9.ZZZ&dib_tag=se&keywords=ssd&qid=1789400999&sr=8-9";
     expect(canonicalUrl(a)).toBe(canonicalUrl(b));
-    expect(canonicalUrl(a)).toBe("amazon.co.uk/crucial-internal/dp/b0dc8rvrbz");
+    expect(canonicalUrl(a)).toBe("amazon.co.uk/Crucial-Internal/dp/B0DC8RVRBZ");
   });
 
   it("collapses a facet link whose token is regenerated per request", () => {
@@ -178,6 +178,13 @@ describe("canonicalUrl", () => {
     const a = "https://www.amazon.co.uk/s?dc=&ds=v1%3aAAAA&k=ssd&rh=p_6%3aA11MV5";
     const b = "https://www.amazon.co.uk/s?dc=&ds=v1%3aZZZZ&k=ssd&rh=p_6%3aA11MV5";
     expect(canonicalUrl(a)).toBe(canonicalUrl(b));
+  });
+
+  it("does not merge ids that differ only in case", () => {
+    // Folding case would make the second entry read as already seen.
+    expect(canonicalUrl("https://shop.test/i?id=aB3")).not.toBe(
+      canonicalUrl("https://shop.test/i?id=Ab3")
+    );
   });
 
   it("keeps two different facets apart", () => {
