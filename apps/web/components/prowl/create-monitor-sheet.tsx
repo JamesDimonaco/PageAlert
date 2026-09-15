@@ -164,6 +164,11 @@ export function CreateMonitorSheet({
     channelsSeededRef.current = true;
   }, [open, activeMonitorId, isScanning, configuredChannels]);
 
+  // A draft carries its own channels, so it is ready the moment it hydrates.
+  // Everything else waits, rather than starting a scan on the ["email"] the
+  // channels state holds before seeding.
+  const channelsReady = hydratedFromDraft || configuredChannels !== undefined;
+
   // Debounced persistence of the draft. Only writes when the form has
   // some content; the writeMonitorDraft helper short-circuits empty drafts.
   useEffect(() => {
@@ -317,6 +322,9 @@ export function CreateMonitorSheet({
                       onClick={() => {
                         clearMonitorDraft();
                         resetForm();
+                        // resetForm drops channels back to ["email"] — let the
+                        // seeding effect fill in the configured set again.
+                        channelsSeededRef.current = false;
                         setHydratedFromDraft(false);
                         trackMonitorDraftCleared();
                       }}
@@ -401,8 +409,8 @@ export function CreateMonitorSheet({
                   >
                     Cancel
                   </Button>
-                  <Button type="submit" className="gap-2 shadow-sm shadow-primary/15">
-                    <Radar className="h-4 w-4" />
+                  <Button type="submit" className="gap-2 shadow-sm shadow-primary/15" disabled={!channelsReady}>
+                    {channelsReady ? <Radar className="h-4 w-4" /> : <Loader2 className="h-4 w-4 animate-spin" />}
                     Scan Page
                   </Button>
                 </div>
