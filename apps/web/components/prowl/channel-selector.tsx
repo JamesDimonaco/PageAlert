@@ -5,6 +5,7 @@ import { Mail, MessageCircle, Hash, Bell, Check, Settings } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useTier } from "@/hooks/use-tier";
 import { useCreateMonitor } from "@/hooks/use-create-monitor";
+import { useMemo } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { useMonitors } from "@/hooks/use-monitors";
@@ -19,6 +20,30 @@ const CHANNEL_CONFIG: Record<Channel, { label: string; icon: typeof Mail }> = {
   push: { label: "Browser", icon: Bell },
 };
 
+/**
+ * Channels the user has actually set up. Email is always available; push has no
+ * settings row, so a registered device is what makes it available.
+ *
+ * Returns undefined while either query is in flight. Callers seeding defaults
+ * must wait for it — falling back to email-only meant a fast page load offered
+ * email even when push and Telegram were configured.
+ */
+export function useConfiguredChannels(): Channel[] | undefined {
+  const notifSettings = useQuery(api.notificationSettings.list);
+  const pushDevices = useQuery(api.pushSubscriptions.deviceCount);
+  return useMemo(() => {
+    if (notifSettings === undefined || pushDevices === undefined) return undefined;
+    const configured: Channel[] = ["email"];
+    if (pushDevices > 0) configured.push("push");
+    for (const s of notifSettings) {
+      if (s.enabled && (s.channel === "telegram" || s.channel === "discord")) {
+        configured.push(s.channel);
+      }
+    }
+    return configured;
+  }, [notifSettings, pushDevices]);
+}
+
 interface ChannelSelectorProps {
   value: Channel[];
   onChange: (channels: Channel[]) => void;
@@ -31,21 +56,10 @@ export function ChannelSelector({ value, onChange, monitorId, disabled }: Channe
   const router = useRouter();
   const { close: closeSheet } = useCreateMonitor();
   const { tier } = useTier();
-  const notifSettings = useQuery(api.notificationSettings.list);
-  const pushDevices = useQuery(api.pushSubscriptions.deviceCount);
   const { monitors } = useMonitors();
   const updateMonitor = useMutation(api.monitors.update);
 
-  // Which channels are configured in Settings
-  const configuredChannels = new Set<Channel>(
-    (notifSettings ?? [])
-      .filter((s) => s.enabled)
-      .map((s) => s.channel as Channel)
-  );
-  // Email is always "configured"
-  configuredChannels.add("email");
-  // Push has no settings row: it is configured once any device is registered
-  if ((pushDevices ?? 0) > 0) configuredChannels.add("push");
+  const configuredChannels = new Set<Channel>(useConfiguredChannels() ?? ["email"]);
 
   // For free tier: find if another monitor already uses non-email channels
   const freeMonitorWithChannels = tier === "free"

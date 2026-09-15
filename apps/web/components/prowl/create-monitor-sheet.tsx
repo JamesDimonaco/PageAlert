@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { ChannelSelector, type Channel } from "@/components/prowl/channel-selector";
+import { ChannelSelector, useConfiguredChannels, type Channel } from "@/components/prowl/channel-selector";
 import { IntervalSelector } from "@/components/prowl/interval-selector";
 import {
   Radar,
@@ -25,8 +25,6 @@ import {
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useMonitor } from "@/hooks/use-monitors";
-import { useQuery } from "convex/react";
-import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { toast } from "sonner";
 import {
@@ -128,14 +126,13 @@ export function CreateMonitorSheet({
     };
   }, [scanInFlight]);
 
-  // Default channels to all configured channels
-  const notifSettings = useQuery(api.notificationSettings.list);
-  const pushDevices = useQuery(api.pushSubscriptions.deviceCount);
+  const configuredChannels = useConfiguredChannels();
 
   // Reset (or hydrate from draft) when the sheet opens for a new monitor.
   // Hydration takes precedence over reset so users who navigated away
   // mid-form don't lose their work. See PROWL-038 Phase 3.
   const prevOpenRef = useRef(open);
+  const channelsSeededRef = useRef(false);
   useEffect(() => {
     if (open && !prevOpenRef.current && !activeMonitorId && !isScanning) {
       const draft = readMonitorDraft();
@@ -147,27 +144,25 @@ export function CreateMonitorSheet({
         setChannels(draft.channels);
         setHydratedFromDraft(true);
         trackMonitorDraftRestored();
+        channelsSeededRef.current = true;
       } else {
         resetForm();
-        // Set default channels to all configured ones
-        const configured: Channel[] = ["email"];
-        // Push has no settings row — a registered device is what makes it
-        // available, and a new monitor should use it without being asked
-        // twice. Leaving it out meant enabling push in Settings did nothing.
-        if ((pushDevices ?? 0) > 0) configured.push("push");
-        if (notifSettings) {
-          for (const s of notifSettings) {
-            if (s.enabled && (s.channel === "telegram" || s.channel === "discord")) {
-              configured.push(s.channel);
-            }
-          }
-        }
-        setChannels(configured);
         setHydratedFromDraft(false);
       }
     }
+    if (!open) channelsSeededRef.current = false;
     prevOpenRef.current = open;
-  }, [open, activeMonitorId, isScanning, notifSettings, pushDevices]);
+  }, [open, activeMonitorId, isScanning]);
+
+  // Defaults wait for the notification queries. Seeding from an unresolved
+  // query offered email-only on a fast open, even with push and Telegram set
+  // up — so this completes once they land, and only before the user edits.
+  useEffect(() => {
+    if (!open || activeMonitorId || isScanning) return;
+    if (channelsSeededRef.current || !configuredChannels) return;
+    setChannels(configuredChannels);
+    channelsSeededRef.current = true;
+  }, [open, activeMonitorId, isScanning, configuredChannels]);
 
   // Debounced persistence of the draft. Only writes when the form has
   // some content; the writeMonitorDraft helper short-circuits empty drafts.
@@ -485,7 +480,7 @@ export function CreateMonitorSheet({
                     <div className="mt-6 w-full max-w-sm space-y-2">
                       <p className="text-xs font-medium text-muted-foreground text-center">While you wait</p>
                       <div className="space-y-1.5">
-                        {!(notifSettings?.find((s) => s.channel === "telegram")?.enabled) && (
+                        {!configuredChannels?.includes("telegram") && (
                           <button
                             type="button"
                             onClick={() => {

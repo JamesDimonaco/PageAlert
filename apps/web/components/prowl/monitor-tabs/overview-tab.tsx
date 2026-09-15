@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label";
 import { AiInsightsCard } from "@/components/prowl/ai-insights";
 import { PriceAlertCard } from "@/components/prowl/price-alert-card";
 import { IntervalSelector } from "@/components/prowl/interval-selector";
-import { ChannelSelector, type Channel } from "@/components/prowl/channel-selector";
+import { ChannelSelector, useConfiguredChannels, type Channel } from "@/components/prowl/channel-selector";
 import {
   ExternalLink,
   List,
@@ -580,10 +580,14 @@ function MonitorSettingsForm({
   const [name, setName] = useState(monitor.name);
   const [prompt, setPrompt] = useState(monitor.prompt);
   const [checkInterval, setCheckInterval] = useState(monitor.checkInterval as CheckInterval);
-  const [channels, setChannels] = useState<Channel[]>(
-    (monitor.notificationChannels as Channel[]) ?? ["email"]
-  );
-  const [channelsTouched, setChannelsTouched] = useState(false);
+  // An unset list means "every configured channel" (scheduler.ts:450), so that
+  // is what the picker has to show. Seeding it to ["email"] meant toggling any
+  // one chip saved email-only and silently narrowed the monitor.
+  const explicitChannels = monitor.notificationChannels as Channel[] | undefined;
+  const configuredChannels = useConfiguredChannels();
+  const [editedChannels, setEditedChannels] = useState<Channel[] | null>(null);
+  const channels = editedChannels ?? explicitChannels ?? configuredChannels ?? ["email"];
+  const channelsUnresolved = explicitChannels === undefined && configuredChannels === undefined;
   const [saving, setSaving] = useState(false);
   const updateMutation = useMutation(api.monitors.update);
 
@@ -595,7 +599,7 @@ function MonitorSettingsForm({
         name: name.trim(),
         prompt: prompt.trim(),
       };
-      if (channelsTouched) payload.notificationChannels = channels;
+      if (editedChannels !== null) payload.notificationChannels = editedChannels;
       if (checkInterval !== monitor.checkInterval) payload.checkInterval = checkInterval;
       await updateMutation(payload as Parameters<typeof updateMutation>[0]);
       onClose();
@@ -634,8 +638,9 @@ function MonitorSettingsForm({
           </div>
           <ChannelSelector
             value={channels}
-            onChange={(c) => { setChannels(c); setChannelsTouched(true); }}
+            onChange={setEditedChannels}
             monitorId={monitorId}
+            disabled={channelsUnresolved}
           />
           <div className="flex items-center gap-2 pt-2">
             <Button size="sm" className="gap-1.5" onClick={save} disabled={saving}>
