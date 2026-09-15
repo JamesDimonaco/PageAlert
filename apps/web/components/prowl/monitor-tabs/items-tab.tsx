@@ -32,7 +32,7 @@ import {
 } from "lucide-react";
 import type { Id } from "@/convex/_generated/dataModel";
 import type { ExtractedItem, MatchConditions, ExtractionSchema } from "@prowl/shared";
-import { applyMatchConditions, getItemKey, MATCH_CONFIDENCE_LABEL, matchConfidence } from "@prowl/shared";
+import { applyMatchConditions, getItemKey, itemIdentity, MATCH_CONFIDENCE_LABEL, matchConfidence } from "@prowl/shared";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { toast } from "sonner";
@@ -81,7 +81,7 @@ export function ItemsTab({ monitorId, allItems, schema, blacklist }: ItemsTabPro
         itemKey: key,
         itemTitle: String(item.title ?? item.name ?? key),
         verdict,
-        matchScore: scores[key]?.matchScore,
+        matchScore: scores[itemIdentity(item)]?.matchScore,
       });
       toast.success(verdict === "good" ? "Marked as a good match" : "Hidden — it won't alert you again");
     } catch {
@@ -339,7 +339,9 @@ export function ItemsTab({ monitorId, allItems, schema, blacklist }: ItemsTabPro
           const isBlacklisted = blacklistKeys.has(key);
           const safeUrl = toSafeUrl(item.url);
           const price = formatPrice(item.price, item.currency);
-          const judged = scores[key];
+          // Verdicts come from a different scrape than the extract rendered
+          // here, so they join on identity rather than on the raw URL.
+          const judged = scores[itemIdentity(item)];
           const score = judged?.matchScore ?? null;
           const reason = judged?.matchReason ?? "";
           const verdict = feedback[key];

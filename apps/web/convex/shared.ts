@@ -1,4 +1,6 @@
-export { MATCH_SCORE_THRESHOLD, alertsOnScore, matchConfidence, MATCH_CONFIDENCE_LABEL } from "@prowl/shared";
+import { canonicalUrl } from "@prowl/shared";
+
+export { MATCH_SCORE_THRESHOLD, alertsOnScore, matchConfidence, MATCH_CONFIDENCE_LABEL, canonicalUrl } from "@prowl/shared";
 
 /** Maximum retry attempts before marking a monitor as error */
 export const MAX_RETRIES = 3;
@@ -48,7 +50,10 @@ export function isBlockedError(message: string): boolean {
  */
 export function matchKey(item: { url?: unknown; title?: unknown; name?: unknown }): string {
   const url = item.url ? String(item.url).trim() : "";
-  if (url) return url;
+  // Canonical, not raw: Amazon stamps a timestamp and a per-request token on
+  // every product link, so the raw URL made one unchanged listing a new
+  // arrival on every single check.
+  if (url) return canonicalUrl(url);
   return String(item.title ?? item.name ?? "").trim().toLowerCase();
 }
 
@@ -65,7 +70,14 @@ export function newMatchKeys(
   current: string[]
 ): string[] {
   if (previous === undefined) return [];
-  const seen = new Set(previous);
+  // Baselines recorded before keys were canonicalised hold raw URLs. Counting
+  // both forms as seen means the switch costs nobody a repeat alert for
+  // everything already on their page; the next write stores canonical only.
+  const seen = new Set<string>();
+  for (const key of previous) {
+    seen.add(key);
+    seen.add(canonicalUrl(key));
+  }
   return [...new Set(current.filter((k) => k && !seen.has(k)))];
 }
 

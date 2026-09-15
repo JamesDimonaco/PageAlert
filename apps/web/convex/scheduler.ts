@@ -12,6 +12,7 @@ import {
   MAX_RETRIES,
   MAX_PROXY_BLOCKS,
   alertsOnScore,
+  canonicalUrl,
   PROXY_REPROBE_EVERY,
 } from "./shared";
 
@@ -21,12 +22,19 @@ type ItemLike = { title?: unknown; name?: unknown; url?: unknown; price?: unknow
 /** Filter out blacklisted items from a matches array based on item title/url keys */
 function filterBlacklisted<T extends ItemLike>(matches: T[], blacklist: string[]): T[] {
   if (!blacklist || blacklist.length === 0) return matches;
-  const blacklistSet = new Set(blacklist);
+  // Both forms of every stored key. A blacklist entry saved from a listing
+  // whose URL carries a per-request token would otherwise stop matching the
+  // moment the page was scraped again, and the hidden item would come back.
+  const blacklistSet = new Set<string>();
+  for (const key of blacklist) {
+    blacklistSet.add(key);
+    blacklistSet.add(canonicalUrl(key));
+  }
   return matches.filter((m) => {
     // Match the same key logic as getItemKey in @prowl/shared
     const url = m.url ? String(m.url) : null;
     const key = url ?? `${String(m.title ?? "")}-${String(m.price ?? "")}`;
-    return !blacklistSet.has(key);
+    return !blacklistSet.has(key) && !blacklistSet.has(canonicalUrl(key));
   });
 }
 

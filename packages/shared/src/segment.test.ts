@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { applyMatchConditions } from "./match";
 import { alertsOnScore, findPrices, matchPageSegments, segmentPage } from "./segment";
+import { canonicalUrl } from "./url-identity";
 
 /**
  * A listing page holding one cheap accessory and one expensive laptop — the
@@ -156,5 +157,50 @@ describe("alertsOnScore", () => {
     expect(alertsOnScore(59)).toBe(false);
     expect(alertsOnScore(60)).toBe(true);
     expect(alertsOnScore(98)).toBe(true);
+  });
+});
+
+describe("canonicalUrl", () => {
+  it("collapses two scrapes of the same Amazon listing to one identity", () => {
+    // Real shape: `qid` is a timestamp and `dib` a per-request token, so these
+    // two are the same product seen a minute apart.
+    const a =
+      "https://www.amazon.co.uk/Crucial-Internal/dp/B0DC8RVRBZ/ref=sr_1_6?dib=eyJ2IjoiMSJ9.AAA&dib_tag=se&keywords=ssd&qid=1789400936&sr=8-6";
+    const b =
+      "https://www.amazon.co.uk/Crucial-Internal/dp/B0DC8RVRBZ/ref=sr_1_9?dib=eyJ2IjoiMSJ9.ZZZ&dib_tag=se&keywords=ssd&qid=1789400999&sr=8-9";
+    expect(canonicalUrl(a)).toBe(canonicalUrl(b));
+    expect(canonicalUrl(a)).toBe("amazon.co.uk/crucial-internal/dp/b0dc8rvrbz");
+  });
+
+  it("collapses a facet link whose token is regenerated per request", () => {
+    // Amazon's sidebar filters carry a `ds` token that changes every scrape
+    // while the filter they describe stays put.
+    const a = "https://www.amazon.co.uk/s?dc=&ds=v1%3aAAAA&k=ssd&rh=p_6%3aA11MV5";
+    const b = "https://www.amazon.co.uk/s?dc=&ds=v1%3aZZZZ&k=ssd&rh=p_6%3aA11MV5";
+    expect(canonicalUrl(a)).toBe(canonicalUrl(b));
+  });
+
+  it("keeps two different facets apart", () => {
+    const a = "https://www.amazon.co.uk/s?ds=v1%3aAAAA&k=ssd&rh=p_6%3aA11MV5";
+    const b = "https://www.amazon.co.uk/s?ds=v1%3aAAAA&k=ssd&rh=p_6%3aB99XYZ";
+    expect(canonicalUrl(a)).not.toBe(canonicalUrl(b));
+  });
+
+  it("keeps a fragment-only difference from splitting one entry in two", () => {
+    expect(canonicalUrl("https://shop.test/a?x=1#reviews")).toBe(canonicalUrl("https://shop.test/a?x=1"));
+  });
+
+  it("does not merge genuinely different products", () => {
+    expect(canonicalUrl("https://shop.test/dp/AAA")).not.toBe(canonicalUrl("https://shop.test/dp/BBB"));
+  });
+
+  it("keeps parameters that identify the thing", () => {
+    // A listing whose id lives in the query, not the path.
+    expect(canonicalUrl("https://shop.test/item?id=42&utm_source=x")).toBe("shop.test/item?id=42");
+  });
+
+  it("gives an unparseable link an identity of its own", () => {
+    expect(canonicalUrl("not a url")).toBe("not a url");
+    expect(canonicalUrl("")).toBe("");
   });
 });
