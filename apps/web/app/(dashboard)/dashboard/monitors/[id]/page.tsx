@@ -29,6 +29,8 @@ import {
   Copy,
   Bell,
   BellOff,
+  Clock,
+  ExternalLink,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -41,6 +43,7 @@ import type { Id } from "@/convex/_generated/dataModel";
 import type { ExtractedItem, ExtractionSchema } from "@prowl/shared";
 import { toast } from "sonner";
 import { trackEvent, captureException } from "@/lib/posthog";
+import { timeAgo } from "@/lib/time";
 
 // Extended monitor type until Convex types are regenerated with npx convex dev
 type MonitorExt = NonNullable<ReturnType<typeof useMonitor>> & {
@@ -67,6 +70,7 @@ export default function MonitorDetailPage({
   const { maxMonitors } = useTier();
   const atLimit = monitors.length >= maxMonitors;
   const scanBudget = useQuery(api.tiers.canScan);
+  const scores = useQuery(api.monitors.latestScores, { monitorId }) ?? {};
   const consumeScan = useMutation(api.tiers.consumeScan);
   const saveScanResult = useMutation(api.monitors.saveScanResult);
   const saveScanError = useMutation(api.monitors.saveScanError);
@@ -74,6 +78,14 @@ export default function MonitorDetailPage({
   const router = useRouter();
 
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [tab, setTab] = useState<"overview" | "items" | "history">("overview");
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+
+  function openSettings() {
+    setTab("overview");
+    setSettingsOpen(true);
+  }
 
   async function handleToggleMute() {
     try {
@@ -178,8 +190,22 @@ export default function MonitorDetailPage({
 
   const m = monitor as MonitorExt;
 
+  // Mirrors effectiveIntervalMs in convex/shared.ts — a blocked site is held
+  // at 6h however often the user asked for it
+  const proxyFloored =
+    monitor.proxyPreferred === true &&
+    ["5m", "15m", "30m", "1h"].includes(monitor.checkInterval);
+
+  const CHANNEL_NAMES: Record<string, string> = { email: "email", push: "browser", telegram: "Telegram", discord: "Discord" };
+  // An unset list means "send on every configured channel" (scheduler.ts:450),
+  // not "send on none" — monitors created before the field existed have no list.
+  const explicitChannels = monitor.notificationChannels;
+  const channels = explicitChannels ?? [];
+  const alertsOff = explicitChannels !== undefined && explicitChannels.length === 0;
+  const channelNames = channels.map((c) => CHANNEL_NAMES[c] ?? c).join(", ");
+
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center gap-3 overflow-hidden">
         <Link href="/dashboard" className="shrink-0">
@@ -198,9 +224,58 @@ export default function MonitorDetailPage({
               </Badge>
             )}
           </div>
-          <p className="text-muted-foreground mt-1.5 text-sm leading-relaxed">
+          <p className="text-muted-foreground mt-1.5 text-sm leading-relaxed line-clamp-2" title={monitor.prompt}>
             &ldquo;{monitor.prompt}&rdquo;
           </p>
+          <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+            <a
+              href={monitor.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 hover:text-foreground max-w-[60vw] sm:max-w-xs"
+              title={monitor.url}
+            >
+              <span className="truncate">{monitor.url.replace(/^https?:\/\/(www\.)?/, "")}</span>
+              <ExternalLink className="h-3 w-3 shrink-0" />
+            </a>
+            <span
+              className="inline-flex items-center gap-1"
+              title={
+                proxyFloored
+                  ? `This site only answers through our proxy, so checks run every 6 hours rather than the ${monitor.checkInterval} you picked.`
+                  : undefined
+              }
+            >
+              <Clock className="h-3 w-3" />
+              every {proxyFloored ? "6h" : monitor.checkInterval}
+            </span>
+            <span>checked {timeAgo(monitor.lastCheckedAt)}</span>
+            <span>{monitor.checkCount ?? 0} checks</span>
+            {!alertsOff ? (
+              <button
+                type="button"
+                onClick={openSettings}
+                className="inline-flex items-center gap-1 hover:text-foreground"
+                title="Change alert channels"
+              >
+                <Bell className="h-3 w-3" />
+                {channels.length === 0
+                  ? "alerts on"
+                  : channels.length === 1
+                    ? `alerts by ${channelNames}`
+                    : channelNames}
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={openSettings}
+                className="inline-flex items-center gap-1 text-amber-400 hover:text-amber-300"
+              >
+                <BellOff className="h-3 w-3" />
+                no alerts
+              </button>
+            )}
+          </div>
         </div>
         <div className="shrink-0">
           <DropdownMenu>
@@ -255,7 +330,15 @@ export default function MonitorDetailPage({
       </div>
 
       {/* Tabs */}
-      <Tabs defaultValue="overview">
+      <Tabs
+        value={tab}
+        onValueChange={(v) => {
+          // Leaving Overview unmounts the settings form and its edit state, so
+          // close it rather than reopening it blank on the way back.
+          if (v !== "overview") setSettingsOpen(false);
+          setTab(v as typeof tab);
+        }}
+      >
         <TabsList>
           <TabsTrigger value="overview">
             <LayoutDashboard className="mr-2 h-4 w-4" />
@@ -284,8 +367,15 @@ export default function MonitorDetailPage({
             matches={matches}
             allItems={allItems}
             totalItems={allItems.length}
+            results={results}
+            scores={scores}
             onRescan={handleRescan}
             onToggleMute={handleToggleMute}
+            settingsOpen={settingsOpen}
+            onSettingsOpenChange={setSettingsOpen}
+            onAdjustFilters={() => { setFiltersOpen(true); setTab("items"); }}
+            onViewItems={() => setTab("items")}
+            displayInterval={proxyFloored ? "6h" : monitor.checkInterval}
           />
         </TabsContent>
 
@@ -295,6 +385,9 @@ export default function MonitorDetailPage({
             allItems={allItems}
             schema={schema}
             blacklist={blacklist}
+            scores={scores}
+            showFilters={filtersOpen}
+            onShowFiltersChange={setFiltersOpen}
           />
         </TabsContent>
 
