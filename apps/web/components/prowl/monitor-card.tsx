@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Badge } from "@/components/ui/badge";
 import { StatusBadge } from "./status-badge";
+import { AutoPauseNote } from "./auto-pause-note";
 import {
   MoreVertical,
   ExternalLink,
@@ -82,6 +83,12 @@ export function MonitorCard({ monitor, onTogglePause, onDelete, onRescan, onClon
             <p className="text-sm text-muted-foreground line-clamp-1 mb-4">
               &ldquo;{monitor.prompt}&rdquo;
             </p>
+
+            {monitor.autoPausedAt !== undefined && (
+              <div className="mb-4">
+                <AutoPauseNote autoPausedAt={monitor.autoPausedAt} />
+              </div>
+            )}
 
             <div className="flex flex-wrap items-center gap-5 text-xs text-muted-foreground">
               <span className="flex items-center gap-1.5">

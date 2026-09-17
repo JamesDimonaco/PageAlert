@@ -2,7 +2,7 @@ import { v } from "convex/values";
 import { mutation, query, internalAction, internalQuery } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { effectiveIntervalMs, ERROR_RECOVERY_INTERVAL_MS, intervalToMs, isBlockedError, MAX_RETRIES, validateMonitorUrl } from "./shared";
-import { itemIdentity } from "@prowl/shared";
+import { itemIdentity, RESUME_TOKEN_TTL_MS } from "@prowl/shared";
 import { effectiveTier, type Tier } from "./tiers";
 import { isBanned } from "./account";
 
@@ -136,7 +136,11 @@ export const get = query({
     if (!identity) return null;
     const monitor = await ctx.db.get(id);
     if (!monitor || monitor.userId !== identity.subject) return null;
-    return monitor;
+    // The restart token belongs in the pause email and nowhere else — the
+    // dashboard has the Resume button and does not need it.
+    const { resumeToken, ...rest } = monitor;
+    void resumeToken;
+    return rest;
   },
 });
 
@@ -438,6 +442,24 @@ export const update = mutation({
       }
     }
 
+    // Resuming clears the auto-pause and its email link, so the monitor reads
+    // as a plain active monitor again and an old email cannot restart it later.
+    // nextCheckAt is set on every resume, not just an auto-paused one: without
+    // it a monitor that was parked (nextCheckAt unset) and then paused comes
+    // back active with nothing scheduled and never runs again.
+    if (fields.status === "active" && existing.status === "paused") {
+      updates.nextCheckAt = now;
+      updates.autoPausedAt = undefined;
+      updates.resumeToken = undefined;
+      if (existing.nextCheckAt === undefined) {
+        // It was parked before it was paused. Same reasoning as the interval
+        // branch below: without a fresh budget the next single failure re-parks
+        // it and sends another "checks stopped" email.
+        updates.proxyBlockCount = 0;
+        updates.retryCount = 0;
+      }
+    }
+
     // Recompute nextCheckAt when interval changes so it takes effect immediately
     if (fields.checkInterval !== undefined) {
       updates.nextCheckAt = now + effectiveIntervalMs({
@@ -454,6 +476,47 @@ export const update = mutation({
 
     await ctx.db.patch(id, updates);
     return id;
+  },
+});
+
+/**
+ * Restart a monitor the inactivity reaper paused, from the link in its pause
+ * email. Public and unauthenticated: the 256-bit token in the URL is the whole
+ * credential, and the only thing it can do is start this one monitor again.
+ *
+ * A mutation behind a page rather than an HTTP GET on purpose — mail scanners
+ * and link prefetchers fetch every URL in an email, and a GET that resumed
+ * would restart monitors nobody clicked, forever.
+ */
+export const resumeByToken = mutation({
+  args: { token: v.string() },
+  handler: async (ctx, { token }) => {
+    const monitor = await ctx.db
+      .query("monitors")
+      .withIndex("by_resumeToken", (q) => q.eq("resumeToken", token))
+      .unique();
+    // Same answer for a tampered link and one already used: there is nothing
+    // useful to say about the difference, and no reason to confirm a guess.
+    if (!monitor || monitor.autoPausedAt === undefined) return { status: "invalid" as const };
+    if (Date.now() - monitor.autoPausedAt > RESUME_TOKEN_TTL_MS) return { status: "expired" as const };
+
+    const now = Date.now();
+    await ctx.db.patch(monitor._id, {
+      status: "active",
+      nextCheckAt: now,
+      autoPausedAt: undefined,
+      resumeToken: undefined,
+      // The proof of life. A dashboard resume moves the session instead, which
+      // is what the reaper normally reads; this path has no session to move.
+      lastResumedAt: now,
+      updatedAt: now,
+    });
+    return {
+      status: "ok" as const,
+      monitorId: monitor._id,
+      name: monitor.name,
+      url: monitor.url,
+    };
   },
 });
 

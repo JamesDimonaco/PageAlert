@@ -51,6 +51,18 @@ export default defineSchema({
     // that would fail anyway. Re-probed periodically — see PROXY_REPROBE_EVERY.
     proxyPreferred: v.optional(v.boolean()),
     nextCheckAt: v.optional(v.number()),
+    // Set by the inactivity reaper (inactivity.ts), cleared by any resume —
+    // the dashboard toggle or the link in the pause email. Present means "we
+    // paused this because the owner had gone, and they have not come back".
+    autoPausedAt: v.optional(v.number()),
+    // Opaque restart token from the pause email. Only ever resumes a monitor
+    // the reaper paused, so an old email can never undo a manual pause.
+    resumeToken: v.optional(v.string()),
+    // When someone last pressed Restart in a pause email. Clicking that link
+    // signs nobody in, so it leaves no session for the reaper to read — this
+    // is the only record that the owner is alive, and without it the next
+    // day's run would pause the monitor again.
+    lastResumedAt: v.optional(v.number()),
     notificationChannels: v.optional(v.array(v.union(
       v.literal("email"),
       v.literal("telegram"),
@@ -81,7 +93,8 @@ export default defineSchema({
     .index("by_status_nextCheckAt", ["status", "nextCheckAt"])
     .index("by_anonymousEmail", ["anonymousEmail"])
     .index("by_isAnonymous", ["isAnonymous"])
-    .index("by_isAnonymous_expiresAt", ["isAnonymous", "expiresAt"]),
+    .index("by_isAnonymous_expiresAt", ["isAnonymous", "expiresAt"])
+    .index("by_resumeToken", ["resumeToken"]),
 
   scrapeResults: defineTable({
     monitorId: v.id("monitors"),
@@ -294,7 +307,7 @@ export default defineSchema({
   // `status` starts at sent/failed and is advanced by the Resend webhook.
   emailSends: defineTable({
     to: v.string(),
-    kind: v.string(), // match | error | monitor-stopped | price | anonymous-scan | onboarding-day0 | bulk
+    kind: v.string(), // match | error | monitor-stopped | inactivity-paused | price | anonymous-scan | onboarding-day0 | bulk
     userId: v.optional(v.string()),
     monitorId: v.optional(v.string()),
     resendId: v.optional(v.string()),

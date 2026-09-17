@@ -32,4 +32,14 @@ crons.interval("scraper-health", { minutes: 10 }, internal.admin.checkScraperHea
 // Drop expired manual Pro grants back to free
 crons.interval("expire-tier-grants", { hours: 24 }, internal.admin.expireGrants);
 
+// Pause monitors whose owners have gone. Gated by INACTIVITY_PAUSE_ENABLED —
+// until that is "true" the run only logs what it would pause. See inactivity.ts.
+// 10:00 UTC is the hour onboarding.ts already picked as globally inoffensive,
+// and `daily` rather than `interval` so the run time cannot drift from a deploy.
+crons.daily(
+  "pause-dormant-monitors",
+  { hourUTC: 10, minuteUTC: 0 },
+  internal.inactivity.pauseDormant
+);
+
 export default crons;

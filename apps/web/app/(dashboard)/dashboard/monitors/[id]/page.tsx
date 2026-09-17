@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { StatusBadge } from "@/components/prowl/status-badge";
+import { AutoPauseNote } from "@/components/prowl/auto-pause-note";
 import { DeleteDialog } from "@/components/prowl/delete-dialog";
 import { OverviewTab } from "@/components/prowl/monitor-tabs/overview-tab";
 import { ItemsTab } from "@/components/prowl/monitor-tabs/items-tab";
@@ -227,6 +228,11 @@ export default function MonitorDetailPage({
           <p className="text-muted-foreground mt-1.5 text-sm leading-relaxed line-clamp-2" title={monitor.prompt}>
             &ldquo;{monitor.prompt}&rdquo;
           </p>
+          {monitor.autoPausedAt !== undefined && (
+            <div className="mt-2">
+              <AutoPauseNote autoPausedAt={monitor.autoPausedAt} />
+            </div>
+          )}
           <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
             <a
               href={monitor.url}
