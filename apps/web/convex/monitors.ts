@@ -444,10 +444,12 @@ export const update = mutation({
         checkInterval: fields.checkInterval,
         proxyPreferred: existing.proxyPreferred,
       });
-      // This un-parks a monitor parked for repeated proxy blocks. Give it a
-      // fresh budget, or the next single block re-parks it and sends a second
-      // "checks stopped" email.
+      // This un-parks a parked monitor. Give it a fresh budget on both
+      // counters, or the next single failure re-parks it and sends a second
+      // "checks stopped" email — a never-succeeded park sits at retryCount 32
+      // and would re-park on its very first check.
       updates.proxyBlockCount = 0;
+      updates.retryCount = 0;
     }
 
     await ctx.db.patch(id, updates);

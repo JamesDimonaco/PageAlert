@@ -26,8 +26,7 @@ export const ERROR_RECOVERY_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
 /**
  * Consecutive failures before a monitor that has never once succeeded stops
- * being rescheduled. Counted in `retryCount`, which only resets on a success,
- * so for these monitors it is simply the number of failed checks ever.
+ * being rescheduled.
  *
  * A monitor that has never worked was set up wrong — a dead URL, a page we
  * cannot read, a prompt matching nothing. Unlike a monitor that worked and
@@ -39,10 +38,27 @@ export const ERROR_RECOVERY_INTERVAL_MS = 6 * 60 * 60 * 1000;
  * 32 sits beyond anything that has ever come good: across six months of prod
  * the worst monitor to eventually succeed needed 30 failures first, and every
  * other one managed it inside 9. Deliberately generous — a monitor that has
- * worked even once is exempt by construction, so this only ever decides how
- * long a broken setup is given to start working.
+ * worked even once is exempt by construction (checkCount counts successes
+ * only), so this never decides anything for a working monitor.
+ *
+ * Counted in `retryCount`. A success resets it, and so do the manual retry
+ * paths (monitors.ts saveScanError, admin.ts rerunNeverScanned), which rewrite
+ * it to a small number. So pressing Retry on a parked monitor deliberately
+ * buys it the better part of another budget — an explicit "I have fixed it,
+ * try again" is worth more than a scheduled attempt.
  */
 export const MAX_NEVER_SUCCEEDED_RETRIES = 32;
+
+/**
+ * Why a monitor stopped being rescheduled, in the user's words. Set as
+ * `lastError` at the park and passed to the stopped-checks alerts, so the
+ * email, Telegram, Discord, push and in-app copies cannot drift apart or
+ * describe the wrong park — see the park branches in scheduler.ts.
+ */
+export const PARK_REASON_PROXY_BLOCKED =
+  "This site blocks automated access even through our proxy, so every attempt was turned away.";
+export const PARK_REASON_NEVER_SUCCEEDED =
+  "We have never managed to read this page since you set the monitor up, so it is worth checking the URL and the prompt.";
 
 /**
  * How often a proxy-preferred monitor tries direct again. Without this a site

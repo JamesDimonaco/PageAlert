@@ -12,6 +12,8 @@ import {
   MAX_RETRIES,
   MAX_PROXY_BLOCKS,
   MAX_NEVER_SUCCEEDED_RETRIES,
+  PARK_REASON_PROXY_BLOCKED,
+  PARK_REASON_NEVER_SUCCEEDED,
   alertsOnScore,
   canonicalUrl,
   PROXY_REPROBE_EVERY,
@@ -201,7 +203,7 @@ export const recordCheckResult = internalMutation({
   handler: async (ctx, args) => {
     const monitor = await ctx.db.get(args.monitorId);
     if (!monitor || (monitor.status !== "active" && monitor.status !== "error")) {
-      return { parked: false, newMatchKeys: [] as string[], resultId: null };
+      return { parked: false, parkReason: null, newMatchKeys: [] as string[], resultId: null };
     }
 
     const now = Date.now();
@@ -214,38 +216,32 @@ export const recordCheckResult = internalMutation({
       const aiStamp = args.aiExtracted ? { lastAiExtractAt: now } : {};
       const proxyBlockCount = (monitor.proxyBlockCount ?? 0) + (args.confirmedProxyBlock ? 1 : 0);
 
-      // Scrapfly has genuinely beaten this site — stop rescheduling instead of
-      // paying for another blocked attempt every 6 hours. nextCheckAt: undefined
-      // sorts before getMonitorsDue's .gte("nextCheckAt", 0) bound, so this
-      // monitor is parked until the user retries it by hand.
-      if (args.confirmedProxyBlock && proxyBlockCount >= MAX_PROXY_BLOCKS) {
-        await ctx.db.patch(args.monitorId, {
-          status: "error",
-          lastError: "Checks have stopped: this site blocks automated access even through our proxy. Use Retry to try again.",
-          retryCount,
-          proxyBlockCount,
-          nextCheckAt: undefined,
-          updatedAt: now,
-          ...aiStamp,
-        });
-        return { parked: true, newMatchKeys: [] as string[], resultId: null };
-      }
+      // Both parks stop rescheduling the same way: nextCheckAt: undefined sorts
+      // before getMonitorsDue's .gte("nextCheckAt", 0) bound, so the monitor is
+      // left alone until the user retries it by hand. They differ only in the
+      // reason, which travels with the park so every channel tells one story.
+      const parkReason =
+        args.confirmedProxyBlock && proxyBlockCount >= MAX_PROXY_BLOCKS
+          ? PARK_REASON_PROXY_BLOCKED
+          // Never worked once, and has had long enough to. checkCount counts
+          // successes only, so this cannot reach a monitor that has ever
+          // returned a page — which is what makes it safe to decide on the
+          // count alone, with no guess about why the checks are failing.
+          : !monitor.checkCount && retryCount >= MAX_NEVER_SUCCEEDED_RETRIES
+            ? PARK_REASON_NEVER_SUCCEEDED
+            : null;
 
-      // Never worked once, and has had long enough to. checkCount only counts
-      // successes, so this cannot reach a monitor that has ever returned a
-      // page — which is what makes it safe to park on the count alone, with no
-      // guess about why it is failing. See MAX_NEVER_SUCCEEDED_RETRIES.
-      if (!monitor.checkCount && retryCount >= MAX_NEVER_SUCCEEDED_RETRIES) {
+      if (parkReason) {
         await ctx.db.patch(args.monitorId, {
           status: "error",
-          lastError: `Checks have stopped: we've never managed to read this page since you set the monitor up. Last attempt: ${args.error} Check the URL and prompt, then use Retry.`,
+          lastError: `Checks have stopped. ${parkReason} Use Retry to try again.`,
           retryCount,
           proxyBlockCount,
           nextCheckAt: undefined,
           updatedAt: now,
           ...aiStamp,
         });
-        return { parked: true, newMatchKeys: [] as string[], resultId: null };
+        return { parked: true, parkReason, newMatchKeys: [] as string[], resultId: null };
       }
 
       if (retryCount >= MAX_RETRIES) {
@@ -271,7 +267,7 @@ export const recordCheckResult = internalMutation({
           ...aiStamp,
         });
       }
-      return { parked: false, newMatchKeys: [] as string[], resultId: null };
+      return { parked: false, parkReason: null, newMatchKeys: [] as string[], resultId: null };
     }
 
     // Remember whether this site needs the proxy at all. A direct success
@@ -351,7 +347,7 @@ export const recordCheckResult = internalMutation({
 
     // Unchanged page: monitor bookkeeping is done, skip the scrapeResults
     // insert — no new data to record and no changes to detect
-    if (args.unchanged) return { parked: false, newMatchKeys: [] as string[], resultId: null };
+    if (args.unchanged) return { parked: false, parkReason: null, newMatchKeys: [] as string[], resultId: null };
 
     // Compute changes from the previous scrape result
     let changes;
@@ -381,7 +377,7 @@ export const recordCheckResult = internalMutation({
       changes,
     });
 
-    return { parked: false, newMatchKeys: newKeys, resultId };
+    return { parked: false, parkReason: null, newMatchKeys: newKeys, resultId };
   },
 });
 
@@ -831,6 +827,7 @@ export const runScheduledChecks = internalAction({
           // "error", which willError deliberately stays quiet about. Without
           // this the monitor stops being checked and nobody is told.
           const parked = outcome?.parked === true;
+          const parkReason = outcome?.parkReason ?? null;
 
           // Re-fetch for fresh muted/channel state
           if (parked || willError) {
@@ -882,6 +879,7 @@ export const runScheduledChecks = internalAction({
                     monitorName: freshErrMonitor.name,
                     monitorId: freshErrMonitor._id,
                     url: freshErrMonitor.url,
+                    reason: parkReason ?? PARK_REASON_PROXY_BLOCKED,
                     telegramConnected,
                   }).catch(() => {});
                 } else {
@@ -903,6 +901,7 @@ export const runScheduledChecks = internalAction({
                     monitorName: freshErrMonitor.name,
                     monitorId: freshErrMonitor._id,
                     url: freshErrMonitor.url,
+                    reason: parkReason ?? PARK_REASON_PROXY_BLOCKED,
                   }).catch(() => {});
                 } else {
                   await ctx.runAction(internal.telegram.sendErrorAlert, {
@@ -928,6 +927,7 @@ export const runScheduledChecks = internalAction({
                       monitorName: freshErrMonitor.name,
                       monitorId: freshErrMonitor._id,
                       url: freshErrMonitor.url,
+                      reason: parkReason ?? PARK_REASON_PROXY_BLOCKED,
                     }).catch(() => {});
                   } else {
                     await ctx.runAction(internal.discord.sendErrorAlert, {

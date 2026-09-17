@@ -100,6 +100,8 @@ export const sendMonitorStoppedAlert = internalAction({
     monitorName: v.string(),
     monitorId: v.string(),
     url: v.string(),
+    /** Why checks stopped, from the park in scheduler.ts. */
+    reason: v.string(),
   },
   handler: async (_ctx, args) => {
     const token = getBotToken();
@@ -107,7 +109,7 @@ export const sendMonitorStoppedAlert = internalAction({
     const text = [
       `🛑 *${escMd(args.monitorName)}* — Checks stopped`,
       ``,
-      `${escMd(displayHost(args.url))} blocks automated access even through our proxy, so we have stopped checking it\\.`,
+      `We have stopped checking ${escMd(displayHost(args.url))}\\. ${escMd(args.reason)}`,
       ``,
       `No more alerts for this monitor until you start it again\\.`,
       ``,

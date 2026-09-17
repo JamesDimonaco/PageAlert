@@ -294,11 +294,14 @@ export const sendMonitorStoppedAlert = internalAction({
     monitorName: v.string(),
     monitorId: v.string(),
     url: v.string(),
+    /** Why checks stopped, from the park in scheduler.ts. */
+    reason: v.string(),
     telegramConnected: v.boolean(),
   },
   handler: async (ctx, args) => {
     const safeName = esc(args.monitorName);
     const safeHost = esc(safeHostname(args.url));
+    const safeReason = esc(args.reason);
     const monitorHref = `${APP_URL}/dashboard/monitors/${args.monitorId}`;
 
     const telegramNudge = args.telegramConnected
@@ -323,7 +326,7 @@ export const sendMonitorStoppedAlert = internalAction({
       <div style="padding:32px">
         <p style="margin:0 0 16px;color:#333;font-size:16px">
           We've stopped checking <a href="${safeHref(args.url)}" style="color:#4f46e5;text-decoration:none">${safeHost}</a>.
-          The site blocks automated access even through our proxy, so every attempt was turned away.
+          ${safeReason}
         </p>
         <p style="margin:0 0 24px;color:#555;font-size:14px">
           You won't get any more alerts for this monitor until you start it again. If the site has
@@ -348,7 +351,7 @@ export const sendMonitorStoppedAlert = internalAction({
       to: args.to,
       subject: `Checks stopped: ${args.monitorName}`,
       html,
-      text: `Checks stopped — ${args.monitorName}\n\nWe've stopped checking ${safeHostname(args.url)}. The site blocks automated access even through our proxy.\n\nYou won't get any more alerts for this monitor until you start it again.\n\nRetry: ${monitorHref}${textNudge}`,
+      text: `Checks stopped — ${args.monitorName}\n\nWe've stopped checking ${safeHostname(args.url)}. ${args.reason}\n\nYou won't get any more alerts for this monitor until you start it again.\n\nRetry: ${monitorHref}${textNudge}`,
       kind: "monitor-stopped",
       monitorId: args.monitorId,
     });

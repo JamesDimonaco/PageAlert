@@ -31,7 +31,6 @@ import {
 } from "lucide-react";
 import type { Id } from "@/convex/_generated/dataModel";
 import type { Doc } from "@/convex/_generated/dataModel";
-import { MAX_PROXY_BLOCKS } from "@/convex/shared";
 import type { ExtractedItem, ExtractionSchema, PriceChange } from "@prowl/shared";
 import { getItemKey, matchConfidence, MATCH_CONFIDENCE_LABEL } from "@prowl/shared";
 import { useMutation } from "convex/react";
@@ -321,10 +320,11 @@ export function OverviewTab({ monitorId, monitor, matches, allItems, totalItems,
       {monitor.status === "error" && monitor.lastError && (() => {
         const err = monitor.lastError.toLowerCase();
         const isBlocked = err.includes("blocking") || err.includes("captcha") || err.includes("anti-bot") || err.includes("blocked");
-        // Parked: the scheduler stopped rescheduling this monitor after repeated
-        // confirmed proxy blocks. Keyed off the count, not a cleared nextCheckAt,
-        // so no other path that leaves nextCheckAt unset shows this message.
-        const isParked = (monitor.proxyBlockCount ?? 0) >= MAX_PROXY_BLOCKS;
+        // Parked: the scheduler stopped rescheduling this monitor, either for
+        // repeated proxy blocks or for never having succeeded. A cleared
+        // nextCheckAt is the signal both parks share; within status "error"
+        // nothing else clears it. lastError carries which park it was.
+        const isParked = monitor.nextCheckAt === undefined;
         return (
         <Card className="border-red-500/30 bg-red-500/5 shadow-sm">
           <CardContent className="p-4 sm:p-5">
@@ -337,7 +337,7 @@ export function OverviewTab({ monitorId, monitor, matches, allItems, totalItems,
                 <p className="text-sm text-muted-foreground break-words">{monitor.lastError}</p>
                 <p className="text-xs text-muted-foreground/60 mt-2">
                   {isParked
-                    ? "This site defeats our proxy, so we've stopped checking it automatically. Hit Retry to give it another go."
+                    ? "We've stopped checking this one automatically. Hit Retry to give it another go."
                     : isBlocked
                       ? "All retry strategies (proxy, mobile browser) were exhausted. Try a different URL for this site, or check if the page works without login."
                       : "Try pausing other monitors, checking the URL is accessible, or simplifying your prompt."}
