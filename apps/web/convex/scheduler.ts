@@ -11,6 +11,7 @@ import {
   effectiveIntervalMs,
   MAX_RETRIES,
   MAX_PROXY_BLOCKS,
+  MAX_NEVER_SUCCEEDED_RETRIES,
   alertsOnScore,
   canonicalUrl,
   PROXY_REPROBE_EVERY,
@@ -221,6 +222,23 @@ export const recordCheckResult = internalMutation({
         await ctx.db.patch(args.monitorId, {
           status: "error",
           lastError: "Checks have stopped: this site blocks automated access even through our proxy. Use Retry to try again.",
+          retryCount,
+          proxyBlockCount,
+          nextCheckAt: undefined,
+          updatedAt: now,
+          ...aiStamp,
+        });
+        return { parked: true, newMatchKeys: [] as string[], resultId: null };
+      }
+
+      // Never worked once, and has had long enough to. checkCount only counts
+      // successes, so this cannot reach a monitor that has ever returned a
+      // page — which is what makes it safe to park on the count alone, with no
+      // guess about why it is failing. See MAX_NEVER_SUCCEEDED_RETRIES.
+      if (!monitor.checkCount && retryCount >= MAX_NEVER_SUCCEEDED_RETRIES) {
+        await ctx.db.patch(args.monitorId, {
+          status: "error",
+          lastError: `Checks have stopped: we've never managed to read this page since you set the monitor up. Last attempt: ${args.error} Check the URL and prompt, then use Retry.`,
           retryCount,
           proxyBlockCount,
           nextCheckAt: undefined,

@@ -25,6 +25,26 @@ export const MAX_PROXY_BLOCKS = 2;
 export const ERROR_RECOVERY_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
 /**
+ * Consecutive failures before a monitor that has never once succeeded stops
+ * being rescheduled. Counted in `retryCount`, which only resets on a success,
+ * so for these monitors it is simply the number of failed checks ever.
+ *
+ * A monitor that has never worked was set up wrong — a dead URL, a page we
+ * cannot read, a prompt matching nothing. Unlike a monitor that worked and
+ * broke, there is no outage for it to recover from, so the 6h recovery lane
+ * just bills forever. Eight of them were doing exactly that, at 40 to 52
+ * failures each, and together with the rest of the error lane accounted for
+ * 18% of all scans.
+ *
+ * 32 sits beyond anything that has ever come good: across six months of prod
+ * the worst monitor to eventually succeed needed 30 failures first, and every
+ * other one managed it inside 9. Deliberately generous — a monitor that has
+ * worked even once is exempt by construction, so this only ever decides how
+ * long a broken setup is given to start working.
+ */
+export const MAX_NEVER_SUCCEEDED_RETRIES = 32;
+
+/**
  * How often a proxy-preferred monitor tries direct again. Without this a site
  * that drops its anti-bot protection keeps costing Scrapfly credits forever.
  *
