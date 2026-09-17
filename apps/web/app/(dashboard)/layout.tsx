@@ -22,7 +22,9 @@ export default function DashboardLayout({
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const claimAnonymous = useMutation(api.anonymous.claimMyAnonymousMonitors);
+  const touchLastSeen = useMutation(api.account.touchLastSeen);
   const claimedRef = useRef(false);
+  const touchedRef = useRef(false);
   const banStatus = useQuery(api.account.myBanStatus, isAuthenticated ? {} : "skip");
 
   useEffect(() => {
@@ -37,6 +39,16 @@ export default function DashboardLayout({
       router.replace(loginUrl);
     }
   }, [isLoading, isAuthenticated, router, pathname, searchParams]);
+
+  // Say we were here. The inactivity reaper pauses monitors on the strength of
+  // this stamp, because Better Auth's session row is deleted on sign-out and
+  // on the next load after it expires — see schema.ts userActivity. Fire and
+  // forget: a failure here must never block the dashboard.
+  useEffect(() => {
+    if (!isAuthenticated || touchedRef.current) return;
+    touchedRef.current = true;
+    void touchLastSeen({}).catch(() => {});
+  }, [isAuthenticated, touchLastSeen]);
 
   // Transfer anonymous monitors on first dashboard load. Waits for banStatus
   // to resolve so a banned account never fires this — the mutation already

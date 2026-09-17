@@ -691,9 +691,18 @@ export function formatDay(ts: number): string {
   return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
 }
 
-/** The one-click restart link from the pause email. No login, no signature — see inactivity.ts. */
+/**
+ * The one-click restart link from the pause email. No login, no signature —
+ * see inactivity.ts.
+ *
+ * The token rides in the fragment, not the query string. A fragment is never
+ * sent to the server, so it stays out of request logs, out of Next's
+ * searchParams, and out of the pageview URL PostHog captures — the resume page
+ * strips it from the address bar, but the provider builds that URL from the
+ * params it captured at render, well before any strip could run.
+ */
 export function resumeUrl(token: string): string {
-  return `${APP_URL}/resume?t=${encodeURIComponent(token)}`;
+  return `${APP_URL}/resume#${encodeURIComponent(token)}`;
 }
 
 /**
@@ -712,8 +721,8 @@ export const sendInactivityPaused = internalAction({
       name: v.string(),
       url: v.string(),
       token: v.string(),
-      rule: v.union(v.literal("ignored-alert"), v.literal("long-gone")),
-      alertCount: v.number(),
+      /** When it last matched, if that was after we last saw them. */
+      matchedSinceSeenAt: v.optional(v.number()),
     })),
   },
   handler: async (ctx, args) => {
@@ -724,11 +733,12 @@ export const sendInactivityPaused = internalAction({
 
     const cards = monitors
       .map((m) => {
-        // Only said where it is true: a rule-B monitor never matched, so it
-        // has no alerts to have been ignored.
+        // Only said where it is true. Deliberately the match date rather than a
+        // count of notifications: error and "checks stopped" notices share that
+        // table, so counting them would promise alerts we never sent.
         const alertLine =
-          m.alertCount > 0
-            ? `<p style="margin:0 0 16px;color:#555;font-size:14px">We sent ${m.alertCount} alert${m.alertCount === 1 ? "" : "s"} for it in that time.</p>`
+          m.matchedSinceSeenAt !== undefined
+            ? `<p style="margin:0 0 16px;color:#555;font-size:14px">It found something on ${formatDay(m.matchedSinceSeenAt)}, after you were last here.</p>`
             : "";
         return `
       <div style="border-top:1px solid #eee;padding:24px 32px">
@@ -772,7 +782,7 @@ export const sendInactivityPaused = internalAction({
 
     const textCards = monitors
       .map((m) => {
-        const alertLine = m.alertCount > 0 ? `\nWe sent ${m.alertCount} alert${m.alertCount === 1 ? "" : "s"} for it in that time.` : "";
+        const alertLine = m.matchedSinceSeenAt !== undefined ? `\nIt found something on ${formatDay(m.matchedSinceSeenAt)}, after you were last here.` : "";
         return `${m.name} — ${safeHostname(m.url)}${alertLine}\nRestart: ${resumeUrl(m.token)}`;
       })
       .join("\n\n");

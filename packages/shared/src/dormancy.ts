@@ -8,7 +8,7 @@
  * nothing downstream would notice.
  */
 
-const DAY_MS = 24 * 60 * 60 * 1000;
+export const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
  * How long an owner has to be away before a monitor that has already alerted
@@ -47,7 +47,7 @@ export type DormancyVerdict = "keep" | "ignored-alert" | "long-gone";
 
 export type DormancyInput = {
   now: number;
-  /** max(newest session.updatedAt, user.createdAt, newest monitor.createdAt). */
+  /** See `lastSeenFrom`. */
   lastSeenAt: number;
   lastMatchAt?: number;
   /** Undefined means parked — the scheduler has already stopped checking it. */
@@ -55,10 +55,48 @@ export type DormancyInput = {
   status: string;
   isAnonymous?: boolean;
   isPaying: boolean;
+  /**
+   * This monitor's alerts go nowhere: it is muted, or its channel list is
+   * empty. `lastMatchAt` is stamped on every new match regardless (see
+   * recordCheckResult), so without this rule A fires on an alert the user was
+   * never sent, and the pause email's premise is a lie.
+   */
+  alertsSuppressed?: boolean;
 };
 
+/**
+ * When we last have evidence this user was here.
+ *
+ * Every input is a moment the user was demonstrably present, so the newest
+ * wins. Assembling it needs care because the obvious signal is the one that
+ * disappears: Better Auth deletes a session row on sign-out, and deletes an
+ * expired one the next time any page loads. So a user who signs out, or who
+ * comes back after their cookie expired and bounces off the login page, leaves
+ * no session at all — and read alone, the session table would call someone who
+ * was reading an alert last week "never seen since signup".
+ */
+export function lastSeenFrom(signals: {
+  /** Our own stamp, written when the dashboard loads. The only one nothing deletes. */
+  touchedAt?: number;
+  /** Newest Better Auth session.updatedAt, i.e. last opened the app. */
+  sessionAt?: number;
+  signupAt?: number;
+  /** Newest monitor this user created, from the creation log. */
+  monitorCreatedAt?: number;
+  /** Last press of Restart in a pause email. Signs nobody in, so nothing else records it. */
+  resumedAt?: number;
+}): number {
+  return Math.max(
+    signals.touchedAt ?? 0,
+    signals.sessionAt ?? 0,
+    signals.signupAt ?? 0,
+    signals.monitorCreatedAt ?? 0,
+    signals.resumedAt ?? 0,
+  );
+}
+
 export function dormancyVerdict(input: DormancyInput): DormancyVerdict {
-  const { now, lastSeenAt, lastMatchAt, nextCheckAt, status, isAnonymous, isPaying } = input;
+  const { now, lastSeenAt, lastMatchAt, nextCheckAt, status, isAnonymous, isPaying, alertsSuppressed } = input;
 
   // Not live: already paused or mid-scan, so there is nothing to stop.
   if (status !== "active" && status !== "error") return "keep";
@@ -73,6 +111,7 @@ export function dormancyVerdict(input: DormancyInput): DormancyVerdict {
   // Rule A: the monitor did its job, told them, and they never came back.
   if (
     away >= DORMANT_AFTER_MS &&
+    !alertsSuppressed &&
     lastMatchAt !== undefined &&
     lastMatchAt > lastSeenAt &&
     now - lastMatchAt >= IGNORED_ALERT_GRACE_MS

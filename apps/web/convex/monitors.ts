@@ -123,9 +123,15 @@ export const list = query({
       .withIndex("by_userId", (q) => q.eq("userId", identity.subject))
       .order("desc")
       .collect();
-    // Strip heavy schema field — dashboard only needs metadata, not full extraction data.
-    // The detail page uses the `get` query which returns the full document.
-    return monitors.map(({ schema, ...rest }) => rest);
+    // Strip the heavy schema field — the dashboard only needs metadata, not the
+    // full extraction data — and the restart token, which is a bearer
+    // credential for an unauthenticated mutation and belongs in the pause email
+    // and nowhere else. The detail page uses `get`, which strips the same.
+    return monitors.map(({ schema, resumeToken, ...rest }) => {
+      void schema;
+      void resumeToken;
+      return rest;
+    });
   },
 });
 
@@ -442,12 +448,17 @@ export const update = mutation({
       }
     }
 
-    // Resuming clears the auto-pause and its email link, so the monitor reads
-    // as a plain active monitor again and an old email cannot restart it later.
+    // Anything that takes a monitor out of "paused" clears the auto-pause and
+    // its email link, so the monitor reads as a plain active monitor again and
+    // an old email cannot restart it later. Keyed off leaving "paused" rather
+    // than off arriving at "active", because Rescan goes paused -> "scanning"
+    // -> active and would otherwise leave a running monitor wearing the
+    // "paused automatically" note for good.
+    //
     // nextCheckAt is set on every resume, not just an auto-paused one: without
     // it a monitor that was parked (nextCheckAt unset) and then paused comes
     // back active with nothing scheduled and never runs again.
-    if (fields.status === "active" && existing.status === "paused") {
+    if (fields.status !== undefined && fields.status !== "paused" && existing.status === "paused") {
       updates.nextCheckAt = now;
       updates.autoPausedAt = undefined;
       updates.resumeToken = undefined;
@@ -499,6 +510,10 @@ export const resumeByToken = mutation({
     // useful to say about the difference, and no reason to confirm a guess.
     if (!monitor || monitor.autoPausedAt === undefined) return { status: "invalid" as const };
     if (Date.now() - monitor.autoPausedAt > RESUME_TOKEN_TTL_MS) return { status: "expired" as const };
+    // banUser only pauses monitors that were live at the time, so one the
+    // reaper had already paused keeps its token and would otherwise start
+    // checking again on behalf of a suspended account.
+    if (await isBanned(ctx, monitor.userId)) return { status: "invalid" as const };
 
     const now = Date.now();
     await ctx.db.patch(monitor._id, {

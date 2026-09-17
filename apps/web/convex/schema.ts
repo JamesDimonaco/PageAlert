@@ -287,6 +287,20 @@ export default defineSchema({
     count: v.number(),
   }).index("by_date", ["date"]),
 
+  // When each user was last in the app, stamped by the dashboard itself.
+  //
+  // Better Auth's session table looks like the natural place to read this, and
+  // the admin dashboard does, but it deletes a session row on sign-out and
+  // deletes an expired one on the next page load — so a user who signs out, or
+  // who returns after their cookie lapsed and bounces off the login page,
+  // leaves no trace at all. The inactivity reaper pauses monitors on the
+  // strength of this number, so it needs one nothing else can delete.
+  // Throttled to one write an hour per user; see account.touchLastSeen.
+  userActivity: defineTable({
+    userId: v.string(),
+    lastSeenAt: v.number(),
+  }).index("by_userId", ["userId"]),
+
   // Lightweight counter for public monitor count (avoids reading all monitors)
   counters: defineTable({
     name: v.string(),

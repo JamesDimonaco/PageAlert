@@ -8,6 +8,10 @@
  * resume runs from JavaScript rather than on page load server-side, because
  * mail scanners and link prefetchers fetch every URL in an email and a GET
  * that resumed would restart monitors nobody clicked.
+ *
+ * The token arrives in the fragment, which browsers never send to the server:
+ * out of request logs, and out of the pageview URL PostHog builds from the
+ * query string at render. See resumeUrl in convex/emails.ts.
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -44,9 +48,9 @@ export default function ResumePage() {
     if (startedRef.current) return;
     startedRef.current = true;
 
-    const token = new URLSearchParams(window.location.search).get("t");
-    // Out of the URL before anything captures a pageview. Read here rather
-    // than with useSearchParams so the strip happens on first paint.
+    const token = decodeURIComponent(window.location.hash.slice(1));
+    // Out of the address bar too, so a shared screenshot or the back button
+    // does not carry it. Belt to the fragment's braces.
     window.history.replaceState(null, "", window.location.pathname);
 
     // Every path sets state asynchronously: a synchronous setState in an
@@ -58,7 +62,7 @@ export default function ResumePage() {
       }
       try {
         const r = await resume({ token });
-        setResult(r as Result);
+        setResult(r);
         trackEvent("monitor_auto_pause_resumed", { outcome: r.status });
       } catch {
         setResult({ status: "failed" });

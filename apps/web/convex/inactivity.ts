@@ -16,23 +16,18 @@ import { v } from "convex/values";
 import { internalAction, internalMutation, internalQuery } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
-import { dormancyVerdict, type DormancyVerdict } from "@prowl/shared";
+import { DAY_MS, dormancyVerdict, lastSeenFrom, type DormancyVerdict } from "@prowl/shared";
 import { fetchAllUsers, fetchLastActiveByUser, isPayingRecord } from "./admin";
 import { effectiveIntervalMs } from "./shared";
 
-const DAY_MS = 24 * 60 * 60 * 1000;
-
 /**
- * Ceiling on the live monitors one run considers. Well above the fleet (65 at
- * the time of writing); a run that hits it pauses what it saw and says so,
- * rather than quietly doing half the job.
+ * Ceiling on the live monitors one run considers — a stop, not a promise. Well
+ * above the fleet (65 at the time of writing); a run that hits it pauses what
+ * it saw and says so, rather than quietly doing half the job. Long before it
+ * bites, `ownerFacts` below needs paging: see the scale table in
+ * docs/plans/inactive-monitor-auto-pause.md.
  */
 const MAX_LIVE_MONITORS = 1000;
-
-/** Alerts counted for the email's "we sent N alerts in that time" line. */
-const MAX_ALERTS_COUNTED = 50;
-
-const ruleValidator = v.union(v.literal("ignored-alert"), v.literal("long-gone"));
 
 type Candidate = {
   id: Id<"monitors">;
@@ -86,6 +81,8 @@ export const listLive = internalQuery({
         nextCheckAt: m.nextCheckAt,
         createdAt: m.createdAt,
         lastResumedAt: m.lastResumedAt,
+        // Muted, or every channel switched off: its matches reached nobody.
+        alertsSuppressed: m.muted === true || m.notificationChannels?.length === 0,
         checksPerDay: DAY_MS / effectiveIntervalMs(m),
       })),
       truncated,
@@ -94,20 +91,31 @@ export const listLive = internalQuery({
 });
 
 /**
- * Per owner: whether they are paying, and when they last created a monitor.
+ * Per owner: whether they are paying, when the dashboard last saw them, and
+ * when they last created a monitor.
  *
- * Creation is a real "was here" moment, and `monitorCreations` keeps it even
- * for monitors since deleted or paused — so a user who set something up last
- * week is safe even if the monitor we are judging is an old one. Monitor
- * `updatedAt` is no use as a signal: the scheduler bumps it on every check.
+ * `userActivity` is the signal that survives a sign-out; creation is a real
+ * "was here" moment too, and `monitorCreations` keeps it even for monitors
+ * since deleted, so a user who set something up last week is safe even if the
+ * monitor we are judging is an old one. Monitor `updatedAt` is no use as a
+ * signal: the scheduler bumps it on every check.
  */
 export const ownerFacts = internalQuery({
   args: { userIds: v.array(v.string()) },
   handler: async (ctx, { userIds }) => {
-    const facts: Array<{ userId: string; isPaying: boolean; lastCreatedMonitorAt: number | null }> = [];
+    const facts: Array<{
+      userId: string;
+      isPaying: boolean;
+      touchedAt: number | null;
+      lastCreatedMonitorAt: number | null;
+    }> = [];
     for (const userId of userIds) {
       const tier = await ctx.db
         .query("userTiers")
+        .withIndex("by_userId", (q) => q.eq("userId", userId))
+        .unique();
+      const activity = await ctx.db
+        .query("userActivity")
         .withIndex("by_userId", (q) => q.eq("userId", userId))
         .unique();
       const newest = await ctx.db
@@ -118,6 +126,7 @@ export const ownerFacts = internalQuery({
       facts.push({
         userId,
         isPaying: tier ? isPayingRecord(tier) : false,
+        touchedAt: activity?.lastSeenAt ?? null,
         lastCreatedMonitorAt: newest?.createdAt ?? null,
       });
     }
@@ -139,7 +148,6 @@ export const pauseForOwner = internalMutation({
     monitors: v.array(v.object({
       id: v.id("monitors"),
       token: v.string(),
-      rule: ruleValidator,
     })),
   },
   handler: async (ctx, { userId, lastSeenAt, monitors }) => {
@@ -149,19 +157,18 @@ export const pauseForOwner = internalMutation({
       name: string;
       url: string;
       token: string;
-      rule: "ignored-alert" | "long-gone";
-      alertCount: number;
+      /** When it last matched, if that was after we last saw the owner. */
+      matchedSinceSeenAt?: number;
     }> = [];
     let email: string | undefined;
 
-    for (const { id, token, rule } of monitors) {
+    for (const { id, token } of monitors) {
       // Re-read: the list was built in an action, so the user may have resumed,
       // paused or deleted it since.
       const m = await ctx.db.get(id);
       if (!m || m.userId !== userId) continue;
       if (m.status !== "active" && m.status !== "error") continue;
       if (m.nextCheckAt === undefined) continue;
-      if (m.autoPausedAt !== undefined) continue;
 
       await ctx.db.patch(id, {
         status: "paused",
@@ -169,13 +176,6 @@ export const pauseForOwner = internalMutation({
         resumeToken: token,
         updatedAt: now,
       });
-
-      const alerts = await ctx.db
-        .query("notifications")
-        .withIndex("by_monitorId", (q) => q.eq("monitorId", id))
-        .order("desc")
-        .take(MAX_ALERTS_COUNTED);
-      const alertCount = alerts.filter((n) => n.channel === "in_app" && n.sentAt > lastSeenAt).length;
 
       await ctx.db.insert("notifications", {
         userId,
@@ -188,7 +188,13 @@ export const pauseForOwner = internalMutation({
       });
 
       email = email ?? m.userEmail;
-      paused.push({ id, name: m.name, url: m.url, token, rule, alertCount });
+      paused.push({
+        id,
+        name: m.name,
+        url: m.url,
+        token,
+        matchedSinceSeenAt: m.lastMatchAt !== undefined && m.lastMatchAt > lastSeenAt ? m.lastMatchAt : undefined,
+      });
     }
 
     if (paused.length > 0) {
@@ -223,8 +229,7 @@ export const notifyPaused = internalAction({
       name: v.string(),
       url: v.string(),
       token: v.string(),
-      rule: ruleValidator,
-      alertCount: v.number(),
+      matchedSinceSeenAt: v.optional(v.number()),
     })),
   },
   handler: async (ctx, { userId, email, lastSeenAt, monitors }) => {
@@ -249,7 +254,7 @@ export const notifyPaused = internalAction({
           url: m.url,
           lastSeenAt,
           token: m.token,
-        }).catch(() => {});
+        }).catch((e) => console.error("[inactivity] Telegram pause notice failed:", userId, e));
       }
     }
 
@@ -265,7 +270,7 @@ export const notifyPaused = internalAction({
           url: m.url,
           lastSeenAt,
           token: m.token,
-        }).catch(() => {});
+        }).catch((e) => console.error("[inactivity] Discord pause notice failed:", userId, e));
       }
     }
   },
@@ -299,46 +304,42 @@ export const pauseDormant = internalAction({
     const facts = await ctx.runQuery(internal.inactivity.ownerFacts, { userIds: owners });
     const factByUser = new Map(facts.map((f) => [f.userId, f]));
 
-    // Newest live monitor per owner, as one more "was here" moment on top of
-    // what monitorCreations remembers — and the last restart from a pause
-    // email, which is the one that stops this cron talking to itself. Clicking
-    // that link does not sign anyone in, so without it a restarted monitor is
-    // still owned by someone "last seen" months ago and tomorrow's run pauses
-    // it again, and again, one email a day forever.
+    // Per owner: the newest monitor they own, and the last time one of them was
+    // restarted from a pause email. The restart is the one that stops this cron
+    // talking to itself — clicking that link signs nobody in, so without it a
+    // restarted monitor is still owned by someone "last seen" months ago and
+    // tomorrow's run pauses it again, one email a day forever.
     const newestLiveByUser = new Map<string, number>();
+    const resumedByUser = new Map<string, number>();
     for (const m of live.monitors) {
-      newestLiveByUser.set(m.userId, Math.max(
-        newestLiveByUser.get(m.userId) ?? 0,
-        m.createdAt,
-        m.lastResumedAt ?? 0,
-      ));
+      newestLiveByUser.set(m.userId, Math.max(newestLiveByUser.get(m.userId) ?? 0, m.createdAt));
+      if (m.lastResumedAt !== undefined) {
+        resumedByUser.set(m.userId, Math.max(resumedByUser.get(m.userId) ?? 0, m.lastResumedAt));
+      }
     }
 
     const lastSeenByUser = new Map<string, number>();
     for (const userId of owners) {
-      lastSeenByUser.set(userId, Math.max(
-        sessions.byUser.get(userId) ?? 0,
-        signupByUser.get(userId) ?? 0,
-        factByUser.get(userId)?.lastCreatedMonitorAt ?? 0,
-        newestLiveByUser.get(userId) ?? 0,
-      ));
+      const facts = factByUser.get(userId);
+      lastSeenByUser.set(userId, lastSeenFrom({
+        touchedAt: facts?.touchedAt ?? undefined,
+        sessionAt: sessions.byUser.get(userId),
+        signupAt: signupByUser.get(userId),
+        monitorCreatedAt: Math.max(facts?.lastCreatedMonitorAt ?? 0, newestLiveByUser.get(userId) ?? 0),
+        resumedAt: resumedByUser.get(userId),
+      }));
     }
 
     const candidates: Candidate[] = [];
     for (const m of live.monitors) {
-      const lastSeenAt = lastSeenByUser.get(m.userId) ?? 0;
-      // A user we know nothing about — no session, no signup row, no creation
-      // log — reads as epoch-old, which is exactly the shape a truncated scan
-      // would fake. The guard above rules that out, but leaving them running
-      // costs a few checks and stopping them wrongly costs a user.
-      if (lastSeenAt === 0) continue;
       const verdict = dormancyVerdict({
         now,
-        lastSeenAt,
+        lastSeenAt: lastSeenByUser.get(m.userId) ?? 0,
         lastMatchAt: m.lastMatchAt,
         nextCheckAt: m.nextCheckAt,
         status: m.status,
         isPaying: factByUser.get(m.userId)?.isPaying ?? false,
+        alertsSuppressed: m.alertsSuppressed,
       });
       if (verdict === "keep") continue;
       candidates.push({ id: m.id, userId: m.userId, name: m.name, url: m.url, rule: verdict, checksPerDay: m.checksPerDay });
@@ -364,7 +365,7 @@ export const pauseDormant = internalAction({
         paused += await ctx.runMutation(internal.inactivity.pauseForOwner, {
           userId,
           lastSeenAt: lastSeenByUser.get(userId)!,
-          monitors: list.map((c) => ({ id: c.id, token: mintToken(), rule: c.rule })),
+          monitors: list.map((c) => ({ id: c.id, token: mintToken() })),
         });
       }
     }
@@ -376,7 +377,12 @@ export const pauseDormant = internalAction({
       `saving ~${checksSaved} checks/day of ${Math.round(live.monitors.reduce((s, m) => s + m.checksPerDay, 0))}.` +
       `${enabled ? "" : " DRY RUN — switch is off."}${live.truncated ? " WARNING: live-monitor list was truncated." : ""}`;
     console.log(summary);
-    await ctx.runAction(internal.admin.notify, { text: summary });
+    // A dry run with nothing to pause is the steady state once this is
+    // enabled, and a daily "0 monitors" ping is how an operator learns to
+    // ignore the channel. The log line above is always there to read.
+    if (candidates.length > 0 || live.truncated) {
+      await ctx.runAction(internal.admin.notify, { text: summary });
+    }
 
     return { candidates: candidates.length, owners: byOwner.size, paused, dryRun: !enabled };
   },

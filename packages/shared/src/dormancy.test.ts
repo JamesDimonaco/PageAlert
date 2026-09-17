@@ -4,6 +4,7 @@ import {
   IGNORED_ALERT_GRACE_MS,
   LONG_GONE_AFTER_MS,
   dormancyVerdict,
+  lastSeenFrom,
   type DormancyInput,
 } from "./dormancy";
 
@@ -105,15 +106,42 @@ describe("skips", () => {
   });
 });
 
-describe("last seen falls back to signup and monitor creation", () => {
-  // Better Auth deletes the session row on sign-out, so a user with no session
-  // is signed out, not absent. The caller passes the newest of signup time and
-  // monitor creation instead; these pin that a recent one of those saves them.
-  it("keeps a monitor created 5 days ago by a user with no session", () => {
-    expect(dormancyVerdict(input({ lastSeenAt: NOW - 5 * DAY, lastMatchAt: NOW - DAY }))).toBe("keep");
+describe("alerts that went nowhere", () => {
+  // lastMatchAt is stamped on every new match, even for a monitor whose alerts
+  // are all switched off. Rule A would then pause it 60 days early on the
+  // strength of an alert the user was never sent.
+  it("does not treat a muted monitor's match as an ignored alert", () => {
+    expect(dormancyVerdict(input({ alertsSuppressed: true }))).toBe("keep");
   });
 
-  it("pauses when signup and monitor creation are both over 90 days old", () => {
-    expect(dormancyVerdict(input({ lastSeenAt: NOW - 120 * DAY, lastMatchAt: undefined }))).toBe("long-gone");
+  it("still pauses a silent monitor once its owner is long gone", () => {
+    expect(dormancyVerdict(input({ alertsSuppressed: true, lastSeenAt: NOW - 100 * DAY }))).toBe("long-gone");
+  });
+});
+
+describe("lastSeenFrom", () => {
+  // The session row is the signal that disappears — Better Auth deletes it on
+  // sign-out and deletes an expired one on the next page load. Every test here
+  // is a user who was demonstrably present but has no session to prove it.
+  it("takes the newest signal, whichever it is", () => {
+    expect(lastSeenFrom({ signupAt: 100, sessionAt: 300, monitorCreatedAt: 200 })).toBe(300);
+    expect(lastSeenFrom({ signupAt: 100, sessionAt: 50, monitorCreatedAt: 200 })).toBe(200);
+  });
+
+  it("keeps our own stamp when the session row has been deleted", () => {
+    expect(lastSeenFrom({ touchedAt: NOW - DAY, signupAt: NOW - 200 * DAY })).toBe(NOW - DAY);
+  });
+
+  it("counts a restart from a pause email, which signs nobody in", () => {
+    // Without this the next day's run pauses the monitor again, one email a day.
+    expect(lastSeenFrom({ resumedAt: NOW - DAY, signupAt: NOW - 200 * DAY })).toBe(NOW - DAY);
+  });
+
+  it("falls back to signup for a user with no session at all", () => {
+    expect(lastSeenFrom({ signupAt: NOW - 5 * DAY })).toBe(NOW - 5 * DAY);
+  });
+
+  it("is 0 when nothing is known, so the caller can tell", () => {
+    expect(lastSeenFrom({})).toBe(0);
   });
 });
