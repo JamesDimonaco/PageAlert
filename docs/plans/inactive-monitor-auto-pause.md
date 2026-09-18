@@ -2,7 +2,9 @@
 
 **Recommendation:** pause first, then tell them. No "still interested?" question, no pending state, no deadline. A daily cron pauses a monitor when its owner has not been seen for 30 days and has ignored at least one alert from it (or 90 days regardless), sends one email naming the monitor with a one-click restart link that needs no login, and leaves the monitor in the dashboard marked "paused automatically". Paying users are exempt via `isPayingRecord`. On today's data the first run pauses 40 of 65 live monitors across 36 users and removes 136 of 258 scheduled checks a day (53%). The restart link is an opaque random token stored on the monitor row, not a signed URL, which makes the "greenfield token infrastructure" about 80 lines rather than a subsystem.
 
-Status: plan, awaiting James's approval. Nothing here is built.
+Status: **built and merged** (PR #79), shipped with the kill switch off. The plan below is
+kept as written; what actually shipped differs in the ways listed under "What changed on
+contact with the code" at the end, which is the section to trust where the two disagree.
 
 ## Why pause-first and not ask-first
 
@@ -286,3 +288,39 @@ Things checked against the snapshot or the code that differ from what was assume
 - **The cohort never came back at all**: 45 of 54 live-monitor owners were last seen within a day of signup. This is not slow drift, which is the main reason ask-first would not change outcomes.
 - My count of the 60-day cohort from the snapshot is 40 users, 47 monitors, 164 of 258 checks/day, against the brief's 42, 49 and 183 of 269. Same picture; the difference is the fallback I use for no-session users and how error-lane monitors are costed.
 - `convex/_generated/ai/guidelines.md`, which `CLAUDE.md` says to read first, does not exist in the repo (`npx convex ai-files install` has not been run). Already noted in the vault's open items.
+
+## What changed on contact with the code
+
+Written after building it. Where this contradicts the plan above, this is right.
+
+- **The restart click is not a session.** Risk #5 dismissed the pause loop on the grounds that
+  "the resume page is a session, so `lastSeenAt` moves". It is not — the link signs nobody in,
+  so the next day's run would pause the monitor again, one email a day forever. `resumeByToken`
+  stamps `monitors.lastResumedAt` and the reaper counts it as a last-seen moment.
+- **The session table cannot answer "when were you last here".** Better Auth deletes a session
+  row on sign-out *and* deletes an expired one the next time any page loads, so a user who signs
+  out, or who returns after their cookie lapsed and bounces off the login page, reads as
+  never-seen-since-signup. Rule A would pause their monitor days after they were reading the
+  alert. There is now a `userActivity` table the app owns, stamped by the dashboard and throttled
+  to an hour; the fallback chain is a tested pure function, `lastSeenFrom`.
+- **`lastMatchAt` does not mean "we alerted you".** It is stamped on every new match, including on
+  muted monitors and ones with every channel switched off, where the notification branch is
+  skipped entirely. Rule A fired on those — 30 days instead of 90, on an alert nobody received.
+  The verdict takes `alertsSuppressed`.
+- **The token is 64 hex characters in the URL fragment**, not 43 base64url in a query parameter.
+  Hex needs no encoder the runtime may not carry; the fragment is never sent to the server, so
+  the token stays out of request logs and out of the pageview URL PostHog builds from the query
+  string at render — the plan's "strip it with replaceState" was always too late.
+- **The email names the match date** ("It found something on 14 August, after you were last
+  here") rather than counting notifications. Error and park notices share the notifications
+  table, so a count promised alerts we never sent.
+- **The pause notice ignores `muted` and the monitor's channel list**, unlike the park path it
+  otherwise mirrors. Mute means "stop telling me what you found"; this is "we stopped looking".
+- **`pauseForOwner` re-reads the owner's tier and activity** inside its transaction, not just the
+  monitor's state: the verdicts are computed in an action beforehand, and someone who opens the
+  dashboard or buys a plan in between has to win.
+- `listLive` takes 1000 per status, not 500. The cron carries `minuteUTC`. `resumeByToken` refuses
+  a banned owner, which `banUser` does not cover for an already-paused monitor. The PostHog event
+  carries the outcome, not the rule.
+- Verified against the dev deployment rather than reasoned about: the six-step checklist above,
+  plus muted-escapes-rule-A, the activity stamp, and the ban refusal.

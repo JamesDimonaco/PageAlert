@@ -48,10 +48,17 @@ export default function ResumePage() {
     if (startedRef.current) return;
     startedRef.current = true;
 
-    const token = decodeURIComponent(window.location.hash.slice(1));
-    // Out of the address bar too, so a shared screenshot or the back button
-    // does not carry it. Belt to the fragment's braces.
+    const raw = window.location.hash.slice(1);
+    // Stripped before the token is parsed, not after: decodeURIComponent throws
+    // on malformed percent encoding, and a throw here would leave the token in
+    // the address bar and the page stuck on "Restarting your monitor…".
     window.history.replaceState(null, "", window.location.pathname);
+    let token: string;
+    try {
+      token = decodeURIComponent(raw);
+    } catch {
+      token = raw;
+    }
 
     // Every path sets state asynchronously: a synchronous setState in an
     // effect body is a cascading render, and the lint rule says so.

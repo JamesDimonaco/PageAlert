@@ -7,7 +7,11 @@ import { PauseCircle } from "lucide-react";
  */
 export function AutoPauseNote({ autoPausedAt }: { autoPausedAt?: number }) {
   if (!autoPausedAt) return null;
+  // Fixed timezone, not the renderer's: this is prerendered on the server and
+  // again in the browser, and a pause near midnight would otherwise hydrate to
+  // a different day than it rendered — and than the email says.
   const on = new Date(autoPausedAt).toLocaleDateString("en-GB", {
+    timeZone: "UTC",
     day: "numeric",
     month: "long",
     year: "numeric",

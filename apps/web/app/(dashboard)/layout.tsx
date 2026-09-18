@@ -24,7 +24,7 @@ export default function DashboardLayout({
   const claimAnonymous = useMutation(api.anonymous.claimMyAnonymousMonitors);
   const touchLastSeen = useMutation(api.account.touchLastSeen);
   const claimedRef = useRef(false);
-  const touchedRef = useRef(false);
+  const lastTouchRef = useRef(0);
   const banStatus = useQuery(api.account.myBanStatus, isAuthenticated ? {} : "skip");
 
   useEffect(() => {
@@ -44,11 +44,19 @@ export default function DashboardLayout({
   // this stamp, because Better Auth's session row is deleted on sign-out and
   // on the next load after it expires — see schema.ts userActivity. Fire and
   // forget: a failure here must never block the dashboard.
+  //
+  // Keyed off navigation rather than mount, because this layout survives every
+  // route change inside the dashboard: someone working in a tab they opened
+  // last month would otherwise carry a month-old stamp. Throttled to an hour
+  // on this side too, so ordinary clicking around costs no round trips — the
+  // mutation throttles again server-side for tabs this ref does not cover.
   useEffect(() => {
-    if (!isAuthenticated || touchedRef.current) return;
-    touchedRef.current = true;
+    if (!isAuthenticated) return;
+    const now = Date.now();
+    if (now - lastTouchRef.current < 60 * 60 * 1000) return;
+    lastTouchRef.current = now;
     void touchLastSeen({}).catch(() => {});
-  }, [isAuthenticated, touchLastSeen]);
+  }, [isAuthenticated, pathname, touchLastSeen]);
 
   // Transfer anonymous monitors on first dashboard load. Waits for banStatus
   // to resolve so a banned account never fires this — the mutation already

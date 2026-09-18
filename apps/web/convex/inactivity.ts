@@ -16,7 +16,7 @@ import { v } from "convex/values";
 import { internalAction, internalMutation, internalQuery } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
-import { DAY_MS, dormancyVerdict, lastSeenFrom, type DormancyVerdict } from "@prowl/shared";
+import { DAY_MS, DORMANT_AFTER_MS, dormancyVerdict, lastSeenFrom, type DormancyVerdict } from "@prowl/shared";
 import { fetchAllUsers, fetchLastActiveByUser, isPayingRecord } from "./admin";
 import { effectiveIntervalMs } from "./shared";
 
@@ -152,6 +152,23 @@ export const pauseForOwner = internalMutation({
   },
   handler: async (ctx, { userId, lastSeenAt, monitors }) => {
     const now = Date.now();
+
+    // The verdicts were worked out in an action, before this transaction
+    // opened. Anything that makes the owner ineligible in between — they open
+    // the dashboard, they buy a plan — has to win, because pausing a monitor
+    // belonging to someone who is right there is the failure this whole feature
+    // is trying not to commit.
+    const tier = await ctx.db
+      .query("userTiers")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .unique();
+    if (tier && isPayingRecord(tier)) return 0;
+    const activity = await ctx.db
+      .query("userActivity")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .unique();
+    if (activity && now - activity.lastSeenAt < DORMANT_AFTER_MS) return 0;
+
     const paused: Array<{
       id: string;
       name: string;
