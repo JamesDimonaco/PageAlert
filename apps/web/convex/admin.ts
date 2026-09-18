@@ -471,20 +471,32 @@ export async function requireAdmin(ctx: AnyCtx): Promise<string> {
   return email;
 }
 
-type AuthUser = { id: string; email: string; name: string; createdAt: number };
+export type AuthUser = { id: string; email: string; name: string; createdAt: number };
+
+/**
+ * Both scans below stop after this many pages rather than walking forever.
+ * `complete` says whether they ran out of pages or out of budget — cosmetic
+ * for the admin table, load-bearing for the inactivity reaper, which reads a
+ * short scan as "these users were never seen" and would pause everything.
+ */
+const SCAN_MAX_PAGES = 40;
+const SCAN_PAGE_SIZE = 500;
 
 /**
  * Page through the Better Auth component's user table. Its `_id` is what
  * ctx.auth.getUserIdentity().subject returns, i.e. the userId stored on
  * monitors / userTiers.
  */
-async function fetchAllUsers(ctx: QueryCtx | ActionCtx): Promise<AuthUser[]> {
+export async function fetchAllUsers(
+  ctx: QueryCtx | ActionCtx,
+): Promise<{ users: AuthUser[]; complete: boolean }> {
   const users: AuthUser[] = [];
   let cursor: string | null = null;
-  for (let page = 0; page < 40; page++) {
+  let complete = false;
+  for (let page = 0; page < SCAN_MAX_PAGES; page++) {
     const result: PaginationResult<Record<string, unknown>> = await ctx.runQuery(components.betterAuth.adapter.findMany, {
       model: "user",
-      paginationOpts: { numItems: 500, cursor },
+      paginationOpts: { numItems: SCAN_PAGE_SIZE, cursor },
     });
     for (const doc of result.page) {
       users.push({
@@ -494,37 +506,46 @@ async function fetchAllUsers(ctx: QueryCtx | ActionCtx): Promise<AuthUser[]> {
         createdAt: Number(doc.createdAt ?? doc._creationTime),
       });
     }
-    if (result.isDone) break;
+    if (result.isDone) {
+      complete = true;
+      break;
+    }
     cursor = result.continueCursor;
   }
-  return users;
+  return { users, complete };
 }
 
 /**
  * Most recent session.updatedAt per user, as a "last active" proxy —
  * Better Auth bumps it when a session is refreshed. Users who never
- * signed in again after their first session (or whose sessions expired
- * and were pruned) come back with no entry.
+ * signed in again after their first session come back with no entry; so do
+ * users who signed out, because Better Auth deletes the row on sign-out.
  */
-async function fetchLastActiveByUser(ctx: QueryCtx | ActionCtx): Promise<Map<string, number>> {
-  const lastActive = new Map<string, number>();
+export async function fetchLastActiveByUser(
+  ctx: QueryCtx | ActionCtx,
+): Promise<{ byUser: Map<string, number>; complete: boolean }> {
+  const byUser = new Map<string, number>();
   let cursor: string | null = null;
-  for (let page = 0; page < 40; page++) {
+  let complete = false;
+  for (let page = 0; page < SCAN_MAX_PAGES; page++) {
     const result: PaginationResult<Record<string, unknown>> = await ctx.runQuery(components.betterAuth.adapter.findMany, {
       model: "session",
-      paginationOpts: { numItems: 500, cursor },
+      paginationOpts: { numItems: SCAN_PAGE_SIZE, cursor },
     });
     for (const doc of result.page) {
       const userId = String(doc.userId ?? "");
       const updatedAt = Number(doc.updatedAt ?? 0);
       if (!userId || !updatedAt) continue;
-      const prev = lastActive.get(userId);
-      if (!prev || updatedAt > prev) lastActive.set(userId, updatedAt);
+      const prev = byUser.get(userId);
+      if (!prev || updatedAt > prev) byUser.set(userId, updatedAt);
     }
-    if (result.isDone) break;
+    if (result.isDone) {
+      complete = true;
+      break;
+    }
     cursor = result.continueCursor;
   }
-  return lastActive;
+  return { byUser, complete };
 }
 
 /**
@@ -532,7 +553,7 @@ async function fetchLastActiveByUser(ctx: QueryCtx | ActionCtx): Promise<Map<str
  * subscription, and for a bought pass — a pass is a purchase, so an admin
  * trial must not quietly overwrite one. An admin-granted trial is not.
  */
-function isPayingRecord(t: { tier: Tier; grantUntil?: number; grantSource?: "admin" | "pass" }): boolean {
+export function isPayingRecord(t: { tier: Tier; grantUntil?: number; grantSource?: "admin" | "pass" }): boolean {
   if (effectiveTier(t) === "free") return false;
   if (!t.grantUntil) return true;
   return t.grantSource === "pass";
@@ -562,7 +583,7 @@ export const overview = query({
     const d30 = now - 30 * DAY_MS;
 
     const [users, allTiers, monitors] = await Promise.all([
-      fetchAllUsers(ctx),
+      fetchAllUsers(ctx).then((r) => r.users),
       ctx.db.query("userTiers").collect(),
       ctx.db.query("monitors").collect(),
     ]);
@@ -668,10 +689,10 @@ export const listUsers = query({
     await requireAdmin(ctx);
     const now = Date.now();
     const [users, tiers, monitors, lastActiveByUser, bannedRows] = await Promise.all([
-      fetchAllUsers(ctx),
+      fetchAllUsers(ctx).then((r) => r.users),
       ctx.db.query("userTiers").collect(),
       ctx.db.query("monitors").collect(),
-      fetchLastActiveByUser(ctx),
+      fetchLastActiveByUser(ctx).then((r) => r.byUser),
       ctx.db.query("bannedUsers").collect(),
     ]);
     const bannedByUser = new Map(bannedRows.map((b) => [b.userId, b]));

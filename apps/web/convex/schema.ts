@@ -51,6 +51,18 @@ export default defineSchema({
     // that would fail anyway. Re-probed periodically — see PROXY_REPROBE_EVERY.
     proxyPreferred: v.optional(v.boolean()),
     nextCheckAt: v.optional(v.number()),
+    // Set by the inactivity reaper (inactivity.ts), cleared by any resume —
+    // the dashboard toggle or the link in the pause email. Present means "we
+    // paused this because the owner had gone, and they have not come back".
+    autoPausedAt: v.optional(v.number()),
+    // Opaque restart token from the pause email. Only ever resumes a monitor
+    // the reaper paused, so an old email can never undo a manual pause.
+    resumeToken: v.optional(v.string()),
+    // When someone last pressed Restart in a pause email. Clicking that link
+    // signs nobody in, so it leaves no session for the reaper to read — this
+    // is the only record that the owner is alive, and without it the next
+    // day's run would pause the monitor again.
+    lastResumedAt: v.optional(v.number()),
     notificationChannels: v.optional(v.array(v.union(
       v.literal("email"),
       v.literal("telegram"),
@@ -81,7 +93,8 @@ export default defineSchema({
     .index("by_status_nextCheckAt", ["status", "nextCheckAt"])
     .index("by_anonymousEmail", ["anonymousEmail"])
     .index("by_isAnonymous", ["isAnonymous"])
-    .index("by_isAnonymous_expiresAt", ["isAnonymous", "expiresAt"]),
+    .index("by_isAnonymous_expiresAt", ["isAnonymous", "expiresAt"])
+    .index("by_resumeToken", ["resumeToken"]),
 
   scrapeResults: defineTable({
     monitorId: v.id("monitors"),
@@ -274,6 +287,20 @@ export default defineSchema({
     count: v.number(),
   }).index("by_date", ["date"]),
 
+  // When each user was last in the app, stamped by the dashboard itself.
+  //
+  // Better Auth's session table looks like the natural place to read this, and
+  // the admin dashboard does, but it deletes a session row on sign-out and
+  // deletes an expired one on the next page load — so a user who signs out, or
+  // who returns after their cookie lapsed and bounces off the login page,
+  // leaves no trace at all. The inactivity reaper pauses monitors on the
+  // strength of this number, so it needs one nothing else can delete.
+  // Throttled to one write an hour per user; see account.touchLastSeen.
+  userActivity: defineTable({
+    userId: v.string(),
+    lastSeenAt: v.number(),
+  }).index("by_userId", ["userId"]),
+
   // Lightweight counter for public monitor count (avoids reading all monitors)
   counters: defineTable({
     name: v.string(),
@@ -294,7 +321,7 @@ export default defineSchema({
   // `status` starts at sent/failed and is advanced by the Resend webhook.
   emailSends: defineTable({
     to: v.string(),
-    kind: v.string(), // match | error | monitor-stopped | price | anonymous-scan | onboarding-day0 | bulk
+    kind: v.string(), // match | error | monitor-stopped | inactivity-paused | price | anonymous-scan | onboarding-day0 | bulk
     userId: v.optional(v.string()),
     monitorId: v.optional(v.string()),
     resendId: v.optional(v.string()),

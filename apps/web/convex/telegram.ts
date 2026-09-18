@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { internalAction, action } from "./_generated/server";
 import { displayHost, MATCH_CONFIDENCE_LABEL, matchConfidence } from "./shared";
+import { formatDay, resumeUrl } from "./emails";
 
 const APP_URL = process.env.SITE_URL ?? "https://pagealert.io";
 const TIMEOUT = 10_000;
@@ -114,6 +115,35 @@ export const sendMonitorStoppedAlert = internalAction({
       `No more alerts for this monitor until you start it again\\.`,
       ``,
       `🔗 [Retry this monitor](${escUrl(APP_URL + "/dashboard/monitors/" + args.monitorId)})`,
+    ].join("\n");
+
+    await sendMessage(token, args.chatId, text);
+  },
+});
+
+/**
+ * We have paused this monitor because the owner has not been back. Telegram
+ * matters here more than anywhere: a user who reads every alert on their phone
+ * and never opens the app is exactly who this pause could blindside.
+ */
+export const sendInactivityPaused = internalAction({
+  args: {
+    chatId: v.string(),
+    monitorName: v.string(),
+    url: v.string(),
+    lastSeenAt: v.number(),
+    /** Restart token — the link needs no login. See inactivity.ts. */
+    token: v.string(),
+  },
+  handler: async (_ctx, args) => {
+    const token = getBotToken();
+
+    const text = [
+      `⏸ *${escMd(args.monitorName)}* — Paused`,
+      ``,
+      `You have not been back to PageAlert since ${escMd(formatDay(args.lastSeenAt))}, so we have stopped checking ${escMd(displayHost(args.url))}\\. Nothing is deleted\\.`,
+      ``,
+      `🔗 [Restart this monitor](${escUrl(resumeUrl(args.token))})`,
     ].join("\n");
 
     await sendMessage(token, args.chatId, text);

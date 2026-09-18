@@ -95,7 +95,44 @@ export async function deleteAllUserData(ctx: MutationCtx, userId: string): Promi
   for (const creation of creations) {
     await ctx.db.delete(creation._id);
   }
+
+  const activity = await ctx.db
+    .query("userActivity")
+    .withIndex("by_userId", (q) => q.eq("userId", userId))
+    .unique();
+  if (activity) await ctx.db.delete(activity._id);
 }
+
+/**
+ * Record that this user is in the app right now. Called from the dashboard
+ * layout on every load; the inactivity reaper reads it to decide whether
+ * anybody is still there. See the userActivity comment in schema.ts for why
+ * the Better Auth session table cannot answer that on its own.
+ *
+ * Throttled to an hour so a user clicking around the dashboard writes once,
+ * not once a page: the reaper works in days, so an hour of staleness costs
+ * nothing and a write per navigation would be pure noise.
+ */
+const TOUCH_THROTTLE_MS = 60 * 60 * 1000;
+
+export const touchLastSeen = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return;
+    const now = Date.now();
+    const row = await ctx.db
+      .query("userActivity")
+      .withIndex("by_userId", (q) => q.eq("userId", identity.subject))
+      .unique();
+    if (!row) {
+      await ctx.db.insert("userActivity", { userId: identity.subject, lastSeenAt: now });
+      return;
+    }
+    if (now - row.lastSeenAt < TOUCH_THROTTLE_MS) return;
+    await ctx.db.patch(row._id, { lastSeenAt: now });
+  },
+});
 
 export const deleteAccount = mutation({
   args: {},
