@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query, internalAction, internalQuery } from "./_generated/server";
 import { internal } from "./_generated/api";
-import { effectiveIntervalMs, ERROR_RECOVERY_INTERVAL_MS, intervalToMs, isBlockedError, MAX_RETRIES, validateMonitorUrl } from "./shared";
+import { displayHost, effectiveIntervalMs, ERROR_RECOVERY_INTERVAL_MS, intervalToMs, isBlockedError, MAX_RETRIES, validateMonitorUrl } from "./shared";
 import { itemIdentity, RESUME_TOKEN_TTL_MS } from "@prowl/shared";
 import { effectiveTier, type Tier } from "./tiers";
 import { isBanned } from "./account";
@@ -302,6 +302,22 @@ export const saveScanResult = mutation({
       hasNewMatches: matchCount > 0,
       scrapedAt: now,
     });
+
+    // Activation: this user's first page we ever managed to read. Checked only
+    // on a monitor's first successful scan, so the extra read happens once per
+    // monitor ever rather than on every check.
+    if ((monitor.checkCount ?? 0) === 0) {
+      const theirs = await ctx.db
+        .query("monitors")
+        .withIndex("by_userId", (q) => q.eq("userId", userId))
+        .collect();
+      const firstEver = theirs.every((m) => m._id === id || (m.checkCount ?? 0) === 0);
+      if (firstEver) {
+        await ctx.scheduler.runAfter(0, internal.admin.notify, {
+          text: `🎉 Activated: ${monitor.userEmail ?? userId} got their first scan — "${monitor.name}" on ${displayHost(monitor.url)}, ${matchCount} match${matchCount === 1 ? "" : "es"}`,
+        });
+      }
+    }
 
     // Send notifications for initial scan matches
     if (matchCount > 0) {

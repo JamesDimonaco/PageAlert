@@ -1,4 +1,5 @@
 import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
+import { internal } from "./_generated/api";
 
 /** Is this user currently banned? Shared by every mutation that gates on ban status. */
 export async function isBanned(ctx: QueryCtx | MutationCtx, userId: string): Promise<boolean> {
@@ -140,6 +141,11 @@ export const deleteAccount = mutation({
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Not authenticated");
     await deleteAllUserData(ctx, identity.subject);
+    // The churn no webhook reports: someone leaving of their own accord.
+    // admin.deleteUser has its own alert naming the admin who did it.
+    await ctx.scheduler.runAfter(0, internal.admin.notify, {
+      text: `📉 Account deleted by the user: ${identity.email ?? identity.subject}`,
+    });
   },
 });
 

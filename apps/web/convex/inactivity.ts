@@ -394,11 +394,17 @@ export const pauseDormant = internalAction({
       `saving ~${checksSaved} checks/day of ${Math.round(live.monitors.reduce((s, m) => s + m.checksPerDay, 0))}.` +
       `${enabled ? "" : " DRY RUN — switch is off."}${live.truncated ? " WARNING: live-monitor list was truncated." : ""}`;
     console.log(summary);
-    // A dry run with nothing to pause is the steady state once this is
-    // enabled, and a daily "0 monitors" ping is how an operator learns to
-    // ignore the channel. The log line above is always there to read.
-    if (candidates.length > 0 || live.truncated) {
-      await ctx.runAction(internal.admin.notify, { text: summary });
+    // A daily "0 monitors" ping is how an operator learns to ignore a channel,
+    // but total silence means a dead cron and a live one look identical from
+    // the outside. So: speak when something happened, and once a week
+    // regardless, which is the heartbeat that says the schedule is still alive.
+    const isMonday = new Date(now).getUTCDay() === 1;
+    if (candidates.length > 0 || live.truncated || isMonday) {
+      await ctx.runAction(internal.admin.notify, {
+        text: candidates.length === 0 && !live.truncated
+          ? `${summary}\n\nWeekly check-in: the reaper is running and had nothing to pause.`
+          : summary,
+      });
     }
 
     return { candidates: candidates.length, owners: byOwner.size, paused, dryRun: !enabled };

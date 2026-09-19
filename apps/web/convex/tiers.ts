@@ -1,5 +1,6 @@
 import { v } from "convex/values";
-import { internalMutation, mutation, query } from "./_generated/server";
+import { internalMutation, mutation, query, type MutationCtx } from "./_generated/server";
+import { internal } from "./_generated/api";
 
 /**
  * The tiers, cheapest first. "sprint" is the 30-day pass: a one-off Polar
@@ -136,8 +137,40 @@ export const grantPass = internalMutation({
       userId: args.userId,
       appliedAt: now,
     });
+
+    // Scheduled from inside the transaction, so a pass that rolls back cannot
+    // announce itself — and the appliedOrders guard above means a redelivered
+    // webhook never sends a second one.
+    await ctx.scheduler.runAfter(0, internal.admin.notify, {
+      text: `💷 Pass bought: ${args.tier} for ${args.days} days (${args.userId})`,
+    });
   },
 });
+
+/**
+ * Tell the operator that money moved. Both directions: a revoke arrives here as
+ * a change to "free", and hearing only the good news would make the channel
+ * useless for knowing where the business actually stands.
+ *
+ * Silent when the tier did not really change — Polar redelivers webhooks, and
+ * `update` is idempotent by design, so without this a retry reads as a second
+ * sale. Also silent when a manual grant is being preserved, because nothing the
+ * customer pays for has changed.
+ */
+async function announce(
+  ctx: MutationCtx,
+  userId: string,
+  before: Tier,
+  after: Tier,
+  keptGrant: boolean,
+) {
+  if (keptGrant || before === after) return;
+  const text =
+    after === "free"
+      ? `📉 Subscription ended: ${before} → free (${userId})`
+      : `💷 New ${after} subscriber${before === "free" ? "" : ` (was ${before})`} (${userId})`;
+  await ctx.scheduler.runAfter(0, internal.admin.notify, { text });
+}
 
 /** Internal mutation for webhook-triggered tier updates */
 export const update = internalMutation({
@@ -169,6 +202,7 @@ export const update = internalMutation({
       if (args.polarCustomerId != null) patch.polarCustomerId = args.polarCustomerId;
       if (args.polarSubscriptionId != null) patch.polarSubscriptionId = args.polarSubscriptionId;
       await ctx.db.patch(existing._id, patch);
+      await announce(ctx, args.userId, effectiveTier(existing, Date.now()), args.tier, keepGrant);
     } else {
       const doc: Record<string, unknown> = {
         userId: args.userId,
@@ -178,6 +212,7 @@ export const update = internalMutation({
       if (args.polarCustomerId != null) doc.polarCustomerId = args.polarCustomerId;
       if (args.polarSubscriptionId != null) doc.polarSubscriptionId = args.polarSubscriptionId;
       await ctx.db.insert("userTiers", doc as any);
+      await announce(ctx, args.userId, "free", args.tier, false);
     }
   },
 });
@@ -207,6 +242,17 @@ export const markCancelled = internalMutation({
     };
     if (args.polarSubscriptionId != null) patch.polarSubscriptionId = args.polarSubscriptionId;
     await ctx.db.patch(existing._id, patch);
+
+    // Distinct from the revoke above: they still have access until periodEnd,
+    // so this is the one with time left to do something about it.
+    if (!existing.cancelledAt) {
+      const until = new Date(args.periodEnd).toLocaleDateString("en-GB", {
+        day: "numeric", month: "short", year: "numeric", timeZone: "UTC",
+      });
+      await ctx.scheduler.runAfter(0, internal.admin.notify, {
+        text: `⚠️ Cancelled: ${effectiveTier(existing)} subscription, access until ${until} (${args.userId})`,
+      });
+    }
   },
 });
 

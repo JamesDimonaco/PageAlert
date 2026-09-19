@@ -42,4 +42,12 @@ crons.daily(
   internal.inactivity.pauseDormant
 );
 
+// The morning digest: what happened to the business yesterday, one message.
+// 08:00 UTC rather than 10:00 so it does not arrive alongside the reaper's.
+crons.daily(
+  "daily-pulse",
+  { hourUTC: 8, minuteUTC: 0 },
+  internal.pulse.dailyPulse
+);
+
 export default crons;
