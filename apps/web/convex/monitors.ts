@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query, internalAction, internalQuery } from "./_generated/server";
 import { internal } from "./_generated/api";
-import { effectiveIntervalMs, ERROR_RECOVERY_INTERVAL_MS, intervalToMs, isBlockedError, MAX_RETRIES, validateMonitorUrl } from "./shared";
+import { displayHost, effectiveIntervalMs, ERROR_RECOVERY_INTERVAL_MS, intervalToMs, isBlockedError, MAX_RETRIES, validateMonitorUrl } from "./shared";
 import { itemIdentity, RESUME_TOKEN_TTL_MS } from "@prowl/shared";
 import { effectiveTier, type Tier } from "./tiers";
 import { isBanned } from "./account";
@@ -302,6 +302,25 @@ export const saveScanResult = mutation({
       hasNewMatches: matchCount > 0,
       scrapedAt: now,
     });
+
+    // Activation: the first page we ever managed to read for this user.
+    //
+    // The marker is claimed in this transaction and the alert scheduled from
+    // inside it, so the two cannot disagree — and being stored on the user
+    // rather than inferred from their monitors means deleting the monitor
+    // cannot produce a second "activated", which reading checkCount across
+    // their rows would have done.
+    const activity = await ctx.db
+      .query("userActivity")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .unique();
+    if (!activity?.activatedAt) {
+      if (activity) await ctx.db.patch(activity._id, { activatedAt: now });
+      else await ctx.db.insert("userActivity", { userId, lastSeenAt: now, activatedAt: now });
+      await ctx.scheduler.runAfter(0, internal.admin.notify, {
+        text: `🎉 Activated: ${monitor.userEmail ?? userId} got their first scan — "${monitor.name}" on ${displayHost(monitor.url)}, ${matchCount} match${matchCount === 1 ? "" : "es"}`,
+      });
+    }
 
     // Send notifications for initial scan matches
     if (matchCount > 0) {

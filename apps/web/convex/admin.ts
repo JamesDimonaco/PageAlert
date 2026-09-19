@@ -440,7 +440,7 @@ const FREE_SLOWEST_ALLOWED = "1h" as const;
 // A Sprint pass is a single $4 payment for 30 days, not a subscription, so it
 // contributes nothing to a figure called MRR. It shows in the tier counts
 // instead, and the users table renders "–" against it rather than a monthly.
-const TIER_PRICE_CENTS: Record<Tier, number> = { free: 0, sprint: 0, pro: 900, max: 2900 };
+export const TIER_PRICE_CENTS: Record<Tier, number> = { free: 0, sprint: 0, pro: 900, max: 2900 };
 
 function adminAllowList(): Set<string> {
   return new Set(

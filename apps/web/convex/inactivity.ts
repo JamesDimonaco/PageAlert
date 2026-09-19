@@ -29,6 +29,9 @@ import { effectiveIntervalMs } from "./shared";
  */
 const MAX_LIVE_MONITORS = 1000;
 
+/** See the heartbeat claim below. */
+const HEARTBEAT_SLACK_MS = 60 * 60 * 1000;
+
 type Candidate = {
   id: Id<"monitors">;
   userId: string;
@@ -394,11 +397,29 @@ export const pauseDormant = internalAction({
       `saving ~${checksSaved} checks/day of ${Math.round(live.monitors.reduce((s, m) => s + m.checksPerDay, 0))}.` +
       `${enabled ? "" : " DRY RUN — switch is off."}${live.truncated ? " WARNING: live-monitor list was truncated." : ""}`;
     console.log(summary);
-    // A dry run with nothing to pause is the steady state once this is
-    // enabled, and a daily "0 monitors" ping is how an operator learns to
-    // ignore the channel. The log line above is always there to read.
-    if (candidates.length > 0 || live.truncated) {
-      await ctx.runAction(internal.admin.notify, { text: summary });
+    // A daily "0 monitors" ping is how an operator learns to ignore a channel,
+    // but total silence means a dead cron and a live one look identical from
+    // the outside. So: speak when something happened, and once a week
+    // regardless, which is the heartbeat that says the schedule is still alive.
+    // Claimed rather than keyed off the weekday: if the one Monday run is
+    // missed — a deploy, an outage, a skipped cron — a weekday test stays
+    // quiet for another seven days, which is the silence this exists to break.
+    // The slot only advances when it is actually due, so the heartbeat
+    // reschedules itself off the last one sent.
+    const hasNews = candidates.length > 0 || live.truncated;
+    const heartbeatDue = await ctx.runMutation(internal.admin.claimAlertSlot, {
+      key: "inactivity:heartbeat",
+      // Short of seven days on purpose: the claim is stamped after the user and
+      // session scans, so the run's own duration varies and an exact week would
+      // miss by seconds and slip a day, every week.
+      minIntervalMs: 7 * DAY_MS - HEARTBEAT_SLACK_MS,
+    });
+    if (hasNews || heartbeatDue) {
+      await ctx.runAction(internal.admin.notify, {
+        text: hasNews
+          ? summary
+          : `${summary}\n\nWeekly check-in: the reaper is running and had nothing to pause.`,
+      });
     }
 
     return { candidates: candidates.length, owners: byOwner.size, paused, dryRun: !enabled };

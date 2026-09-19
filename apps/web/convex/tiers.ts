@@ -1,5 +1,7 @@
 import { v } from "convex/values";
-import { internalMutation, mutation, query } from "./_generated/server";
+import { internalMutation, mutation, query, type MutationCtx } from "./_generated/server";
+import { internal } from "./_generated/api";
+import { tierAlert, type TierChange } from "@prowl/shared";
 
 /**
  * The tiers, cheapest first. "sprint" is the 30-day pass: a one-off Polar
@@ -104,6 +106,11 @@ export const grantPass = internalMutation({
         `[tiers] Pass purchased by ${args.userId} who already holds subscription ` +
           `${existing!.polarSubscriptionId}. Not applied — refund it.`
       );
+      // The one money path that needs a person: they have paid and got
+      // nothing, and nothing else in the system will ever mention it.
+      await ctx.scheduler.runAfter(0, internal.admin.notify, {
+        text: `🚨 REFUND NEEDED: ${args.userId} bought a ${args.tier} pass while holding subscription ${existing!.polarSubscriptionId}. Not applied — order ${args.orderId}.`,
+      });
       return;
     }
 
@@ -136,8 +143,36 @@ export const grantPass = internalMutation({
       userId: args.userId,
       appliedAt: now,
     });
+
+    // Scheduled from inside the transaction, so a pass that rolls back cannot
+    // announce itself — and the appliedOrders guard above means a redelivered
+    // webhook never sends a second one.
+    await ctx.scheduler.runAfter(0, internal.admin.notify, {
+      text: `💷 Pass bought: ${args.tier} for ${args.days} days (${args.userId})`,
+    });
   },
 });
+
+/**
+ * Tell the operator that money moved, in both directions — hearing only the
+ * good news would make the channel useless for knowing where things stand.
+ *
+ * Which message, and whether to send one at all, is `tierAlert` in
+ * @prowl/shared: the combinations are subtle enough to be worth a decision
+ * table with tests rather than a chain of conditions here.
+ */
+async function announce(ctx: MutationCtx, userId: string, change: TierChange) {
+  const alert = tierAlert(change);
+  const text =
+    alert.kind === "none"
+      ? null
+      : alert.kind === "converted"
+        ? `💷 Trial converted: now paying for ${alert.tier} (${userId})`
+        : alert.kind === "started"
+          ? `💷 New ${alert.tier} subscriber${alert.from === "free" ? "" : ` (was ${alert.from})`} (${userId})`
+          : `📉 Subscription ended: ${alert.from} → free (${userId})`;
+  if (text) await ctx.scheduler.runAfter(0, internal.admin.notify, { text });
+}
 
 /** Internal mutation for webhook-triggered tier updates */
 export const update = internalMutation({
@@ -169,6 +204,14 @@ export const update = internalMutation({
       if (args.polarCustomerId != null) patch.polarCustomerId = args.polarCustomerId;
       if (args.polarSubscriptionId != null) patch.polarSubscriptionId = args.polarSubscriptionId;
       await ctx.db.patch(existing._id, patch);
+      const liveGrant = !!existing.grantUntil && existing.grantUntil > Date.now();
+      await announce(ctx, args.userId, {
+        before: effectiveTier(existing, Date.now()),
+        after: args.tier,
+        keptGrant: keepGrant,
+        // Only a grant actually being dropped for a real subscription counts.
+        replacedGrant: !keepGrant && liveGrant && args.tier !== "free" ? existing.grantSource : undefined,
+      });
     } else {
       const doc: Record<string, unknown> = {
         userId: args.userId,
@@ -178,6 +221,7 @@ export const update = internalMutation({
       if (args.polarCustomerId != null) doc.polarCustomerId = args.polarCustomerId;
       if (args.polarSubscriptionId != null) doc.polarSubscriptionId = args.polarSubscriptionId;
       await ctx.db.insert("userTiers", doc as any);
+      await announce(ctx, args.userId, { before: "free", after: args.tier, keptGrant: false });
     }
   },
 });
@@ -207,6 +251,17 @@ export const markCancelled = internalMutation({
     };
     if (args.polarSubscriptionId != null) patch.polarSubscriptionId = args.polarSubscriptionId;
     await ctx.db.patch(existing._id, patch);
+
+    // Distinct from the revoke above: they still have access until periodEnd,
+    // so this is the one with time left to do something about it.
+    if (!existing.cancelledAt) {
+      const until = new Date(args.periodEnd).toLocaleDateString("en-GB", {
+        day: "numeric", month: "short", year: "numeric", timeZone: "UTC",
+      });
+      await ctx.scheduler.runAfter(0, internal.admin.notify, {
+        text: `⚠️ Cancelled: ${effectiveTier(existing)} subscription, access until ${until} (${args.userId})`,
+      });
+    }
   },
 });
 
