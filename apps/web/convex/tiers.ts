@@ -156,6 +156,10 @@ export const grantPass = internalMutation({
  * `update` is idempotent by design, so without this a retry reads as a second
  * sale. Also silent when a manual grant is being preserved, because nothing the
  * customer pays for has changed.
+ *
+ * `replacedGrant` is the exception to "same tier, say nothing": someone on a
+ * free pro grant who then actually subscribes to pro looks unchanged by tier
+ * alone, and is the most interesting sale there is — a trial that converted.
  */
 async function announce(
   ctx: MutationCtx,
@@ -163,8 +167,16 @@ async function announce(
   before: Tier,
   after: Tier,
   keptGrant: boolean,
+  replacedGrant = false,
 ) {
-  if (keptGrant || before === after) return;
+  if (keptGrant) return;
+  if (before === after && !replacedGrant) return;
+  if (replacedGrant && after !== "free") {
+    await ctx.scheduler.runAfter(0, internal.admin.notify, {
+      text: `💷 Trial converted: now paying for ${after} (${userId})`,
+    });
+    return;
+  }
   const text =
     after === "free"
       ? `📉 Subscription ended: ${before} → free (${userId})`
@@ -202,7 +214,15 @@ export const update = internalMutation({
       if (args.polarCustomerId != null) patch.polarCustomerId = args.polarCustomerId;
       if (args.polarSubscriptionId != null) patch.polarSubscriptionId = args.polarSubscriptionId;
       await ctx.db.patch(existing._id, patch);
-      await announce(ctx, args.userId, effectiveTier(existing, Date.now()), args.tier, keepGrant);
+      await announce(
+        ctx,
+        args.userId,
+        effectiveTier(existing, Date.now()),
+        args.tier,
+        keepGrant,
+        // A live grant is being dropped for a real subscription.
+        !keepGrant && !!existing.grantUntil && existing.grantUntil > Date.now() && args.tier !== "free",
+      );
     } else {
       const doc: Record<string, unknown> = {
         userId: args.userId,

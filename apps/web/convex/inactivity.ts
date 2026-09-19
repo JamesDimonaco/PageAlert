@@ -398,12 +398,21 @@ export const pauseDormant = internalAction({
     // but total silence means a dead cron and a live one look identical from
     // the outside. So: speak when something happened, and once a week
     // regardless, which is the heartbeat that says the schedule is still alive.
-    const isMonday = new Date(now).getUTCDay() === 1;
-    if (candidates.length > 0 || live.truncated || isMonday) {
+    // Claimed rather than keyed off the weekday: if the one Monday run is
+    // missed — a deploy, an outage, a skipped cron — a weekday test stays
+    // quiet for another seven days, which is the silence this exists to break.
+    // The slot only advances when it is actually due, so the heartbeat
+    // reschedules itself off the last one sent.
+    const hasNews = candidates.length > 0 || live.truncated;
+    const heartbeatDue = await ctx.runMutation(internal.admin.claimAlertSlot, {
+      key: "inactivity:heartbeat",
+      minIntervalMs: 7 * DAY_MS,
+    });
+    if (hasNews || heartbeatDue) {
       await ctx.runAction(internal.admin.notify, {
-        text: candidates.length === 0 && !live.truncated
-          ? `${summary}\n\nWeekly check-in: the reaper is running and had nothing to pause.`
-          : summary,
+        text: hasNews
+          ? summary
+          : `${summary}\n\nWeekly check-in: the reaper is running and had nothing to pause.`,
       });
     }
 
