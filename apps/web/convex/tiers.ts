@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { internalMutation, mutation, query, type MutationCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
+import { tierAlert, type TierChange } from "@prowl/shared";
 
 /**
  * The tiers, cheapest first. "sprint" is the 30-day pass: a one-off Polar
@@ -105,6 +106,11 @@ export const grantPass = internalMutation({
         `[tiers] Pass purchased by ${args.userId} who already holds subscription ` +
           `${existing!.polarSubscriptionId}. Not applied — refund it.`
       );
+      // The one money path that needs a person: they have paid and got
+      // nothing, and nothing else in the system will ever mention it.
+      await ctx.scheduler.runAfter(0, internal.admin.notify, {
+        text: `🚨 REFUND NEEDED: ${args.userId} bought a ${args.tier} pass while holding subscription ${existing!.polarSubscriptionId}. Not applied — order ${args.orderId}.`,
+      });
       return;
     }
 
@@ -148,40 +154,24 @@ export const grantPass = internalMutation({
 });
 
 /**
- * Tell the operator that money moved. Both directions: a revoke arrives here as
- * a change to "free", and hearing only the good news would make the channel
- * useless for knowing where the business actually stands.
+ * Tell the operator that money moved, in both directions — hearing only the
+ * good news would make the channel useless for knowing where things stand.
  *
- * Silent when the tier did not really change — Polar redelivers webhooks, and
- * `update` is idempotent by design, so without this a retry reads as a second
- * sale. Also silent when a manual grant is being preserved, because nothing the
- * customer pays for has changed.
- *
- * `replacedGrant` is the exception to "same tier, say nothing": someone on a
- * free pro grant who then actually subscribes to pro looks unchanged by tier
- * alone, and is the most interesting sale there is — a trial that converted.
+ * Which message, and whether to send one at all, is `tierAlert` in
+ * @prowl/shared: the combinations are subtle enough to be worth a decision
+ * table with tests rather than a chain of conditions here.
  */
-async function announce(
-  ctx: MutationCtx,
-  userId: string,
-  before: Tier,
-  after: Tier,
-  keptGrant: boolean,
-  replacedGrant = false,
-) {
-  if (keptGrant) return;
-  if (before === after && !replacedGrant) return;
-  if (replacedGrant && after !== "free") {
-    await ctx.scheduler.runAfter(0, internal.admin.notify, {
-      text: `💷 Trial converted: now paying for ${after} (${userId})`,
-    });
-    return;
-  }
+async function announce(ctx: MutationCtx, userId: string, change: TierChange) {
+  const alert = tierAlert(change);
   const text =
-    after === "free"
-      ? `📉 Subscription ended: ${before} → free (${userId})`
-      : `💷 New ${after} subscriber${before === "free" ? "" : ` (was ${before})`} (${userId})`;
-  await ctx.scheduler.runAfter(0, internal.admin.notify, { text });
+    alert.kind === "none"
+      ? null
+      : alert.kind === "converted"
+        ? `💷 Trial converted: now paying for ${alert.tier} (${userId})`
+        : alert.kind === "started"
+          ? `💷 New ${alert.tier} subscriber${alert.from === "free" ? "" : ` (was ${alert.from})`} (${userId})`
+          : `📉 Subscription ended: ${alert.from} → free (${userId})`;
+  if (text) await ctx.scheduler.runAfter(0, internal.admin.notify, { text });
 }
 
 /** Internal mutation for webhook-triggered tier updates */
@@ -214,15 +204,14 @@ export const update = internalMutation({
       if (args.polarCustomerId != null) patch.polarCustomerId = args.polarCustomerId;
       if (args.polarSubscriptionId != null) patch.polarSubscriptionId = args.polarSubscriptionId;
       await ctx.db.patch(existing._id, patch);
-      await announce(
-        ctx,
-        args.userId,
-        effectiveTier(existing, Date.now()),
-        args.tier,
-        keepGrant,
-        // A live grant is being dropped for a real subscription.
-        !keepGrant && !!existing.grantUntil && existing.grantUntil > Date.now() && args.tier !== "free",
-      );
+      const liveGrant = !!existing.grantUntil && existing.grantUntil > Date.now();
+      await announce(ctx, args.userId, {
+        before: effectiveTier(existing, Date.now()),
+        after: args.tier,
+        keptGrant: keepGrant,
+        // Only a grant actually being dropped for a real subscription counts.
+        replacedGrant: !keepGrant && liveGrant && args.tier !== "free" ? existing.grantSource : undefined,
+      });
     } else {
       const doc: Record<string, unknown> = {
         userId: args.userId,
@@ -232,7 +221,7 @@ export const update = internalMutation({
       if (args.polarCustomerId != null) doc.polarCustomerId = args.polarCustomerId;
       if (args.polarSubscriptionId != null) doc.polarSubscriptionId = args.polarSubscriptionId;
       await ctx.db.insert("userTiers", doc as any);
-      await announce(ctx, args.userId, "free", args.tier, false);
+      await announce(ctx, args.userId, { before: "free", after: args.tier, keptGrant: false });
     }
   },
 });

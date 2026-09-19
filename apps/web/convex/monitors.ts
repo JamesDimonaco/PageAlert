@@ -303,20 +303,23 @@ export const saveScanResult = mutation({
       scrapedAt: now,
     });
 
-    // Activation: this user's first page we ever managed to read. Checked only
-    // on a monitor's first successful scan, so the extra read happens once per
-    // monitor ever rather than on every check.
-    if ((monitor.checkCount ?? 0) === 0) {
-      const theirs = await ctx.db
-        .query("monitors")
-        .withIndex("by_userId", (q) => q.eq("userId", userId))
-        .collect();
-      const firstEver = theirs.every((m) => m._id === id || (m.checkCount ?? 0) === 0);
-      if (firstEver) {
-        await ctx.scheduler.runAfter(0, internal.admin.notify, {
-          text: `🎉 Activated: ${monitor.userEmail ?? userId} got their first scan — "${monitor.name}" on ${displayHost(monitor.url)}, ${matchCount} match${matchCount === 1 ? "" : "es"}`,
-        });
-      }
+    // Activation: the first page we ever managed to read for this user.
+    //
+    // The marker is claimed in this transaction and the alert scheduled from
+    // inside it, so the two cannot disagree — and being stored on the user
+    // rather than inferred from their monitors means deleting the monitor
+    // cannot produce a second "activated", which reading checkCount across
+    // their rows would have done.
+    const activity = await ctx.db
+      .query("userActivity")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .unique();
+    if (!activity?.activatedAt) {
+      if (activity) await ctx.db.patch(activity._id, { activatedAt: now });
+      else await ctx.db.insert("userActivity", { userId, lastSeenAt: now, activatedAt: now });
+      await ctx.scheduler.runAfter(0, internal.admin.notify, {
+        text: `🎉 Activated: ${monitor.userEmail ?? userId} got their first scan — "${monitor.name}" on ${displayHost(monitor.url)}, ${matchCount} match${matchCount === 1 ? "" : "es"}`,
+      });
     }
 
     // Send notifications for initial scan matches

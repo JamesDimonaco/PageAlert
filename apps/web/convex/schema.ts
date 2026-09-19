@@ -299,6 +299,12 @@ export default defineSchema({
   userActivity: defineTable({
     userId: v.string(),
     lastSeenAt: v.number(),
+    // When we first managed to read a page for this user — the moment a signup
+    // became a working product. Stored rather than derived from their monitors
+    // so deleting the monitor cannot make them "activate" a second time, and
+    // so the anonymous-scan funnel (which arrives with checkCount already set)
+    // still counts. Claimed in monitors.saveScanResult.
+    activatedAt: v.optional(v.number()),
   }).index("by_userId", ["userId"]),
 
   // Lightweight counter for public monitor count (avoids reading all monitors)

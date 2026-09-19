@@ -71,25 +71,36 @@ export const snapshot = internalQuery({
 
     // Bounded by the window as well as the cap, so a quiet day reads few rows
     // rather than always paying for LOG_SAMPLE of them.
+    // order("desc") is load-bearing, not tidiness: the default walks the index
+    // ascending, so when the cap bites `take` returns the OLDEST rows of the
+    // window. An evening outage would then be invisible in the morning digest,
+    // which is the one thing it exists to catch.
     const recent = await ctx.db
       .query("scrapeLogs")
       .withIndex("by_createdAt", (q) => q.gte("createdAt", since))
+      .order("desc")
       .take(LOG_SAMPLE);
-    const scans = { ok: 0, error: 0, timeout: 0, blocked: 0, matched: 0 };
+    // `blocked` is a subset of the failures, not a fourth outcome — the
+    // scheduler sets it on error and timeout rows alike.
+    const scans = { ok: 0, error: 0, timeout: 0, blocked: 0, matches: 0 };
     for (const l of recent) {
       scans[l.status === "success" ? "ok" : l.status]++;
       if (l.blocked) scans.blocked++;
-      if ((l.matchCount ?? 0) > 0) scans.matched++;
+      scans.matches += l.matchCount ?? 0;
     }
 
     const recentSends = await ctx.db
       .query("emailSends")
       .withIndex("by_createdAt", (q) => q.gte("createdAt", since))
+      .order("desc")
       .take(EMAIL_SAMPLE);
     const emails = {
       sent: recentSends.length,
       bad: recentSends.filter((s) => s.status === "failed" || s.status === "bounced" || s.status === "complained").length,
     };
+    // Named separately from `sent` because they mean different work: a bounce
+    // is the recipient's server refusing, a failure is ours or Resend's.
+
 
     return {
       users: users.length,
@@ -129,14 +140,18 @@ export const dailyPulse = internalAction({
       weekday: "short", day: "numeric", month: "short", timeZone: "UTC",
     });
 
+    // A short user scan hides whole users, and their tier rows are filtered out
+    // with them — so signups, paying and MRR are all floors, not counts.
+    const partial = s.usersComplete ? "" : " (partial)";
+
     // Two blocks, and the split is load-bearing: everything above the rule is a
     // standing total, everything below it happened in the last day. Mixing a
     // stock into the daily list reads as "34 paused yesterday" forever.
     const lines = [
       `PageAlert — ${day}`,
       ``,
-      `Users      ${s.users}${plus(s.signups)}${s.usersComplete ? "" : " (partial)"}`,
-      `Paying     ${s.paying} · MRR ${usd(s.mrrCents)}`,
+      `Users      ${s.users}${plus(s.signups)}${partial}`,
+      `Paying     ${s.paying} · MRR ${usd(s.mrrCents)}${partial}`,
       `Monitors   ${s.live} live of ${s.monitors}${plus(s.monitorsNew)}`,
       `Checks     ${s.checksPerDay}/day`,
     ];
@@ -144,9 +159,9 @@ export const dailyPulse = internalAction({
     lines.push(
       ``,
       `Last 24h${s.logsTruncated || s.sendsTruncated ? " (sampled)" : ""}`,
-      `  scans    ${s.scans.ok} ok · ${s.scans.error + s.scans.timeout} failed · ${s.scans.blocked} blocked`,
-      `  matches  ${s.scans.matched}`,
-      `  emails   ${s.emails.sent} sent${s.emails.bad > 0 ? ` · ${s.emails.bad} BOUNCED` : ""}`,
+      `  scans    ${s.scans.ok} ok · ${s.scans.error + s.scans.timeout} failed (${s.scans.blocked} blocked)`,
+      `  matches  ${s.scans.matches}`,
+      `  emails   ${s.emails.sent} sent${s.emails.bad > 0 ? ` · ${s.emails.bad} not delivered` : ""}`,
     );
 
     await ctx.runAction(internal.admin.notify, { text: lines.join("\n") });

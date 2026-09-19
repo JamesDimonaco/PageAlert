@@ -29,6 +29,9 @@ import { effectiveIntervalMs } from "./shared";
  */
 const MAX_LIVE_MONITORS = 1000;
 
+/** See the heartbeat claim below. */
+const HEARTBEAT_SLACK_MS = 60 * 60 * 1000;
+
 type Candidate = {
   id: Id<"monitors">;
   userId: string;
@@ -406,7 +409,10 @@ export const pauseDormant = internalAction({
     const hasNews = candidates.length > 0 || live.truncated;
     const heartbeatDue = await ctx.runMutation(internal.admin.claimAlertSlot, {
       key: "inactivity:heartbeat",
-      minIntervalMs: 7 * DAY_MS,
+      // Short of seven days on purpose: the claim is stamped after the user and
+      // session scans, so the run's own duration varies and an exact week would
+      // miss by seconds and slip a day, every week.
+      minIntervalMs: 7 * DAY_MS - HEARTBEAT_SLACK_MS,
     });
     if (hasNews || heartbeatDue) {
       await ctx.runAction(internal.admin.notify, {
