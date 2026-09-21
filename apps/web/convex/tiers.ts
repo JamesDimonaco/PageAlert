@@ -244,6 +244,11 @@ export const markCancelled = internalMutation({
       return;
     }
 
+    // Already says exactly this. Returning early keeps cancelledAt meaning
+    // "when they cancelled" rather than "when a job last looked", now that
+    // reconcile re-asserts cancellations on every run.
+    if (existing.cancelledAt && existing.periodEnd === args.periodEnd) return;
+
     const patch: Record<string, unknown> = {
       cancelledAt: Date.now(),
       periodEnd: args.periodEnd,
@@ -382,7 +387,14 @@ async function fetchActiveSubscriptions(token: string, production: boolean): Pro
       pagination?: { max_page?: number };
     };
     items.push(...(body.items ?? []));
-    if (page >= (body.pagination?.max_page ?? 1)) return items;
+    const maxPage = body.pagination?.max_page;
+    // Defaulting a missing max_page to 1 would turn a first page into "that is
+    // all of them" — the exact partial-read-as-truth this function refuses to
+    // return. If Polar stops sending it, that is a failure, not one page.
+    if (typeof maxPage !== "number") {
+      throw new Error(`Polar subscriptions page ${page}: no pagination.max_page in response`);
+    }
+    if (page >= maxPage) return items;
   }
   // Falling out of the loop means Polar has more pages than we read, so the
   // result is a subset. Refuse it rather than let the caller treat a partial
@@ -467,33 +479,58 @@ export const reconcile = internalAction({
     const cachedByUser = new Map(cached.map((c) => [c.userId, c]));
 
     const granted: string[] = [];
-    const drift: string[] = [];
+    const linked: string[] = [];
+    const overGranted: string[] = [];
+
+    // What this run has already written, so a customer holding two active
+    // subscriptions is judged against the row as it stands rather than the
+    // pre-loop snapshot. Without it the second subscription reads the stale
+    // "free" and update() — which has no rank guard — demotes the first.
+    const writtenTier = new Map<string, Tier>();
 
     for (const { userId, tier, sub } of wanted) {
       const current = cachedByUser.get(userId);
-      const currentTier = current?.tier ?? "free";
+      const currentTier = writtenTier.get(userId) ?? current?.tier ?? "free";
+      const isLinked = current?.subscriptionId === sub.id;
+      let cancellationCleared = false;
 
-      if (TIER_RANK[currentTier] < TIER_RANK[tier]) {
-        // Underserving someone who is being billed — the harm this job exists
-        // for. update() announces it and is idempotent, so a repeat run that
-        // finds nothing changed stays silent.
+      const applyTier = async (outcome: string[], label: string) => {
         await ctx.runMutation(internal.tiers.update, {
           userId,
           tier,
           ...(sub.customer_id ? { polarCustomerId: sub.customer_id } : {}),
           polarSubscriptionId: sub.id,
         });
-        granted.push(`${userId}: ${currentTier} → ${tier}`);
-      } else if (current?.subscriptionId !== sub.id) {
-        // Access is already at or above what they pay for, so touching the
-        // tier could demote a live trial. Say so instead.
-        drift.push(`${userId}: on ${currentTier}, Polar has ${tier} sub ${sub.id}`);
+        writtenTier.set(userId, tier);
+        // update() clears cancelledAt/periodEnd unconditionally, so anything
+        // below has to put a live cancellation back rather than trust the
+        // snapshot taken before this write.
+        cancellationCleared = true;
+        outcome.push(label);
+      };
+
+      if (TIER_RANK[currentTier] < TIER_RANK[tier]) {
+        // Underserving someone who is being billed — the harm this job exists
+        // for.
+        await applyTier(granted, `${userId}: ${currentTier} → ${tier}`);
+      } else if (TIER_RANK[currentTier] > TIER_RANK[tier]) {
+        // Access above what they pay for. Report only: a plan downgrade and a
+        // live admin trial look identical from here, and taking a tier away
+        // from the wrong one of those is the costlier mistake.
+        overGranted.push(`${userId}: on ${currentTier}, Polar bills ${tier} (sub ${sub.id})`);
+      } else if (!isLinked) {
+        // Right tier, but the row does not name this subscription — so a later
+        // cancel or revoke webhook has nothing to match on. Writing the id is
+        // what stops this reappearing in tomorrow's message unchanged.
+        await applyTier(linked, `${userId}: ${tier} linked to sub ${sub.id}`);
       }
 
-      if (sub.cancel_at_period_end && sub.current_period_end) {
-        const periodEnd = new Date(sub.current_period_end).getTime();
-        const stillUncancelled = !cachedByUser.get(userId)?.isCancelled;
-        if (stillUncancelled && Number.isFinite(periodEnd)) {
+      const periodEnd = sub.current_period_end ? new Date(sub.current_period_end).getTime() : NaN;
+      if (sub.cancel_at_period_end && Number.isFinite(periodEnd)) {
+        // Skipped only when the cached row is already cancelled AND this run
+        // did not just wipe that state. markCancelled is itself a no-op when
+        // the row already says the same thing.
+        if (cancellationCleared || !current?.isCancelled) {
           await ctx.runMutation(internal.tiers.markCancelled, {
             userId,
             periodEnd,
@@ -503,22 +540,32 @@ export const reconcile = internalAction({
       }
     }
 
+    const fixed = granted.length + linked.length;
     console.log(
-      `[tiers] reconcile: ${subscriptions.length} active sub(s), ${granted.length} granted, ${drift.length} drifted`,
+      `[tiers] reconcile: ${subscriptions.length} active sub(s), ${granted.length} granted, ` +
+        `${linked.length} linked, ${overGranted.length} over-granted`,
     );
 
     // Silent when there is nothing wrong. The daily pulse already proves the
     // crons are alive, so a heartbeat here would only add noise to the channel
     // that has to stay worth reading.
-    const problems = [
+    const repaired = [
       ...granted.map((g) => `  granted ${g}`),
-      ...drift.map((d) => `  drift ${d}`),
+      ...linked.map((l) => `  linked ${l}`),
+    ];
+    // These need a person. They repeat every morning until someone acts,
+    // which is the point — nothing else in the system mentions them.
+    const needsYou = [
+      ...overGranted.map((o) => `  over-granted ${o}`),
       ...unknownProduct.map((u) => `  unknown product ${u}`),
       ...noExternalId.map((n) => `  no external id ${n}`),
     ];
-    if (problems.length) {
+    if (repaired.length || needsYou.length) {
+      const headline = needsYou.length
+        ? `🔁 Billing reconcile: fixed ${fixed}, ${needsYou.length} need(s) you`
+        : `🔁 Billing reconcile: fixed ${fixed}`;
       await ctx.runAction(internal.admin.notify, {
-        text: [`🔁 Billing reconcile fixed ${granted.length} of ${problems.length} finding(s):`, ...problems].join("\n"),
+        text: [headline, ...repaired, ...needsYou].join("\n"),
       });
     }
   },

@@ -75,6 +75,27 @@ function productIdToTier(productId: string): "pro" | "max" | null {
 }
 
 /**
+ * The fields this file reads off a Polar subscription payload.
+ *
+ * Narrower than the SDK's Subscription on purpose — the payload has arrived
+ * both camelCase and snake_case across versions, so the reads stay defensive,
+ * but naming them keeps a rename in a Polar bump a compile error rather than
+ * an undefined that silently leaves a paying customer on free.
+ */
+type SubscriptionPayload = {
+  id: string;
+  productId: string;
+  customerId?: string;
+  cancelAtPeriodEnd?: boolean;
+  cancel_at_period_end?: boolean;
+  currentPeriodEnd?: string | Date | null;
+  current_period_end?: string | Date | null;
+  customerExternalId?: string | null;
+  customer_external_id?: string | null;
+  customer?: { externalId?: string | null; external_id?: string | null } | null;
+};
+
+/**
  * Grant the tier a live Polar subscription pays for.
  *
  * Shared by `subscription.created` and `subscription.active` so that losing
@@ -82,11 +103,10 @@ function productIdToTier(productId: string): "pro" | "max" | null {
  * path: tiers.reconcile is what repairs an account whose events never arrived
  * at all, which is how a paying customer sat on free for six months.
  */
-async function grantFromSubscription(ctx: GenericCtx<DataModel>, sub: any, event: string) {
+async function grantFromSubscription(ctx: GenericCtx<DataModel>, sub: SubscriptionPayload, event: string) {
   const tier = productIdToTier(sub.productId);
-  const customer = sub.customer as Record<string, unknown> | undefined;
   const userId =
-    customer?.externalId ?? customer?.external_id ?? sub.customerExternalId ?? sub.customer_external_id;
+    sub.customer?.externalId ?? sub.customer?.external_id ?? sub.customerExternalId ?? sub.customer_external_id;
   console.log(`[polar] Subscription ${event}:`, sub.id, "tier:", tier, "userId:", userId);
 
   if (!tier || !userId) {
@@ -101,6 +121,19 @@ async function grantFromSubscription(ctx: GenericCtx<DataModel>, sub: any, event
     polarSubscriptionId: sub.id,
   });
   console.log("[polar] Tier updated to", tier, "for user", userId);
+
+  // update() clears cancelledAt, so a subscription that is already cancelled
+  // and merely going active again — a past-due renewal recovering, say — would
+  // otherwise lose its end date and stop telling the user when access stops.
+  const rawEnd = sub.currentPeriodEnd ?? sub.current_period_end;
+  const periodEnd = rawEnd ? new Date(String(rawEnd)).getTime() : NaN;
+  if ((sub.cancelAtPeriodEnd ?? sub.cancel_at_period_end) && Number.isFinite(periodEnd)) {
+    await (ctx as any).runMutation(internal.tiers.markCancelled, {
+      userId,
+      periodEnd,
+      polarSubscriptionId: sub.id,
+    });
+  }
 }
 
 export const createAuthOptions = (ctx: GenericCtx<DataModel>) => {
@@ -127,8 +160,9 @@ export const createAuthOptions = (ctx: GenericCtx<DataModel>) => {
 
             // Polar sends `created` when the subscription record appears and
             // `active` once it is paid for. Both grant, because either can be
-            // the one that goes missing — tiers.update is idempotent, so the
-            // second to arrive writes nothing and announces nothing.
+            // the one that goes missing. Whichever lands second re-writes the
+            // same tier, and tierAlert stays silent on an unchanged one, so a
+            // customer is never announced as a second sale.
             onSubscriptionCreated: async (payload) => {
               await grantFromSubscription(ctx, payload.data, "created");
             },
