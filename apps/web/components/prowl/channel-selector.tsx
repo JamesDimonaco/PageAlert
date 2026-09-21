@@ -67,6 +67,7 @@ export function ChannelSelector({ value, onChange, monitorId, disabled }: Channe
   const updateMonitor = useMutation(api.monitors.update);
 
   const configuredChannels = new Set<Channel>(useConfiguredChannels() ?? ["email"]);
+  const smsEnabled = useQuery(api.sms.isEnabled);
 
   // For free tier: find if another monitor already uses non-email channels
   const freeMonitorWithChannels = tier === "free"
@@ -152,7 +153,11 @@ export function ChannelSelector({ value, onChange, monitorId, disabled }: Channe
     <div className="space-y-2">
       <p className="text-xs font-medium text-muted-foreground">Notification channels</p>
       <div className="flex flex-wrap gap-2">
-        {(["email", "sms", "push", "telegram", "discord"] as Channel[]).map((channel) => {
+        {(["email", "sms", "push", "telegram", "discord"] as Channel[])
+          // While text alerts are off there is no settings card to send anyone
+          // to, so offering the chip would be a dead end.
+          .filter((channel) => channel !== "sms" || smsEnabled)
+          .map((channel) => {
           const config = CHANNEL_CONFIG[channel];
           const Icon = config.icon;
           const isActive = value.includes(channel);

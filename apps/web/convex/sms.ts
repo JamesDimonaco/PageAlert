@@ -4,6 +4,7 @@ import {
   internalMutation,
   action,
   mutation,
+  query,
   type ActionCtx,
   type MutationCtx,
 } from "./_generated/server";
@@ -33,10 +34,23 @@ import {
 const APP_URL = process.env.SITE_URL ?? "https://pagealert.io";
 const TIMEOUT = 10_000;
 
-/** Off until the Twilio console guards are in place. See docs/sms.md. */
+/** Off until the Twilio console guards are in place — see .env.example. */
 function smsEnabled(): boolean {
   return process.env.SMS_ENABLED === "true";
 }
+
+/**
+ * Whether to offer text alerts in the UI at all.
+ *
+ * A query rather than a NEXT_PUBLIC_ twin because SMS_ENABLED is read inside
+ * Convex actions, and two copies of a kill switch drift. Without this the
+ * settings card ships visible and errors on every click for as long as the
+ * flag is off.
+ */
+export const isEnabled = query({
+  args: {},
+  handler: async () => smsEnabled(),
+});
 
 interface TwilioConfig {
   accountSid: string;

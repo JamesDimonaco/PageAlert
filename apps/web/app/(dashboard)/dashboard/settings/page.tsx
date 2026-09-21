@@ -139,6 +139,7 @@ export default function SettingsPage() {
   const startSmsVerification = useAction(api.sms.startVerification);
   const confirmSmsVerification = useMutation(api.sms.confirmVerification);
   const smsAllowance = useQuery(api.tiers.smsAllowance);
+  const smsEnabled = useQuery(api.sms.isEnabled);
   const updateMonitor = useMutation(api.monitors.update);
   const notifSettings = useQuery(api.notificationSettings.list);
 
@@ -382,6 +383,7 @@ export default function SettingsPage() {
             </CardContent>
           </Card>
 
+          {smsEnabled && (
           <Card className="border-border/30 bg-card/50 shadow-sm shadow-black/5">
             <CardHeader className="pb-4">
               <CardTitle className="flex items-center gap-2 text-lg font-semibold">
@@ -525,6 +527,7 @@ export default function SettingsPage() {
               )}
             </CardContent>
           </Card>
+          )}
 
           <Card className="border-border/30 bg-card/50 shadow-sm shadow-black/5">
             <CardHeader className="pb-4">
