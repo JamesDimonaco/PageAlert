@@ -67,7 +67,8 @@ export default defineSchema({
       v.literal("email"),
       v.literal("telegram"),
       v.literal("discord"),
-      v.literal("push")
+      v.literal("push"),
+      v.literal("sms")
     ))),
     isAnonymous: v.optional(v.boolean()),
     anonymousEmail: v.optional(v.string()),
@@ -210,9 +211,12 @@ export default defineSchema({
     channel: v.union(
       v.literal("email"),
       v.literal("telegram"),
-      v.literal("discord")
+      v.literal("discord"),
+      v.literal("sms")
     ),
     enabled: v.boolean(),
+    // The destination: a chat id, a webhook URL, or for sms an E.164 number
+    // that has already answered a verification code. See sms.ts.
     target: v.string(),
   })
     .index("by_userId", ["userId"])
@@ -238,6 +242,17 @@ export default defineSchema({
     subscriptionModifiedAt: v.optional(v.number()),
     dailyScans: v.optional(v.number()),
     dailyScansDate: v.optional(v.string()),
+    // SMS allowance, counted the same way as dailyScans: the period is stamped
+    // alongside the count, so a stale stamp reads as zero and no cron has to
+    // reset anything. Both windows are enforced — the month is the budget, the
+    // day stops a flapping page spending it before lunch. See tiers.ts.
+    smsMonth: v.optional(v.string()), // YYYY-MM UTC
+    smsMonthCount: v.optional(v.number()),
+    smsDay: v.optional(v.string()), // YYYY-MM-DD UTC
+    smsDayCount: v.optional(v.number()),
+    // The month we last told this user their texts had run out, so the notice
+    // costs one SMS a month rather than one per refused alert.
+    smsCapNotifiedMonth: v.optional(v.string()),
     reviewDismissed: v.optional(v.boolean()),
     updatedAt: v.number(),
   }).index("by_userId", ["userId"]),
@@ -276,13 +291,33 @@ export default defineSchema({
   }).index("by_userId", ["userId"]),
 
   channelClaims: defineTable({
-    channel: v.union(v.literal("telegram"), v.literal("discord")),
+    channel: v.union(v.literal("telegram"), v.literal("discord"), v.literal("sms")),
     target: v.string(),
     userId: v.string(),
     claimedAt: v.number(),
   })
     .index("by_channel_target", ["channel", "target"])
     .index("by_userId", ["userId"]),
+
+  // In-flight phone verifications. A number only becomes an alert destination
+  // by answering a code sent to it, because an unverified number means texting
+  // a stranger and, on the free tier, means anyone's signup can bill us for
+  // sends to a premium-rate destination.
+  //
+  // The code is stored as typed rather than hashed: it is six digits that die
+  // in ten minutes behind an authenticated endpoint, and the attempt counter,
+  // not secrecy at rest, is what makes guessing useless.
+  phoneVerifications: defineTable({
+    userId: v.string(),
+    phone: v.string(), // E.164
+    code: v.string(),
+    expiresAt: v.number(),
+    /** Wrong guesses so far. See MAX_CODE_ATTEMPTS in sms.ts. */
+    attempts: v.number(),
+    /** Codes sent on sentDate — the cap that makes this a bad pumping target. */
+    sentCount: v.number(),
+    sentDate: v.string(), // YYYY-MM-DD UTC
+  }).index("by_userId", ["userId"]),
 
   reviews: defineTable({
     userId: v.string(),

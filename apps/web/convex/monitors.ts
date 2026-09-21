@@ -42,9 +42,14 @@ type CheckInterval = "5m" | "15m" | "30m" | "1h" | "6h" | "24h";
  * Channels the free tier is rationed on. Email and push are always available:
  * email is the account's own address, and push goes to a device the user has
  * already granted permission on, at no cost per message to us.
+ *
+ * SMS is rationed for the opposite reason to Telegram and Discord — not to
+ * push people towards a paid plan, but because every send is money. Its
+ * monthly and daily allowance lives in tiers.ts; this is what keeps a free
+ * account from spreading that allowance across three monitors at once.
  */
 function isRestrictedChannel(channel: string): boolean {
-  return channel === "telegram" || channel === "discord";
+  return channel === "telegram" || channel === "discord" || channel === "sms";
 }
 
 function clampInterval(interval: string, tier: Tier): CheckInterval {
@@ -156,7 +161,8 @@ const channelValidator = v.array(v.union(
   v.literal("email"),
   v.literal("telegram"),
   v.literal("discord"),
-  v.literal("push")
+  v.literal("push"),
+  v.literal("sms")
 ));
 
 /** Create a monitor in "scanning" state. The scan runs client-side, then saveScanResult is called. */

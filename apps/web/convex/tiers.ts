@@ -1002,5 +1002,167 @@ export const reconcile = internalAction({
       console.log(`[tiers] reconcile report:\n${lines.join("\n")}`);
       await notifyQuietly(ctx, shown.join("\n"));
     }
+// ---- SMS allowance ----
+
+/**
+ * Texts a user may be sent per month and per day.
+ *
+ * SMS is the only channel that costs money per send, so unlike monitors or
+ * scans these numbers are a budget rather than a product limit. At the UK rate
+ * (~$0.056) a free user who spends their month costs about $0.56 against no
+ * revenue, and a Max user about $11.20 against $29.
+ *
+ * The two windows stop different things. The month caps spend. The day stops a
+ * page that starts flapping from burning a whole month before lunch — and from
+ * texting someone ten times at 3am, which loses the user either way.
+ *
+ * Set low on purpose. Raising an allowance once real usage is visible costs
+ * nothing; lowering one takes something away from people already using it.
+ */
+export const SMS_LIMITS: Record<Tier, { month: number; day: number }> = {
+  free: { month: 10, day: 3 },
+  sprint: { month: 25, day: 10 },
+  pro: { month: 60, day: 20 },
+  max: { month: 200, day: 50 },
+};
+
+/**
+ * Ceiling on texts across every user, in case a bug or an abuser defeats the
+ * per-user caps. Past it SMS stops and alerts fall back to email, which is the
+ * failure an operator would pick. 2000 sends is roughly $112 a month.
+ */
+const SMS_MONTHLY_BUDGET = Number(process.env.SMS_MONTHLY_BUDGET ?? 2000);
+
+/** Why a send was refused. "budget" is ours; the others are the user's. */
+export type SmsRefusal = "day" | "month" | "budget";
+
+export interface SmsReservation {
+  ok: boolean;
+  reason?: SmsRefusal;
+  /**
+   * True on the one refusal that should still cost a text: the monthly
+   * allowance has just run out and the user has not been told. The caller
+   * sends that notice and nothing else until the month turns over.
+   */
+  notifyExhausted: boolean;
+  monthLimit: number;
+}
+
+/**
+ * Counts one text against the day, the month and the global budget, or refuses.
+ *
+ * A mutation rather than a check inside the sending action, so two monitors
+ * firing in the same minute cannot both read "9 used" and both send.
+ */
+export const reserveSmsSend = internalMutation({
+  args: { userId: v.string() },
+  handler: async (ctx, { userId }): Promise<SmsReservation> => {
+    const now = new Date();
+    const month = now.toISOString().slice(0, 7);
+    const day = now.toISOString().slice(0, 10);
+
+    const record = await ctx.db
+      .query("userTiers")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .unique();
+
+    const tier = effectiveTier(record);
+    const limits = SMS_LIMITS[tier];
+
+    const budgetKey = `sms:sends:${month}`;
+    const budgetRow = await ctx.db
+      .query("counters")
+      .withIndex("by_name", (q) => q.eq("name", budgetKey))
+      .unique();
+    const budgetUsed = budgetRow?.value ?? 0;
+    const spendOne = async () => {
+      if (budgetRow) await ctx.db.patch(budgetRow._id, { value: budgetUsed + 1 });
+      else await ctx.db.insert("counters", { name: budgetKey, value: 1 });
+    };
+
+    // The global budget comes first: when it is spent nobody sends, and a user
+    // must not have a text deducted for a send that never happened.
+    if (budgetUsed >= SMS_MONTHLY_BUDGET) {
+      const alertKey = `sms:cap-alerted:${month}`;
+      const alerted = await ctx.db
+        .query("counters")
+        .withIndex("by_name", (q) => q.eq("name", alertKey))
+        .unique();
+      if (!alerted) {
+        await ctx.db.insert("counters", { name: alertKey, value: Date.now() });
+        await ctx.scheduler.runAfter(0, internal.admin.notify, {
+          text: `PageAlert: the SMS budget for ${month} is spent (${SMS_MONTHLY_BUDGET} sends). Alerts fall back to email until next month.`,
+        });
+      }
+      return { ok: false, reason: "budget", notifyExhausted: false, monthLimit: limits.month };
+    }
+
+    const monthUsed = record?.smsMonth === month ? (record.smsMonthCount ?? 0) : 0;
+    const dayUsed = record?.smsDay === day ? (record.smsDayCount ?? 0) : 0;
+
+    if (monthUsed >= limits.month) {
+      // The "you are out" notice is itself a text, so it is reserved like any
+      // other send and marked spent in the same write that refuses this one.
+      const owed = !!record && record.smsCapNotifiedMonth !== month;
+      if (owed && record) {
+        await ctx.db.patch(record._id, { smsCapNotifiedMonth: month });
+        await spendOne();
+      }
+      return { ok: false, reason: "month", notifyExhausted: owed, monthLimit: limits.month };
+    }
+
+    if (dayUsed >= limits.day) {
+      return { ok: false, reason: "day", notifyExhausted: false, monthLimit: limits.month };
+    }
+
+    if (record) {
+      await ctx.db.patch(record._id, {
+        smsMonth: month,
+        smsMonthCount: monthUsed + 1,
+        smsDay: day,
+        smsDayCount: dayUsed + 1,
+      });
+    } else {
+      await ctx.db.insert("userTiers", {
+        userId,
+        tier: "free",
+        smsMonth: month,
+        smsMonthCount: 1,
+        smsDay: day,
+        smsDayCount: 1,
+        updatedAt: Date.now(),
+      });
+    }
+
+    await spendOne();
+    return { ok: true, notifyExhausted: false, monthLimit: limits.month };
+  },
+});
+
+/** What the settings page shows: texts left this month, and the allowance. */
+export const smsAllowance = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return null;
+
+    const record = await ctx.db
+      .query("userTiers")
+      .withIndex("by_userId", (q) => q.eq("userId", identity.subject))
+      .unique();
+
+    const limits = SMS_LIMITS[effectiveTier(record)];
+    const now = new Date();
+    const usedThisMonth =
+      record?.smsMonth === now.toISOString().slice(0, 7) ? (record.smsMonthCount ?? 0) : 0;
+    const usedToday =
+      record?.smsDay === now.toISOString().slice(0, 10) ? (record.smsDayCount ?? 0) : 0;
+
+    return {
+      monthLimit: limits.month,
+      monthRemaining: Math.max(0, limits.month - usedThisMonth),
+      dayLimit: limits.day,
+      dayRemaining: Math.max(0, limits.day - usedToday),
+    };
   },
 });

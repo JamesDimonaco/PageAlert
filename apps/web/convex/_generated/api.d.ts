@@ -31,6 +31,7 @@ import type * as pushSubscriptions from "../pushSubscriptions.js";
 import type * as reviews from "../reviews.js";
 import type * as scheduler from "../scheduler.js";
 import type * as shared from "../shared.js";
+import type * as sms from "../sms.js";
 import type * as telegram from "../telegram.js";
 import type * as telegramWebhook from "../telegramWebhook.js";
 import type * as tiers from "../tiers.js";
@@ -66,6 +67,7 @@ declare const fullApi: ApiFromModules<{
   reviews: typeof reviews;
   scheduler: typeof scheduler;
   shared: typeof shared;
+  sms: typeof sms;
   telegram: typeof telegram;
   telegramWebhook: typeof telegramWebhook;
   tiers: typeof tiers;

@@ -590,6 +590,25 @@ export const runScheduledChecks = internalAction({
                   }).catch(() => {});
                 }
               }
+
+              // Send to SMS if verified and enabled for this monitor. The
+              // allowance check lives inside sms.ts, so a refusal here is
+              // silent by design — the email alert has already gone.
+              if (shouldSend("sms")) {
+                const smsSetting = await ctx.runQuery(internal.scheduler.getNotificationSetting, {
+                  userId: freshMonitor.userId,
+                  channel: "sms",
+                });
+                if (smsSetting?.enabled && smsSetting.target) {
+                  await ctx.runAction(internal.sms.sendMatchAlert, {
+                    userId: freshMonitor.userId,
+                    phone: smsSetting.target,
+                    monitorName: freshMonitor.name,
+                    monitorId: freshMonitor._id,
+                    matchCount: newCount,
+                  }).catch(() => {});
+                }
+              }
             }
 
             // --- Price change notifications ---
@@ -720,6 +739,35 @@ export const runScheduledChecks = internalAction({
                             await ctx.runAction(internal.discord.sendPriceAlert, {
                               webhookUrl: discordSetting.target,
                               ...pricePayload,
+                            }).catch(() => {});
+                          }
+                        }
+
+                        // SMS. Only one item fits in 160 characters, so the
+                        // lead has to be the item the alert is actually about
+                        // — the threshold that was crossed, or the drop —
+                        // rather than whatever came first off the page.
+                        if (shouldSend("sms")) {
+                          const smsSetting = await ctx.runQuery(internal.scheduler.getNotificationSetting, {
+                            userId: freshMonitor.userId,
+                            channel: "sms",
+                          });
+                          if (smsSetting?.enabled && smsSetting.target) {
+                            const lead = hasThresholdCrossing
+                              ? [...belowHits, ...aboveHits]
+                              : variant === "single_drop" ? drops : significantChanges;
+                            await ctx.runAction(internal.sms.sendPriceAlert, {
+                              userId: freshMonitor.userId,
+                              phone: smsSetting.target,
+                              monitorName: freshMonitor.name,
+                              monitorId: freshMonitor._id,
+                              variant,
+                              changes: lead.map((pc) => ({
+                                title: pc.title,
+                                oldPrice: pc.oldPrice,
+                                newPrice: pc.newPrice,
+                                changePercent: pc.changePercent,
+                              })),
                             }).catch(() => {});
                           }
                         }
@@ -1372,7 +1420,7 @@ export const getUserTier = internalQuery({
 export const getNotificationSetting = internalQuery({
   args: {
     userId: v.string(),
-    channel: v.union(v.literal("email"), v.literal("telegram"), v.literal("discord")),
+    channel: v.union(v.literal("email"), v.literal("telegram"), v.literal("discord"), v.literal("sms")),
   },
   handler: async (ctx, args) => {
     return ctx.db
