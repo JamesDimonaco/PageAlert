@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { internalMutation, mutation, query, type MutationCtx } from "./_generated/server";
+import { internalAction, internalMutation, internalQuery, mutation, query, type MutationCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { tierAlert, type TierChange } from "@prowl/shared";
 
@@ -329,6 +329,197 @@ export const consumeScan = mutation({
         updatedAt: Date.now(),
       } as any);
       return { success: true, remaining: limit - 1, limit };
+    }
+  },
+});
+
+/**
+ * Polar is the source of truth for what a customer pays; userTiers is a cache
+ * of it. This reconciles the cache.
+ *
+ * It exists because the webhook path can only write on the events it actually
+ * receives. A `subscription.created` missed during a deploy — or before the
+ * handler shipped at all — left the account on free while Polar went on
+ * billing it monthly, and nothing downstream ever noticed: six months, in the
+ * case that prompted this. Adding more webhook handlers does not fix that,
+ * because the failure is the event never arriving.
+ *
+ * Deliberately one-directional. It grants what Polar says is paid for, and
+ * only reports the opposite case instead of acting on it. Wrongly granting
+ * access costs a few pounds; wrongly revoking it takes a paying customer's
+ * service away on the strength of an API read that may have been partial.
+ * Revocation keeps its two webhook paths and expireGrants.
+ */
+
+const POLAR_PAGE = 100;
+/** Enough for 2,000 active subscriptions; a real run reads one page. */
+const POLAR_MAX_PAGES = 20;
+
+type PolarSubscription = {
+  id: string;
+  status: string;
+  product_id?: string;
+  customer_id?: string;
+  cancel_at_period_end?: boolean;
+  current_period_end?: string | null;
+  customer?: { external_id?: string | null } | null;
+};
+
+async function fetchActiveSubscriptions(token: string, production: boolean): Promise<PolarSubscription[]> {
+  const base = production ? "https://api.polar.sh" : "https://sandbox-api.polar.sh";
+  const items: PolarSubscription[] = [];
+
+  for (let page = 1; page <= POLAR_MAX_PAGES; page++) {
+    const res = await fetch(`${base}/v1/subscriptions/?active=true&limit=${POLAR_PAGE}&page=${page}`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (!res.ok) {
+      throw new Error(`Polar subscriptions page ${page}: HTTP ${res.status} ${await res.text().catch(() => "")}`);
+    }
+    const body = (await res.json()) as {
+      items?: PolarSubscription[];
+      pagination?: { max_page?: number };
+    };
+    items.push(...(body.items ?? []));
+    if (page >= (body.pagination?.max_page ?? 1)) return items;
+  }
+  // Falling out of the loop means Polar has more pages than we read, so the
+  // result is a subset. Refuse it rather than let the caller treat a partial
+  // read as the whole truth.
+  throw new Error(`Polar returned more than ${POLAR_MAX_PAGES * POLAR_PAGE} active subscriptions`);
+}
+
+/**
+ * Current cached state for the handful of users Polar says are subscribed.
+ * Indexed per user rather than a full table scan, so this stays bounded by
+ * paying customers rather than by signups.
+ */
+export const cachedStateFor = internalQuery({
+  args: { userIds: v.array(v.string()) },
+  handler: async (ctx, { userIds }) => {
+    const rows = await Promise.all(
+      userIds.map((userId) =>
+        ctx.db
+          .query("userTiers")
+          .withIndex("by_userId", (q) => q.eq("userId", userId))
+          .unique(),
+      ),
+    );
+    return rows.map((row, i) => ({
+      userId: userIds[i],
+      tier: effectiveTier(row),
+      subscriptionId: row?.polarSubscriptionId ?? null,
+      isCancelled: !!row?.cancelledAt,
+    }));
+  },
+});
+
+export const reconcile = internalAction({
+  args: {},
+  handler: async (ctx) => {
+    const token = process.env.POLAR_ACCESS_TOKEN;
+    if (!token) {
+      console.warn("[tiers] reconcile: POLAR_ACCESS_TOKEN not set, skipping");
+      return;
+    }
+    const proProductId = process.env.POLAR_PRO_PRODUCT_ID;
+    const maxProductId = process.env.POLAR_MAX_PRODUCT_ID;
+
+    let subscriptions: PolarSubscription[];
+    try {
+      subscriptions = await fetchActiveSubscriptions(token, process.env.POLAR_ENVIRONMENT === "production");
+    } catch (err) {
+      // A reconcile that fails quietly is the bug it was written to catch, so
+      // this is the one failure worth interrupting for.
+      await ctx.runAction(internal.admin.notify, {
+        text: `🚨 Billing reconcile failed: ${err instanceof Error ? err.message : String(err)}`,
+      });
+      throw err;
+    }
+
+    const wanted: { userId: string; tier: Tier; sub: PolarSubscription }[] = [];
+    const unknownProduct: string[] = [];
+    const noExternalId: string[] = [];
+
+    for (const sub of subscriptions) {
+      const userId = sub.customer?.external_id;
+      if (!userId) {
+        noExternalId.push(sub.id);
+        continue;
+      }
+      const tier: Tier | null =
+        sub.product_id && sub.product_id === maxProductId
+          ? "max"
+          : sub.product_id && sub.product_id === proProductId
+            ? "pro"
+            : null;
+      if (!tier) {
+        unknownProduct.push(`${sub.id} (product ${sub.product_id})`);
+        continue;
+      }
+      wanted.push({ userId, tier, sub });
+    }
+
+    const cached = wanted.length
+      ? await ctx.runQuery(internal.tiers.cachedStateFor, { userIds: wanted.map((w) => w.userId) })
+      : [];
+    const cachedByUser = new Map(cached.map((c) => [c.userId, c]));
+
+    const granted: string[] = [];
+    const drift: string[] = [];
+
+    for (const { userId, tier, sub } of wanted) {
+      const current = cachedByUser.get(userId);
+      const currentTier = current?.tier ?? "free";
+
+      if (TIER_RANK[currentTier] < TIER_RANK[tier]) {
+        // Underserving someone who is being billed — the harm this job exists
+        // for. update() announces it and is idempotent, so a repeat run that
+        // finds nothing changed stays silent.
+        await ctx.runMutation(internal.tiers.update, {
+          userId,
+          tier,
+          ...(sub.customer_id ? { polarCustomerId: sub.customer_id } : {}),
+          polarSubscriptionId: sub.id,
+        });
+        granted.push(`${userId}: ${currentTier} → ${tier}`);
+      } else if (current?.subscriptionId !== sub.id) {
+        // Access is already at or above what they pay for, so touching the
+        // tier could demote a live trial. Say so instead.
+        drift.push(`${userId}: on ${currentTier}, Polar has ${tier} sub ${sub.id}`);
+      }
+
+      if (sub.cancel_at_period_end && sub.current_period_end) {
+        const periodEnd = new Date(sub.current_period_end).getTime();
+        const stillUncancelled = !cachedByUser.get(userId)?.isCancelled;
+        if (stillUncancelled && Number.isFinite(periodEnd)) {
+          await ctx.runMutation(internal.tiers.markCancelled, {
+            userId,
+            periodEnd,
+            polarSubscriptionId: sub.id,
+          });
+        }
+      }
+    }
+
+    console.log(
+      `[tiers] reconcile: ${subscriptions.length} active sub(s), ${granted.length} granted, ${drift.length} drifted`,
+    );
+
+    // Silent when there is nothing wrong. The daily pulse already proves the
+    // crons are alive, so a heartbeat here would only add noise to the channel
+    // that has to stay worth reading.
+    const problems = [
+      ...granted.map((g) => `  granted ${g}`),
+      ...drift.map((d) => `  drift ${d}`),
+      ...unknownProduct.map((u) => `  unknown product ${u}`),
+      ...noExternalId.map((n) => `  no external id ${n}`),
+    ];
+    if (problems.length) {
+      await ctx.runAction(internal.admin.notify, {
+        text: [`🔁 Billing reconcile fixed ${granted.length} of ${problems.length} finding(s):`, ...problems].join("\n"),
+      });
     }
   },
 });

@@ -74,6 +74,35 @@ function productIdToTier(productId: string): "pro" | "max" | null {
   return null;
 }
 
+/**
+ * Grant the tier a live Polar subscription pays for.
+ *
+ * Shared by `subscription.created` and `subscription.active` so that losing
+ * either event still gets the customer what they bought. It is only the fast
+ * path: tiers.reconcile is what repairs an account whose events never arrived
+ * at all, which is how a paying customer sat on free for six months.
+ */
+async function grantFromSubscription(ctx: GenericCtx<DataModel>, sub: any, event: string) {
+  const tier = productIdToTier(sub.productId);
+  const customer = sub.customer as Record<string, unknown> | undefined;
+  const userId =
+    customer?.externalId ?? customer?.external_id ?? sub.customerExternalId ?? sub.customer_external_id;
+  console.log(`[polar] Subscription ${event}:`, sub.id, "tier:", tier, "userId:", userId);
+
+  if (!tier || !userId) {
+    console.error(`[polar] Subscription ${event} not applied — tier:`, tier, "userId:", userId, "sub:", sub.id);
+    return;
+  }
+
+  await (ctx as any).runMutation(internal.tiers.update, {
+    userId,
+    tier,
+    polarCustomerId: sub.customerId,
+    polarSubscriptionId: sub.id,
+  });
+  console.log("[polar] Tier updated to", tier, "for user", userId);
+}
+
 export const createAuthOptions = (ctx: GenericCtx<DataModel>) => {
   const plugins: BetterAuthOptions["plugins"] = [convex({ authConfig })];
 
@@ -96,22 +125,16 @@ export const createAuthOptions = (ctx: GenericCtx<DataModel>) => {
           ...(process.env.POLAR_WEBHOOK_SECRET ? [webhooks({
             secret: process.env.POLAR_WEBHOOK_SECRET,
 
+            // Polar sends `created` when the subscription record appears and
+            // `active` once it is paid for. Both grant, because either can be
+            // the one that goes missing — tiers.update is idempotent, so the
+            // second to arrive writes nothing and announces nothing.
             onSubscriptionCreated: async (payload) => {
-              const sub = payload.data;
-              const tier = productIdToTier(sub.productId);
-              const customer = sub.customer as Record<string, unknown> | undefined;
-              const userId = customer?.externalId ?? customer?.external_id ?? (sub as any).customerExternalId ?? (sub as any).customer_external_id;
-              console.log("[polar] Subscription created:", sub.id, "tier:", tier, "userId:", userId);
+              await grantFromSubscription(ctx, payload.data, "created");
+            },
 
-              if (tier && userId) {
-                await (ctx as any).runMutation(internal.tiers.update, {
-                  userId,
-                  tier,
-                  polarCustomerId: sub.customerId,
-                  polarSubscriptionId: sub.id,
-                });
-                console.log("[polar] Tier updated to", tier, "for user", userId);
-              }
+            onSubscriptionActive: async (payload) => {
+              await grantFromSubscription(ctx, payload.data, "active");
             },
 
             onSubscriptionCanceled: async (payload) => {
