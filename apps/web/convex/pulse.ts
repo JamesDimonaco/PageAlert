@@ -59,9 +59,15 @@ export const snapshot = internalQuery({
     let checksPerDay = 0;
     let monitorsNew = 0;
     let autoPaused = 0;
+    let alerted = 0;
     for (const m of monitors) {
       if (m.isAnonymous) continue; // claimWithEmail leaves these schedulable
       if (m.createdAt >= since) monitorsNew++;
+      // Deliberately not scrapeLogs.matchCount, which is how many matching
+      // items the page held at that check — the same listing counted again on
+      // every check, summing to thousands. lastMatchAt moves only when a
+      // genuinely new item alerted someone, which is the event worth counting.
+      if (m.lastMatchAt !== undefined && m.lastMatchAt >= since) alerted++;
       if (m.autoPausedAt !== undefined) autoPaused++;
       if ((m.status === "active" || m.status === "error") && m.nextCheckAt !== undefined) {
         live++;
@@ -82,11 +88,10 @@ export const snapshot = internalQuery({
       .take(LOG_SAMPLE);
     // `blocked` is a subset of the failures, not a fourth outcome — the
     // scheduler sets it on error and timeout rows alike.
-    const scans = { ok: 0, error: 0, timeout: 0, blocked: 0, matches: 0 };
+    const scans = { ok: 0, error: 0, timeout: 0, blocked: 0 };
     for (const l of recent) {
       scans[l.status === "success" ? "ok" : l.status]++;
       if (l.blocked) scans.blocked++;
-      scans.matches += l.matchCount ?? 0;
     }
 
     const recentSends = await ctx.db
@@ -113,6 +118,7 @@ export const snapshot = internalQuery({
       live,
       autoPaused,
       checksPerDay: Math.round(checksPerDay),
+      alerted,
       scans,
       emails,
       // True when the sample did not reach back a full day, so the 24h figures
@@ -160,7 +166,7 @@ export const dailyPulse = internalAction({
       ``,
       `Last 24h${s.logsTruncated || s.sendsTruncated ? " (sampled)" : ""}`,
       `  scans    ${s.scans.ok} ok · ${s.scans.error + s.scans.timeout} failed (${s.scans.blocked} blocked)`,
-      `  matches  ${s.scans.matches}`,
+      `  alerts   ${s.alerted} monitor${s.alerted === 1 ? "" : "s"} found something new`,
       `  emails   ${s.emails.sent} sent${s.emails.bad > 0 ? ` · ${s.emails.bad} not delivered` : ""}`,
     );
 
