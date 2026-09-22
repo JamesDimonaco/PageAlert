@@ -5,7 +5,7 @@ import type { ActionCtx } from "../_generated/server";
 import type { BetterAuthOptions } from "better-auth";
 import { betterAuth } from "better-auth";
 import { polar, checkout, portal, webhooks } from "@polar-sh/better-auth";
-import { productTier } from "@prowl/shared";
+import { productTier, TIER_RANK } from "@prowl/shared";
 
 // Polyfill Buffer for Convex runtime — @polar-sh/sdk/webhooks uses
 // Buffer.from() for webhook signature verification which isn't available
@@ -70,12 +70,6 @@ const MAX_PRODUCT_ID = process.env.POLAR_MAX_PRODUCT_ID;
 const SPRINT_PRODUCT_ID = process.env.POLAR_SPRINT_PRODUCT_ID;
 const SPRINT_DAYS = 30;
 
-/**
- * Polar's own clock for this subscription, so the mutations can drop a replay
- * that predates what the row already knows. modified_at is null until
- * something changes it — a fresh subscription.created has only created_at,
- * and a row with no stamp can order nothing.
- */
 /** The user id Polar carries, across the camelCase/snake_case it has used. */
 function externalUserId(sub: SubscriptionPayload): string | undefined {
   return (
@@ -86,9 +80,21 @@ function externalUserId(sub: SubscriptionPayload): string | undefined {
   ) ?? undefined;
 }
 
+/**
+ * Polar's own clock for this subscription, so the mutations can drop a replay
+ * that predates what the row already knows. modified_at is null until
+ * something changes it — a fresh subscription.created has only created_at,
+ * and a row with no stamp can order nothing.
+ */
 function orderingStamp(sub: SubscriptionPayload): { subscriptionModifiedAt?: number } {
   const raw = sub.modifiedAt ?? sub.modified_at ?? sub.createdAt ?? sub.created_at;
-  const ms = raw ? new Date(String(raw)).getTime() : NaN;
+  if (raw == null) return {};
+  // The SDK hands these over as Date objects, and String(date) renders to the
+  // second — so stringifying first silently floored the stamp by up to 999ms,
+  // while reconcile wrote the same field from an ISO string at full precision.
+  // A later webhook could then stamp lower than an earlier reconcile and be
+  // dropped as stale: the guard rejecting exactly what it exists to protect.
+  const ms = raw instanceof Date ? raw.getTime() : Date.parse(String(raw));
   return Number.isFinite(ms) ? { subscriptionModifiedAt: ms } : {};
 }
 
@@ -102,7 +108,7 @@ function orderingStamp(sub: SubscriptionPayload): { subscriptionModifiedAt?: num
  * type-checked, which on a money path is worth the one extra line. The
  * existing casts are left alone; converting them is not this change's job.
  */
-type WebhookCtx = GenericCtx<DataModel> & Pick<ActionCtx, "runMutation">;
+type WebhookCtx = GenericCtx<DataModel> & Pick<ActionCtx, "runMutation" | "runQuery">;
 
 /**
  * The fields this file reads off a Polar subscription payload.
@@ -116,6 +122,7 @@ type SubscriptionPayload = {
   id: string;
   productId: string;
   customerId?: string;
+  customer_id?: string;
   cancelAtPeriodEnd?: boolean;
   cancel_at_period_end?: boolean;
   modifiedAt?: string | Date | null;
@@ -154,13 +161,20 @@ async function grantFromSubscription(ctx: GenericCtx<DataModel>, sub: Subscripti
   // it, and the customer is never told when their access stops.
   const ordering = orderingStamp(sub);
 
-  await (ctx as WebhookCtx).runMutation(internal.tiers.update, {
+  const applied = await (ctx as WebhookCtx).runMutation(internal.tiers.update, {
     userId,
     tier,
-    polarCustomerId: sub.customerId,
+    polarCustomerId: sub.customerId ?? sub.customer_id,
     polarSubscriptionId: sub.id,
     ...ordering,
   });
+  if (!applied) {
+    // The row already holds a newer event for this subscription. Saying "tier
+    // updated" here would assert a write that did not happen, on the one path
+    // whose logs are what a missed grant gets reconstructed from.
+    console.warn(`[polar] Subscription ${event} dropped as stale for user`, userId, "sub:", sub.id);
+    return;
+  }
   console.log("[polar] Tier updated to", tier, "for user", userId);
 
   // update() clears cancelledAt, so a subscription that is already cancelled
@@ -211,6 +225,26 @@ export const createAuthOptions = (ctx: GenericCtx<DataModel>) => {
 
             onSubscriptionActive: async (payload) => {
               await grantFromSubscription(ctx, payload.data, "active");
+            },
+
+            // Polar's catch-all, and the only event an in-place plan change
+            // fires: neither created nor active re-fires when someone moves
+            // pro → max in the portal. Without this they pay max rates on pro
+            // limits until the next morning's reconcile.
+            //
+            // A downgrade is deliberately not applied here. Reducing a tier on
+            // a catch-all event that also fires for cancellations, renewals and
+            // past-due would take access away on the strength of whichever
+            // payload arrived last; reconcile reports it for a person instead.
+            onSubscriptionUpdated: async (payload) => {
+              const sub = payload.data as SubscriptionPayload;
+              const userId = externalUserId(sub);
+              const tier = productTier(sub.productId, { pro: PRO_PRODUCT_ID, max: MAX_PRODUCT_ID });
+              if (!userId || !tier) return;
+
+              const current = await (ctx as WebhookCtx).runQuery(internal.tiers.effectiveFor, { userId });
+              if (TIER_RANK[current] >= TIER_RANK[tier]) return;
+              await grantFromSubscription(ctx, payload.data, "updated");
             },
 
             onSubscriptionCanceled: async (payload) => {
@@ -265,7 +299,7 @@ export const createAuthOptions = (ctx: GenericCtx<DataModel>) => {
                 await (ctx as WebhookCtx).runMutation(internal.tiers.update, {
                   userId,
                   tier: "free" as const,
-                  polarCustomerId: sub.customerId,
+                  polarCustomerId: sub.customerId ?? sub.customer_id,
                   polarSubscriptionId: sub.id,
                   ...orderingStamp(sub),
                 });

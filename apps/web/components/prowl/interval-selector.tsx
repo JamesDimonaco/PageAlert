@@ -10,6 +10,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Lock } from "lucide-react";
 import { useTier, type Tier } from "@/hooks/use-tier";
+import { TIER_RANK } from "@prowl/shared";
 
 type CheckInterval = "5m" | "15m" | "30m" | "1h" | "6h" | "24h";
 
@@ -22,9 +23,6 @@ const INTERVALS: { value: CheckInterval; label: string; tier: Tier }[] = [
   { value: "24h", label: "Every 24 hours", tier: "free" },
 ];
 
-// Mirrors TIER_RANK in convex/tiers.ts — an interval is available to any tier
-// at or above the one that unlocks it.
-const TIER_RANK: Record<Tier, number> = { free: 0, sprint: 1, pro: 2, max: 3 };
 
 const TIER_LABELS: Record<Tier, string> = { free: "Free", sprint: "Sprint", pro: "Pro", max: "Max" };
 
