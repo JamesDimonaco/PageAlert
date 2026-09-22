@@ -76,10 +76,12 @@ async function windowFor(ctx: QueryCtx, userId: string, now: number) {
 /**
  * The fields the list renders, and nothing else.
  *
- * rawResponse is the big one — a single row of it has reached 11KB — and the
- * list has never shown it; the AI narrative is only read on the detail page.
- * Sending the whole document for 500 rows was paying egress for fields nobody
- * was going to look at.
+ * This trims what crosses the wire, not what comes off the database: the rows
+ * are read whole and narrowed here, so rawResponse is still paid for on the
+ * read. Worth knowing where that ends — 501 rows of the heaviest row in prod
+ * today (23KB) would be 11.8MB against a query limit of roughly 8.4MB. The
+ * worst window any real user has is 215KB, so there is a lot of room, but the
+ * page will need paginate() rather than a bigger take() before that closes.
  */
 function summarise(log: Doc<"scrapeLogs">) {
   return {
@@ -104,8 +106,12 @@ export const list = query({
   handler: async (ctx, { limit }) => {
     const now = Date.now();
     const identity = await ctx.auth.getUserIdentity();
+    // null, not the free window. Convex identity arrives over its own socket
+    // rather than with the Better Auth token, so every user — paying ones
+    // included — is briefly unauthenticated here. Naming a window now would
+    // tell a Pro user they are on 7 days before we have looked.
     if (!identity) {
-      return { logs: [], windowDays: HISTORY_WINDOW_DAYS.free, capped: false };
+      return { logs: [], windowDays: null, capped: false };
     }
 
     const safeLimit = Math.min(Math.max(Math.floor(limit ?? 50), 1), 500);
@@ -134,7 +140,7 @@ export const get = query({
   handler: async (ctx, { id }) => {
     const now = Date.now();
     const identity = await ctx.auth.getUserIdentity();
-    if (!identity) return { log: null, outsideWindow: false, windowDays: HISTORY_WINDOW_DAYS.free };
+    if (!identity) return { log: null, outsideWindow: false, windowDays: null };
 
     const { tier, windowDays } = await windowFor(ctx, identity.subject, now);
     const log = await ctx.db.get(id);

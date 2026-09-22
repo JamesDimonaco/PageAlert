@@ -26,10 +26,12 @@ export function historyCutoff(tier: TierName, now: number): number {
 }
 
 /**
- * Inclusive both ends: a row stamped exactly one window ago still counts, and
- * so does one stamped slightly in the future — the scraper and Convex keep
- * their own clocks, and a few seconds of skew must not hide the check that
- * just ran.
+ * Inclusive at the cutoff: a row stamped exactly one window ago still counts,
+ * so "7 days" means seven and not six.
+ *
+ * Nothing caps the other end. Today every createdAt is written by Date.now()
+ * inside a Convex mutation, so a future stamp cannot happen; if a backfill or
+ * an import ever writes one, showing it beats hiding it.
  */
 export function isWithinHistoryWindow(stampedAt: number, tier: TierName, now: number): boolean {
   return stampedAt >= historyCutoff(tier, now);

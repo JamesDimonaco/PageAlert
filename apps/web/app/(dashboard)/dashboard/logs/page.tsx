@@ -146,6 +146,14 @@ export default function LogsPage() {
 
   const windowDays = data?.windowDays;
   const isFiltered = filtered.length !== (logs?.length ?? 0);
+  // Every count on this page is of the rows we fetched. When that is a slice
+  // of the window, each one is a floor — say so on all of them, not just the
+  // total, or "12 errors" reads as the whole week's errors.
+  const atLeast = data?.capped ? "+" : "";
+  // Groups hold their own page size. Remounting them when the filters change
+  // keeps the two views paging alike — otherwise a group expanded to 50 rows
+  // stays at 50 while the flat view snaps back to 25.
+  const filterKey = `${statusFilter}|${monitorFilter}|${search}`;
 
   return (
     <div className="space-y-8">
@@ -162,19 +170,19 @@ export default function LogsPage() {
       {logs && logs.length > 0 && (
         <div className="flex flex-wrap items-center gap-2">
           <StatChip
-            label={`${logs.length}${data?.capped ? "+" : ""} check${logs.length === 1 ? "" : "s"}`}
+            label={`${logs.length}${atLeast} check${logs.length === 1 ? "" : "s"}`}
             active={statusFilter === "all"}
             onClick={() => { setStatusFilter("all"); resetPaging(); }}
           />
           <StatChip
-            label={`${counts.success} ok`}
+            label={`${counts.success}${atLeast} ok`}
             tone="text-emerald-400"
             active={statusFilter === "success"}
             onClick={() => { setStatusFilter("success"); resetPaging(); }}
           />
           {counts.error > 0 && (
             <StatChip
-              label={`${counts.error} error${counts.error === 1 ? "" : "s"}`}
+              label={`${counts.error}${atLeast} error${counts.error === 1 ? "" : "s"}`}
               tone="text-red-400"
               active={statusFilter === "error"}
               onClick={() => { setStatusFilter("error"); resetPaging(); }}
@@ -182,7 +190,7 @@ export default function LogsPage() {
           )}
           {counts.timeout > 0 && (
             <StatChip
-              label={`${counts.timeout} timeout${counts.timeout === 1 ? "" : "s"}`}
+              label={`${counts.timeout}${atLeast} timeout${counts.timeout === 1 ? "" : "s"}`}
               tone="text-amber-400"
               active={statusFilter === "timeout"}
               onClick={() => { setStatusFilter("timeout"); resetPaging(); }}
@@ -190,7 +198,7 @@ export default function LogsPage() {
           )}
           {counts.blocked > 0 && (
             <StatChip
-              label={`${counts.blocked} blocked`}
+              label={`${counts.blocked}${atLeast} blocked`}
               tone="text-red-400"
               icon={Ban}
               active={statusFilter === "blocked"}
@@ -264,17 +272,20 @@ export default function LogsPage() {
         )}
       </div>
 
-      {logs === undefined ? (
+      {/* windowDays is null until Convex has the identity, so an empty result
+          here is "not looked yet", not "nothing to show". */}
+      {logs === undefined || windowDays == null ? (
         <div className="flex items-center justify-center py-20">
           <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
         </div>
       ) : logs.length === 0 ? (
         <div className="flex flex-col items-center justify-center rounded-xl bg-card/30 py-20 px-6 text-center">
           <Clock className="h-8 w-8 text-muted-foreground mb-4" />
-          <p className="text-sm text-muted-foreground">
-            {windowDays != null
-              ? `No checks in the last ${windowDays} days`
-              : "No scrape logs yet"}
+          <p className="text-sm font-medium mb-1">No checks to show</p>
+          {/* Says what the page covers without claiming there is anything
+              behind it — a new account and a downgraded one both land here. */}
+          <p className="text-xs text-muted-foreground">
+            This page shows your last {windowDays} days.
           </p>
         </div>
       ) : filtered.length === 0 ? (
@@ -289,7 +300,7 @@ export default function LogsPage() {
         <div className="space-y-4">
           {grouped.map(([groupKey, groupLogs]) => (
             <MonitorGroup
-              key={groupKey}
+              key={`${groupKey}|${filterKey}`}
               label={monitorLabels.get(groupKey) ?? groupKey}
               logs={groupLogs}
               collapsed={collapsedGroups.has(groupKey)}

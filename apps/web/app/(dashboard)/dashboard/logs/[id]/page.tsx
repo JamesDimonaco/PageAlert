@@ -57,7 +57,9 @@ export default function LogDetailPage({
   const { open: openCreate } = useCreateMonitor();
   const router = useRouter();
 
-  if (result === undefined) {
+  // A null window means Convex has not got the identity yet, not that the log
+  // is missing — the same first-round-trip gap the list page waits out.
+  if (result === undefined || result.windowDays == null) {
     return (
       <div className="flex items-center justify-center py-32">
         <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />

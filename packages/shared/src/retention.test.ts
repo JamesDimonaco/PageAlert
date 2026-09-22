@@ -57,7 +57,8 @@ describe("isWithinHistoryWindow", () => {
     expect(isWithinHistoryWindow(NOW - 7 * DAY - 1, "free", NOW)).toBe(false);
   });
 
-  // Clock skew between the scraper and Convex can stamp a row a little ahead.
+  // Convex stamps createdAt itself, so this cannot arise today. Pinned because
+  // a backfill that lands one is better shown than silently swallowed.
   it("admits a row stamped in the future", () => {
     expect(isWithinHistoryWindow(NOW + 1000, "free", NOW)).toBe(true);
   });
