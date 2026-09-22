@@ -1,6 +1,6 @@
 # Legal pages refresh
 
-**Status:** not started
+**Status:** Phases 2-4 done in `docs/legal-refresh`; Phase 1 lands with `worktree-sms-alerts`
 **Created:** 2026-09-22
 **Blocks:** `SMS_ENABLED=true` in production (Phase 1 only)
 
