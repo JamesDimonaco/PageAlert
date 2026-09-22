@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { HISTORY_WINDOW_DAYS, historyCutoff, isWithinHistoryWindow } from "./retention";
+import {
+  HISTORY_WINDOW_DAYS,
+  MAX_HISTORY_WINDOW_DAYS,
+  hasLongerWindow,
+  historyCutoff,
+  isWithinHistoryWindow,
+} from "./retention";
 import type { TierName } from "./subscription";
 
 const NOW = Date.UTC(2026, 8, 22, 10, 0, 0);
@@ -21,6 +27,25 @@ describe("the advertised windows", () => {
 
   it("gives every tier something to look at", () => {
     for (const tier of TIERS) expect(HISTORY_WINDOW_DAYS[tier]).toBeGreaterThan(0);
+  });
+});
+
+describe("hasLongerWindow", () => {
+  // Drives whether a log we cannot show offers an upgrade. Getting this wrong
+  // sells a Max user a plan that would not bring their log back.
+  it("is true for every tier below the longest", () => {
+    for (const tier of ["free", "sprint", "pro"] as TierName[]) {
+      expect(hasLongerWindow(HISTORY_WINDOW_DAYS[tier])).toBe(true);
+    }
+  });
+
+  it("is false on the longest window there is", () => {
+    expect(hasLongerWindow(MAX_HISTORY_WINDOW_DAYS)).toBe(false);
+    expect(hasLongerWindow(HISTORY_WINDOW_DAYS.max)).toBe(false);
+  });
+
+  it("stays false past the end, so a wider window never sells an upgrade", () => {
+    expect(hasLongerWindow(MAX_HISTORY_WINDOW_DAYS + 1)).toBe(false);
   });
 });
 

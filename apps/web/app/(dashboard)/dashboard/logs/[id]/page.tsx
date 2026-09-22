@@ -39,6 +39,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCreateMonitor } from "@/hooks/use-create-monitor";
 import type { Id } from "@/convex/_generated/dataModel";
+import { hasLongerWindow } from "@prowl/shared";
 
 function formatDuration(ms: number): string {
   if (ms < 1000) return `${ms}ms`;
@@ -70,6 +71,10 @@ export default function LogDetailPage({
   }
 
   if (!log) {
+    // Only offer the upgrade when one would actually reach this check. On the
+    // longest plan there is nothing above to buy, so say what is true instead.
+    const upgradeWouldHelp =
+      result.outsideWindow && result.windowDays != null && hasLongerWindow(result.windowDays);
     return (
       <div className="flex flex-col items-center justify-center py-32 px-6 text-center">
         <p className="text-lg font-semibold mb-2">
@@ -77,15 +82,16 @@ export default function LogDetailPage({
         </p>
         {result.outsideWindow && (
           <p className="text-sm text-muted-foreground mb-4 max-w-sm">
-            This check is still here — your plan shows the last {result.windowDays} days. Upgrade
-            and it comes back.
+            {upgradeWouldHelp
+              ? `This check is still here — your plan shows the last ${result.windowDays} days. Upgrade and it comes back.`
+              : `This check is older than the ${result.windowDays} days any plan shows.`}
           </p>
         )}
         <div className="flex gap-2">
           <Link href="/dashboard/logs">
             <Button variant="outline">Back to logs</Button>
           </Link>
-          {result.outsideWindow && (
+          {upgradeWouldHelp && (
             <Link href="/dashboard/settings?tab=billing">
               <Button>Upgrade</Button>
             </Link>

@@ -74,14 +74,26 @@ async function windowFor(ctx: QueryCtx, userId: string, now: number) {
 }
 
 /**
- * The fields the list renders, and nothing else.
+ * Most rows one read of the list may take.
  *
- * This trims what crosses the wire, not what comes off the database: the rows
- * are read whole and narrowed here, so rawResponse is still paid for on the
- * read. Worth knowing where that ends — 501 rows of the heaviest row in prod
- * today (23KB) would be 11.8MB against a query limit of roughly 8.4MB. The
- * worst window any real user has is 215KB, so there is a lot of room, but the
- * page will need paginate() rather than a bigger take() before that closes.
+ * Convex has no column projection: summarise() below trims what crosses the
+ * wire, but the rows come off the database whole, rawResponse and all. The
+ * manual-scan paths slice that field at 50,000 characters (see
+ * use-create-monitor.tsx), so a row has a hard ceiling near 51KB and 150 of
+ * them stay under the ~8MB a query may read. 500 did not: an account with
+ * that many manual scans inside its window would have broken this page for
+ * good, and nothing prunes the table to save it.
+ *
+ * It costs almost nothing today — the widest window any account has is 253
+ * rows, and only one of 91 accounts is over 150. The real fix is to keep
+ * rawResponse off this row so the list can read cheaply; until then the page
+ * says when it is showing a slice.
+ */
+const MAX_LIST_LIMIT = 150;
+
+/**
+ * The fields the list renders, and nothing else. Saves sending the AI
+ * narrative and the raw response to a page that shows neither.
  */
 function summarise(log: Doc<"scrapeLogs">) {
   return {
@@ -114,7 +126,7 @@ export const list = query({
       return { logs: [], windowDays: null, capped: false };
     }
 
-    const safeLimit = Math.min(Math.max(Math.floor(limit ?? 50), 1), 500);
+    const safeLimit = Math.min(Math.max(Math.floor(limit ?? 50), 1), MAX_LIST_LIMIT);
     const { windowDays, cutoff } = await windowFor(ctx, identity.subject, now);
 
     // One over the limit, so the page can say it is showing a slice without

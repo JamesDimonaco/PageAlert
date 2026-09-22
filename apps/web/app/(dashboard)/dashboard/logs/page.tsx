@@ -43,8 +43,12 @@ const statusConfig = {
 
 const PAGE_SIZE = 25;
 
-/** How many logs are fetched. The window is the tier's; this caps one page of it. */
-const FETCH_LIMIT = 500;
+/**
+ * How many logs to ask for. The server clamps this to its own ceiling (see
+ * MAX_LIST_LIMIT in convex/logs.ts, bounded by how big one row can get), so
+ * treat it as a request and read the actual count off the result.
+ */
+const FETCH_LIMIT = 150;
 
 type StatusFilter = "all" | "success" | "error" | "timeout" | "blocked";
 
@@ -346,7 +350,7 @@ export default function LogsPage() {
             : `Showing ${Math.min(visibleCount, filtered.length)} of ${filtered.length}`}
           {isFiltered && `, filtered from ${logs.length}`}
           {data?.capped
-            ? ` — the ${FETCH_LIMIT} most recent of your last ${windowDays} days`
+            ? ` — the ${logs.length} most recent of your last ${windowDays} days`
             /* "every check" only reads true of an unfiltered view; next to a
                filter clause it would contradict the sentence it ends. */
             : !isFiltered && ` — every check in your last ${windowDays} days`}

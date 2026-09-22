@@ -22,6 +22,20 @@ export const HISTORY_WINDOW_DAYS: Record<TierName, number> = {
   max: 90,
 };
 
+/** The longest window sold. Nothing older than this is readable on any plan. */
+export const MAX_HISTORY_WINDOW_DAYS = Math.max(...Object.values(HISTORY_WINDOW_DAYS));
+
+/**
+ * Is there a plan that would show more than this window does?
+ *
+ * Gates the upgrade offer on a log we cannot show. Without it a Max user is
+ * told their 91-day-old check comes back if they upgrade, and there is
+ * nothing for them to upgrade to.
+ */
+export function hasLongerWindow(windowDays: number): boolean {
+  return windowDays < MAX_HISTORY_WINDOW_DAYS;
+}
+
 /** The oldest timestamp `tier` may read. Rows stamped at or after it are theirs. */
 export function historyCutoff(tier: TierName, now: number): number {
   return now - HISTORY_WINDOW_DAYS[tier] * DAY_MS;
