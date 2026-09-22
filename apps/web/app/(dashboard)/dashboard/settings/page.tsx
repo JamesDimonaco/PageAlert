@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useSearchParams, useRouter, usePathname } from "next/navigation";
+import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -27,6 +28,9 @@ import { api } from "@/convex/_generated/api";
 import { authClient } from "@/lib/auth-client";
 import { toast } from "sonner";
 import {
+  POSTHOG_KEY,
+  onPostHogReady,
+  setAnalyticsOptOut,
   trackUpgradePromptClicked,
   trackTestEmailSent,
   trackNotificationChannelToggled,
@@ -104,6 +108,9 @@ export default function SettingsPage() {
   const [telegramTesting, setTelegramTesting] = useState(false);
   const [discordSaving, setDiscordSaving] = useState(false);
   const deleteAccountMutation = useMutation(api.account.deleteAccount);
+  // null until posthog-js has loaded and can say what this browser chose
+  const [analyticsOptedOut, setAnalyticsOptedOut] = useState<boolean | null>(null);
+  useEffect(() => onPostHogReady((p) => setAnalyticsOptedOut(p.has_opted_out_capturing())), []);
   const sendTestEmail = useAction(api.notifications.sendTestEmail);
   const upsertSetting = useMutation(api.notificationSettings.upsert);
   const removeSetting = useMutation(api.notificationSettings.remove);
@@ -193,6 +200,38 @@ export default function SettingsPage() {
               </div>
             </CardContent>
           </Card>
+
+          {POSTHOG_KEY && (
+            <Card className="border-border/30 bg-card/50 shadow-sm shadow-black/5">
+              <CardHeader className="pb-4">
+                <CardTitle className="text-lg font-semibold">Analytics</CardTitle>
+                <CardDescription className="text-sm">How we see what the app is used for</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <p className="text-xs text-muted-foreground leading-relaxed max-w-lg">
+                    We use PostHog to record page views, clicks and errors, and to replay sessions:
+                    the pages you visit and what you click, with anything you type masked.
+                    Turning this off stops both, in this browser only.{" "}
+                    <Link href="/privacy" className="text-primary hover:underline">Privacy policy</Link>
+                  </p>
+                  <Button
+                    variant={analyticsOptedOut === false ? "default" : "outline"}
+                    size="sm"
+                    disabled={analyticsOptedOut === null}
+                    onClick={() => {
+                      const optOut = !analyticsOptedOut;
+                      setAnalyticsOptOut(optOut);
+                      setAnalyticsOptedOut(optOut);
+                      toast.success(optOut ? "Analytics off in this browser" : "Analytics on in this browser");
+                    }}
+                  >
+                    {analyticsOptedOut === null ? "Loading" : analyticsOptedOut ? "Disabled" : "Enabled"}
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          )}
 
           <Card className="border-destructive/20 bg-card/50 shadow-sm shadow-black/5">
             <CardHeader className="pb-4">
