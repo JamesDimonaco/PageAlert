@@ -2,7 +2,8 @@ import { v } from "convex/values";
 import { mutation, query, internalMutation, type QueryCtx } from "./_generated/server";
 import {
   HISTORY_WINDOW_DAYS,
-  capRawResponse,
+  MAX_LOG_ROW_BYTES,
+  capLogFields,
   historyCutoff,
   isWithinHistoryWindow,
 } from "@prowl/shared";
@@ -40,8 +41,7 @@ export const create = mutation({
     if (!identity) throw new Error("Not authenticated");
 
     return ctx.db.insert("scrapeLogs", {
-      ...args,
-      rawResponse: capRawResponse(args.rawResponse),
+      ...capLogFields(args),
       userId: identity.subject,
       createdAt: Date.now(),
     });
@@ -56,8 +56,7 @@ export const createInternal = internalMutation({
   },
   handler: async (ctx, args) => {
     return ctx.db.insert("scrapeLogs", {
-      ...args,
-      rawResponse: capRawResponse(args.rawResponse),
+      ...capLogFields(args),
       createdAt: Date.now(),
     });
   },
@@ -84,18 +83,22 @@ async function windowFor(ctx: QueryCtx, userId: string, now: number) {
  * Most rows one read of the list may take.
  *
  * Convex has no column projection: summarise() below trims what crosses the
- * wire, but the rows come off the database whole, rawResponse and all. Both
- * write paths run that field through capRawResponse, so a row cannot exceed
- * MAX_RAW_RESPONSE_BYTES plus its other fields — roughly 37KB — and 150 of
- * them stay under the ~8MB a query may read. 500 did not, and nothing prunes
- * this table to save a page that outgrew it.
+ * wire, but the rows come off the database whole, rawResponse and all. So
+ * this is the read budget divided by what a row can cost — not a number
+ * picked against whatever prod happens to hold today, which is how the last
+ * two versions of this comment came to state a ceiling nothing enforced.
  *
- * It costs almost nothing today — the widest window any account has is 253
- * rows, and only one of 91 is over 150. Moving rawResponse off this row is
- * what would buy the 500 back, by making the read cheap rather than small;
- * until then the page says when it is showing a slice.
+ * What makes it true is capLogFields on both write paths: scrapeLogs is
+ * written by a public mutation whose matchConditions is v.any(), so without
+ * it a signed-in caller decides what a row costs. Nothing prunes this table
+ * either, so a page that outgrew its budget would have stayed broken.
+ *
+ * Moving rawResponse off the row is what would raise this, by making the
+ * read cheap rather than small; until then the page says when it is showing
+ * a slice.
  */
-const MAX_LIST_LIMIT = 150;
+const QUERY_READ_BUDGET_BYTES = 8_000_000;
+const MAX_LIST_LIMIT = Math.floor(QUERY_READ_BUDGET_BYTES / MAX_LOG_ROW_BYTES);
 
 /**
  * The fields the list renders, and nothing else. Saves sending the AI

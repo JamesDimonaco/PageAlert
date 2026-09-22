@@ -41,28 +41,3 @@ export function historyCutoff(tier: TierName, now: number): number {
 export function isWithinHistoryWindow(stampedAt: number, tier: TierName, now: number): boolean {
   return stampedAt >= historyCutoff(tier, now);
 }
-
-/**
- * Most bytes of raw AI response one scrape log may keep.
- *
- * Lives here rather than in the Convex function so it can be tested. The
- * bound it puts on a row is what the logs list's page size is calculated
- * against, and the previous version of that calculation rested on a
- * client-side slice that enforced nothing.
- */
-export const MAX_RAW_RESPONSE_BYTES = 32_000;
-
-/**
- * Truncates a string to MAX_RAW_RESPONSE_BYTES *bytes*, not characters.
- *
- * The distinction is the whole point: 50,000 characters of emoji is 200,000
- * bytes, so a character-counted limit bounds nothing you can budget against.
- * Cutting mid-sequence leaves one replacement character, which is the right
- * trade for a debugging blob nobody parses.
- */
-export function capRawResponse(raw: string | undefined): string | undefined {
-  if (raw === undefined) return undefined;
-  const bytes = new TextEncoder().encode(raw);
-  if (bytes.length <= MAX_RAW_RESPONSE_BYTES) return raw;
-  return `${new TextDecoder().decode(bytes.slice(0, MAX_RAW_RESPONSE_BYTES))}\n…truncated`;
-}

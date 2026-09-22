@@ -44,11 +44,12 @@ const statusConfig = {
 const PAGE_SIZE = 25;
 
 /**
- * How many logs to ask for. The server clamps this to its own ceiling (see
- * MAX_LIST_LIMIT in convex/logs.ts, bounded by how big one row can get), so
- * treat it as a request and read the actual count off the result.
+ * How many logs to ask for. The server clamps this to its own ceiling — see
+ * MAX_LIST_LIMIT in convex/logs.ts, which is the query read budget divided by
+ * what one row can cost — so ask for more than that and read the count that
+ * actually came back off the result.
  */
-const FETCH_LIMIT = 150;
+const FETCH_LIMIT = 500;
 
 type StatusFilter = "all" | "success" | "error" | "timeout" | "blocked";
 
