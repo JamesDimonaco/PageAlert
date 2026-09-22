@@ -58,7 +58,8 @@ export default function PrivacyPage() {
           <p>We use essential cookies for authentication (keeping you signed in). We also use PostHog analytics cookies to understand product usage. You can opt out of analytics by using a browser ad blocker or disabling cookies.</p>
 
           <h2>Data retention</h2>
-          <p>Your monitor data and scrape results are retained as long as your account is active. If you delete your account, all associated data (monitors, results, notifications) is permanently removed.</p>
+          <p>Your monitor data and scrape results are retained as long as your account is active. How far back you can read your own scrape log depends on your plan &mdash; the older checks are hidden rather than deleted, and upgrading brings them back.</p>
+          <p>If you delete your account, your monitors, scrape results, notifications, notification settings and scrape log are permanently removed.</p>
 
           <h2>Your rights</h2>
           <p>You can:</p>

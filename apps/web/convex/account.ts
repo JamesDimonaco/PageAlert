@@ -1,4 +1,5 @@
-import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
+import { v } from "convex/values";
+import { internalMutation, mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 
 /** Is this user currently banned? Shared by every mutation that gates on ban status. */
@@ -13,11 +14,16 @@ export async function isBanned(ctx: QueryCtx | MutationCtx, userId: string): Pro
 /**
  * Deletes every row this app owns for a user: monitors and their scrape
  * results/notifications, notification settings, remaining notifications,
- * channel claims, the tier record, and the creation-rate-limit log.
+ * channel claims, the tier record, the creation-rate-limit log, the
+ * last-seen record, and the scrape log.
  * Shared by the user's own deleteAccount and the admin dashboard's
  * forced delete, so both paths agree on what "all data" means — a
  * userTiers row surviving account deletion was a known gap this closes
  * for both callers.
+ *
+ * Two tables still hold an email address after this runs: emailSends and
+ * onboardingEmails. Both are small (one and four rows for the worst account)
+ * and both are deliberately left for a separate decision, not overlooked.
  *
  * monitorCreations rows are kept across *monitor* deletion (see
  * monitors.ts) to stop a delete-and-remake bypassing the creation rate
@@ -102,7 +108,59 @@ export async function deleteAllUserData(ctx: MutationCtx, userId: string): Promi
     .withIndex("by_userId", (q) => q.eq("userId", userId))
     .unique();
   if (activity) await ctx.db.delete(activity._id);
+
+  await deleteScrapeLogs(ctx, userId);
 }
+
+/**
+ * Scrape logs removed per mutation.
+ *
+ * 100 because a row carries rawResponse: the heaviest in prod is 23KB, so a
+ * batch costs roughly 2.4MB of a transaction's ~8MB read budget even at that
+ * size, alongside everything else the sweep reads. Taking them all at once
+ * looked fine on today's numbers and was the wrong bet — nothing prunes this
+ * table, deliberately, so the accounts holding the most would be exactly the
+ * ones whose deletion blew the budget, threw, and rolled back. A user who
+ * cannot delete their account is worse than a delete that takes ten rounds.
+ */
+const LOG_DELETE_BATCH = 100;
+
+/**
+ * Takes one batch of a user's scrape logs, and queues another if more remain.
+ *
+ * The log is the last and largest of it: every URL they watched, every prompt
+ * they wrote, and the raw AI response for each check. It survived account
+ * deletion until now because the per-monitor sweep does not take it — a log
+ * outlives its monitor on purpose, so the logs page can still show checks for
+ * one you have since deleted (1,372 of prod's 7,420 rows point at a monitor
+ * that is gone). That leaves the account as the only thing that removes them.
+ *
+ * Past the first batch this is no longer atomic with the account deletion,
+ * which is the right way round: the goal is erasure, so partial progress
+ * toward it is acceptable where refusing to start is not.
+ */
+async function deleteScrapeLogs(ctx: MutationCtx, userId: string): Promise<void> {
+  const batch = await ctx.db
+    .query("scrapeLogs")
+    .withIndex("by_userId_createdAt", (q) => q.eq("userId", userId))
+    .take(LOG_DELETE_BATCH);
+
+  for (const log of batch) {
+    await ctx.db.delete(log._id);
+  }
+
+  if (batch.length === LOG_DELETE_BATCH) {
+    await ctx.scheduler.runAfter(0, internal.account.deleteRemainingScrapeLogs, { userId });
+  }
+}
+
+/** Continues deleteScrapeLogs for an account holding more than one batch. */
+export const deleteRemainingScrapeLogs = internalMutation({
+  args: { userId: v.string() },
+  handler: async (ctx, { userId }) => {
+    await deleteScrapeLogs(ctx, userId);
+  },
+});
 
 /**
  * Record that this user is in the app right now. Called from the dashboard

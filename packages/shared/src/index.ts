@@ -5,3 +5,5 @@ export * from "./url-identity";
 export * from "./changes";
 export * from "./dormancy";
 export * from "./subscription";
+export * from "./retention";
+export * from "./log-size";
