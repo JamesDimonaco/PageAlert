@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   cancellationAction,
+  grantsAccess,
   isStaleSubscriptionEvent,
   periodEndMs,
   productTier,
@@ -168,9 +169,9 @@ describe("cancellationAction", () => {
   });
 
   it("re-marks one this run just wiped", () => {
-    // update() clears cancelledAt unconditionally, so a grant applied to a
-    // cancelling subscription has to put the end date back or the user is
-    // never told when access stops.
+    // A tier write clears cancelledAt, so a grant applied to a cancelling
+    // subscription has to put the end date back or the user is never told
+    // when access stops.
     // rowPeriodEndMs deliberately matches: without the rewrite clause this
     // falls through to "nothing changed, do nothing" and the wipe stands.
     expect(
@@ -293,5 +294,37 @@ describe("preferSubscription with an unusable period end", () => {
     const a = { id: "a", tier: "pro" as TierName, periodEndMs: Number.NaN };
     const b = { id: "b", tier: "pro" as TierName, periodEndMs: 5_000 };
     expect(preferSubscription(a, b).id).toBe("b");
+  });
+});
+
+describe("grantsAccess", () => {
+  it("grants on the statuses that mean the customer is entitled", () => {
+    expect(grantsAccess("active")).toBe(true);
+    expect(grantsAccess("trialing")).toBe(true);
+  });
+
+  it("refuses a subscription that has ended", () => {
+    // subscription.updated is Polar's catch-all and fires on revoke too, with
+    // the same product id. Without reading status, a revoke's `updated` twin
+    // landing after its `revoked` hands the tier straight back.
+    expect(grantsAccess("canceled")).toBe(false);
+    expect(grantsAccess("unpaid")).toBe(false);
+    expect(grantsAccess("incomplete_expired")).toBe(false);
+  });
+
+  it("refuses one that has not been paid for yet", () => {
+    // Polar: on subscription.created the status may not be active yet.
+    expect(grantsAccess("incomplete")).toBe(false);
+  });
+
+  it("refuses past_due rather than guessing", () => {
+    // Recovery fires subscription.active, which grants through the normal path.
+    expect(grantsAccess("past_due")).toBe(false);
+  });
+
+  it("grants when Polar sent no status at all", () => {
+    // Older payload shapes omit it; refusing would break every grant rather
+    // than the handful this guard exists to stop.
+    expect(grantsAccess(undefined)).toBe(true);
   });
 });

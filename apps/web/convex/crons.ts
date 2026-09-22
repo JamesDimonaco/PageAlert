@@ -56,7 +56,8 @@ crons.daily(
 // access. 07:30 UTC, so the pulse half an hour later counts the repaired tier.
 //
 // Gated by BILLING_RECONCILE_ENABLED — until that is "true" the run reports
-// what it would change and writes nothing. Same shape as the two crons above.
+// what it would change and writes nothing — the same shape as the dormant-
+// monitor reaper above.
 crons.daily(
   "reconcile-billing",
   { hourUTC: 7, minuteUTC: 30 },

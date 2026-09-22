@@ -199,3 +199,21 @@ export function productTier(
   if (ids.pro && productId === ids.pro) return "pro";
   return null;
 }
+
+/**
+ * Whether a subscription status means the customer is entitled to the tier.
+ *
+ * `subscription.updated` is Polar's catch-all: it also fires on cancel,
+ * revoke, past_due and resume, carrying the same product id as the grant
+ * events. Without reading status, a revoke's `updated` twin arriving after
+ * its `revoked` reads as "they are on free, Polar says pro" and hands the
+ * tier back. It also stops `created` granting before the first payment
+ * clears, which Polar warns can happen.
+ *
+ * Absent status grants, because refusing would break every grant rather than
+ * the few deliveries this exists to stop.
+ */
+export function grantsAccess(status: string | undefined | null): boolean {
+  if (status == null) return true;
+  return status === "active" || status === "trialing";
+}

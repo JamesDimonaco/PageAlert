@@ -12,6 +12,7 @@ import { internal } from "./_generated/api";
 import {
   cancellationAction,
   isStaleSubscriptionEvent,
+  periodEndMs,
   productTier,
   preferSubscription,
   reconcileAction,
@@ -275,7 +276,11 @@ export const update = internalMutation({
       existing?.polarSubscriptionId &&
       args.polarSubscriptionId != null &&
       args.polarSubscriptionId !== existing.polarSubscriptionId &&
-      TIER_RANK[args.tier] < TIER_RANK[effectiveTier(existing)]
+      // Only a downgrade. A paid tier arriving under a different id is the
+      // customer's live subscription — Polar forbids holding two — and
+      // refusing it left a genuine subscriber on free whenever an unrelated
+      // admin grant happened to outrank the tier they had just bought.
+      args.tier === "free"
     ) {
       console.warn(
         `[tiers] update: refusing to lower ${args.userId} to ${args.tier} on behalf of ` +
@@ -382,7 +387,16 @@ export const markCancelled = internalMutation({
     // Already says exactly this. Returning early keeps cancelledAt meaning
     // "when they cancelled" rather than "when a job last looked", now that
     // reconcile re-asserts cancellations on every run.
-    if (existing.cancelledAt && existing.periodEnd === args.periodEnd) return "unchanged" as const;
+    if (existing.cancelledAt && existing.periodEnd === args.periodEnd) {
+      // Nothing to change, but the event is still newer than what the row was
+      // stamped with. Without recording that, a re-cancel returns early and a
+      // delayed `uncanceled` from before it still looks fresh enough to wipe
+      // a cancellation the customer has since reinstated.
+      if (args.subscriptionModifiedAt != null && args.subscriptionModifiedAt > (existing.subscriptionModifiedAt ?? 0)) {
+        await ctx.db.patch(existing._id, { subscriptionModifiedAt: args.subscriptionModifiedAt });
+      }
+      return "unchanged" as const;
+    }
 
     const patch: Record<string, unknown> = {
       cancelledAt: Date.now(),
@@ -612,6 +626,7 @@ export const cachedStateFor = internalQuery({
       subscriptionId: row?.polarSubscriptionId ?? null,
       isCancelled: !!row?.cancelledAt,
       periodEnd: row?.periodEnd ?? null,
+      modifiedAt: row?.subscriptionModifiedAt ?? null,
       /** A live time-boxed grant this row holds, which a tier write destroys. */
       liveGrant:
         row?.grantUntil && row.grantUntil > Date.now()
@@ -759,8 +774,14 @@ export const reconcile = internalAction({
     const uncancellations: string[] = [];
     /** Writes the row refused because it already holds a newer event. */
     const raced: string[] = [];
-    /** Live time-boxed grants a subscription write destroyed. */
+    // update() clears a time-boxed grant when a real subscription replaces it
+    // — necessary, because grantUntil is what makes access expire and leaving
+    // it on a subscriber drops them to free when it passes. But a bought pass
+    // is time the customer paid for, and losing it silently in a background
+    // job is not something to find out from a support email.
     const grantsReplaced: string[] = [];
+    /** Users this run already accounted for, so they are not also called orphans. */
+    const handledUsers = new Set<string>();
 
     for (const { userId, tier, sub } of wanted) {
       const current = cachedByUser.get(userId);
@@ -790,32 +811,48 @@ export const reconcile = internalAction({
             silent: true,
           });
           if (!applied) {
-            // The row already holds a newer event than Polar's own record of
-            // this subscription. Claiming a repair we did not make is how a
-            // reconcile report stops being worth reading.
-            raced.push(`${userId}: row is ahead of Polar for sub ${sub.id}`);
+            // Backstop: the pre-loop snapshot said this was writable and the
+            // mutation disagreed, so something changed underneath us. Claiming
+            // a repair we did not make is how a report stops being read.
+            raced.push(`${userId}: write refused for sub ${sub.id} (changed underneath the run)`);
             return;
           }
         }
-        // update() clears cancelledAt/periodEnd unconditionally, so the
-        // cancellation decision below has to know the row was just rewritten
-        // rather than trust the snapshot taken before it.
-        rowRewrittenThisRun = true;
+        // update() clears cancelledAt/periodEnd when the subscription or tier
+        // actually changes, so the cancellation decision below has to know the
+        // row was just rewritten rather than trust the earlier snapshot.
+        // Only a real write clears the cancellation, so only a real write can
+        // make the re-mark below a genuine repair. Setting this in a dry run
+        // inflated "would fix" past what a live run actually does — and that
+        // number is what the decision to enable this rests on.
+        if (!dryRun) rowRewrittenThisRun = true;
         outcome.push(label);
+        if (current?.liveGrant) {
+          grantsReplaced.push(
+            `${userId}: ${current.liveGrant.source ?? "unknown"} grant to ` +
+              `${displayDate(current.liveGrant.until)} replaced by ${tier} subscription`,
+          );
+        }
       };
 
-      // update() clears a time-boxed grant when a real subscription replaces
-      // it — necessary, because grantUntil is what makes access expire and
-      // leaving it on a subscriber drops them to free when it passes. But a
-      // bought pass is time the customer paid for, and losing it silently in a
-      // background job is not something to find out from a support email.
-      const action = reconcileAction({ cachedTier: currentTier, polarTier: tier, isLinked });
-      if (current?.liveGrant && action !== "none") {
-        grantsReplaced.push(
-          `${userId}: ${current.liveGrant.source ?? "unknown"} grant to ` +
-            `${displayDate(current.liveGrant.until)} replaced by ${tier} subscription`,
-        );
+      // A dry run never calls the mutations, so it cannot learn from them that
+      // the row already holds a newer event. Asking the same question here
+      // keeps "would fix N" honest about what a live run would actually do.
+      if (
+        isStaleSubscriptionEvent({
+          storedSubscriptionId: current?.subscriptionId ?? undefined,
+          storedModifiedAt: current?.modifiedAt ?? undefined,
+          incomingSubscriptionId: sub.id,
+          incomingModifiedAt: ordering.subscriptionModifiedAt,
+        })
+      ) {
+        raced.push(`${userId}: row is ahead of Polar for sub ${sub.id}`);
+        handledUsers.add(userId);
+        continue;
       }
+
+      const action = reconcileAction({ cachedTier: currentTier, polarTier: tier, isLinked });
+      handledUsers.add(userId);
 
       switch (action) {
         case "grant":
@@ -837,10 +874,10 @@ export const reconcile = internalAction({
       // announce an end date for a tier that is not the one ending.
       if (action === "over-granted") continue;
 
-      const rawEnd = sub.current_period_end ? Date.parse(sub.current_period_end) : NaN;
+      const rawEnd = periodEndMs(sub.current_period_end);
       const cancellation = cancellationAction({
         polarCancelAtPeriodEnd: sub.cancel_at_period_end === true,
-        polarPeriodEndMs: Number.isFinite(rawEnd) ? rawEnd : null,
+        polarPeriodEndMs: rawEnd,
         rowIsCancelled: !!current?.isCancelled,
         rowPeriodEndMs: current?.periodEnd ?? undefined,
         rowRewrittenThisRun,
@@ -851,14 +888,14 @@ export const reconcile = internalAction({
           ? true
           : await ctx.runMutation(internal.tiers.markCancelled, {
               userId,
-              periodEnd: rawEnd,
+              periodEnd: rawEnd as number,
               polarSubscriptionId: sub.id,
               ...ordering,
               silent: true,
             });
         // "unchanged" means the row already said exactly this. Counting it
         // would put a repair in the report that no one made.
-        if (result === true) cancellations.push(`${userId}: access until ${displayDate(rawEnd)}`);
+        if (result === true) cancellations.push(`${userId}: access until ${displayDate(rawEnd as number)}`);
       } else if (cancellation === "clear") {
         const applied =
           dryRun ||
@@ -880,7 +917,17 @@ export const reconcile = internalAction({
       internal.tiers.rowsWithSubscriptions,
       {},
     );
-    const orphans = allLinkedRows.filter((row) => !seenSubscriptionIds.has(row.subscriptionId));
+    const orphans = allLinkedRows.filter(
+      (row) =>
+        !seenSubscriptionIds.has(row.subscriptionId) &&
+        // Already accounted for above — reporting the same row as both "linked"
+        // and "Polar bills nothing" describes one problem twice.
+        !handledUsers.has(row.userId) &&
+        // A pass or admin trial explains the paid tier, and expireGrants ends
+        // it. Without this the row is listed every morning until it lapses,
+        // with nothing anyone can do about it.
+        row.grantSource === null,
+    );
 
     const repaired = [
       ...granted.map((g) => `  granted ${g}`),
@@ -902,9 +949,6 @@ export const reconcile = internalAction({
       ...multipleSubs.map((m) => `  two active subs ${m}`),
       ...unknownProduct.map((u) => `  unknown product ${u}`),
       ...noExternalId.map((n) => `  no external id ${n}`),
-      // Said out loud rather than silently under-reporting: past the cap the
-      // orphan pass is a sample, so "no rows need you" stops being a fact.
-      ...(orphanScanCapped ? [`  orphan scan hit its ${ORPHAN_SCAN_CAP}-row cap — this list is partial`] : []),
     ];
 
     console.log(
@@ -935,7 +979,15 @@ export const reconcile = internalAction({
       // admin.notify slices at 4,000 characters without saying so, and the
       // lines it would cut are the ones appended last — including the warning
       // that the list is already partial. Say what was left out instead.
-      const lines = [headline, ...repaired, ...needsYou];
+      // The partial-list warning goes first, not last: the budget loop below
+      // drops the tail, which is exactly when the reader most needs to know
+      // the list is a sample.
+      const lines = [
+        headline,
+        ...(orphanScanCapped ? [`  ⚠️ orphan scan hit its ${ORPHAN_SCAN_CAP}-row cap — this list is partial`] : []),
+        ...repaired,
+        ...needsYou,
+      ];
       const shown: string[] = [];
       let budget = MESSAGE_BUDGET;
       for (const line of lines) {

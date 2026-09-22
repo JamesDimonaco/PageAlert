@@ -5,7 +5,7 @@ import type { ActionCtx } from "../_generated/server";
 import type { BetterAuthOptions } from "better-auth";
 import { betterAuth } from "better-auth";
 import { polar, checkout, portal, webhooks } from "@polar-sh/better-auth";
-import { cancellationAction, periodEndMs, productTier, TIER_RANK } from "@prowl/shared";
+import { grantsAccess, periodEndMs, productTier, TIER_RANK } from "@prowl/shared";
 
 // Polyfill Buffer for Convex runtime — @polar-sh/sdk/webhooks uses
 // Buffer.from() for webhook signature verification which isn't available
@@ -121,6 +121,8 @@ type WebhookCtx = GenericCtx<DataModel> & Pick<ActionCtx, "runMutation" | "runQu
 type SubscriptionPayload = {
   id: string;
   productId: string;
+  /** Polar's lifecycle status. Read by grantsAccess — see finding in review 5. */
+  status?: string;
   customerId?: string;
   customer_id?: string;
   cancelAtPeriodEnd?: boolean;
@@ -151,6 +153,15 @@ async function grantFromSubscription(ctx: GenericCtx<DataModel>, sub: Subscripti
 
   if (!tier || !userId) {
     console.error(`[polar] Subscription ${event} not applied — tier:`, tier, "userId:", userId, "sub:", sub.id);
+    return;
+  }
+
+  // subscription.updated is Polar's catch-all and fires on revoke too, with
+  // the same product id. Without this, a revoke's `updated` twin landing after
+  // its `revoked` reads as "they are on free, Polar says pro" and hands the
+  // tier straight back to a churned customer.
+  if (!grantsAccess(sub.status)) {
+    console.log(`[polar] Subscription ${event} for ${sub.id} has status ${sub.status} — not granting`);
     return;
   }
 
@@ -190,7 +201,9 @@ async function grantFromSubscription(ctx: GenericCtx<DataModel>, sub: Subscripti
       polarSubscriptionId: sub.id,
       ...ordering,
     });
-  } else if (!cancelling) {
+  } else if (cancelling) {
+    console.warn(`[polar] Subscription ${event} cancels at period end but gave no usable date:`, sub.id);
+  } else {
     await (ctx as WebhookCtx).runMutation(internal.tiers.clearCancellation, {
       userId,
       polarSubscriptionId: sub.id,
