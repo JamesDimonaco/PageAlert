@@ -318,11 +318,15 @@ export default function LogsPage() {
       )}
 
       {/* What you are looking at, said exactly. The old line called the loaded
-          slice the total, which read as data loss once the cap bit. */}
+          slice the total, which read as data loss once the cap bit. Grouped
+          view counts monitors rather than rows, because each group pages on
+          its own and no single number describes what is on screen. */}
       {logs && logs.length > 0 && (
         <p className="text-xs text-muted-foreground text-center">
-          Showing {grouped ? filtered.length : Math.min(visibleCount, filtered.length)} of {filtered.length}
-          {isFiltered && ` filtered from ${logs.length}`}
+          {grouped
+            ? `${filtered.length} log${filtered.length === 1 ? "" : "s"} across ${grouped.length} monitor${grouped.length === 1 ? "" : "s"}`
+            : `Showing ${Math.min(visibleCount, filtered.length)} of ${filtered.length}`}
+          {isFiltered && `, filtered from ${logs.length}`}
           {data?.capped
             ? ` — the ${FETCH_LIMIT} most recent of your last ${windowDays} days`
             : windowDays != null && ` — every check in your last ${windowDays} days`}
