@@ -109,10 +109,13 @@ export async function deleteAllUserData(ctx: MutationCtx, userId: string): Promi
   if (activity) await ctx.db.delete(activity._id);
 
   // The scrape log is the last and largest of it: every URL they watched,
-  // every prompt they wrote, and the raw AI response for each check. It
-  // survived account deletion until now because nothing links it to a
-  // monitor — the rows outlive the monitor on purpose, so the per-monitor
-  // sweep above never reached them.
+  // every prompt they wrote, and the raw AI response for each check.
+  //
+  // It survived account deletion until now because the per-monitor sweep
+  // above does not take it. That is on purpose — a log outlives its monitor
+  // so the logs page can still show checks for one you have since deleted
+  // (1,372 of prod's 7,420 rows point at a monitor that is gone). Which
+  // leaves the account as the only thing that should ever take them, here.
   //
   // Read whole rather than in pages. The heaviest account in prod is 1,008
   // rows and 653KB, well inside one mutation, and a mutation that outgrew
