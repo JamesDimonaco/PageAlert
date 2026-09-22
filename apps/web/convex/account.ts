@@ -13,11 +13,16 @@ export async function isBanned(ctx: QueryCtx | MutationCtx, userId: string): Pro
 /**
  * Deletes every row this app owns for a user: monitors and their scrape
  * results/notifications, notification settings, remaining notifications,
- * channel claims, the tier record, and the creation-rate-limit log.
+ * channel claims, the tier record, the creation-rate-limit log, the
+ * last-seen record, and the scrape log.
  * Shared by the user's own deleteAccount and the admin dashboard's
  * forced delete, so both paths agree on what "all data" means — a
  * userTiers row surviving account deletion was a known gap this closes
  * for both callers.
+ *
+ * Two tables still hold an email address after this runs: emailSends and
+ * onboardingEmails. Both are small (one and four rows for the worst account)
+ * and both are deliberately left for a separate decision, not overlooked.
  *
  * monitorCreations rows are kept across *monitor* deletion (see
  * monitors.ts) to stop a delete-and-remake bypassing the creation rate
@@ -102,6 +107,23 @@ export async function deleteAllUserData(ctx: MutationCtx, userId: string): Promi
     .withIndex("by_userId", (q) => q.eq("userId", userId))
     .unique();
   if (activity) await ctx.db.delete(activity._id);
+
+  // The scrape log is the last and largest of it: every URL they watched,
+  // every prompt they wrote, and the raw AI response for each check. It
+  // survived account deletion until now because nothing links it to a
+  // monitor — the rows outlive the monitor on purpose, so the per-monitor
+  // sweep above never reached them.
+  //
+  // Read whole rather than in pages. The heaviest account in prod is 1,008
+  // rows and 653KB, well inside one mutation, and a mutation that outgrew
+  // the limit would roll back entirely rather than erase half an account.
+  const logs = await ctx.db
+    .query("scrapeLogs")
+    .withIndex("by_userId_createdAt", (q) => q.eq("userId", userId))
+    .collect();
+  for (const log of logs) {
+    await ctx.db.delete(log._id);
+  }
 }
 
 /**
