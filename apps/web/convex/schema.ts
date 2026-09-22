@@ -197,7 +197,8 @@ export default defineSchema({
   })
     .index("by_monitorId", ["monitorId"])
     .index("by_monitor_item", ["monitorId", "itemKey"])
-    .index("by_createdAt", ["createdAt"]),
+    .index("by_createdAt", ["createdAt"])
+    .index("by_userId", ["userId"]),
 
   notificationSettings: defineTable({
     userId: v.string(),
@@ -349,7 +350,8 @@ export default defineSchema({
   })
     .index("by_resendId", ["resendId"])
     .index("by_createdAt", ["createdAt"])
-    .index("by_status_createdAt", ["status", "createdAt"]),
+    .index("by_status_createdAt", ["status", "createdAt"])
+    .index("by_userId", ["userId"]),
 
   // Audit log of bulk emails sent from the super-admin dashboard
   adminEmails: defineTable({

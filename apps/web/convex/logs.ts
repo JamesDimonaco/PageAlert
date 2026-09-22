@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { mutation, query, internalMutation } from "./_generated/server";
+import { internal } from "./_generated/api";
 
 /** Shared validator for scrape log fields */
 const scrapeLogArgs = {
@@ -66,6 +67,31 @@ export const list = query({
       .withIndex("by_userId", (q) => q.eq("userId", identity.subject))
       .order("desc")
       .take(safeLimit);
+  },
+});
+
+/**
+ * Rows deleted per run of purgeForUser. A Max user on 5-minute checks writes
+ * ~300 logs a day per monitor, and rawResponse alone can be 50KB, so one
+ * transaction cannot hold a heavy user's history: it runs in batches and
+ * reschedules itself until the index is empty.
+ */
+const PURGE_BATCH = 100;
+
+/** Deletes a user's check history. Scheduled by account.deleteAllUserData. */
+export const purgeForUser = internalMutation({
+  args: { userId: v.string() },
+  handler: async (ctx, { userId }) => {
+    const batch = await ctx.db
+      .query("scrapeLogs")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .take(PURGE_BATCH);
+    for (const log of batch) {
+      await ctx.db.delete(log._id);
+    }
+    if (batch.length === PURGE_BATCH) {
+      await ctx.scheduler.runAfter(0, internal.logs.purgeForUser, { userId });
+    }
   },
 });
 
