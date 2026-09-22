@@ -225,6 +225,11 @@ export default defineSchema({
     // the billing UI and isPayingRecord both need to know.
     grantUntil: v.optional(v.number()),
     grantSource: v.optional(v.union(v.literal("admin"), v.literal("pass"))),
+    // Polar's modified_at for polarSubscriptionId, as an ordering key. Polar
+    // retries a failed delivery up to ten times with backoff, so a stale
+    // subscription.created can land after the cancellation it predates and
+    // wipe it. Writes carrying an older stamp than this are dropped.
+    subscriptionModifiedAt: v.optional(v.number()),
     dailyScans: v.optional(v.number()),
     dailyScansDate: v.optional(v.string()),
     reviewDismissed: v.optional(v.boolean()),
