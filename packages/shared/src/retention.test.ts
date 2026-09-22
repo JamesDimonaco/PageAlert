@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   HISTORY_WINDOW_DAYS,
   MAX_HISTORY_WINDOW_DAYS,
+  MAX_RAW_RESPONSE_BYTES,
+  capRawResponse,
   historyCutoff,
   isWithinHistoryWindow,
 } from "./retention";
@@ -78,5 +80,53 @@ describe("isWithinHistoryWindow", () => {
   // a backfill that lands one is better shown than silently swallowed.
   it("admits a row stamped in the future", () => {
     expect(isWithinHistoryWindow(NOW + 1000, "free", NOW)).toBe(true);
+  });
+});
+
+describe("capRawResponse", () => {
+  const byteLen = (s: string) => new TextEncoder().encode(s).length;
+  // The suffix added on truncation, plus up to 3 bytes of replacement
+  // character from a cut that lands mid-sequence.
+  const SLACK = byteLen("\n…truncated") + 3;
+
+  it("leaves undefined alone", () => {
+    expect(capRawResponse(undefined)).toBeUndefined();
+  });
+
+  it("leaves a string under the cap untouched", () => {
+    const small = "x".repeat(100);
+    expect(capRawResponse(small)).toBe(small);
+  });
+
+  it("leaves a string exactly on the cap untouched", () => {
+    const exact = "x".repeat(MAX_RAW_RESPONSE_BYTES);
+    expect(capRawResponse(exact)).toBe(exact);
+  });
+
+  it("truncates one byte over", () => {
+    const over = "x".repeat(MAX_RAW_RESPONSE_BYTES + 1);
+    expect(capRawResponse(over)).not.toBe(over);
+  });
+
+  // The bug this exists for. The old limit counted characters, so 50,000 of
+  // them passed as "50KB" while actually being 200KB — and the logs page size
+  // was calculated against that made-up ceiling.
+  it("counts bytes, not characters", () => {
+    const emoji = "🙂".repeat(50000);
+    expect(byteLen(emoji)).toBe(200000);
+    expect(byteLen(capRawResponse(emoji)!)).toBeLessThanOrEqual(MAX_RAW_RESPONSE_BYTES + SLACK);
+  });
+
+  it("holds the bound when the cut lands mid-sequence", () => {
+    const wide = "あ".repeat(20000); // 60,000 bytes, three per character
+    expect(byteLen(capRawResponse(wide)!)).toBeLessThanOrEqual(MAX_RAW_RESPONSE_BYTES + SLACK);
+  });
+
+  // What the logs page size rests on: no row can cost more than this.
+  it("bounds every input, whatever its encoding", () => {
+    const inputs = ["x".repeat(1000000), "🙂".repeat(100000), "あ".repeat(100000), "√".repeat(100000)];
+    for (const input of inputs) {
+      expect(byteLen(capRawResponse(input)!)).toBeLessThanOrEqual(MAX_RAW_RESPONSE_BYTES + SLACK);
+    }
   });
 });

@@ -1,6 +1,11 @@
 import { v } from "convex/values";
 import { mutation, query, internalMutation, type QueryCtx } from "./_generated/server";
-import { HISTORY_WINDOW_DAYS, historyCutoff, isWithinHistoryWindow } from "@prowl/shared";
+import {
+  HISTORY_WINDOW_DAYS,
+  capRawResponse,
+  historyCutoff,
+  isWithinHistoryWindow,
+} from "@prowl/shared";
 import { effectiveTier } from "./tiers";
 import type { Doc } from "./_generated/dataModel";
 
@@ -27,33 +32,6 @@ const scrapeLogArgs = {
   blockReason: v.optional(v.string()),
   strategy: v.optional(v.string()),
 };
-
-/**
- * Most bytes of raw AI response one log may keep.
- *
- * The callers slice this field themselves — at 10,000 or 50,000 characters,
- * see use-create-monitor.tsx — but that bounds nothing here: create is a
- * public mutation, so the size of a row is whatever a client sends, up to
- * Convex's document limit. Characters are not bytes either; 50,000 of them
- * can be 200,000 bytes. Both matter, because the list reads whole rows and
- * has to know what one can cost.
- *
- * 32,000 leaves the heaviest row in prod (23KB, all fields) untouched while
- * putting a real ceiling near 37KB on a row, which is what MAX_LIST_LIMIT is
- * calculated against.
- */
-const MAX_RAW_RESPONSE_BYTES = 32_000;
-
-/**
- * Truncates to a byte budget. Cutting mid-sequence leaves one replacement
- * character, which is the right trade for a debugging blob nobody parses.
- */
-function capRawResponse(raw: string | undefined): string | undefined {
-  if (raw === undefined) return undefined;
-  const bytes = new TextEncoder().encode(raw);
-  if (bytes.length <= MAX_RAW_RESPONSE_BYTES) return raw;
-  return `${new TextDecoder().decode(bytes.slice(0, MAX_RAW_RESPONSE_BYTES))}\n…truncated`;
-}
 
 export const create = mutation({
   args: scrapeLogArgs,
@@ -106,10 +84,11 @@ async function windowFor(ctx: QueryCtx, userId: string, now: number) {
  * Most rows one read of the list may take.
  *
  * Convex has no column projection: summarise() below trims what crosses the
- * wire, but the rows come off the database whole, rawResponse and all. With
- * that field capped at MAX_RAW_RESPONSE_BYTES a row cannot exceed roughly
- * 37KB, so 150 of them stay under the ~8MB a query may read. 500 did not,
- * and nothing prunes this table to save a page that outgrew it.
+ * wire, but the rows come off the database whole, rawResponse and all. Both
+ * write paths run that field through capRawResponse, so a row cannot exceed
+ * MAX_RAW_RESPONSE_BYTES plus its other fields — roughly 37KB — and 150 of
+ * them stay under the ~8MB a query may read. 500 did not, and nothing prunes
+ * this table to save a page that outgrew it.
  *
  * It costs almost nothing today — the widest window any account has is 253
  * rows, and only one of 91 is over 150. Moving rawResponse off this row is
