@@ -35,7 +35,7 @@ export const FAQ: FaqEntry[] = [
   },
   {
     q: "What happens when my plan ends?",
-    a: "Your monitors and their history stay where they are. You go back to free limits, so you can't create new monitors past the free cap or pick a faster check interval until you upgrade again.",
+    a: "Your monitors stay where they are. You go back to free limits, so you can't create new monitors past the free cap or pick a faster check interval until you upgrade again, and the scrape log goes back to showing the last week. Nothing is deleted — upgrade again and the older checks are there.",
   },
   {
     q: "What do you do with my data?",

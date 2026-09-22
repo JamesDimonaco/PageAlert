@@ -25,7 +25,6 @@ interface LogExtended {
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
 import {
   ArrowLeft,
   Loader2,
@@ -52,13 +51,13 @@ export default function LogDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = use(params);
-  const rawLog = useQuery(api.logs.get, { id: id as Id<"scrapeLogs"> });
-  const log = rawLog as (typeof rawLog & LogExtended) | null | undefined;
+  const result = useQuery(api.logs.get, { id: id as Id<"scrapeLogs"> });
+  const log = result?.log as (NonNullable<typeof result>["log"] & LogExtended) | null | undefined;
   const [showRaw, setShowRaw] = useState(false);
   const { open: openCreate } = useCreateMonitor();
   const router = useRouter();
 
-  if (log === undefined) {
+  if (result === undefined) {
     return (
       <div className="flex items-center justify-center py-32">
         <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
@@ -66,13 +65,28 @@ export default function LogDetailPage({
     );
   }
 
-  if (log === null) {
+  if (!log) {
     return (
-      <div className="flex flex-col items-center justify-center py-32">
-        <p className="text-lg font-semibold mb-2">Log not found</p>
-        <Link href="/dashboard/logs">
-          <Button variant="outline">Back to logs</Button>
-        </Link>
+      <div className="flex flex-col items-center justify-center py-32 px-6 text-center">
+        <p className="text-lg font-semibold mb-2">
+          {result.outsideWindow ? "Older than your plan shows" : "Log not found"}
+        </p>
+        {result.outsideWindow && (
+          <p className="text-sm text-muted-foreground mb-4 max-w-sm">
+            This check is still here — your plan shows the last {result.windowDays} days. Upgrade
+            and it comes back.
+          </p>
+        )}
+        <div className="flex gap-2">
+          <Link href="/dashboard/logs">
+            <Button variant="outline">Back to logs</Button>
+          </Link>
+          {result.outsideWindow && (
+            <Link href="/dashboard/settings?tab=billing">
+              <Button>Upgrade</Button>
+            </Link>
+          )}
+        </div>
       </div>
     );
   }
