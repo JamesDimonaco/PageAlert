@@ -28,6 +28,33 @@ const scrapeLogArgs = {
   strategy: v.optional(v.string()),
 };
 
+/**
+ * Most bytes of raw AI response one log may keep.
+ *
+ * The callers slice this field themselves — at 10,000 or 50,000 characters,
+ * see use-create-monitor.tsx — but that bounds nothing here: create is a
+ * public mutation, so the size of a row is whatever a client sends, up to
+ * Convex's document limit. Characters are not bytes either; 50,000 of them
+ * can be 200,000 bytes. Both matter, because the list reads whole rows and
+ * has to know what one can cost.
+ *
+ * 32,000 leaves the heaviest row in prod (23KB, all fields) untouched while
+ * putting a real ceiling near 37KB on a row, which is what MAX_LIST_LIMIT is
+ * calculated against.
+ */
+const MAX_RAW_RESPONSE_BYTES = 32_000;
+
+/**
+ * Truncates to a byte budget. Cutting mid-sequence leaves one replacement
+ * character, which is the right trade for a debugging blob nobody parses.
+ */
+function capRawResponse(raw: string | undefined): string | undefined {
+  if (raw === undefined) return undefined;
+  const bytes = new TextEncoder().encode(raw);
+  if (bytes.length <= MAX_RAW_RESPONSE_BYTES) return raw;
+  return `${new TextDecoder().decode(bytes.slice(0, MAX_RAW_RESPONSE_BYTES))}\n…truncated`;
+}
+
 export const create = mutation({
   args: scrapeLogArgs,
   handler: async (ctx, args) => {
@@ -36,6 +63,7 @@ export const create = mutation({
 
     return ctx.db.insert("scrapeLogs", {
       ...args,
+      rawResponse: capRawResponse(args.rawResponse),
       userId: identity.subject,
       createdAt: Date.now(),
     });
@@ -51,6 +79,7 @@ export const createInternal = internalMutation({
   handler: async (ctx, args) => {
     return ctx.db.insert("scrapeLogs", {
       ...args,
+      rawResponse: capRawResponse(args.rawResponse),
       createdAt: Date.now(),
     });
   },
@@ -77,17 +106,15 @@ async function windowFor(ctx: QueryCtx, userId: string, now: number) {
  * Most rows one read of the list may take.
  *
  * Convex has no column projection: summarise() below trims what crosses the
- * wire, but the rows come off the database whole, rawResponse and all. The
- * manual-scan paths slice that field at 50,000 characters (see
- * use-create-monitor.tsx), so a row has a hard ceiling near 51KB and 150 of
- * them stay under the ~8MB a query may read. 500 did not: an account with
- * that many manual scans inside its window would have broken this page for
- * good, and nothing prunes the table to save it.
+ * wire, but the rows come off the database whole, rawResponse and all. With
+ * that field capped at MAX_RAW_RESPONSE_BYTES a row cannot exceed roughly
+ * 37KB, so 150 of them stay under the ~8MB a query may read. 500 did not,
+ * and nothing prunes this table to save a page that outgrew it.
  *
  * It costs almost nothing today — the widest window any account has is 253
- * rows, and only one of 91 accounts is over 150. The real fix is to keep
- * rawResponse off this row so the list can read cheaply; until then the page
- * says when it is showing a slice.
+ * rows, and only one of 91 is over 150. Moving rawResponse off this row is
+ * what would buy the 500 back, by making the read cheap rather than small;
+ * until then the page says when it is showing a slice.
  */
 const MAX_LIST_LIMIT = 150;
 
@@ -152,20 +179,30 @@ export const get = query({
   handler: async (ctx, { id }) => {
     const now = Date.now();
     const identity = await ctx.auth.getUserIdentity();
-    if (!identity) return { log: null, outsideWindow: false, windowDays: null };
+    if (!identity) {
+      return { log: null, outsideWindow: false, windowDays: null, upgradeWouldShow: false };
+    }
 
     const { tier, windowDays } = await windowFor(ctx, identity.subject, now);
     const log = await ctx.db.get(id);
     if (!log || log.userId !== identity.subject) {
-      return { log: null, outsideWindow: false, windowDays };
+      return { log: null, outsideWindow: false, windowDays, upgradeWouldShow: false };
     }
 
     // A link kept from before a downgrade. The row is still there, so say so
     // rather than "not found", which reads as data we lost.
     if (!isWithinHistoryWindow(log.createdAt, tier, now)) {
-      return { log: null, outsideWindow: true, windowDays };
+      return {
+        log: null,
+        outsideWindow: true,
+        windowDays,
+        // Whether buying something would actually reach this row, which is
+        // not the same as a bigger plan existing: a 91-day-old check is past
+        // every window there is, so a Free user must not be promised it back.
+        upgradeWouldShow: isWithinHistoryWindow(log.createdAt, "max", now),
+      };
     }
 
-    return { log, outsideWindow: false, windowDays };
+    return { log, outsideWindow: false, windowDays, upgradeWouldShow: false };
   },
 });

@@ -39,7 +39,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCreateMonitor } from "@/hooks/use-create-monitor";
 import type { Id } from "@/convex/_generated/dataModel";
-import { hasLongerWindow } from "@prowl/shared";
+import { MAX_HISTORY_WINDOW_DAYS } from "@prowl/shared";
 
 function formatDuration(ms: number): string {
   if (ms < 1000) return `${ms}ms`;
@@ -71,10 +71,10 @@ export default function LogDetailPage({
   }
 
   if (!log) {
-    // Only offer the upgrade when one would actually reach this check. On the
-    // longest plan there is nothing above to buy, so say what is true instead.
-    const upgradeWouldHelp =
-      result.outsideWindow && result.windowDays != null && hasLongerWindow(result.windowDays);
+    // The server decides this from the log's own age, not from whether a
+    // bigger plan exists: a check older than every window is gone from the
+    // page on any plan, so nobody should be sold one to get it back.
+    const upgradeWouldHelp = result.upgradeWouldShow;
     return (
       <div className="flex flex-col items-center justify-center py-32 px-6 text-center">
         <p className="text-lg font-semibold mb-2">
@@ -84,7 +84,7 @@ export default function LogDetailPage({
           <p className="text-sm text-muted-foreground mb-4 max-w-sm">
             {upgradeWouldHelp
               ? `This check is still here — your plan shows the last ${result.windowDays} days. Upgrade and it comes back.`
-              : `This check is older than the ${result.windowDays} days any plan shows.`}
+              : `This check is older than the ${MAX_HISTORY_WINDOW_DAYS} days any plan shows.`}
           </p>
         )}
         <div className="flex gap-2">
