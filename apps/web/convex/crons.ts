@@ -57,7 +57,8 @@ crons.daily(
 crons.daily(
   "reconcile-billing",
   { hourUTC: 7, minuteUTC: 30 },
-  internal.tiers.reconcile
+  internal.tiers.reconcile,
+  { dryRun: false }
 );
 
 export default crons;

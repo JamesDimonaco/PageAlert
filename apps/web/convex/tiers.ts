@@ -1,7 +1,16 @@
 import { v } from "convex/values";
 import { internalAction, internalMutation, internalQuery, mutation, query, type MutationCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
-import { tierAlert, type TierChange } from "@prowl/shared";
+import {
+  cancellationAction,
+  isStaleSubscriptionEvent,
+  productTier,
+  preferSubscription,
+  reconcileAction,
+  tierAlert,
+  TIER_RANK,
+  type TierChange,
+} from "@prowl/shared";
 
 /**
  * The tiers, cheapest first. "sprint" is the 30-day pass: a one-off Polar
@@ -17,8 +26,8 @@ export const tierValidator = v.union(
   v.literal("max")
 );
 
-/** Ordering for "don't downgrade someone who already has more" comparisons */
-export const TIER_RANK: Record<Tier, number> = { free: 0, sprint: 1, pro: 2, max: 3 };
+/** Ordering for "don't downgrade someone who already has more" comparisons. */
+export { TIER_RANK } from "@prowl/shared";
 
 /** The tier a user is actually on right now: "free" once a grant has lapsed, else the stored tier. */
 export function effectiveTier(
@@ -174,6 +183,32 @@ async function announce(ctx: MutationCtx, userId: string, change: TierChange) {
   if (text) await ctx.scheduler.runAfter(0, internal.admin.notify, { text });
 }
 
+/**
+ * Alert the operator without letting a Telegram failure become the error.
+ * admin.notify does its own fetch with a timeout; thrown from inside a catch
+ * it would replace the real cause on the way out.
+ */
+async function notifyQuietly(ctx: { runAction: (ref: any, args: any) => Promise<unknown> }, text: string) {
+  try {
+    await ctx.runAction(internal.admin.notify, { text });
+  } catch (notifyErr) {
+    console.error("[tiers] could not reach Telegram:", notifyErr);
+  }
+}
+
+/** Row-shaped adapter for the tested predicate in @prowl/shared. */
+function staleEvent(
+  existing: { polarSubscriptionId?: string; subscriptionModifiedAt?: number } | null,
+  args: { polarSubscriptionId?: string; subscriptionModifiedAt?: number },
+): boolean {
+  return isStaleSubscriptionEvent({
+    storedSubscriptionId: existing?.polarSubscriptionId,
+    storedModifiedAt: existing?.subscriptionModifiedAt,
+    incomingSubscriptionId: args.polarSubscriptionId,
+    incomingModifiedAt: args.subscriptionModifiedAt,
+  });
+}
+
 /** Internal mutation for webhook-triggered tier updates */
 export const update = internalMutation({
   args: {
@@ -181,12 +216,21 @@ export const update = internalMutation({
     tier: tierValidator,
     polarCustomerId: v.optional(v.string()),
     polarSubscriptionId: v.optional(v.string()),
+    /** Polar's modified_at, as an ordering key — see isStaleSubscriptionEvent. */
+    subscriptionModifiedAt: v.optional(v.number()),
+    /** Reconcile sends its own summary, so it suppresses the per-change alert. */
+    silent: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const existing = await ctx.db
       .query("userTiers")
       .withIndex("by_userId", (q) => q.eq("userId", args.userId))
       .unique();
+
+    if (staleEvent(existing, args)) {
+      console.log(`[tiers] update: ignoring stale event for ${args.userId} sub ${args.polarSubscriptionId}`);
+      return false;
+    }
 
     if (existing) {
       // A revoke must not wipe a manual grant that outlives the subscription
@@ -203,9 +247,17 @@ export const update = internalMutation({
       };
       if (args.polarCustomerId != null) patch.polarCustomerId = args.polarCustomerId;
       if (args.polarSubscriptionId != null) patch.polarSubscriptionId = args.polarSubscriptionId;
+      // The stamp only means anything next to the id it was read from. Writing
+      // a new id without one would leave the old subscription's timestamp
+      // guarding the new subscription, silently dropping its later events.
+      if (args.subscriptionModifiedAt != null) {
+        patch.subscriptionModifiedAt = args.subscriptionModifiedAt;
+      } else if (args.polarSubscriptionId != null && args.polarSubscriptionId !== existing.polarSubscriptionId) {
+        patch.subscriptionModifiedAt = undefined;
+      }
       await ctx.db.patch(existing._id, patch);
       const liveGrant = !!existing.grantUntil && existing.grantUntil > Date.now();
-      await announce(ctx, args.userId, {
+      if (!args.silent) await announce(ctx, args.userId, {
         before: effectiveTier(existing, Date.now()),
         after: args.tier,
         keptGrant: keepGrant,
@@ -220,9 +272,11 @@ export const update = internalMutation({
       };
       if (args.polarCustomerId != null) doc.polarCustomerId = args.polarCustomerId;
       if (args.polarSubscriptionId != null) doc.polarSubscriptionId = args.polarSubscriptionId;
+      if (args.subscriptionModifiedAt != null) doc.subscriptionModifiedAt = args.subscriptionModifiedAt;
       await ctx.db.insert("userTiers", doc as any);
-      await announce(ctx, args.userId, { before: "free", after: args.tier, keptGrant: false });
+      if (!args.silent) await announce(ctx, args.userId, { before: "free", after: args.tier, keptGrant: false });
     }
+    return true;
   },
 });
 
@@ -232,6 +286,9 @@ export const markCancelled = internalMutation({
     userId: v.string(),
     periodEnd: v.number(),
     polarSubscriptionId: v.optional(v.string()),
+    subscriptionModifiedAt: v.optional(v.number()),
+    /** Reconcile sends its own summary, so it suppresses the per-change alert. */
+    silent: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const existing = await ctx.db
@@ -239,15 +296,20 @@ export const markCancelled = internalMutation({
       .withIndex("by_userId", (q) => q.eq("userId", args.userId))
       .unique();
 
+    if (staleEvent(existing, args)) {
+      console.log(`[tiers] markCancelled: ignoring stale event for ${args.userId}`);
+      return false;
+    }
+
     if (!existing) {
       console.warn("[tiers] markCancelled: no userTiers record for userId:", args.userId, "sub:", args.polarSubscriptionId);
-      return;
+      return false;
     }
 
     // Already says exactly this. Returning early keeps cancelledAt meaning
     // "when they cancelled" rather than "when a job last looked", now that
     // reconcile re-asserts cancellations on every run.
-    if (existing.cancelledAt && existing.periodEnd === args.periodEnd) return;
+    if (existing.cancelledAt && existing.periodEnd === args.periodEnd) return true;
 
     const patch: Record<string, unknown> = {
       cancelledAt: Date.now(),
@@ -255,11 +317,12 @@ export const markCancelled = internalMutation({
       updatedAt: Date.now(),
     };
     if (args.polarSubscriptionId != null) patch.polarSubscriptionId = args.polarSubscriptionId;
+    if (args.subscriptionModifiedAt != null) patch.subscriptionModifiedAt = args.subscriptionModifiedAt;
     await ctx.db.patch(existing._id, patch);
 
     // Distinct from the revoke above: they still have access until periodEnd,
     // so this is the one with time left to do something about it.
-    if (!existing.cancelledAt) {
+    if (!existing.cancelledAt && !args.silent) {
       const until = new Date(args.periodEnd).toLocaleDateString("en-GB", {
         day: "numeric", month: "short", year: "numeric", timeZone: "UTC",
       });
@@ -267,6 +330,43 @@ export const markCancelled = internalMutation({
         text: `⚠️ Cancelled: ${effectiveTier(existing)} subscription, access until ${until} (${args.userId})`,
       });
     }
+    return true;
+  },
+});
+
+/**
+ * Undo a cancellation the customer has reversed.
+ *
+ * Nothing used to do this. A customer who resubscribed through the Polar
+ * portal kept the amber "your plan has been cancelled" banner, and once the
+ * old period end passed, "your access has expired" — while paying.
+ */
+export const clearCancellation = internalMutation({
+  args: {
+    userId: v.string(),
+    polarSubscriptionId: v.optional(v.string()),
+    subscriptionModifiedAt: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const existing = await ctx.db
+      .query("userTiers")
+      .withIndex("by_userId", (q) => q.eq("userId", args.userId))
+      .unique();
+    if (!existing || !existing.cancelledAt) return true;
+    if (staleEvent(existing, args)) return false;
+
+    const patch: Record<string, unknown> = {
+      cancelledAt: undefined,
+      periodEnd: undefined,
+      updatedAt: Date.now(),
+    };
+    if (args.subscriptionModifiedAt != null) patch.subscriptionModifiedAt = args.subscriptionModifiedAt;
+    await ctx.db.patch(existing._id, patch);
+
+    await ctx.scheduler.runAfter(0, internal.admin.notify, {
+      text: `↩️ Uncancelled: ${effectiveTier(existing)} subscription is staying (${args.userId})`,
+    });
+    return true;
   },
 });
 
@@ -362,11 +462,12 @@ const POLAR_MAX_PAGES = 20;
 
 type PolarSubscription = {
   id: string;
-  status: string;
   product_id?: string;
   customer_id?: string;
   cancel_at_period_end?: boolean;
   current_period_end?: string | null;
+  created_at?: string | null;
+  modified_at?: string | null;
   customer?: { external_id?: string | null } | null;
 };
 
@@ -423,36 +524,78 @@ export const cachedStateFor = internalQuery({
       tier: effectiveTier(row),
       subscriptionId: row?.polarSubscriptionId ?? null,
       isCancelled: !!row?.cancelledAt,
+      periodEnd: row?.periodEnd ?? null,
     }));
   },
 });
 
-export const reconcile = internalAction({
+/**
+ * Every row that names a Polar subscription, so reconcile can spot the ones
+ * Polar no longer bills. A full scan, bounded by paying customers rather than
+ * signups once the index below is the filter.
+ */
+export const rowsWithSubscriptions = internalQuery({
   args: {},
   handler: async (ctx) => {
+    const rows = await ctx.db.query("userTiers").collect();
+    return rows
+      .filter((r) => r.polarSubscriptionId !== undefined && effectiveTier(r) !== "free")
+      .map((r) => ({
+        userId: r.userId,
+        subscriptionId: r.polarSubscriptionId as string,
+        tier: effectiveTier(r),
+        /** A bought pass or admin trial explains paid access with no live sub. */
+        grantSource: r.grantSource ?? null,
+      }));
+  },
+});
+
+export const reconcile = internalAction({
+  args: {
+    /** Report what would change without writing it. The cron runs live. */
+    dryRun: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    const dryRun = args.dryRun === true;
     const token = process.env.POLAR_ACCESS_TOKEN;
     if (!token) {
       console.warn("[tiers] reconcile: POLAR_ACCESS_TOKEN not set, skipping");
       return;
     }
-    const proProductId = process.env.POLAR_PRO_PRODUCT_ID;
-    const maxProductId = process.env.POLAR_MAX_PRODUCT_ID;
+    const productIds = { pro: process.env.POLAR_PRO_PRODUCT_ID, max: process.env.POLAR_MAX_PRODUCT_ID };
+    // Without these every subscription falls through to "unknown product":
+    // zero repairs, and a daily message listing every paying customer as
+    // broken. Refuse to run rather than look like the drift we hunt.
+    if (!productIds.pro || !productIds.max) {
+      await notifyQuietly(ctx, "🚨 Billing reconcile skipped: POLAR_PRO_PRODUCT_ID / POLAR_MAX_PRODUCT_ID not set");
+      return;
+    }
 
     let subscriptions: PolarSubscription[];
     try {
       subscriptions = await fetchActiveSubscriptions(token, process.env.POLAR_ENVIRONMENT === "production");
     } catch (err) {
       // A reconcile that fails quietly is the bug it was written to catch, so
-      // this is the one failure worth interrupting for.
-      await ctx.runAction(internal.admin.notify, {
-        text: `🚨 Billing reconcile failed: ${err instanceof Error ? err.message : String(err)}`,
-      });
+      // this is the one failure worth interrupting for. notifyQuietly so a
+      // Telegram timeout cannot replace the Polar error on its way out.
+      await notifyQuietly(ctx, `🚨 Billing reconcile failed: ${err instanceof Error ? err.message : String(err)}`);
       throw err;
     }
 
-    const wanted: { userId: string; tier: Tier; sub: PolarSubscription }[] = [];
     const unknownProduct: string[] = [];
     const noExternalId: string[] = [];
+    const multipleSubs: string[] = [];
+
+    // One subscription per user, decided before anything is written.
+    //
+    // Polar's org setting currently forbids a customer holding two at once, so
+    // this is a guard rather than a live case — but iterating subscriptions
+    // and writing as we go made the row depend on the order the API happened
+    // to return them: a max and a cancelling pro could leave the tier on max,
+    // the subscription id pointing at pro, and the row marked cancelled.
+    // Highest tier wins, then the latest period end, so the choice is the same
+    // whatever order they arrive in.
+    const byUser = new Map<string, { userId: string; tier: Tier; sub: PolarSubscription }>();
 
     for (const sub of subscriptions) {
       const userId = sub.customer?.external_id;
@@ -460,19 +603,31 @@ export const reconcile = internalAction({
         noExternalId.push(sub.id);
         continue;
       }
-      const tier: Tier | null =
-        sub.product_id && sub.product_id === maxProductId
-          ? "max"
-          : sub.product_id && sub.product_id === proProductId
-            ? "pro"
-            : null;
+      const tier = productTier(sub.product_id, productIds);
       if (!tier) {
         unknownProduct.push(`${sub.id} (product ${sub.product_id})`);
         continue;
       }
-      wanted.push({ userId, tier, sub });
+
+      const held = byUser.get(userId);
+      if (!held) {
+        byUser.set(userId, { userId, tier, sub });
+        continue;
+      }
+      // Two active subscriptions is worth a person's attention either way, so
+      // say so once, naming the one that won.
+      const key = (c: { tier: Tier; sub: PolarSubscription }) => ({
+        id: c.sub.id,
+        tier: c.tier,
+        periodEndMs: c.sub.current_period_end ? Date.parse(c.sub.current_period_end) : 0,
+      });
+      const candidate = { userId, tier, sub };
+      const winner = preferSubscription(key(candidate), key(held)).id === sub.id ? candidate : held;
+      byUser.set(userId, winner);
+      multipleSubs.push(`${userId}: ${sub.id} and ${held.sub.id}, using ${winner.sub.id}`);
     }
 
+    const wanted = [...byUser.values()];
     const cached = wanted.length
       ? await ctx.runQuery(internal.tiers.cachedStateFor, { userIds: wanted.map((w) => w.userId) })
       : [];
@@ -481,92 +636,164 @@ export const reconcile = internalAction({
     const granted: string[] = [];
     const linked: string[] = [];
     const overGranted: string[] = [];
-
-    // What this run has already written, so a customer holding two active
-    // subscriptions is judged against the row as it stands rather than the
-    // pre-loop snapshot. Without it the second subscription reads the stale
-    // "free" and update() — which has no rank guard — demotes the first.
-    const writtenTier = new Map<string, Tier>();
+    const cancellations: string[] = [];
+    const uncancellations: string[] = [];
+    /** Writes the row refused because it already holds a newer event. */
+    const raced: string[] = [];
+    /** Subscription ids Polar still lists as active, for the orphan pass below. */
+    const seenSubscriptionIds = new Set<string>();
 
     for (const { userId, tier, sub } of wanted) {
       const current = cachedByUser.get(userId);
-      const currentTier = writtenTier.get(userId) ?? current?.tier ?? "free";
+      const currentTier = current?.tier ?? "free";
       const isLinked = current?.subscriptionId === sub.id;
-      let cancellationCleared = false;
+      let rowRewrittenThisRun = false;
+      seenSubscriptionIds.add(sub.id);
+
+      // Live Polar state is by definition current, so it carries the freshest
+      // ordering stamp and the mutations' stale-event guard never rejects it.
+      // modified_at is null until something changes, hence the created_at
+      // fallback — a row with no stamp at all cannot order anything.
+      const rawStamp = sub.modified_at ?? sub.created_at;
+      const stamped = rawStamp ? Date.parse(rawStamp) : NaN;
+      const ordering = Number.isFinite(stamped) ? { subscriptionModifiedAt: stamped } : {};
 
       const applyTier = async (outcome: string[], label: string) => {
-        await ctx.runMutation(internal.tiers.update, {
-          userId,
-          tier,
-          ...(sub.customer_id ? { polarCustomerId: sub.customer_id } : {}),
-          polarSubscriptionId: sub.id,
-        });
-        writtenTier.set(userId, tier);
-        // update() clears cancelledAt/periodEnd unconditionally, so anything
-        // below has to put a live cancellation back rather than trust the
-        // snapshot taken before this write.
-        cancellationCleared = true;
+        if (!dryRun) {
+          const applied = await ctx.runMutation(internal.tiers.update, {
+            userId,
+            tier,
+            ...(sub.customer_id ? { polarCustomerId: sub.customer_id } : {}),
+            polarSubscriptionId: sub.id,
+            ...ordering,
+            // Reconcile sends one summary below. Letting update() announce as
+            // well would report a six-month-old subscription to the operator
+            // as a sale made this morning.
+            silent: true,
+          });
+          if (!applied) {
+            // The row already holds a newer event than Polar's own record of
+            // this subscription. Claiming a repair we did not make is how a
+            // reconcile report stops being worth reading.
+            raced.push(`${userId}: row is ahead of Polar for sub ${sub.id}`);
+            return;
+          }
+        }
+        // update() clears cancelledAt/periodEnd unconditionally, so the
+        // cancellation decision below has to know the row was just rewritten
+        // rather than trust the snapshot taken before it.
+        rowRewrittenThisRun = true;
         outcome.push(label);
       };
 
-      if (TIER_RANK[currentTier] < TIER_RANK[tier]) {
-        // Underserving someone who is being billed — the harm this job exists
-        // for.
-        await applyTier(granted, `${userId}: ${currentTier} → ${tier}`);
-      } else if (TIER_RANK[currentTier] > TIER_RANK[tier]) {
-        // Access above what they pay for. Report only: a plan downgrade and a
-        // live admin trial look identical from here, and taking a tier away
-        // from the wrong one of those is the costlier mistake.
-        overGranted.push(`${userId}: on ${currentTier}, Polar bills ${tier} (sub ${sub.id})`);
-      } else if (!isLinked) {
-        // Right tier, but the row does not name this subscription — so a later
-        // cancel or revoke webhook has nothing to match on. Writing the id is
-        // what stops this reappearing in tomorrow's message unchanged.
-        await applyTier(linked, `${userId}: ${tier} linked to sub ${sub.id}`);
+      const action = reconcileAction({ cachedTier: currentTier, polarTier: tier, isLinked });
+      switch (action) {
+        case "grant":
+          await applyTier(granted, `${userId}: ${currentTier} → ${tier}`);
+          break;
+        case "link":
+          await applyTier(linked, `${userId}: ${tier} linked to sub ${sub.id}`);
+          break;
+        case "over-granted":
+          overGranted.push(`${userId}: on ${currentTier}, Polar bills ${tier} (sub ${sub.id})`);
+          break;
+        case "none":
+          break;
       }
 
-      const periodEnd = sub.current_period_end ? new Date(sub.current_period_end).getTime() : NaN;
-      if (sub.cancel_at_period_end && Number.isFinite(periodEnd)) {
-        // Skipped only when the cached row is already cancelled AND this run
-        // did not just wipe that state. markCancelled is itself a no-op when
-        // the row already says the same thing.
-        if (cancellationCleared || !current?.isCancelled) {
-          await ctx.runMutation(internal.tiers.markCancelled, {
+      // Only for the subscription this row actually reflects. On over-granted
+      // we deliberately refused to touch the tier, so writing a cancellation
+      // from that same subscription would repoint the row at it anyway — and
+      // announce an end date for a tier that is not the one ending.
+      if (action === "over-granted") continue;
+
+      const rawEnd = sub.current_period_end ? Date.parse(sub.current_period_end) : NaN;
+      const cancellation = cancellationAction({
+        polarCancelAtPeriodEnd: sub.cancel_at_period_end === true,
+        polarPeriodEndMs: Number.isFinite(rawEnd) ? rawEnd : null,
+        rowIsCancelled: !!current?.isCancelled,
+        rowPeriodEndMs: current?.periodEnd ?? undefined,
+        rowRewrittenThisRun,
+      });
+
+      if (cancellation === "mark") {
+        const applied =
+          dryRun ||
+          (await ctx.runMutation(internal.tiers.markCancelled, {
             userId,
-            periodEnd,
+            periodEnd: rawEnd,
             polarSubscriptionId: sub.id,
-          });
-        }
+            ...ordering,
+            silent: true,
+          }));
+        if (applied) cancellations.push(`${userId}: access until ${new Date(rawEnd).toISOString().slice(0, 10)}`);
+      } else if (cancellation === "clear") {
+        const applied =
+          dryRun ||
+          (await ctx.runMutation(internal.tiers.clearCancellation, {
+            userId,
+            polarSubscriptionId: sub.id,
+            ...ordering,
+          }));
+        if (applied) uncancellations.push(`${userId}: cancellation reversed`);
       }
     }
 
-    const fixed = granted.length + linked.length;
-    console.log(
-      `[tiers] reconcile: ${subscriptions.length} active sub(s), ${granted.length} granted, ` +
-        `${linked.length} linked, ${overGranted.length} over-granted`,
-    );
+    // Rows that still claim a Polar subscription Polar no longer lists as
+    // active. A missed subscription.revoked is the same delivery failure as
+    // the one this job exists for, just in the direction that costs money
+    // rather than goodwill — and nothing else in the system mentions it.
+    const orphans = (
+      await ctx.runQuery(internal.tiers.rowsWithSubscriptions, {})
+    ).filter((row) => !seenSubscriptionIds.has(row.subscriptionId));
 
-    // Silent when there is nothing wrong. The daily pulse already proves the
-    // crons are alive, so a heartbeat here would only add noise to the channel
-    // that has to stay worth reading.
     const repaired = [
       ...granted.map((g) => `  granted ${g}`),
       ...linked.map((l) => `  linked ${l}`),
+      ...cancellations.map((c) => `  cancelling ${c}`),
+      ...uncancellations.map((u) => `  uncancelled ${u}`),
     ];
     // These need a person. They repeat every morning until someone acts,
     // which is the point — nothing else in the system mentions them.
     const needsYou = [
       ...overGranted.map((o) => `  over-granted ${o}`),
+      ...raced.map((r) => `  ahead of Polar ${r}`),
+      ...orphans.map(
+        (o) =>
+          `  no live sub ${o.userId}: row says ${o.tier}` +
+          `${o.grantSource ? ` (${o.grantSource} grant)` : ", Polar bills nothing"} — sub ${o.subscriptionId}`,
+      ),
+      ...multipleSubs.map((m) => `  two active subs ${m}`),
       ...unknownProduct.map((u) => `  unknown product ${u}`),
       ...noExternalId.map((n) => `  no external id ${n}`),
     ];
+
+    console.log(
+      `[tiers] reconcile${dryRun ? " (dry run)" : ""}: ${subscriptions.length} active sub(s), ` +
+        `${repaired.length} repaired, ${needsYou.length} needing attention`,
+    );
+
+    // Silent when there is nothing wrong. The daily pulse already proves the
+    // crons are alive, so a heartbeat here would only add noise to the channel
+    // that has to stay worth reading. The one exception is an empty read:
+    // zero active subscriptions while rows still claim paid tiers means the
+    // token is pointed at the wrong account, and that looks identical to a
+    // clean run otherwise.
+    if (subscriptions.length === 0 && orphans.length > 0) {
+      await notifyQuietly(
+        ctx,
+        `🚨 Billing reconcile read 0 active subscriptions from Polar, but ${orphans.length} row(s) still claim one. ` +
+          `Check POLAR_ACCESS_TOKEN and POLAR_ENVIRONMENT before trusting this.`,
+      );
+      return;
+    }
+
     if (repaired.length || needsYou.length) {
+      const prefix = dryRun ? "🔁 Billing reconcile (dry run)" : "🔁 Billing reconcile";
       const headline = needsYou.length
-        ? `🔁 Billing reconcile: fixed ${fixed}, ${needsYou.length} need(s) you`
-        : `🔁 Billing reconcile: fixed ${fixed}`;
-      await ctx.runAction(internal.admin.notify, {
-        text: [headline, ...repaired, ...needsYou].join("\n"),
-      });
+        ? `${prefix}: ${dryRun ? "would fix" : "fixed"} ${repaired.length}, ${needsYou.length} need(s) you`
+        : `${prefix}: ${dryRun ? "would fix" : "fixed"} ${repaired.length}`;
+      await notifyQuietly(ctx, [headline, ...repaired, ...needsYou].join("\n"));
     }
   },
 });

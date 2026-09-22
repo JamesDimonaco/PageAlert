@@ -1,9 +1,11 @@
 import { createClient } from "@convex-dev/better-auth";
 import { convex } from "@convex-dev/better-auth/plugins";
 import type { GenericCtx } from "@convex-dev/better-auth/utils";
+import type { ActionCtx } from "../_generated/server";
 import type { BetterAuthOptions } from "better-auth";
 import { betterAuth } from "better-auth";
 import { polar, checkout, portal, webhooks } from "@polar-sh/better-auth";
+import { productTier } from "@prowl/shared";
 
 // Polyfill Buffer for Convex runtime — @polar-sh/sdk/webhooks uses
 // Buffer.from() for webhook signature verification which isn't available
@@ -68,11 +70,39 @@ const MAX_PRODUCT_ID = process.env.POLAR_MAX_PRODUCT_ID;
 const SPRINT_PRODUCT_ID = process.env.POLAR_SPRINT_PRODUCT_ID;
 const SPRINT_DAYS = 30;
 
-function productIdToTier(productId: string): "pro" | "max" | null {
-  if (productId === MAX_PRODUCT_ID) return "max";
-  if (productId === PRO_PRODUCT_ID) return "pro";
-  return null;
+/**
+ * Polar's own clock for this subscription, so the mutations can drop a replay
+ * that predates what the row already knows. modified_at is null until
+ * something changes it — a fresh subscription.created has only created_at,
+ * and a row with no stamp can order nothing.
+ */
+/** The user id Polar carries, across the camelCase/snake_case it has used. */
+function externalUserId(sub: SubscriptionPayload): string | undefined {
+  return (
+    sub.customer?.externalId ??
+    sub.customer?.external_id ??
+    sub.customerExternalId ??
+    sub.customer_external_id
+  ) ?? undefined;
 }
+
+function orderingStamp(sub: SubscriptionPayload): { subscriptionModifiedAt?: number } {
+  const raw = sub.modifiedAt ?? sub.modified_at ?? sub.createdAt ?? sub.created_at;
+  const ms = raw ? new Date(String(raw)).getTime() : NaN;
+  return Number.isFinite(ms) ? { subscriptionModifiedAt: ms } : {};
+}
+
+/**
+ * ctx as a webhook handler actually receives it.
+ *
+ * GenericCtx's union does not expose runMutation, but at runtime an HTTP route
+ * handler's ctx is action-like and has it — hence the `as any` the Polar and
+ * onboarding handlers below have used since the first one. Borrowing
+ * ActionCtx's signature instead keeps the mutation reference and its arguments
+ * type-checked, which on a money path is worth the one extra line. The
+ * existing casts are left alone; converting them is not this change's job.
+ */
+type WebhookCtx = GenericCtx<DataModel> & Pick<ActionCtx, "runMutation">;
 
 /**
  * The fields this file reads off a Polar subscription payload.
@@ -88,6 +118,10 @@ type SubscriptionPayload = {
   customerId?: string;
   cancelAtPeriodEnd?: boolean;
   cancel_at_period_end?: boolean;
+  modifiedAt?: string | Date | null;
+  modified_at?: string | Date | null;
+  createdAt?: string | Date | null;
+  created_at?: string | Date | null;
   currentPeriodEnd?: string | Date | null;
   current_period_end?: string | Date | null;
   customerExternalId?: string | null;
@@ -104,9 +138,8 @@ type SubscriptionPayload = {
  * at all, which is how a paying customer sat on free for six months.
  */
 async function grantFromSubscription(ctx: GenericCtx<DataModel>, sub: SubscriptionPayload, event: string) {
-  const tier = productIdToTier(sub.productId);
-  const userId =
-    sub.customer?.externalId ?? sub.customer?.external_id ?? sub.customerExternalId ?? sub.customer_external_id;
+  const tier = productTier(sub.productId, { pro: PRO_PRODUCT_ID, max: MAX_PRODUCT_ID });
+  const userId = externalUserId(sub);
   console.log(`[polar] Subscription ${event}:`, sub.id, "tier:", tier, "userId:", userId);
 
   if (!tier || !userId) {
@@ -114,11 +147,19 @@ async function grantFromSubscription(ctx: GenericCtx<DataModel>, sub: Subscripti
     return;
   }
 
-  await (ctx as any).runMutation(internal.tiers.update, {
+  // Polar retries a failed delivery up to ten times with backoff, so events
+  // do not arrive in the order they happened. Handing the mutations Polar's
+  // own modified_at lets them drop a replay that predates what the row already
+  // knows — without it, a stale `created` landing after a cancellation clears
+  // it, and the customer is never told when their access stops.
+  const ordering = orderingStamp(sub);
+
+  await (ctx as WebhookCtx).runMutation(internal.tiers.update, {
     userId,
     tier,
     polarCustomerId: sub.customerId,
     polarSubscriptionId: sub.id,
+    ...ordering,
   });
   console.log("[polar] Tier updated to", tier, "for user", userId);
 
@@ -128,10 +169,11 @@ async function grantFromSubscription(ctx: GenericCtx<DataModel>, sub: Subscripti
   const rawEnd = sub.currentPeriodEnd ?? sub.current_period_end;
   const periodEnd = rawEnd ? new Date(String(rawEnd)).getTime() : NaN;
   if ((sub.cancelAtPeriodEnd ?? sub.cancel_at_period_end) && Number.isFinite(periodEnd)) {
-    await (ctx as any).runMutation(internal.tiers.markCancelled, {
+    await (ctx as WebhookCtx).runMutation(internal.tiers.markCancelled, {
       userId,
       periodEnd,
       polarSubscriptionId: sub.id,
+      ...ordering,
     });
   }
 }
@@ -172,14 +214,13 @@ export const createAuthOptions = (ctx: GenericCtx<DataModel>) => {
             },
 
             onSubscriptionCanceled: async (payload) => {
-              const sub = payload.data;
-              const customer = sub.customer as Record<string, unknown> | undefined;
-              const userId = customer?.externalId ?? customer?.external_id ?? (sub as any).customerExternalId ?? (sub as any).customer_external_id;
+              const sub = payload.data as SubscriptionPayload;
+              const userId = externalUserId(sub);
 
               // Don't downgrade tier — user keeps access until period ends.
               // Just mark the subscription as cancelled with the period end date.
               if (userId) {
-                const rawPeriodEnd = (sub as any).currentPeriodEnd ?? (sub as any).current_period_end;
+                const rawPeriodEnd = sub.currentPeriodEnd ?? sub.current_period_end;
                 const periodEnd = rawPeriodEnd
                   ? new Date(String(rawPeriodEnd)).getTime()
                   : undefined;
@@ -188,26 +229,45 @@ export const createAuthOptions = (ctx: GenericCtx<DataModel>) => {
                   console.warn("[polar] Subscription canceled but no periodEnd found:", sub.id, "userId:", userId);
                 }
 
-                await (ctx as any).runMutation(internal.tiers.markCancelled, {
+                await (ctx as WebhookCtx).runMutation(internal.tiers.markCancelled, {
                   userId,
                   periodEnd: periodEnd ?? Date.now() + 30 * 24 * 60 * 60 * 1000, // fallback: 30 days
                   polarSubscriptionId: sub.id,
+                  // Without a stamp here the ordering guard has nothing to
+                  // compare against, and a retried `created` walks straight
+                  // over this cancellation.
+                  ...orderingStamp(sub),
                 });
               }
             },
 
+            // The reverse: a customer who resubscribes before the period ends.
+            // Unhandled, the row stayed cancelled and the settings page went on
+            // telling a paying customer their access had expired.
+            onSubscriptionUncanceled: async (payload) => {
+              const sub = payload.data as SubscriptionPayload;
+              const userId = externalUserId(sub);
+              console.log("[polar] Subscription uncanceled:", sub.id, "userId:", userId);
+              if (!userId) return;
+              await (ctx as WebhookCtx).runMutation(internal.tiers.clearCancellation, {
+                userId,
+                polarSubscriptionId: sub.id,
+                ...orderingStamp(sub),
+              });
+            },
+
             onSubscriptionRevoked: async (payload) => {
-              const sub = payload.data;
-              const customer = sub.customer as Record<string, unknown> | undefined;
-              const userId = customer?.externalId ?? customer?.external_id ?? (sub as any).customerExternalId ?? (sub as any).customer_external_id;
+              const sub = payload.data as SubscriptionPayload;
+              const userId = externalUserId(sub);
               console.log("[polar] Subscription revoked:", sub.id, "userId:", userId);
 
               if (userId) {
-                await (ctx as any).runMutation(internal.tiers.update, {
+                await (ctx as WebhookCtx).runMutation(internal.tiers.update, {
                   userId,
                   tier: "free" as const,
                   polarCustomerId: sub.customerId,
                   polarSubscriptionId: sub.id,
+                  ...orderingStamp(sub),
                 });
                 console.log("[polar] Tier downgraded to free for user", userId);
               }
