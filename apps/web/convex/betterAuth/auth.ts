@@ -5,7 +5,7 @@ import type { ActionCtx } from "../_generated/server";
 import type { BetterAuthOptions } from "better-auth";
 import { betterAuth } from "better-auth";
 import { polar, checkout, portal, webhooks } from "@polar-sh/better-auth";
-import { productTier, TIER_RANK } from "@prowl/shared";
+import { cancellationAction, periodEndMs, productTier, TIER_RANK } from "@prowl/shared";
 
 // Polyfill Buffer for Convex runtime — @polar-sh/sdk/webhooks uses
 // Buffer.from() for webhook signature verification which isn't available
@@ -177,15 +177,22 @@ async function grantFromSubscription(ctx: GenericCtx<DataModel>, sub: Subscripti
   }
   console.log("[polar] Tier updated to", tier, "for user", userId);
 
-  // update() clears cancelledAt, so a subscription that is already cancelled
-  // and merely going active again — a past-due renewal recovering, say — would
-  // otherwise lose its end date and stop telling the user when access stops.
-  const rawEnd = sub.currentPeriodEnd ?? sub.current_period_end;
-  const periodEnd = rawEnd ? new Date(String(rawEnd)).getTime() : NaN;
-  if ((sub.cancelAtPeriodEnd ?? sub.cancel_at_period_end) && Number.isFinite(periodEnd)) {
+  // Both directions, because update() no longer clears the cancellation when
+  // the subscription and tier are unchanged. Without the clear branch, a
+  // dropped `uncanceled` would leave the row saying "cancelled" forever and
+  // the settings page telling a paying customer their access had expired.
+  const periodEnd = periodEndMs(sub.currentPeriodEnd ?? sub.current_period_end);
+  const cancelling = (sub.cancelAtPeriodEnd ?? sub.cancel_at_period_end) === true;
+  if (cancelling && periodEnd !== null) {
     await (ctx as WebhookCtx).runMutation(internal.tiers.markCancelled, {
       userId,
       periodEnd,
+      polarSubscriptionId: sub.id,
+      ...ordering,
+    });
+  } else if (!cancelling) {
+    await (ctx as WebhookCtx).runMutation(internal.tiers.clearCancellation, {
+      userId,
       polarSubscriptionId: sub.id,
       ...ordering,
     });
@@ -242,8 +249,12 @@ export const createAuthOptions = (ctx: GenericCtx<DataModel>) => {
               const tier = productTier(sub.productId, { pro: PRO_PRODUCT_ID, max: MAX_PRODUCT_ID });
               if (!userId || !tier) return;
 
-              const current = await (ctx as WebhookCtx).runQuery(internal.tiers.effectiveFor, { userId });
-              if (TIER_RANK[current] >= TIER_RANK[tier]) return;
+              // Stored tier, not the effective one: a live grant can put a
+              // customer at max while their subscription row still says pro,
+              // and skipping the write there leaves the row on pro to collapse
+              // to free the moment the grant lapses.
+              const stored = await (ctx as WebhookCtx).runQuery(internal.tiers.storedTierFor, { userId });
+              if (TIER_RANK[stored] >= TIER_RANK[tier]) return;
               await grantFromSubscription(ctx, payload.data, "updated");
             },
 
@@ -254,18 +265,16 @@ export const createAuthOptions = (ctx: GenericCtx<DataModel>) => {
               // Don't downgrade tier — user keeps access until period ends.
               // Just mark the subscription as cancelled with the period end date.
               if (userId) {
-                const rawPeriodEnd = sub.currentPeriodEnd ?? sub.current_period_end;
-                const periodEnd = rawPeriodEnd
-                  ? new Date(String(rawPeriodEnd)).getTime()
-                  : undefined;
+                const periodEnd = periodEndMs(sub.currentPeriodEnd ?? sub.current_period_end);
 
-                if (!periodEnd) {
+                if (periodEnd === null) {
                   console.warn("[polar] Subscription canceled but no periodEnd found:", sub.id, "userId:", userId);
                 }
 
                 await (ctx as WebhookCtx).runMutation(internal.tiers.markCancelled, {
                   userId,
                   periodEnd: periodEnd ?? Date.now() + 30 * 24 * 60 * 60 * 1000, // fallback: 30 days
+
                   polarSubscriptionId: sub.id,
                   // Without a stamp here the ordering guard has nothing to
                   // compare against, and a retried `created` walks straight
@@ -296,14 +305,20 @@ export const createAuthOptions = (ctx: GenericCtx<DataModel>) => {
               console.log("[polar] Subscription revoked:", sub.id, "userId:", userId);
 
               if (userId) {
-                await (ctx as WebhookCtx).runMutation(internal.tiers.update, {
+                const applied = await (ctx as WebhookCtx).runMutation(internal.tiers.update, {
                   userId,
                   tier: "free" as const,
                   polarCustomerId: sub.customerId ?? sub.customer_id,
                   polarSubscriptionId: sub.id,
                   ...orderingStamp(sub),
                 });
-                console.log("[polar] Tier downgraded to free for user", userId);
+                // The path that takes access away needs the same honesty as
+                // the one that grants it: a refused write must not log as done.
+                console.log(
+                  applied
+                    ? `[polar] Tier downgraded to free for user ${userId}`
+                    : `[polar] Revoke for ${sub.id} not applied to ${userId} (stale or superseded)`,
+                );
               }
             },
 

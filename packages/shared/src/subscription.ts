@@ -127,8 +127,28 @@ export function preferSubscription<T extends { tier: TierName; periodEndMs: numb
   b: T,
 ): T {
   if (TIER_RANK[a.tier] !== TIER_RANK[b.tier]) return TIER_RANK[a.tier] > TIER_RANK[b.tier] ? a : b;
-  if (a.periodEndMs !== b.periodEndMs) return a.periodEndMs > b.periodEndMs ? a : b;
+  // NaN fails every comparison, so comparing it directly fell through to
+  // "return the second argument" — order-dependent, which is the one thing
+  // this function exists to rule out.
+  const aEnd = Number.isFinite(a.periodEndMs) ? a.periodEndMs : 0;
+  const bEnd = Number.isFinite(b.periodEndMs) ? b.periodEndMs : 0;
+  if (aEnd !== bEnd) return aEnd > bEnd ? a : b;
   return a.id > b.id ? a : b;
+}
+
+/**
+ * Polar's period end as milliseconds, from whichever shape it arrived in.
+ *
+ * The SDK hands webhooks a Date and the REST API a string, and String(date)
+ * renders to the second — so stringifying first stored a value up to 999ms
+ * below the one reconcile wrote for the same instant. Each writer then saw
+ * the other's value as drift and "corrected" it, resetting cancelledAt every
+ * morning. One helper, one precision, all three call sites.
+ */
+export function periodEndMs(raw: string | Date | null | undefined): number | null {
+  if (raw == null || raw === "") return null;
+  const ms = raw instanceof Date ? raw.getTime() : Date.parse(String(raw));
+  return Number.isFinite(ms) ? ms : null;
 }
 
 export type CancellationAction =

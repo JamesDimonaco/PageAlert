@@ -204,6 +204,13 @@ async function notifyQuietly(ctx: Pick<ActionCtx, "runAction">, text: string) {
   }
 }
 
+/** DMY, the convention for anything a person reads. Storage stays epoch ms. */
+function displayDate(ms: number): string {
+  return new Date(ms).toLocaleDateString("en-GB", {
+    day: "numeric", month: "short", year: "numeric", timeZone: "UTC",
+  });
+}
+
 /** Row-shaped adapter for the tested predicate in @prowl/shared. */
 function staleEvent(
   existing: { polarSubscriptionId?: string; subscriptionModifiedAt?: number } | null,
@@ -217,15 +224,21 @@ function staleEvent(
   });
 }
 
-/** The tier a user is on right now, for handlers that must not downgrade. */
-export const effectiveFor = internalQuery({
+/**
+ * The tier stored on the row, ignoring any grant on top of it.
+ *
+ * Deliberately not effectiveTier: a live grant can read as max while the
+ * subscription row still says pro, and a handler that skips its write on that
+ * basis leaves the row to collapse to free when the grant lapses.
+ */
+export const storedTierFor = internalQuery({
   args: { userId: v.string() },
   handler: async (ctx, { userId }) => {
     const row = await ctx.db
       .query("userTiers")
       .withIndex("by_userId", (q) => q.eq("userId", userId))
       .unique();
-    return effectiveTier(row);
+    return row?.tier ?? ("free" as Tier);
   },
 });
 
@@ -249,6 +262,25 @@ export const update = internalMutation({
 
     if (staleEvent(existing, args)) {
       console.log(`[tiers] update: ignoring stale event for ${args.userId} sub ${args.polarSubscriptionId}`);
+      return false;
+    }
+
+    // A retried event for a subscription the row has since moved off says
+    // nothing about the one it holds now. The stale guard cannot catch this —
+    // a different id is deliberately a different timeline — so a late
+    // `revoked` for a cancelled subscription would drop a customer who has
+    // already resubscribed. Raising a tier from a new subscription is fine;
+    // lowering one on behalf of a dead subscription is not.
+    if (
+      existing?.polarSubscriptionId &&
+      args.polarSubscriptionId != null &&
+      args.polarSubscriptionId !== existing.polarSubscriptionId &&
+      TIER_RANK[args.tier] < TIER_RANK[effectiveTier(existing)]
+    ) {
+      console.warn(
+        `[tiers] update: refusing to lower ${args.userId} to ${args.tier} on behalf of ` +
+          `${args.polarSubscriptionId}; row holds ${existing.polarSubscriptionId}`,
+      );
       return false;
     }
 
@@ -327,6 +359,21 @@ export const markCancelled = internalMutation({
       return false;
     }
 
+    // Same reasoning as clearCancellation's guard: a cancellation belongs to
+    // the subscription that raised it, and stamping it onto a row that has
+    // moved on tells a paying customer their access is ending.
+    if (
+      existing?.polarSubscriptionId &&
+      args.polarSubscriptionId != null &&
+      args.polarSubscriptionId !== existing.polarSubscriptionId
+    ) {
+      console.warn(
+        `[tiers] markCancelled: ${args.userId} holds ${existing.polarSubscriptionId}, ` +
+          `cancel is for ${args.polarSubscriptionId} — ignoring`,
+      );
+      return false;
+    }
+
     if (!existing) {
       console.warn("[tiers] markCancelled: no userTiers record for userId:", args.userId, "sub:", args.polarSubscriptionId);
       return false;
@@ -335,7 +382,7 @@ export const markCancelled = internalMutation({
     // Already says exactly this. Returning early keeps cancelledAt meaning
     // "when they cancelled" rather than "when a job last looked", now that
     // reconcile re-asserts cancellations on every run.
-    if (existing.cancelledAt && existing.periodEnd === args.periodEnd) return true;
+    if (existing.cancelledAt && existing.periodEnd === args.periodEnd) return "unchanged" as const;
 
     const patch: Record<string, unknown> = {
       cancelledAt: Date.now(),
@@ -587,11 +634,14 @@ export const cachedStateFor = internalQuery({
 /** See rowsWithSubscriptions. Well under Convex's 16,384-document query limit. */
 const ORPHAN_SCAN_CAP = 8000;
 
+/** Under admin.notify's silent 4,000-character slice, with room for the tail line. */
+const MESSAGE_BUDGET = 3800;
+
 export const rowsWithSubscriptions = internalQuery({
   args: {},
   handler: async (ctx) => {
     const rows = await ctx.db.query("userTiers").take(ORPHAN_SCAN_CAP);
-    return rows
+    const linked = rows
       .filter((r) => r.polarSubscriptionId !== undefined && effectiveTier(r) !== "free")
       .map((r) => ({
         userId: r.userId,
@@ -600,15 +650,9 @@ export const rowsWithSubscriptions = internalQuery({
         /** A bought pass or admin trial explains paid access with no live sub. */
         grantSource: r.grantSource ?? null,
       }));
-  },
-});
-
-/** True when the orphan scan hit its cap, so its result is a subset. */
-export const orphanScanTruncated = internalQuery({
-  args: {},
-  handler: async (ctx) => {
-    const rows = await ctx.db.query("userTiers").take(ORPHAN_SCAN_CAP);
-    return rows.length === ORPHAN_SCAN_CAP;
+    // Reported from the same read, so the flag cannot describe a different
+    // snapshot than the list it belongs to.
+    return { rows: linked, truncated: rows.length === ORPHAN_SCAN_CAP };
   },
 });
 
@@ -626,7 +670,9 @@ export const reconcile = internalAction({
     const dryRun = args.dryRun === true || !enabled;
     const token = process.env.POLAR_ACCESS_TOKEN;
     if (!token) {
-      console.warn("[tiers] reconcile: POLAR_ACCESS_TOKEN not set, skipping");
+      // Logging alone would make a permanently dead reconcile look exactly
+      // like a clean one — the shape of the six-month bug this job exists for.
+      await notifyQuietly(ctx, "🚨 Billing reconcile skipped: POLAR_ACCESS_TOKEN not set");
       return;
     }
     const productIds = { pro: process.env.POLAR_PRO_PRODUCT_ID, max: process.env.POLAR_MAX_PRODUCT_ID };
@@ -696,7 +742,6 @@ export const reconcile = internalAction({
       });
       const candidate = { userId, tier, sub };
       const winner = preferSubscription(key(candidate), key(held)).id === sub.id ? candidate : held;
-      seenSubscriptionIds.add(held.sub.id);
       byUser.set(userId, winner);
       multipleSubs.push(`${userId}: ${sub.id} and ${held.sub.id}, using ${winner.sub.id}`);
     }
@@ -764,14 +809,14 @@ export const reconcile = internalAction({
       // leaving it on a subscriber drops them to free when it passes. But a
       // bought pass is time the customer paid for, and losing it silently in a
       // background job is not something to find out from a support email.
-      if (current?.liveGrant && reconcileAction({ cachedTier: currentTier, polarTier: tier, isLinked }) !== "none") {
+      const action = reconcileAction({ cachedTier: currentTier, polarTier: tier, isLinked });
+      if (current?.liveGrant && action !== "none") {
         grantsReplaced.push(
           `${userId}: ${current.liveGrant.source ?? "unknown"} grant to ` +
-            `${new Date(current.liveGrant.until).toISOString().slice(0, 10)} replaced by ${tier} subscription`,
+            `${displayDate(current.liveGrant.until)} replaced by ${tier} subscription`,
         );
       }
 
-      const action = reconcileAction({ cachedTier: currentTier, polarTier: tier, isLinked });
       switch (action) {
         case "grant":
           await applyTier(granted, `${userId}: ${currentTier} → ${tier}`);
@@ -802,16 +847,18 @@ export const reconcile = internalAction({
       });
 
       if (cancellation === "mark") {
-        const applied =
-          dryRun ||
-          (await ctx.runMutation(internal.tiers.markCancelled, {
-            userId,
-            periodEnd: rawEnd,
-            polarSubscriptionId: sub.id,
-            ...ordering,
-            silent: true,
-          }));
-        if (applied) cancellations.push(`${userId}: access until ${new Date(rawEnd).toISOString().slice(0, 10)}`);
+        const result = dryRun
+          ? true
+          : await ctx.runMutation(internal.tiers.markCancelled, {
+              userId,
+              periodEnd: rawEnd,
+              polarSubscriptionId: sub.id,
+              ...ordering,
+              silent: true,
+            });
+        // "unchanged" means the row already said exactly this. Counting it
+        // would put a repair in the report that no one made.
+        if (result === true) cancellations.push(`${userId}: access until ${displayDate(rawEnd)}`);
       } else if (cancellation === "clear") {
         const applied =
           dryRun ||
@@ -829,10 +876,10 @@ export const reconcile = internalAction({
     // active. A missed subscription.revoked is the same delivery failure as
     // the one this job exists for, just in the direction that costs money
     // rather than goodwill — and nothing else in the system mentions it.
-    const [allLinkedRows, orphanScanCapped] = await Promise.all([
-      ctx.runQuery(internal.tiers.rowsWithSubscriptions, {}),
-      ctx.runQuery(internal.tiers.orphanScanTruncated, {}),
-    ]);
+    const { rows: allLinkedRows, truncated: orphanScanCapped } = await ctx.runQuery(
+      internal.tiers.rowsWithSubscriptions,
+      {},
+    );
     const orphans = allLinkedRows.filter((row) => !seenSubscriptionIds.has(row.subscriptionId));
 
     const repaired = [
@@ -885,7 +932,21 @@ export const reconcile = internalAction({
       const headline = needsYou.length
         ? `${prefix}: ${dryRun ? "would fix" : "fixed"} ${repaired.length}, ${needsYou.length} need(s) you`
         : `${prefix}: ${dryRun ? "would fix" : "fixed"} ${repaired.length}`;
-      await notifyQuietly(ctx, [headline, ...repaired, ...needsYou].join("\n"));
+      // admin.notify slices at 4,000 characters without saying so, and the
+      // lines it would cut are the ones appended last — including the warning
+      // that the list is already partial. Say what was left out instead.
+      const lines = [headline, ...repaired, ...needsYou];
+      const shown: string[] = [];
+      let budget = MESSAGE_BUDGET;
+      for (const line of lines) {
+        if (budget - line.length - 1 < 0) break;
+        budget -= line.length + 1;
+        shown.push(line);
+      }
+      const omitted = lines.length - shown.length;
+      if (omitted > 0) shown.push(`  …and ${omitted} more line(s) — see the Convex logs`);
+      console.log(`[tiers] reconcile report:\n${lines.join("\n")}`);
+      await notifyQuietly(ctx, shown.join("\n"));
     }
   },
 });

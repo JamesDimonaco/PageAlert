@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   cancellationAction,
   isStaleSubscriptionEvent,
+  periodEndMs,
   productTier,
   preferSubscription,
   reconcileAction,
@@ -248,5 +249,49 @@ describe("productTier", () => {
     expect(productTier(undefined, { pro: undefined, max: undefined })).toBeNull();
     expect(productTier(undefined, ids)).toBeNull();
     expect(productTier("prod_pro", { pro: undefined, max: undefined })).toBeNull();
+  });
+});
+
+describe("periodEndMs", () => {
+  it("keeps milliseconds from a Date, matching an ISO string exactly", () => {
+    // The webhook path used String(date) first, which renders to the second.
+    // Reconcile parsed the ISO form at full precision, so the two writers
+    // stored different values for one instant and each run "corrected" the
+    // other — resetting cancelledAt to this morning, every morning.
+    const iso = "2026-10-15T12:34:56.789Z";
+    expect(periodEndMs(new Date(iso))).toBe(Date.parse(iso));
+    expect(periodEndMs(iso)).toBe(Date.parse(iso));
+  });
+
+  it("returns null for anything unusable rather than NaN", () => {
+    expect(periodEndMs(null)).toBeNull();
+    expect(periodEndMs(undefined)).toBeNull();
+    expect(periodEndMs("")).toBeNull();
+    expect(periodEndMs("not a date")).toBeNull();
+  });
+});
+
+describe("preferSubscription with an unusable period end", () => {
+  it("still gives the same answer whichever order they arrive in", () => {
+    // NaN fails every comparison, so the old code fell through to "return the
+    // second argument" — order-dependent, which is the one thing this function
+    // exists to rule out.
+    const a = { id: "a", tier: "pro" as TierName, periodEndMs: Number.NaN };
+    const b = { id: "b", tier: "pro" as TierName, periodEndMs: 5_000 };
+    expect(preferSubscription(a, b).id).toBe(preferSubscription(b, a).id);
+  });
+
+  it("is still order-independent when neither end is usable", () => {
+    // Normalising only one side happens to stay symmetric against a good
+    // value, so this is the case that actually pins both.
+    const a = { id: "a", tier: "pro" as TierName, periodEndMs: Number.NaN };
+    const b = { id: "b", tier: "pro" as TierName, periodEndMs: Number.NaN };
+    expect(preferSubscription(a, b).id).toBe(preferSubscription(b, a).id);
+  });
+
+  it("prefers a real period end over an unusable one", () => {
+    const a = { id: "a", tier: "pro" as TierName, periodEndMs: Number.NaN };
+    const b = { id: "b", tier: "pro" as TierName, periodEndMs: 5_000 };
+    expect(preferSubscription(a, b).id).toBe("b");
   });
 });
