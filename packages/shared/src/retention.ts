@@ -6,8 +6,10 @@ import type { TierName } from "./subscription";
  *
  * This is a window on to the data, not a lifetime: nothing is deleted, so an
  * upgrade makes the older checks readable again the moment it lands, and a
- * downgrade hides them rather than destroying them. Support can still see
- * everything, which is the whole reason for keeping them.
+ * downgrade hides them rather than destroying them.
+ *
+ * Deleting the account does remove them — see deleteScrapeLogs in
+ * convex/account.ts. Only the reading is gated.
  *
  * The numbers are sold on the pricing page — lib/plans.ts reads them from
  * here so the cards cannot drift from what the server actually serves, which

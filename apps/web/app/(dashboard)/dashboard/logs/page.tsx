@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useMemo } from "react";
-import { useQuery } from "convex/react";
+import { useConvexAuth, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -51,6 +51,11 @@ type StatusFilter = "all" | "success" | "error" | "timeout" | "blocked";
 export default function LogsPage() {
   const data = useQuery(api.logs.list, { limit: FETCH_LIMIT });
   const logs = data?.logs;
+  // Convex's own auth state, not Better Auth's. A null window means the query
+  // saw no identity, which is normal while this is still settling and
+  // terminal once it has — without the second half the page spins forever on
+  // the split where Better Auth is signed in and the Convex socket is not.
+  const { isLoading: convexAuthLoading } = useConvexAuth();
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [monitorFilter, setMonitorFilter] = useState<string>("all");
@@ -273,8 +278,8 @@ export default function LogsPage() {
       </div>
 
       {/* windowDays is null until Convex has the identity, so an empty result
-          here is "not looked yet", not "nothing to show". */}
-      {logs === undefined || windowDays == null ? (
+          here is "not looked yet" — but only while that is still resolving. */}
+      {logs === undefined || (windowDays == null && convexAuthLoading) ? (
         <div className="flex items-center justify-center py-20">
           <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
         </div>
@@ -284,9 +289,11 @@ export default function LogsPage() {
           <p className="text-sm font-medium mb-1">No checks to show</p>
           {/* Says what the page covers without claiming there is anything
               behind it — a new account and a downgraded one both land here. */}
-          <p className="text-xs text-muted-foreground">
-            This page shows your last {windowDays} days.
-          </p>
+          {windowDays != null && (
+            <p className="text-xs text-muted-foreground">
+              This page shows your last {windowDays} days.
+            </p>
+          )}
         </div>
       ) : filtered.length === 0 ? (
         <div className="flex flex-col items-center justify-center rounded-xl bg-card/30 py-20">
@@ -340,7 +347,9 @@ export default function LogsPage() {
           {isFiltered && `, filtered from ${logs.length}`}
           {data?.capped
             ? ` — the ${FETCH_LIMIT} most recent of your last ${windowDays} days`
-            : windowDays != null && ` — every check in your last ${windowDays} days`}
+            /* "every check" only reads true of an unfiltered view; next to a
+               filter clause it would contradict the sentence it ends. */
+            : !isFiltered && ` — every check in your last ${windowDays} days`}
         </p>
       )}
     </div>

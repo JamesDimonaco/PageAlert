@@ -1,7 +1,7 @@
 "use client";
 
 import { use, useState } from "react";
-import { useQuery } from "convex/react";
+import { useConvexAuth, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 
 import { formatStrategy } from "@/lib/strategy";
@@ -52,14 +52,16 @@ export default function LogDetailPage({
 }) {
   const { id } = use(params);
   const result = useQuery(api.logs.get, { id: id as Id<"scrapeLogs"> });
+  const { isLoading: convexAuthLoading } = useConvexAuth();
   const log = result?.log as (NonNullable<typeof result>["log"] & LogExtended) | null | undefined;
   const [showRaw, setShowRaw] = useState(false);
   const { open: openCreate } = useCreateMonitor();
   const router = useRouter();
 
-  // A null window means Convex has not got the identity yet, not that the log
-  // is missing — the same first-round-trip gap the list page waits out.
-  if (result === undefined || result.windowDays == null) {
+  // A null window means the query saw no identity — worth waiting out while
+  // Convex auth is still settling, but not past that, or the page spins
+  // forever on the split where Better Auth is signed in and the socket is not.
+  if (result === undefined || (result.windowDays == null && convexAuthLoading)) {
     return (
       <div className="flex items-center justify-center py-32">
         <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
