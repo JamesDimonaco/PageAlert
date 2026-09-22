@@ -50,4 +50,19 @@ crons.daily(
   internal.pulse.dailyPulse
 );
 
+// Re-read Polar and grant anyone whose subscription the webhooks missed. The
+// webhook path can only act on events it receives, so this is what stops a
+// dropped subscription.created from billing someone indefinitely for free
+// access. 07:30 UTC, so the pulse half an hour later counts the repaired tier.
+//
+// Gated by BILLING_RECONCILE_ENABLED — until that is "true" the run reports
+// what it would change and writes nothing — the same shape as the dormant-
+// monitor reaper above.
+crons.daily(
+  "reconcile-billing",
+  { hourUTC: 7, minuteUTC: 30 },
+  internal.tiers.reconcile,
+  {}
+);
+
 export default crons;

@@ -5,6 +5,7 @@ import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { setUserProperties } from "@/lib/posthog";
+import { TIER_RANK } from "@prowl/shared";
 
 export type Tier = "free" | "sprint" | "pro" | "max";
 
@@ -103,7 +104,6 @@ function fetchPolarTier(force = false): Promise<Tier | null | undefined> {
 }
 
 // Pick the higher-privilege tier between two sources
-const TIER_RANK: Record<Tier, number> = { free: 0, sprint: 1, pro: 2, max: 3 };
 function higherTier(a: Tier, b: Tier): Tier {
   return TIER_RANK[a] >= TIER_RANK[b] ? a : b;
 }
