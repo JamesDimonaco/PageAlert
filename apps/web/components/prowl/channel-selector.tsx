@@ -28,6 +28,15 @@ const CHANNEL_CONFIG: Record<Channel, { label: string; icon: typeof Mail }> = {
 const RESTRICTED: Channel[] = ["telegram", "discord", "sms"];
 
 /**
+ * Channels whose availability is a notificationSettings row. Equal to
+ * RESTRICTED today, but by coincidence rather than by rule — email needs no
+ * row, push is proved by a device, and a future paid-but-unrationed channel
+ * would belong here and not there. Kept separate so adding one cannot quietly
+ * change who gets rationed.
+ */
+const SETTINGS_BACKED: Channel[] = ["telegram", "discord", "sms"];
+
+/**
  * Channels the user has actually set up. Email is always available; push has no
  * settings row, so a registered device is what makes it available.
  *
@@ -43,7 +52,7 @@ export function useConfiguredChannels(): Channel[] | undefined {
     const configured: Channel[] = ["email"];
     if (pushDevices > 0) configured.push("push");
     for (const s of notifSettings) {
-      if (s.enabled && (RESTRICTED as string[]).includes(s.channel)) {
+      if (s.enabled && (SETTINGS_BACKED as string[]).includes(s.channel)) {
         configured.push(s.channel as Channel);
       }
     }

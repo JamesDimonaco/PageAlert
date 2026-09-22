@@ -1002,6 +1002,9 @@ export const reconcile = internalAction({
       console.log(`[tiers] reconcile report:\n${lines.join("\n")}`);
       await notifyQuietly(ctx, shown.join("\n"));
     }
+  },
+});
+
 // ---- SMS allowance ----
 
 /**
@@ -1026,12 +1029,63 @@ export const SMS_LIMITS: Record<Tier, { month: number; day: number }> = {
   max: { month: 200, day: 50 },
 };
 
+const SMS_BUDGET_DEFAULT = 2000;
+
 /**
  * Ceiling on texts across every user, in case a bug or an abuser defeats the
  * per-user caps. Past it SMS stops and alerts fall back to email, which is the
  * failure an operator would pick. 2000 sends is roughly $112 a month.
+ *
+ * Read through Number.isFinite rather than `??`, because an env var is a
+ * string: a dashboard value of "" is not null, so `??` would not fire and
+ * Number("") is 0 — SMS dead on arrival. A typo is worse. `used >= NaN` is
+ * always false, so the backstop would quietly stop existing in exactly the
+ * "the code is wrong" case it was written for.
  */
-const SMS_MONTHLY_BUDGET = Number(process.env.SMS_MONTHLY_BUDGET ?? 2000);
+function smsMonthlyBudget(): number {
+  const raw = Number(process.env.SMS_MONTHLY_BUDGET);
+  return Number.isFinite(raw) && raw >= 0 ? raw : SMS_BUDGET_DEFAULT;
+}
+
+/**
+ * Count one text against the ceiling that applies to everyone, or refuse.
+ *
+ * Shared by alerts and verification codes. A verification code is a real text
+ * with a real cost, and it is the one send an unpaid attacker can reach, so
+ * leaving it outside the budget would leave the backstop guarding the wrong
+ * door. Called only once a send is actually going to happen, so a refusal
+ * never consumes budget.
+ */
+export async function spendSmsBudget(ctx: MutationCtx): Promise<boolean> {
+  const month = new Date().toISOString().slice(0, 7);
+  const key = `sms:sends:${month}`;
+  const budget = smsMonthlyBudget();
+
+  const row = await ctx.db
+    .query("counters")
+    .withIndex("by_name", (q) => q.eq("name", key))
+    .unique();
+  const used = row?.value ?? 0;
+
+  if (used >= budget) {
+    const alertKey = `sms:cap-alerted:${month}`;
+    const alerted = await ctx.db
+      .query("counters")
+      .withIndex("by_name", (q) => q.eq("name", alertKey))
+      .unique();
+    if (!alerted) {
+      await ctx.db.insert("counters", { name: alertKey, value: Date.now() });
+      await ctx.scheduler.runAfter(0, internal.admin.notify, {
+        text: `PageAlert: the SMS budget for ${month} is spent (${budget} sends). Alerts fall back to email until next month.`,
+      });
+    }
+    return false;
+  }
+
+  if (row) await ctx.db.patch(row._id, { value: used + 1 });
+  else await ctx.db.insert("counters", { name: key, value: 1 });
+  return true;
+}
 
 /** Why a send was refused. "budget" is ours; the others are the user's. */
 export type SmsRefusal = "day" | "month" | "budget";
@@ -1069,50 +1123,27 @@ export const reserveSmsSend = internalMutation({
     const tier = effectiveTier(record);
     const limits = SMS_LIMITS[tier];
 
-    const budgetKey = `sms:sends:${month}`;
-    const budgetRow = await ctx.db
-      .query("counters")
-      .withIndex("by_name", (q) => q.eq("name", budgetKey))
-      .unique();
-    const budgetUsed = budgetRow?.value ?? 0;
-    const spendOne = async () => {
-      if (budgetRow) await ctx.db.patch(budgetRow._id, { value: budgetUsed + 1 });
-      else await ctx.db.insert("counters", { name: budgetKey, value: 1 });
-    };
-
-    // The global budget comes first: when it is spent nobody sends, and a user
-    // must not have a text deducted for a send that never happened.
-    if (budgetUsed >= SMS_MONTHLY_BUDGET) {
-      const alertKey = `sms:cap-alerted:${month}`;
-      const alerted = await ctx.db
-        .query("counters")
-        .withIndex("by_name", (q) => q.eq("name", alertKey))
-        .unique();
-      if (!alerted) {
-        await ctx.db.insert("counters", { name: alertKey, value: Date.now() });
-        await ctx.scheduler.runAfter(0, internal.admin.notify, {
-          text: `PageAlert: the SMS budget for ${month} is spent (${SMS_MONTHLY_BUDGET} sends). Alerts fall back to email until next month.`,
-        });
-      }
-      return { ok: false, reason: "budget", notifyExhausted: false, monthLimit: limits.month };
-    }
-
     const monthUsed = record?.smsMonth === month ? (record.smsMonthCount ?? 0) : 0;
     const dayUsed = record?.smsDay === day ? (record.smsDayCount ?? 0) : 0;
 
     if (monthUsed >= limits.month) {
-      // The "you are out" notice is itself a text, so it is reserved like any
-      // other send and marked spent in the same write that refuses this one.
-      const owed = !!record && record.smsCapNotifiedMonth !== month;
-      if (owed && record) {
-        await ctx.db.patch(record._id, { smsCapNotifiedMonth: month });
-        await spendOne();
-      }
+      // The "you are out" notice is itself a text, so it only goes out if the
+      // global budget can carry it — and is marked spent in the same write
+      // that refuses this alert, so it costs one text a month, not one per
+      // refused alert.
+      const owed =
+        !!record && record.smsCapNotifiedMonth !== month && (await spendSmsBudget(ctx));
+      if (owed && record) await ctx.db.patch(record._id, { smsCapNotifiedMonth: month });
       return { ok: false, reason: "month", notifyExhausted: owed, monthLimit: limits.month };
     }
 
     if (dayUsed >= limits.day) {
       return { ok: false, reason: "day", notifyExhausted: false, monthLimit: limits.month };
+    }
+
+    // Last, so that a send refused on either per-user cap costs no budget.
+    if (!(await spendSmsBudget(ctx))) {
+      return { ok: false, reason: "budget", notifyExhausted: false, monthLimit: limits.month };
     }
 
     if (record) {
@@ -1134,7 +1165,6 @@ export const reserveSmsSend = internalMutation({
       });
     }
 
-    await spendOne();
     return { ok: true, notifyExhausted: false, monthLimit: limits.month };
   },
 });

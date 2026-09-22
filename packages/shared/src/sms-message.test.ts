@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   GSM7_SEGMENT_LIMIT,
+  fit,
   formatMatchSms,
   formatPriceSms,
   formatQuotaExhaustedSms,
@@ -125,6 +126,45 @@ describe("formatPriceSms", () => {
     assertOneSegment(body);
   });
 
+  /**
+   * Which form an alert takes is decided by `variant OR variant OR count === 1`.
+   * Every case below has a count other than one, or a variant of "multiple",
+   * so each leg of that condition is load-bearing on its own — with one change
+   * and a naming variant, all three legs agree and the branch is untested.
+   */
+  it("names the crossing item when a threshold fires on several", () => {
+    const changes = [
+      { title: "Sony WH-1000XM5", oldPrice: 379, newPrice: 279.99, changePercent: -26.1 },
+      { title: "Bose QC45", oldPrice: 329, newPrice: 299, changePercent: -9.1 },
+    ];
+    const body = formatPriceSms({ monitorName: "Headphones", variant: "threshold", changes, link: LINK });
+    expect(body).toContain("price target hit");
+    expect(body).toContain("Sony WH-1000XM5");
+    assertOneSegment(body);
+  });
+
+  it("names the dropped item when a single_drop arrives with others", () => {
+    const changes = [
+      { title: "Sony WH-1000XM5", oldPrice: 379, newPrice: 279.99, changePercent: -26.1 },
+      { title: "Bose QC45", oldPrice: 329, newPrice: 299, changePercent: -9.1 },
+    ];
+    const body = formatPriceSms({ monitorName: "Headphones", variant: "single_drop", changes, link: LINK });
+    expect(body).toContain("Sony WH-1000XM5 now $279.99");
+    assertOneSegment(body);
+  });
+
+  it("names the item when 'multiple' turns out to carry exactly one", () => {
+    const body = formatPriceSms({
+      monitorName: "Headphones",
+      variant: "multiple",
+      changes: [drop],
+      link: LINK,
+    });
+    expect(body).toContain("Sony WH-1000XM5 now $279.99");
+    expect(body).not.toContain("price change");
+    assertOneSegment(body);
+  });
+
   it("handles an empty change list without throwing", () => {
     const body = formatPriceSms({ monitorName: "Headphones", variant: "multiple", changes: [], link: LINK });
     assertOneSegment(body);
@@ -132,10 +172,76 @@ describe("formatPriceSms", () => {
   });
 });
 
+/**
+ * `fit` decides where a message stops, and every boundary below is one septet
+ * from doubling the cost of every alert that hits it. Asserting exact output
+ * rather than "short enough", because "short enough" passes whatever the
+ * boundary happens to be.
+ */
+describe("fit", () => {
+  it("returns text untouched when it exactly fills the budget", () => {
+    expect(fit("abcd", 4)).toBe("abcd");
+  });
+
+  it("marks the cut when there is room for a marker", () => {
+    expect(fit("abcdef", 4)).toBe("ab..");
+  });
+
+  it("drops the marker below four septets rather than losing all the content", () => {
+    expect(fit("abcdef", 3)).toBe("abc");
+    expect(fit("abcdef", 1)).toBe("a");
+  });
+
+  it("gives nothing back when there is no room at all", () => {
+    expect(fit("abcdef", 0)).toBe("");
+    expect(fit("abcdef", -5)).toBe("");
+  });
+
+  it("counts an extended character as the two septets it costs", () => {
+    // "[" is escape-prefixed, so only one fits in the two septets left after
+    // the marker. Counting it as one would put the message over its segment.
+    expect(fit("[[[[", 4)).toBe("[..");
+  });
+
+  it("fills the budget exactly rather than stopping a character early", () => {
+    expect(fit("abcdefgh", 6)).toBe("abcd..");
+  });
+});
+
+describe("the segment boundary is exact, not approximate", () => {
+  it("fills a truncated match alert to exactly 160 septets", () => {
+    // One unbroken token, so the cut lands mid-word and nothing is trimmed —
+    // this is the case that reaches the limit exactly.
+    const body = formatMatchSms({
+      monitorName: "Supercalifragilistic".repeat(10),
+      newCount: 7,
+      link: LINK,
+    });
+    // Not "<= 160": a limit of 161 would satisfy that too, and 161 septets is
+    // two segments and twice the price of every alert that hits it.
+    expect(gsm7Length(body)).toBe(GSM7_SEGMENT_LIMIT);
+    expect(gsm7Length(body)).toBe(160);
+  });
+
+  it("leaves a name alone when it already fits, however close to the limit", () => {
+    const monitorName = "A monitor name long enough that it has to be cut short to fit the message";
+    const body = formatMatchSms({ monitorName, newCount: 7, link: LINK });
+    expect(body).toContain(monitorName);
+    expect(body).not.toContain("..");
+    assertOneSegment(body);
+  });
+});
+
 describe("the fixed-copy messages", () => {
-  it("fits the quota notice in one segment", () => {
-    assertOneSegment(formatQuotaExhaustedSms(10, "https://pagealert.io/dashboard/settings"));
-    assertOneSegment(formatQuotaExhaustedSms(200, "https://pagealert.io/dashboard/settings"));
+  it("fits the quota notice in one segment at every tier's allowance", () => {
+    for (const limit of [10, 25, 60, 200]) {
+      assertOneSegment(formatQuotaExhaustedSms(limit));
+    }
+  });
+
+  it("names the allowance that ran out", () => {
+    expect(formatQuotaExhaustedSms(10)).toContain("10");
+    expect(formatQuotaExhaustedSms(200)).toContain("200");
   });
 
   it("fits the verification code in one segment", () => {

@@ -9,7 +9,7 @@ import {
   type MutationCtx,
 } from "./_generated/server";
 import { internal } from "./_generated/api";
-import { effectiveTier } from "./tiers";
+import { effectiveTier, spendSmsBudget } from "./tiers";
 import {
   formatMatchSms,
   formatPriceSms,
@@ -131,7 +131,11 @@ export class PhoneError extends Error {}
  * text a stranger.
  */
 export function normalisePhone(input: string): string {
-  const raw = input.trim();
+  // "+44 (0)7911 123456" is how UK sites write a number, and it is what people
+  // paste. Stripping punctuation blindly turns it into +4407911123456, which
+  // looks valid to every check below and is only rejected by Twilio — after a
+  // daily code slot has been spent on it.
+  const raw = input.trim().replace(/\(\s*0\s*\)/, "");
   let digits = raw.replace(/[^\d+]/g, "");
 
   if (digits.startsWith("00")) digits = `+${digits.slice(2)}`;
@@ -203,14 +207,23 @@ async function sendAlert(
     return false;
   }
 
+  // Before reserving, not after. Reserving spends the user's allowance and the
+  // global budget; if the credentials are half-configured — SMS_ENABLED flipped
+  // on in the dashboard before the Messaging Service id is in — postToTwilio
+  // throws, the scheduler swallows it, and a free user's ten texts drain to
+  // zero having delivered nothing.
+  try {
+    twilioConfig();
+  } catch {
+    console.error("[sms] SMS_ENABLED is true but Twilio is not configured — not reserving");
+    return false;
+  }
+
   const reservation = await ctx.runMutation(internal.tiers.reserveSmsSend, { userId });
 
   if (!reservation.ok) {
     if (reservation.notifyExhausted) {
-      await postToTwilio(
-        to,
-        formatQuotaExhaustedSms(reservation.monthLimit, `${APP_URL}/dashboard/settings`),
-      );
+      await postToTwilio(to, formatQuotaExhaustedSms(reservation.monthLimit));
       return true;
     }
     console.log(`[sms] refused for ${userId}: ${reservation.reason}`);
@@ -310,6 +323,14 @@ export const claimVerification = internalMutation({
       throw new Error(`That is ${MAX_CODES_PER_DAY} codes today. Try again tomorrow.`);
     }
 
+    // A code is a real text with a real cost, and this is the one send an
+    // unpaid attacker can reach — the classic SMS-pumping target. The per-day
+    // cap above is per account, and accounts are free, so the global budget
+    // has to apply here too or it is guarding the wrong door.
+    if (!(await spendSmsBudget(ctx))) {
+      throw new Error("Text alerts are paused right now. Try again later.");
+    }
+
     const code = sixDigits();
     const row = {
       userId,
@@ -325,6 +346,28 @@ export const claimVerification = internalMutation({
     else await ctx.db.insert("phoneVerifications", row);
 
     return code;
+  },
+});
+
+/**
+ * Give back a slot claimed for a send that never landed.
+ *
+ * Without it a number Twilio rejects — a geo block, a dead line, a
+ * half-configured account — costs one of three daily attempts and destroys
+ * whatever code was pending. Three of those and the user is locked out until
+ * UTC midnight holding no working code at all.
+ */
+export const releaseVerification = internalMutation({
+  args: { userId: v.string() },
+  handler: async (ctx, { userId }) => {
+    const row = await ctx.db
+      .query("phoneVerifications")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .unique();
+    if (!row) return;
+    // The code went nowhere, so the row is useless; the slot goes back.
+    if (row.sentCount <= 1) await ctx.db.delete(row._id);
+    else await ctx.db.patch(row._id, { sentCount: row.sentCount - 1, expiresAt: 0 });
   },
 });
 
@@ -348,7 +391,12 @@ export const startVerification = action({
       phone,
     });
 
-    await postToTwilio(phone, formatVerificationSms(code));
+    try {
+      await postToTwilio(phone, formatVerificationSms(code));
+    } catch (e) {
+      await ctx.runMutation(internal.sms.releaseVerification, { userId: identity.subject });
+      throw e;
+    }
     return { sent: true, phone: maskPhone(phone) };
   },
 });

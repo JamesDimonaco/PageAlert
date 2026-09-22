@@ -74,8 +74,15 @@ export function toGsm7(text: string): string {
   return out.replace(/\s+/g, " ").trim();
 }
 
-/** Cut `text` to at most `budget` septets, marking the cut when there is room. */
-function fit(text: string, budget: number): string {
+/**
+ * Cut `text` to at most `budget` septets, marking the cut when there is room.
+ *
+ * Exported for its own tests. Every boundary in here is one septet away from
+ * turning a one-segment alert into a two-segment one, and reaching them
+ * through the formatters means constructing a message of an exact length,
+ * which hides what is being asserted.
+ */
+export function fit(text: string, budget: number): string {
   if (budget <= 0) return "";
   if (gsm7Length(text) <= budget) return text;
 
@@ -150,13 +157,15 @@ export function formatPriceSms({ monitorName, variant, changes, link }: PriceSms
 /**
  * The last SMS of the period. Sent once, when the allowance runs out, so the
  * silence that follows is explained rather than read as the product failing.
+ *
+ * Carries no link, deliberately. A message with no variable part has nothing
+ * to truncate, so its length rested entirely on how long the host happened to
+ * be — fine at pagealert.io, two segments on a preview host or after a rename.
+ * Someone already using the product knows where to find it, and this is the
+ * one message that must not quietly cost double.
  */
-export function formatQuotaExhaustedSms(limit: number, link: string): string {
-  return oneSegment(
-    `PageAlert: that used the last of your ${limit} texts this month. Alerts come by email until it resets. `,
-    "",
-    toGsm7(link)
-  );
+export function formatQuotaExhaustedSms(limit: number): string {
+  return `PageAlert: that was the last of your ${limit} texts this month. Alerts keep coming by email until it resets.`;
 }
 
 /** The verification code, and the only place the opt-out route is spelled out. */

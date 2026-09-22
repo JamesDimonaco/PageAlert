@@ -491,6 +491,15 @@ export const runScheduledChecks = internalAction({
             const shouldSend = (channel: string) => !monitorChannels || monitorChannels.includes(channel);
             const hasAnyChannel = !monitorChannels || monitorChannels.length > 0;
 
+            // Texts are opt-in per monitor, never opt-out. An absent list means
+            // "every channel" above, which is right for the ones that cost
+            // nothing — but every monitor made before the field existed has no
+            // list, so the shared rule would start texting for all of them the
+            // moment a user verified a number. It would also route around the
+            // free-tier ration, which monitors.create/update only apply when
+            // the list is explicit.
+            const shouldSendSms = monitorChannels?.includes("sms") === true;
+
             // Both paths now name the entries the user has not been told
             // about, so an alert means a genuinely new listing rather than a
             // page that merely still says what it said last time.
@@ -594,7 +603,7 @@ export const runScheduledChecks = internalAction({
               // Send to SMS if verified and enabled for this monitor. The
               // allowance check lives inside sms.ts, so a refusal here is
               // silent by design — the email alert has already gone.
-              if (shouldSend("sms")) {
+              if (shouldSendSms) {
                 const smsSetting = await ctx.runQuery(internal.scheduler.getNotificationSetting, {
                   userId: freshMonitor.userId,
                   channel: "sms",
@@ -747,7 +756,7 @@ export const runScheduledChecks = internalAction({
                         // lead has to be the item the alert is actually about
                         // — the threshold that was crossed, or the drop —
                         // rather than whatever came first off the page.
-                        if (shouldSend("sms")) {
+                        if (shouldSendSms) {
                           const smsSetting = await ctx.runQuery(internal.scheduler.getNotificationSetting, {
                             userId: freshMonitor.userId,
                             channel: "sms",

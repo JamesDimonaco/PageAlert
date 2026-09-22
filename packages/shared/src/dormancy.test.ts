@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  DAY_MS,
   DORMANT_AFTER_MS,
   IGNORED_ALERT_GRACE_MS,
   LONG_GONE_AFTER_MS,
+  RESUME_TOKEN_TTL_MS,
   dormancyVerdict,
   lastSeenFrom,
   type DormancyInput,
@@ -10,6 +12,44 @@ import {
 
 const NOW = Date.UTC(2026, 8, 18, 10, 0, 0);
 const DAY = 24 * 60 * 60 * 1000;
+
+/**
+ * The thresholds themselves, in real units.
+ *
+ * Every other test here is written as `NOW - DORMANT_AFTER_MS`, so it moves
+ * with the constant and stays green however the constant changes. Those tests
+ * pin the comparisons; these pin the values. Each number is a product decision
+ * argued out in the doc comments on the constants — how long someone can be
+ * away before we stop checking the page they are waiting on. Changing one
+ * should mean reading that argument, not watching a suite stay green.
+ */
+describe("the thresholds", () => {
+  it("counts a day as 24 hours", () => {
+    expect(DAY_MS).toBe(86_400_000);
+  });
+
+  it("pauses an alerted monitor after 30 days away", () => {
+    expect(DORMANT_AFTER_MS).toBe(30 * 86_400_000);
+  });
+
+  it("pauses a never-matched monitor after 90 days away", () => {
+    expect(LONG_GONE_AFTER_MS).toBe(90 * 86_400_000);
+  });
+
+  it("gives an alert 3 days before it counts as ignored", () => {
+    expect(IGNORED_ALERT_GRACE_MS).toBe(3 * 86_400_000);
+  });
+
+  it("keeps a pause email's restart link working for 90 days", () => {
+    expect(RESUME_TOKEN_TTL_MS).toBe(90 * 86_400_000);
+  });
+
+  it("is more patient with a monitor that never matched", () => {
+    // The ordering is the actual rule: silence is the expected state for a
+    // visa-appointment watch, so it must not be reaped on the shorter clock.
+    expect(LONG_GONE_AFTER_MS).toBeGreaterThan(DORMANT_AFTER_MS);
+  });
+});
 
 /** A live monitor whose owner has been gone 40 days and ignored an alert. */
 function input(overrides: Partial<DormancyInput> = {}): DormancyInput {
