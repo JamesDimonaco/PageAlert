@@ -8,7 +8,7 @@ import type { TierName } from "./subscription";
  * upgrade makes the older checks readable again the moment it lands, and a
  * downgrade hides them rather than destroying them.
  *
- * Deleting the account does remove them — see deleteScrapeLogs in
+ * Deleting the account does remove them — see deleteAllUserData in
  * convex/account.ts. Only the reading is gated.
  *
  * The numbers are sold on the pricing page — lib/plans.ts reads them from

@@ -353,6 +353,8 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index("by_userId", ["userId"])
+    // Most sends record no userId, so erasure has to find them by address.
+    .index("by_to", ["to"])
     .index("by_resendId", ["resendId"])
     .index("by_createdAt", ["createdAt"])
     .index("by_status_createdAt", ["status", "createdAt"]),

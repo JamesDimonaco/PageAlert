@@ -1,5 +1,4 @@
 import { v } from "convex/values";
-import { MAX_LOG_ROW_BYTES } from "@prowl/shared";
 import { internalMutation, mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Id, TableNames } from "./_generated/dataModel";
@@ -14,180 +13,190 @@ export async function isBanned(ctx: QueryCtx | MutationCtx, userId: string): Pro
 }
 
 /**
- * Deletes every row this app owns for a user.
- *
- * Monitors and their scrape results and notifications go inline, because a
- * result is only reachable through the monitor that owns it. Everything keyed
- * by userId goes through the batched sweep below instead, so no one
- * transaction has to read an account's whole history.
+ * Deletes every row this app owns for a user, over as many rounds as it takes.
  *
  * Shared by the user's own deleteAccount and the admin dashboard's forced
- * delete, so both paths agree on what "all data" means.
+ * delete, so both paths agree on what "all data" means. Pass the account's
+ * email where it is known: six of the eight email send sites record no userId,
+ * so without it most of a user's send history stays behind under their own
+ * address.
  *
  * SWEPT_ON_DELETE and KEPT_ON_DELETE together name every table carrying a
  * userId, and account.test.ts fails if the schema grows one they don't cover.
  */
-export async function deleteAllUserData(ctx: MutationCtx, userId: string): Promise<void> {
-  const monitors = await ctx.db
-    .query("monitors")
-    .withIndex("by_userId", (q) => q.eq("userId", userId))
-    .collect();
-
-  for (const monitor of monitors) {
-    const results = await ctx.db
-      .query("scrapeResults")
-      .withIndex("by_monitorId", (q) => q.eq("monitorId", monitor._id))
-      .collect();
-    for (const result of results) {
-      await ctx.db.delete(result._id);
-    }
-
-    const notifs = await ctx.db
-      .query("notifications")
-      .withIndex("by_monitorId", (q) => q.eq("monitorId", monitor._id))
-      .collect();
-    for (const notif of notifs) {
-      await ctx.db.delete(notif._id);
-    }
-
-    await ctx.db.delete(monitor._id);
-  }
-
-  await sweepUserTables(ctx, userId);
+export async function deleteAllUserData(
+  ctx: MutationCtx,
+  userId: string,
+  email?: string
+): Promise<void> {
+  await sweep(ctx, { userId, email });
 }
 
 /**
- * Every table keyed by userId, and the query that takes one batch of a user's
- * rows from it.
+ * What one round of the sweep may spend.
  *
- * Batched rather than collected because none of them is bounded per account:
- * the scrape log, the email sends, the thumbs and the rate-limit entries all
- * grow for as long as the account exists, and nothing prunes them. Reading
- * them all in one transaction would breach its read budget for exactly the
- * heaviest accounts, throw, and roll back — so the users with the most data
- * would be the only ones unable to delete it.
+ * Both are enforced as the round runs, not assumed of the data: the sweep
+ * streams each table and stops the moment it has spent either, so no row size
+ * and no row count anywhere in the schema can carry a round past what a
+ * transaction will take. That matters most for scrapeResults, which is the
+ * heaviest thing an account owns and which nothing caps or prunes — a busy
+ * pro account accrues tens of thousands of them a year, and collecting them
+ * all is how the delete used to fail for precisely the accounts that needed
+ * it. Convex will accept a document up to ONE_CONVEX_DOCUMENT_BYTES, so a
+ * round reads at most its byte budget plus the one row that crossed it.
+ */
+export const ONE_CONVEX_DOCUMENT_BYTES = 1_000_000;
+export const SWEEP_BUDGET_BYTES = 4_000_000;
+export const SWEEP_BUDGET_ROWS = 1_000;
+
+type Allowance = { bytes: number; rows: number };
+
+const spent = (left: Allowance): boolean => left.bytes <= 0 || left.rows <= 0;
+
+/**
+ * Deletes rows from one query until the allowance runs out.
+ *
+ * Streaming rather than `.take(n)`: a count says nothing about what the rows
+ * weigh, and the byte budget can only be honest if it is measured against
+ * what was actually read.
+ */
+async function drain(
+  ctx: MutationCtx,
+  rows: AsyncIterable<{ _id: Id<TableNames> }>,
+  left: Allowance
+): Promise<void> {
+  for await (const row of rows) {
+    await ctx.db.delete(row._id);
+    left.bytes -= JSON.stringify(row).length;
+    left.rows -= 1;
+    if (spent(left)) return;
+  }
+}
+
+/** Who the sweep is erasing. The email reaches sends that carry no userId. */
+type Target = { userId: string; email?: string };
+
+/**
+ * A monitor and everything hanging off it.
+ *
+ * Children go first and the monitor last, so a round that runs out midway
+ * leaves the monitor in place and the next round finds it again with fewer
+ * children. Anonymous monitors are not swept here: signup claims any carrying
+ * the account's address and clears anonymousEmail (see anonymous.ts), so one
+ * still holding an address belongs to a scan that never became this account,
+ * and the daily cron expires it.
+ */
+async function sweepMonitors(ctx: MutationCtx, userId: string, left: Allowance): Promise<void> {
+  for await (const monitor of ctx.db
+    .query("monitors")
+    .withIndex("by_userId", (q) => q.eq("userId", userId))) {
+    await drain(
+      ctx,
+      ctx.db.query("scrapeResults").withIndex("by_monitorId", (q) => q.eq("monitorId", monitor._id)),
+      left
+    );
+    if (spent(left)) return;
+
+    await drain(
+      ctx,
+      ctx.db.query("notifications").withIndex("by_monitorId", (q) => q.eq("monitorId", monitor._id)),
+      left
+    );
+    if (spent(left)) return;
+
+    await ctx.db.delete(monitor._id);
+    left.rows -= 1;
+    if (spent(left)) return;
+  }
+}
+
+/**
+ * Every table keyed by userId, and the query that finds a user's rows in it.
  *
  * `monitorCreations` survives *monitor* deletion (see monitors.ts) so a
  * delete-and-remake cannot bypass the creation rate limit, but a new signup
  * gets a new userId regardless, so after account deletion those rows are
  * orphaned personal data and nothing else. `appliedOrders` goes for the same
  * reason: Polar holds the receipt, and this table only exists to stop a
- * redelivered webhook granting one pass twice to a userId that no longer
- * exists.
+ * redelivered webhook granting one pass twice to a userId that cannot come
+ * back. `reviews` goes too, which takes the quote off the public homepage
+ * along with the name it was signed with — erasure has to mean that, but it
+ * is a visible change and not only a database one.
  */
 const SWEEPS: readonly {
   table: TableNames;
-  batch: (ctx: MutationCtx, userId: string, take: number) => Promise<{ _id: Id<TableNames> }[]>;
+  rows: (ctx: MutationCtx, userId: string) => AsyncIterable<{ _id: Id<TableNames> }>;
 }[] = [
   {
     table: "scrapeLogs",
-    batch: (ctx, userId, take) =>
-      ctx.db
-        .query("scrapeLogs")
-        .withIndex("by_userId_createdAt", (q) => q.eq("userId", userId))
-        .take(take),
+    rows: (ctx, userId) =>
+      ctx.db.query("scrapeLogs").withIndex("by_userId_createdAt", (q) => q.eq("userId", userId)),
   },
   {
     table: "matchFeedback",
-    batch: (ctx, userId, take) =>
-      ctx.db
-        .query("matchFeedback")
-        .withIndex("by_userId", (q) => q.eq("userId", userId))
-        .take(take),
+    rows: (ctx, userId) =>
+      ctx.db.query("matchFeedback").withIndex("by_userId", (q) => q.eq("userId", userId)),
   },
   {
     table: "emailSends",
-    batch: (ctx, userId, take) =>
-      ctx.db
-        .query("emailSends")
-        .withIndex("by_userId", (q) => q.eq("userId", userId))
-        .take(take),
+    rows: (ctx, userId) =>
+      ctx.db.query("emailSends").withIndex("by_userId", (q) => q.eq("userId", userId)),
   },
   {
     table: "onboardingEmails",
-    batch: (ctx, userId, take) =>
-      ctx.db
-        .query("onboardingEmails")
-        .withIndex("by_userId", (q) => q.eq("userId", userId))
-        .take(take),
+    rows: (ctx, userId) =>
+      ctx.db.query("onboardingEmails").withIndex("by_userId", (q) => q.eq("userId", userId)),
   },
   {
     table: "notifications",
-    batch: (ctx, userId, take) =>
-      ctx.db
-        .query("notifications")
-        .withIndex("by_userId", (q) => q.eq("userId", userId))
-        .take(take),
+    rows: (ctx, userId) =>
+      ctx.db.query("notifications").withIndex("by_userId", (q) => q.eq("userId", userId)),
   },
   {
     table: "notificationSettings",
-    batch: (ctx, userId, take) =>
-      ctx.db
-        .query("notificationSettings")
-        .withIndex("by_userId", (q) => q.eq("userId", userId))
-        .take(take),
+    rows: (ctx, userId) =>
+      ctx.db.query("notificationSettings").withIndex("by_userId", (q) => q.eq("userId", userId)),
   },
   {
     table: "pushSubscriptions",
-    batch: (ctx, userId, take) =>
-      ctx.db
-        .query("pushSubscriptions")
-        .withIndex("by_userId", (q) => q.eq("userId", userId))
-        .take(take),
+    rows: (ctx, userId) =>
+      ctx.db.query("pushSubscriptions").withIndex("by_userId", (q) => q.eq("userId", userId)),
   },
   {
     table: "channelClaims",
-    batch: (ctx, userId, take) =>
-      ctx.db
-        .query("channelClaims")
-        .withIndex("by_userId", (q) => q.eq("userId", userId))
-        .take(take),
+    rows: (ctx, userId) =>
+      ctx.db.query("channelClaims").withIndex("by_userId", (q) => q.eq("userId", userId)),
   },
   {
     table: "monitorCreations",
-    batch: (ctx, userId, take) =>
-      ctx.db
-        .query("monitorCreations")
-        .withIndex("by_userId_createdAt", (q) => q.eq("userId", userId))
-        .take(take),
+    rows: (ctx, userId) =>
+      ctx.db.query("monitorCreations").withIndex("by_userId_createdAt", (q) => q.eq("userId", userId)),
   },
   {
     table: "appliedOrders",
-    batch: (ctx, userId, take) =>
-      ctx.db
-        .query("appliedOrders")
-        .withIndex("by_userId", (q) => q.eq("userId", userId))
-        .take(take),
+    rows: (ctx, userId) =>
+      ctx.db.query("appliedOrders").withIndex("by_userId", (q) => q.eq("userId", userId)),
   },
   {
     table: "reviews",
-    batch: (ctx, userId, take) =>
-      ctx.db
-        .query("reviews")
-        .withIndex("by_userId", (q) => q.eq("userId", userId))
-        .take(take),
+    rows: (ctx, userId) =>
+      ctx.db.query("reviews").withIndex("by_userId", (q) => q.eq("userId", userId)),
   },
   {
     table: "userTiers",
-    batch: (ctx, userId, take) =>
-      ctx.db
-        .query("userTiers")
-        .withIndex("by_userId", (q) => q.eq("userId", userId))
-        .take(take),
+    rows: (ctx, userId) =>
+      ctx.db.query("userTiers").withIndex("by_userId", (q) => q.eq("userId", userId)),
   },
   {
     table: "userActivity",
-    batch: (ctx, userId, take) =>
-      ctx.db
-        .query("userActivity")
-        .withIndex("by_userId", (q) => q.eq("userId", userId))
-        .take(take),
+    rows: (ctx, userId) =>
+      ctx.db.query("userActivity").withIndex("by_userId", (q) => q.eq("userId", userId)),
   },
 ];
 
 /**
- * Every table account deletion clears, the inline monitor sweep included.
- * Exported so a test can prove the schema holds no userId table it misses.
+ * Every table account deletion clears, the monitor sweep included. Exported
+ * so a test can prove the schema holds no userId table it misses.
  */
 export const SWEPT_ON_DELETE: readonly string[] = [
   "monitors",
@@ -199,59 +208,56 @@ export const SWEPT_ON_DELETE: readonly string[] = [
  *
  * Only bannedUsers, and only on the self-service path: deleteAccount does not
  * remove the caller's Better Auth session, so the same still-logged-in
- * identity outlives the delete — dropping the ban row here would let a banned
- * user delete their way back to an unbanned session. admin.deleteUser does
- * remove it, because that path also destroys the session, account and user
- * rows the ban was blocking, so the userId can never come back to use it.
+ * identity outlives the delete — dropping the ban row would let a banned user
+ * delete their way back to an unbanned session. admin.deleteUser does remove
+ * it, because that path also destroys the session, account and user rows the
+ * ban was blocking, so the userId can never come back to use it.
  */
 export const KEPT_ON_DELETE: readonly string[] = ["bannedUsers"];
 
 /**
- * Rows deleted per round.
+ * Deletes up to one allowance of this user's rows and queues another round if
+ * it spent the lot.
  *
- * Derived rather than picked: a scrapeLogs row is the heaviest thing the
- * sweep can read and capLogFields caps it at MAX_LOG_ROW_BYTES, so this is
- * how many fit in half of a transaction's ~8MB read budget. The other half is
- * left for the monitor sweep the first round shares its transaction with.
- */
-const SWEEP_BUDGET_BYTES = 4_000_000;
-export const SWEEP_BATCH = Math.floor(SWEEP_BUDGET_BYTES / MAX_LOG_ROW_BYTES);
-
-/**
- * Deletes up to one batch of a user's rows, taking the tables in order, and
- * queues another round if it filled the batch.
- *
- * Spending one allowance across the tables rather than a batch per table
- * means an ordinary account finishes in the first round with nothing
- * scheduled at all, while a heavy one still reads at most SWEEP_BATCH rows
- * however many tables it spans.
+ * Spending one allowance across the tables in order, rather than a batch per
+ * table, means an ordinary account finishes inside the first transaction with
+ * nothing scheduled at all, while a heavy one still reads no more than the
+ * allowance however many tables it spans.
  *
  * Past the first round this is no longer atomic with the account deletion,
  * which is the right way round: the goal is erasure, so partial progress
  * toward it beats refusing to start.
  */
-async function sweepUserTables(ctx: MutationCtx, userId: string): Promise<void> {
-  let allowance = SWEEP_BATCH;
+async function sweep(ctx: MutationCtx, target: Target): Promise<void> {
+  const left: Allowance = { bytes: SWEEP_BUDGET_BYTES, rows: SWEEP_BUDGET_ROWS };
 
-  for (const sweep of SWEEPS) {
-    if (allowance === 0) break;
-    const rows = await sweep.batch(ctx, userId, allowance);
-    for (const row of rows) {
-      await ctx.db.delete(row._id);
-    }
-    allowance -= rows.length;
+  await sweepMonitors(ctx, target.userId, left);
+
+  for (const table of SWEEPS) {
+    if (spent(left)) break;
+    await drain(ctx, table.rows(ctx, target.userId), left);
   }
 
-  if (allowance === 0) {
-    await ctx.scheduler.runAfter(0, internal.account.sweepRemainingUserData, { userId });
+  // Match alerts, errors, anonymous scans and admin bulk sends all record the
+  // address and no userId, so the index above misses most of a user's history.
+  if (!spent(left) && target.email) {
+    await drain(
+      ctx,
+      ctx.db.query("emailSends").withIndex("by_to", (q) => q.eq("to", target.email!)),
+      left
+    );
+  }
+
+  if (spent(left)) {
+    await ctx.scheduler.runAfter(0, internal.account.sweepRemainingUserData, target);
   }
 }
 
-/** Continues sweepUserTables for an account holding more than one batch. */
+/** Continues the sweep for an account holding more than one round's worth. */
 export const sweepRemainingUserData = internalMutation({
-  args: { userId: v.string() },
-  handler: async (ctx, { userId }) => {
-    await sweepUserTables(ctx, userId);
+  args: { userId: v.string(), email: v.optional(v.string()) },
+  handler: async (ctx, target) => {
+    await sweep(ctx, target);
   },
 });
 
@@ -291,7 +297,7 @@ export const deleteAccount = mutation({
   handler: async (ctx) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Not authenticated");
-    await deleteAllUserData(ctx, identity.subject);
+    await deleteAllUserData(ctx, identity.subject, identity.email);
     // The churn no webhook reports: someone leaving of their own accord.
     // admin.deleteUser has its own alert naming the admin who did it.
     await ctx.scheduler.runAfter(0, internal.admin.notify, {

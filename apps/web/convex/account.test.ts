@@ -2,11 +2,12 @@
 import { expect, test } from "vitest";
 import { convexTest } from "convex-test";
 import schema from "./schema";
-import { MAX_LOG_ROW_BYTES } from "@prowl/shared";
 import {
   deleteAllUserData,
   KEPT_ON_DELETE,
-  SWEEP_BATCH,
+  ONE_CONVEX_DOCUMENT_BYTES,
+  SWEEP_BUDGET_BYTES,
+  SWEEP_BUDGET_ROWS,
   SWEPT_ON_DELETE,
 } from "./account";
 import type { Doc, Id, TableNames } from "./_generated/dataModel";
@@ -147,14 +148,18 @@ async function remaining(ctx: MutationCtx, userId: string): Promise<string[]> {
 }
 
 /**
- * A round reads its whole batch inside one transaction, and a scrapeLogs row
- * is the heaviest thing in it. Convex rolls the transaction back on breaching
- * the read budget, so a batch that grows past half of it makes deletion fail
- * for the accounts holding the most data — the ones that most need it.
+ * A round runs in one transaction, and Convex rolls the whole thing back on
+ * breaching its read or write limits — so a round that can outgrow them means
+ * deletion failing outright for the accounts holding the most data. The worst
+ * a round can read is its byte budget plus the one document that crossed it.
  */
-test("a sweep round cannot read more than half a transaction's budget", () => {
-  expect(SWEEP_BATCH).toBeGreaterThan(0);
-  expect(SWEEP_BATCH * MAX_LOG_ROW_BYTES).toBeLessThanOrEqual(4_000_000);
+test("a round's budget leaves room for the document that overruns it", () => {
+  expect(SWEEP_BUDGET_BYTES).toBeGreaterThan(0);
+  expect(SWEEP_BUDGET_BYTES + ONE_CONVEX_DOCUMENT_BYTES).toBeLessThanOrEqual(8_000_000);
+  // Convex writes at most 8,192 documents in a transaction, and the monitor
+  // sweep deletes children alongside what the allowance counts.
+  expect(SWEEP_BUDGET_ROWS).toBeGreaterThan(0);
+  expect(SWEEP_BUDGET_ROWS * 2).toBeLessThanOrEqual(8_192);
 });
 
 test("every table carrying a userId is either swept on delete or deliberately kept", () => {
@@ -225,9 +230,134 @@ test("one account's deletion leaves every other account untouched", async () => 
   });
 });
 
+/**
+ * Six of the eight send sites record no userId — a match alert, an error, an
+ * anonymous scan and an admin bulk all write the address to `to` and leave
+ * the owner blank. Sweeping by userId alone would leave most of a user's
+ * email history behind, addressed to them by name.
+ */
+test("sends recorded without a userId go too, on the address", async () => {
+  const t = convexTest(schema, modules);
+  const email = `${LEAVING}@example.com`;
+
+  await t.run(async (ctx) => {
+    await ctx.db.insert("emailSends", {
+      to: email,
+      kind: "match",
+      status: "sent",
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    await ctx.db.insert("emailSends", {
+      to: "someone.else@example.com",
+      kind: "match",
+      status: "sent",
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    await deleteAllUserData(ctx as MutationCtx, LEAVING, email);
+  });
+  await t.finishAllScheduledFunctions(() => {});
+
+  await t.run(async (ctx) => {
+    const sends = await ctx.db.query("emailSends").collect();
+    expect(sends.map((row) => row.to)).toEqual(["someone.else@example.com"]);
+  });
+});
+
+/**
+ * A scrape result is the heaviest row an account owns and nothing prunes the
+ * table, so collecting every one of them in a single transaction breaks the
+ * read budget for exactly the accounts this sweep exists to rescue.
+ */
+test("a monitor with more results than one round can read is still deleted", async () => {
+  const t = convexTest(schema, modules);
+  const RESULTS = SWEEP_BUDGET_ROWS * 2 + 5;
+
+  await t.run(async (ctx) => {
+    const monitorId = await ctx.db.insert("monitors", {
+      userId: LEAVING,
+      name: "watch",
+      url: "https://example.com/deals",
+      prompt: "tell me about deals",
+      status: "active",
+      checkInterval: "1h",
+      matchCount: 0,
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    for (let i = 0; i < RESULTS; i++) {
+      await ctx.db.insert("scrapeResults", {
+        monitorId,
+        matches: [],
+        totalItems: 0,
+        hasNewMatches: false,
+        scrapedAt: i,
+      });
+    }
+    await deleteAllUserData(ctx as MutationCtx, LEAVING);
+  });
+  await t.finishAllScheduledFunctions(() => {});
+
+  await t.run(async (ctx) => {
+    expect(await ctx.db.query("scrapeResults").collect()).toHaveLength(0);
+    expect(await ctx.db.query("monitors").collect()).toHaveLength(0);
+  });
+});
+
+/**
+ * The budget has to hold against row sizes nothing caps. A scrapeResults row
+ * has no ceiling at all — one fat row must not be able to carry a round past
+ * what the transaction can read.
+ */
+test("a round stops once it has spent its byte budget", async () => {
+  const t = convexTest(schema, modules);
+  const FILLER = "x".repeat(200_000);
+  const ROWS = 60;
+
+  await t.run(async (ctx) => {
+    const monitorId = await ctx.db.insert("monitors", {
+      userId: LEAVING,
+      name: "watch",
+      url: "https://example.com/deals",
+      prompt: "tell me about deals",
+      status: "active",
+      checkInterval: "1h",
+      matchCount: 0,
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    for (let i = 0; i < ROWS; i++) {
+      await ctx.db.insert("scrapeResults", {
+        monitorId,
+        matches: [FILLER],
+        totalItems: 0,
+        hasNewMatches: false,
+        scrapedAt: i,
+      });
+    }
+    await deleteAllUserData(ctx as MutationCtx, LEAVING);
+  });
+
+  // No scheduled rounds run yet, so this is what one round alone managed.
+  await t.run(async (ctx) => {
+    const left = await ctx.db.query("scrapeResults").collect();
+    const deleted = ROWS - left.length;
+    expect(deleted).toBeGreaterThan(0);
+    expect(deleted * FILLER.length).toBeLessThanOrEqual(
+      SWEEP_BUDGET_BYTES + ONE_CONVEX_DOCUMENT_BYTES
+    );
+  });
+
+  await t.finishAllScheduledFunctions(() => {});
+  await t.run(async (ctx) => {
+    expect(await ctx.db.query("scrapeResults").collect()).toHaveLength(0);
+  });
+});
+
 test("an account holding more rows than one batch is still emptied", async () => {
   const t = convexTest(schema, modules);
-  const OVER_ONE_BATCH = 250;
+  const OVER_ONE_BATCH = SWEEP_BUDGET_ROWS + 10;
 
   await t.run(async (ctx) => {
     for (let i = 0; i < OVER_ONE_BATCH; i++) {
