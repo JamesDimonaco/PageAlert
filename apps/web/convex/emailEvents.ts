@@ -23,10 +23,16 @@ export const recordSend = internalMutation({
     ok: v.boolean(),
     error: v.optional(v.string()),
   },
-  handler: async (ctx, { ok, ...args }) => {
+  handler: async (ctx, { ok, to, ...args }) => {
     const now = Date.now();
     await ctx.db.insert("emailSends", {
       ...args,
+      // Lowercased here because this is the one mutation every send passes
+      // through, and account deletion finds these rows by an exact match on
+      // the address. Some callers pass identity.email untouched and some
+      // lowercase it, so without this a send can outlive the account it
+      // belongs to purely on capitalisation.
+      to: to.toLowerCase(),
       status: ok ? "sent" : "failed",
       createdAt: now,
       updatedAt: now,

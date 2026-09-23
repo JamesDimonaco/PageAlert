@@ -10,6 +10,7 @@ import {
   SWEEP_BUDGET_ROWS,
   SWEPT_ON_DELETE,
 } from "./account";
+import { internal } from "./_generated/api";
 import type { Doc, Id, TableNames } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
 
@@ -262,6 +263,117 @@ test("sends recorded without a userId go too, on the address", async () => {
   await t.run(async (ctx) => {
     const sends = await ctx.db.query("emailSends").collect();
     expect(sends.map((row) => row.to)).toEqual(["someone.else@example.com"]);
+  });
+});
+
+/**
+ * The sweep finds sends on an exact index match, so the address it looks for
+ * and the address that was stored have to agree on case. Some send sites
+ * lowercase and some pass identity.email through untouched, so the agreement
+ * has to be made rather than hoped for — at the one mutation every send goes
+ * through, and at the sweep.
+ */
+test("a send recorded in mixed case still goes", async () => {
+  const t = convexTest(schema, modules);
+
+  await t.mutation(internal.emailEvents.recordSend, {
+    to: "User.Leaving@Example.COM",
+    kind: "match",
+    ok: true,
+  });
+
+  await t.run(async (ctx) => {
+    const [stored] = await ctx.db.query("emailSends").collect();
+    expect(stored.to).toBe("user.leaving@example.com");
+    await deleteAllUserData(ctx as MutationCtx, LEAVING, "USER.LEAVING@example.com");
+  });
+  await t.finishAllScheduledFunctions(() => {});
+
+  await t.run(async (ctx) => {
+    expect(await ctx.db.query("emailSends").collect()).toHaveLength(0);
+  });
+});
+
+/**
+ * Characters are not bytes. A CJK character is one UTF-16 code unit and three
+ * UTF-8 bytes, so measuring a row by string length undercounts it threefold —
+ * and scraped page text is exactly where non-ASCII lives. The budget has to
+ * hold against the text the scraper actually brings back.
+ */
+test("the byte budget holds when rows are multi-byte", async () => {
+  const t = convexTest(schema, modules);
+  // 100k CJK characters: 100k UTF-16 units, 300k UTF-8 bytes.
+  const FILLER = "検".repeat(100_000);
+  const ROW_BYTES = new TextEncoder().encode(FILLER).length;
+  const ROWS = 60;
+
+  await t.run(async (ctx) => {
+    const monitorId = await ctx.db.insert("monitors", {
+      userId: LEAVING,
+      name: "watch",
+      url: "https://example.com/deals",
+      prompt: "tell me about deals",
+      status: "active",
+      checkInterval: "1h",
+      matchCount: 0,
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    for (let i = 0; i < ROWS; i++) {
+      await ctx.db.insert("scrapeResults", {
+        monitorId,
+        matches: [FILLER],
+        totalItems: 0,
+        hasNewMatches: false,
+        scrapedAt: i,
+      });
+    }
+    await deleteAllUserData(ctx as MutationCtx, LEAVING);
+  });
+
+  await t.run(async (ctx) => {
+    const deleted = ROWS - (await ctx.db.query("scrapeResults").collect()).length;
+    expect(deleted).toBeGreaterThan(0);
+    expect(deleted * ROW_BYTES).toBeLessThanOrEqual(
+      SWEEP_BUDGET_BYTES + ONE_CONVEX_DOCUMENT_BYTES
+    );
+  });
+});
+
+/**
+ * A monitor carries `schema: v.any()` and three arrays with no size limit, so
+ * an account of fat monitors and no children can outrun the budget while the
+ * row counter barely moves.
+ */
+test("the monitors themselves are charged to the byte budget", async () => {
+  const t = convexTest(schema, modules);
+  const FILLER = "x".repeat(400_000);
+  const MONITORS = 30;
+
+  await t.run(async (ctx) => {
+    for (let i = 0; i < MONITORS; i++) {
+      await ctx.db.insert("monitors", {
+        userId: LEAVING,
+        name: "watch",
+        url: "https://example.com/deals",
+        prompt: "tell me about deals",
+        status: "active",
+        checkInterval: "1h",
+        matchCount: 0,
+        blacklistedItems: [FILLER],
+        createdAt: 1,
+        updatedAt: 1,
+      });
+    }
+    await deleteAllUserData(ctx as MutationCtx, LEAVING);
+  });
+
+  await t.run(async (ctx) => {
+    const deleted = MONITORS - (await ctx.db.query("monitors").collect()).length;
+    expect(deleted).toBeGreaterThan(0);
+    expect(deleted * FILLER.length).toBeLessThanOrEqual(
+      SWEEP_BUDGET_BYTES + ONE_CONVEX_DOCUMENT_BYTES
+    );
   });
 });
 

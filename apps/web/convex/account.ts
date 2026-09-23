@@ -53,6 +53,18 @@ type Allowance = { bytes: number; rows: number };
 
 const spent = (left: Allowance): boolean => left.bytes <= 0 || left.rows <= 0;
 
+const encoder = new TextEncoder();
+
+/**
+ * What a row weighs, in bytes.
+ *
+ * Encoded rather than `.length`: a string's length counts UTF-16 code units,
+ * and a CJK character is one of those and three UTF-8 bytes. Scraped page text
+ * is where non-ASCII lives, so measuring by length would let a round read
+ * three times its budget on the pages most likely to be heavy.
+ */
+const byteSize = (row: unknown): number => encoder.encode(JSON.stringify(row)).length;
+
 /**
  * Deletes rows from one query until the allowance runs out.
  *
@@ -67,7 +79,7 @@ async function drain(
 ): Promise<void> {
   for await (const row of rows) {
     await ctx.db.delete(row._id);
-    left.bytes -= JSON.stringify(row).length;
+    left.bytes -= byteSize(row);
     left.rows -= 1;
     if (spent(left)) return;
   }
@@ -90,6 +102,11 @@ async function sweepMonitors(ctx: MutationCtx, userId: string, left: Allowance):
   for await (const monitor of ctx.db
     .query("monitors")
     .withIndex("by_userId", (q) => q.eq("userId", userId))) {
+    // Charged on read, not on delete: a monitor carries `schema: v.any()` and
+    // three arrays with no size limit, and the round has already paid to read
+    // it even if it runs out before deleting it.
+    left.bytes -= byteSize(monitor);
+
     await drain(
       ctx,
       ctx.db.query("scrapeResults").withIndex("by_monitorId", (q) => q.eq("monitorId", monitor._id)),
@@ -241,9 +258,10 @@ async function sweep(ctx: MutationCtx, target: Target): Promise<void> {
   // Match alerts, errors, anonymous scans and admin bulk sends all record the
   // address and no userId, so the index above misses most of a user's history.
   if (!spent(left) && target.email) {
+    const to = target.email.toLowerCase();
     await drain(
       ctx,
-      ctx.db.query("emailSends").withIndex("by_to", (q) => q.eq("to", target.email!)),
+      ctx.db.query("emailSends").withIndex("by_to", (q) => q.eq("to", to)),
       left
     );
   }
