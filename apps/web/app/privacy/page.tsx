@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Radar } from "lucide-react";
+import { AnalyticsToggle } from "@/components/prowl/analytics-toggle";
 
 export const metadata: Metadata = {
   title: "Privacy Policy",
@@ -69,7 +70,11 @@ export default function PrivacyPage() {
 
           <h2>Cookies and analytics</h2>
           <p>We use an essential cookie to keep you signed in. PostHog stores an identifier in a cookie and in local storage so it can tell one visit from the next.</p>
-          <p>Analytics requests go through our own domain, so a browser ad blocker may not stop them. To turn analytics off, use the switch in <strong>Settings → Profile → Analytics</strong>. It stops both event capture and session replay, in that browser. Other browsers and devices keep their own setting.</p>
+          <p>Analytics requests go through our own domain, so a browser ad blocker may not stop them. Turn them off here — no account needed, because we start recording on the pages you can reach without one. The same switch is in <strong>Settings → Profile → Analytics</strong> once you have signed in.</p>
+
+          <div className="not-prose rounded-lg border border-border/40 bg-card/50 p-4">
+            <AnalyticsToggle />
+          </div>
 
           <h2>How long we keep it</h2>
           <p>Everything tied to your account is kept while the account exists, including your full check history. Scans run without an account are deleted after 7 days, or 30 days if you left an email address.</p>
@@ -83,7 +88,7 @@ export default function PrivacyPage() {
             <li><strong>Correct</strong> it — email us and we will fix it.</li>
             <li><strong>Delete</strong> it — delete individual monitors or your whole account from Settings.</li>
             <li><strong>Export</strong> it — email us and we will send you a copy.</li>
-            <li><strong>Object</strong> to analytics — turn it off in Settings, as above.</li>
+            <li><strong>Object</strong> to analytics — use the switch above, or the one in Settings.</li>
             <li><strong>Complain</strong> to the Information Commissioner&apos;s Office at <a href="https://ico.org.uk" className="text-primary hover:underline" target="_blank" rel="noopener noreferrer">ico.org.uk</a> if you think we have handled your data badly. We would rather hear from you first.</li>
           </ul>
 

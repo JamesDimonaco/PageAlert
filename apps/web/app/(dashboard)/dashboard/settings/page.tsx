@@ -29,12 +29,11 @@ import { authClient } from "@/lib/auth-client";
 import { toast } from "sonner";
 import {
   POSTHOG_KEY,
-  onPostHogReady,
-  setAnalyticsOptOut,
   trackUpgradePromptClicked,
   trackTestEmailSent,
   trackNotificationChannelToggled,
 } from "@/lib/posthog";
+import { AnalyticsToggle } from "@/components/prowl/analytics-toggle";
 
 type NotificationChannel = "email" | "telegram" | "discord" | "push";
 
@@ -108,9 +107,6 @@ export default function SettingsPage() {
   const [telegramTesting, setTelegramTesting] = useState(false);
   const [discordSaving, setDiscordSaving] = useState(false);
   const deleteAccountMutation = useMutation(api.account.deleteAccount);
-  // null until posthog-js has loaded and can say what this browser chose
-  const [analyticsOptedOut, setAnalyticsOptedOut] = useState<boolean | null>(null);
-  useEffect(() => onPostHogReady((p) => setAnalyticsOptedOut(p.has_opted_out_capturing())), []);
   const sendTestEmail = useAction(api.notifications.sendTestEmail);
   const upsertSetting = useMutation(api.notificationSettings.upsert);
   const removeSetting = useMutation(api.notificationSettings.remove);
@@ -207,28 +203,11 @@ export default function SettingsPage() {
                 <CardTitle className="text-lg font-semibold">Analytics</CardTitle>
                 <CardDescription className="text-sm">How we see what the app is used for</CardDescription>
               </CardHeader>
-              <CardContent>
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                  <p className="text-xs text-muted-foreground leading-relaxed max-w-lg">
-                    We use PostHog to record page views, clicks and errors, and to replay sessions:
-                    the pages you visit and what you click, with anything you type masked.
-                    Turning this off stops both, in this browser only.{" "}
-                    <Link href="/privacy" className="text-primary hover:underline">Privacy policy</Link>
-                  </p>
-                  <Button
-                    variant={analyticsOptedOut === false ? "default" : "outline"}
-                    size="sm"
-                    disabled={analyticsOptedOut === null}
-                    onClick={() => {
-                      const optOut = !analyticsOptedOut;
-                      setAnalyticsOptOut(optOut);
-                      setAnalyticsOptedOut(optOut);
-                      toast.success(optOut ? "Analytics off in this browser" : "Analytics on in this browser");
-                    }}
-                  >
-                    {analyticsOptedOut === null ? "Loading" : analyticsOptedOut ? "Disabled" : "Enabled"}
-                  </Button>
-                </div>
+              <CardContent className="space-y-3">
+                <AnalyticsToggle />
+                <Link href="/privacy" className="text-xs text-primary hover:underline">
+                  Privacy policy
+                </Link>
               </CardContent>
             </Card>
           )}
