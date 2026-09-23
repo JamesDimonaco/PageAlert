@@ -75,8 +75,12 @@ export const list = query({
  * ~300 logs a day per monitor, and rawResponse alone can be 50KB, so one
  * transaction cannot hold a heavy user's history: it runs in batches and
  * reschedules itself until the index is empty.
+ *
+ * 25 rather than 100 because of that 50KB: a hundred heavy rows is ~5MB read
+ * and written in one transaction, close enough to Convex's limits that the
+ * batch that trips it is the one belonging to the user with the most history.
  */
-const PURGE_BATCH = 100;
+const PURGE_BATCH = 25;
 
 /** Deletes a user's check history. Scheduled by account.deleteAllUserData. */
 export const purgeForUser = internalMutation({
@@ -92,6 +96,28 @@ export const purgeForUser = internalMutation({
     if (batch.length === PURGE_BATCH) {
       await ctx.scheduler.runAfter(0, internal.logs.purgeForUser, { userId });
     }
+  },
+});
+
+/**
+ * Checks the purge chain actually finished, and shouts if it did not.
+ *
+ * The chain only continues from inside a run that succeeded, so one throw ends
+ * it silently with half a user's history still on disk — and the privacy page
+ * says that history is gone within minutes. Nothing else would ever notice.
+ * Scheduled by deleteAllUserData for well after the chain should be done.
+ */
+export const auditPurge = internalMutation({
+  args: { userId: v.string() },
+  handler: async (ctx, { userId }) => {
+    const leftover = await ctx.db
+      .query("scrapeLogs")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .take(1);
+    if (leftover.length === 0) return;
+    await ctx.scheduler.runAfter(0, internal.admin.notify, {
+      text: `⚠️ Check history survived account deletion for ${userId}. The purge chain stopped early — delete the rest by hand.`,
+    });
   },
 });
 

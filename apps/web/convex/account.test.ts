@@ -169,7 +169,7 @@ describe("deleteAllUserData", () => {
       theirs: await insertRowsFor(ctx, "user-staying"),
     }));
 
-    await t.run((ctx) => deleteAllUserData(ctx, "user-leaving"));
+    await t.run((ctx) => deleteAllUserData(ctx, "user-leaving", "user-leaving@example.test"));
     await t.finishAllScheduledFunctions(vi.runAllTimers);
 
     await t.run(async (ctx) => {
@@ -183,6 +183,45 @@ describe("deleteAllUserData", () => {
         }
         expect(await ctx.db.get(theirs[table]), `${table} row of another user was deleted`).not.toBeNull();
       }
+    });
+    vi.useRealTimers();
+  });
+
+  /**
+   * The fixture above tags its emailSends row with a userId, which only the
+   * onboarding and inactivity emails actually do. Match, error,
+   * monitor-stopped, price, anonymous-scan and bulk all record with userId
+   * undefined, so a by_userId sweep leaves a year of alerts behind with the
+   * address still in `to` — and the privacy policy promises otherwise.
+   */
+  it("removes email records that were never tagged with a userId", async () => {
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    const email = "user-leaving@example.test";
+
+    const { untagged, otherPerson } = await t.run(async (ctx) => ({
+      untagged: await ctx.db.insert("emailSends", {
+        to: email,
+        kind: "match",
+        status: "sent",
+        createdAt: NOW,
+        updatedAt: NOW,
+      }),
+      otherPerson: await ctx.db.insert("emailSends", {
+        to: "someone-else@example.test",
+        kind: "match",
+        status: "sent",
+        createdAt: NOW,
+        updatedAt: NOW,
+      }),
+    }));
+
+    await t.run((ctx) => deleteAllUserData(ctx, "user-leaving", email));
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    await t.run(async (ctx) => {
+      expect(await ctx.db.get(untagged), "an untagged send to this address survived").toBeNull();
+      expect(await ctx.db.get(otherPerson), "another person's send was deleted").not.toBeNull();
     });
     vi.useRealTimers();
   });

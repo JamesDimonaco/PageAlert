@@ -33,8 +33,18 @@ export async function isBanned(ctx: QueryCtx | MutationCtx, userId: string): Pro
  *
  * scrapeLogs can run to tens of thousands of rows for one user, more than
  * a transaction holds, so that table is purged in scheduled batches.
+ *
+ * `email` is required rather than optional because emailSends is only
+ * reachable by address for most of its rows, and a caller that forgot to
+ * pass it would silently leave a user's alert history behind — the exact bug
+ * this function keeps being fixed for. Pass undefined only when there is
+ * genuinely no address on record.
  */
-export async function deleteAllUserData(ctx: MutationCtx, userId: string): Promise<void> {
+export async function deleteAllUserData(
+  ctx: MutationCtx,
+  userId: string,
+  email: string | undefined,
+): Promise<void> {
   const monitors = await ctx.db
     .query("monitors")
     .withIndex("by_userId", (q) => q.eq("userId", userId))
@@ -128,11 +138,28 @@ export async function deleteAllUserData(ctx: MutationCtx, userId: string): Promi
     await ctx.db.delete(review._id);
   }
 
+  // Two sweeps, because only the onboarding and inactivity emails pass a
+  // userId to recordSend. Match, error, monitor-stopped, price,
+  // anonymous-scan and bulk all record with it undefined, so by_userId alone
+  // would leave a user's whole alert history behind with their address in
+  // `to`. The address is what reaches those; the userId still matters for the
+  // rows written before an address change.
   const sends = await ctx.db
     .query("emailSends")
     .withIndex("by_userId", (q) => q.eq("userId", userId))
     .collect();
+  if (email) {
+    sends.push(
+      ...(await ctx.db
+        .query("emailSends")
+        .withIndex("by_to", (q) => q.eq("to", email))
+        .collect())
+    );
+  }
+  const seen = new Set<string>();
   for (const send of sends) {
+    if (seen.has(send._id)) continue;
+    seen.add(send._id);
     await ctx.db.delete(send._id);
   }
 
@@ -145,6 +172,9 @@ export async function deleteAllUserData(ctx: MutationCtx, userId: string): Promi
   }
 
   await ctx.scheduler.runAfter(0, internal.logs.purgeForUser, { userId });
+  // Ten minutes is far longer than the chain needs even for the heaviest
+  // account, so anything still there means it stopped early. See auditPurge.
+  await ctx.scheduler.runAfter(10 * 60 * 1000, internal.logs.auditPurge, { userId });
 }
 
 type UserIdRow = { field: "userId"; operator: "eq"; value: string };
@@ -219,7 +249,7 @@ export const deleteAccount = mutation({
     if (await isBanned(ctx, identity.subject)) {
       throw new Error("This account is suspended. Email us to have it deleted.");
     }
-    await deleteAllUserData(ctx, identity.subject);
+    await deleteAllUserData(ctx, identity.subject, identity.email);
     await deleteAuthRows(ctx, identity.subject);
     // The churn no webhook reports: someone leaving of their own accord.
     // admin.deleteUser has its own alert naming the admin who did it.

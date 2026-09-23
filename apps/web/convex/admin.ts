@@ -874,7 +874,7 @@ export const deleteUser = mutation({
   handler: async (ctx, { userId, email }) => {
     const adminEmail = await requireAdmin(ctx);
 
-    await deleteAllUserData(ctx, userId);
+    await deleteAllUserData(ctx, userId, email);
     await deleteAuthRows(ctx, userId);
 
     // Safe to drop the ban record here (unlike self-service deleteAccount):
