@@ -1,6 +1,8 @@
 import { v } from "convex/values";
+import { MAX_LOG_ROW_BYTES } from "@prowl/shared";
 import { internalMutation, mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
+import type { Id, TableNames } from "./_generated/dataModel";
 
 /** Is this user currently banned? Shared by every mutation that gates on ban status. */
 export async function isBanned(ctx: QueryCtx | MutationCtx, userId: string): Promise<boolean> {
@@ -12,32 +14,18 @@ export async function isBanned(ctx: QueryCtx | MutationCtx, userId: string): Pro
 }
 
 /**
- * Deletes every row this app owns for a user: monitors and their scrape
- * results/notifications, notification settings, remaining notifications,
- * channel claims, the tier record, the creation-rate-limit log, the
- * last-seen record, and the scrape log.
- * Shared by the user's own deleteAccount and the admin dashboard's
- * forced delete, so both paths agree on what "all data" means — a
- * userTiers row surviving account deletion was a known gap this closes
- * for both callers.
+ * Deletes every row this app owns for a user.
  *
- * Two tables still hold an email address after this runs: emailSends and
- * onboardingEmails. Both are small (one and four rows for the worst account)
- * and both are deliberately left for a separate decision, not overlooked.
+ * Monitors and their scrape results and notifications go inline, because a
+ * result is only reachable through the monitor that owns it. Everything keyed
+ * by userId goes through the batched sweep below instead, so no one
+ * transaction has to read an account's whole history.
  *
- * monitorCreations rows are kept across *monitor* deletion (see
- * monitors.ts) to stop a delete-and-remake bypassing the creation rate
- * limit, but a full account delete gets a fresh userId on re-signup
- * regardless, so retaining them here serves no anti-abuse purpose —
- * they're just orphaned personal data at that point.
+ * Shared by the user's own deleteAccount and the admin dashboard's forced
+ * delete, so both paths agree on what "all data" means.
  *
- * Deliberately does NOT touch bannedUsers: deleteAccount (self-service)
- * doesn't remove the caller's Better Auth session, so the same still-
- * logged-in identity would remain — dropping the ban row here would let
- * a banned user delete their way back to an unbanned session. Only
- * admin.deleteUser removes the ban record, because that path also
- * destroys the Better Auth session/account/user rows the ban was
- * blocking, so the userId can never come back to use it.
+ * SWEPT_ON_DELETE and KEPT_ON_DELETE together name every table carrying a
+ * userId, and account.test.ts fails if the schema grows one they don't cover.
  */
 export async function deleteAllUserData(ctx: MutationCtx, userId: string): Promise<void> {
   const monitors = await ctx.db
@@ -65,100 +53,205 @@ export async function deleteAllUserData(ctx: MutationCtx, userId: string): Promi
     await ctx.db.delete(monitor._id);
   }
 
-  const settings = await ctx.db
-    .query("notificationSettings")
-    .withIndex("by_userId", (q) => q.eq("userId", userId))
-    .collect();
-  for (const setting of settings) {
-    await ctx.db.delete(setting._id);
-  }
-
-  const remainingNotifs = await ctx.db
-    .query("notifications")
-    .withIndex("by_userId", (q) => q.eq("userId", userId))
-    .collect();
-  for (const notif of remainingNotifs) {
-    await ctx.db.delete(notif._id);
-  }
-
-  const claims = await ctx.db
-    .query("channelClaims")
-    .withIndex("by_userId", (q) => q.eq("userId", userId))
-    .collect();
-  for (const claim of claims) {
-    await ctx.db.delete(claim._id);
-  }
-
-  const tier = await ctx.db
-    .query("userTiers")
-    .withIndex("by_userId", (q) => q.eq("userId", userId))
-    .unique();
-  if (tier) await ctx.db.delete(tier._id);
-
-  const creations = await ctx.db
-    .query("monitorCreations")
-    .withIndex("by_userId_createdAt", (q) => q.eq("userId", userId))
-    .collect();
-  for (const creation of creations) {
-    await ctx.db.delete(creation._id);
-  }
-
-  const activity = await ctx.db
-    .query("userActivity")
-    .withIndex("by_userId", (q) => q.eq("userId", userId))
-    .unique();
-  if (activity) await ctx.db.delete(activity._id);
-
-  await deleteScrapeLogs(ctx, userId);
+  await sweepUserTables(ctx, userId);
 }
 
 /**
- * Scrape logs removed per mutation.
+ * Every table keyed by userId, and the query that takes one batch of a user's
+ * rows from it.
  *
- * 100 because a row carries rawResponse: the heaviest in prod is 23KB, so a
- * batch costs roughly 2.4MB of a transaction's ~8MB read budget even at that
- * size, alongside everything else the sweep reads. Taking them all at once
- * looked fine on today's numbers and was the wrong bet — nothing prunes this
- * table, deliberately, so the accounts holding the most would be exactly the
- * ones whose deletion blew the budget, threw, and rolled back. A user who
- * cannot delete their account is worse than a delete that takes ten rounds.
+ * Batched rather than collected because none of them is bounded per account:
+ * the scrape log, the email sends, the thumbs and the rate-limit entries all
+ * grow for as long as the account exists, and nothing prunes them. Reading
+ * them all in one transaction would breach its read budget for exactly the
+ * heaviest accounts, throw, and roll back — so the users with the most data
+ * would be the only ones unable to delete it.
+ *
+ * `monitorCreations` survives *monitor* deletion (see monitors.ts) so a
+ * delete-and-remake cannot bypass the creation rate limit, but a new signup
+ * gets a new userId regardless, so after account deletion those rows are
+ * orphaned personal data and nothing else. `appliedOrders` goes for the same
+ * reason: Polar holds the receipt, and this table only exists to stop a
+ * redelivered webhook granting one pass twice to a userId that no longer
+ * exists.
  */
-const LOG_DELETE_BATCH = 100;
+const SWEEPS: readonly {
+  table: TableNames;
+  batch: (ctx: MutationCtx, userId: string, take: number) => Promise<{ _id: Id<TableNames> }[]>;
+}[] = [
+  {
+    table: "scrapeLogs",
+    batch: (ctx, userId, take) =>
+      ctx.db
+        .query("scrapeLogs")
+        .withIndex("by_userId_createdAt", (q) => q.eq("userId", userId))
+        .take(take),
+  },
+  {
+    table: "matchFeedback",
+    batch: (ctx, userId, take) =>
+      ctx.db
+        .query("matchFeedback")
+        .withIndex("by_userId", (q) => q.eq("userId", userId))
+        .take(take),
+  },
+  {
+    table: "emailSends",
+    batch: (ctx, userId, take) =>
+      ctx.db
+        .query("emailSends")
+        .withIndex("by_userId", (q) => q.eq("userId", userId))
+        .take(take),
+  },
+  {
+    table: "onboardingEmails",
+    batch: (ctx, userId, take) =>
+      ctx.db
+        .query("onboardingEmails")
+        .withIndex("by_userId", (q) => q.eq("userId", userId))
+        .take(take),
+  },
+  {
+    table: "notifications",
+    batch: (ctx, userId, take) =>
+      ctx.db
+        .query("notifications")
+        .withIndex("by_userId", (q) => q.eq("userId", userId))
+        .take(take),
+  },
+  {
+    table: "notificationSettings",
+    batch: (ctx, userId, take) =>
+      ctx.db
+        .query("notificationSettings")
+        .withIndex("by_userId", (q) => q.eq("userId", userId))
+        .take(take),
+  },
+  {
+    table: "pushSubscriptions",
+    batch: (ctx, userId, take) =>
+      ctx.db
+        .query("pushSubscriptions")
+        .withIndex("by_userId", (q) => q.eq("userId", userId))
+        .take(take),
+  },
+  {
+    table: "channelClaims",
+    batch: (ctx, userId, take) =>
+      ctx.db
+        .query("channelClaims")
+        .withIndex("by_userId", (q) => q.eq("userId", userId))
+        .take(take),
+  },
+  {
+    table: "monitorCreations",
+    batch: (ctx, userId, take) =>
+      ctx.db
+        .query("monitorCreations")
+        .withIndex("by_userId_createdAt", (q) => q.eq("userId", userId))
+        .take(take),
+  },
+  {
+    table: "appliedOrders",
+    batch: (ctx, userId, take) =>
+      ctx.db
+        .query("appliedOrders")
+        .withIndex("by_userId", (q) => q.eq("userId", userId))
+        .take(take),
+  },
+  {
+    table: "reviews",
+    batch: (ctx, userId, take) =>
+      ctx.db
+        .query("reviews")
+        .withIndex("by_userId", (q) => q.eq("userId", userId))
+        .take(take),
+  },
+  {
+    table: "userTiers",
+    batch: (ctx, userId, take) =>
+      ctx.db
+        .query("userTiers")
+        .withIndex("by_userId", (q) => q.eq("userId", userId))
+        .take(take),
+  },
+  {
+    table: "userActivity",
+    batch: (ctx, userId, take) =>
+      ctx.db
+        .query("userActivity")
+        .withIndex("by_userId", (q) => q.eq("userId", userId))
+        .take(take),
+  },
+];
 
 /**
- * Takes one batch of a user's scrape logs, and queues another if more remain.
+ * Every table account deletion clears, the inline monitor sweep included.
+ * Exported so a test can prove the schema holds no userId table it misses.
+ */
+export const SWEPT_ON_DELETE: readonly string[] = [
+  "monitors",
+  ...SWEEPS.map((sweep) => sweep.table),
+];
+
+/**
+ * Tables that go on holding a userId after the account is gone.
  *
- * The log is the last and largest of it: every URL they watched, every prompt
- * they wrote, and the raw AI response for each check. It survived account
- * deletion until now because the per-monitor sweep does not take it — a log
- * outlives its monitor on purpose, so the logs page can still show checks for
- * one you have since deleted (1,372 of prod's 7,420 rows point at a monitor
- * that is gone). That leaves the account as the only thing that removes them.
+ * Only bannedUsers, and only on the self-service path: deleteAccount does not
+ * remove the caller's Better Auth session, so the same still-logged-in
+ * identity outlives the delete — dropping the ban row here would let a banned
+ * user delete their way back to an unbanned session. admin.deleteUser does
+ * remove it, because that path also destroys the session, account and user
+ * rows the ban was blocking, so the userId can never come back to use it.
+ */
+export const KEPT_ON_DELETE: readonly string[] = ["bannedUsers"];
+
+/**
+ * Rows deleted per round.
  *
- * Past the first batch this is no longer atomic with the account deletion,
+ * Derived rather than picked: a scrapeLogs row is the heaviest thing the
+ * sweep can read and capLogFields caps it at MAX_LOG_ROW_BYTES, so this is
+ * how many fit in half of a transaction's ~8MB read budget. The other half is
+ * left for the monitor sweep the first round shares its transaction with.
+ */
+const SWEEP_BUDGET_BYTES = 4_000_000;
+export const SWEEP_BATCH = Math.floor(SWEEP_BUDGET_BYTES / MAX_LOG_ROW_BYTES);
+
+/**
+ * Deletes up to one batch of a user's rows, taking the tables in order, and
+ * queues another round if it filled the batch.
+ *
+ * Spending one allowance across the tables rather than a batch per table
+ * means an ordinary account finishes in the first round with nothing
+ * scheduled at all, while a heavy one still reads at most SWEEP_BATCH rows
+ * however many tables it spans.
+ *
+ * Past the first round this is no longer atomic with the account deletion,
  * which is the right way round: the goal is erasure, so partial progress
- * toward it is acceptable where refusing to start is not.
+ * toward it beats refusing to start.
  */
-async function deleteScrapeLogs(ctx: MutationCtx, userId: string): Promise<void> {
-  const batch = await ctx.db
-    .query("scrapeLogs")
-    .withIndex("by_userId_createdAt", (q) => q.eq("userId", userId))
-    .take(LOG_DELETE_BATCH);
+async function sweepUserTables(ctx: MutationCtx, userId: string): Promise<void> {
+  let allowance = SWEEP_BATCH;
 
-  for (const log of batch) {
-    await ctx.db.delete(log._id);
+  for (const sweep of SWEEPS) {
+    if (allowance === 0) break;
+    const rows = await sweep.batch(ctx, userId, allowance);
+    for (const row of rows) {
+      await ctx.db.delete(row._id);
+    }
+    allowance -= rows.length;
   }
 
-  if (batch.length === LOG_DELETE_BATCH) {
-    await ctx.scheduler.runAfter(0, internal.account.deleteRemainingScrapeLogs, { userId });
+  if (allowance === 0) {
+    await ctx.scheduler.runAfter(0, internal.account.sweepRemainingUserData, { userId });
   }
 }
 
-/** Continues deleteScrapeLogs for an account holding more than one batch. */
-export const deleteRemainingScrapeLogs = internalMutation({
+/** Continues sweepUserTables for an account holding more than one batch. */
+export const sweepRemainingUserData = internalMutation({
   args: { userId: v.string() },
   handler: async (ctx, { userId }) => {
-    await deleteScrapeLogs(ctx, userId);
+    await sweepUserTables(ctx, userId);
   },
 });
 
@@ -220,5 +313,3 @@ export const myBanStatus = query({
     return { banned: !!row, reason: row?.reason ?? null };
   },
 });
-
-

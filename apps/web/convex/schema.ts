@@ -197,6 +197,7 @@ export default defineSchema({
     source: v.union(v.literal("dashboard"), v.literal("telegram")),
     createdAt: v.number(),
   })
+    .index("by_userId", ["userId"])
     .index("by_monitorId", ["monitorId"])
     .index("by_monitor_item", ["monitorId", "itemKey"])
     .index("by_createdAt", ["createdAt"]),
@@ -260,7 +261,9 @@ export default defineSchema({
     orderId: v.string(),
     userId: v.string(),
     appliedAt: v.number(),
-  }).index("by_orderId", ["orderId"]),
+  })
+    .index("by_orderId", ["orderId"])
+    .index("by_userId", ["userId"]),
   // Super-admin bans. Blocks monitor creation and dashboard access; existing
   // monitors are paused when the ban is applied (see admin.banUser).
   bannedUsers: defineTable({
@@ -349,6 +352,7 @@ export default defineSchema({
     createdAt: v.number(),
     updatedAt: v.number(),
   })
+    .index("by_userId", ["userId"])
     .index("by_resendId", ["resendId"])
     .index("by_createdAt", ["createdAt"])
     .index("by_status_createdAt", ["status", "createdAt"]),
