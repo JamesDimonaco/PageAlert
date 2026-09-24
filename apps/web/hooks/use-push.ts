@@ -5,11 +5,12 @@ import { useAction, useMutation, useQuery } from "convex/react";
 import { detectDevice, type Device } from "@prowl/shared";
 import { api } from "@/convex/_generated/api";
 
-/** Matches the tag convex/push.ts sendTestMessage puts on its payload */
-const TEST_TAG = "pagealert-test";
-
-/** How long after the server hands off a test before we call it lost */
-const TEST_ARRIVAL_TIMEOUT_MS = 10_000;
+/**
+ * How long after the server hands off a test before we call it lost. Push
+ * services run normal-priority sends late, so this is generous: calling a
+ * healthy device lost tells its owner to re-register for nothing.
+ */
+const TEST_ARRIVAL_TIMEOUT_MS = 30_000;
 
 /** VAPID keys arrive base64url; PushManager wants raw bytes */
 function urlBase64ToUint8Array(base64: string): Uint8Array {
@@ -73,39 +74,16 @@ async function detectState(): Promise<PushState> {
 }
 
 /**
- * Make sure the page talks to the current sw.js. Workers registered before the
- * worker learned to report arrivals would otherwise stay silent, and the
- * browser only re-checks sw.js on its own schedule.
- */
-async function refreshWorker(): Promise<void> {
-  const registration = await navigator.serviceWorker.getRegistration();
-  if (!registration) return;
-  await registration.update().catch(() => {});
-  const pending = registration.installing ?? registration.waiting;
-  if (!pending) return;
-  await new Promise<void>((resolve) => {
-    const check = () => {
-      if (pending.state === "activated" || pending.state === "redundant") {
-        pending.removeEventListener("statechange", check);
-        resolve();
-      }
-    };
-    pending.addEventListener("statechange", check);
-    check();
-  });
-}
-
-/**
  * Resolves true when the service worker reports the test push, false after
  * the timeout. Listening starts before the send because the push can land
  * before the action returns; the clock only starts once the send has resolved.
  */
-function listenForTestPush(): { arrived: (timeoutMs: number) => Promise<boolean>; stop: () => void } {
+function listenForTestPush(testId: string): { arrived: (timeoutMs: number) => Promise<boolean>; stop: () => void } {
   let heard = false;
   let wake: (() => void) | null = null;
   const onMessage = (event: MessageEvent) => {
-    const data = event.data as { type?: string; tag?: string } | null;
-    if (data?.type === "push-received" && data.tag === TEST_TAG) {
+    const data = event.data as { type?: string; testId?: string } | null;
+    if (data?.type === "push-received" && data.testId === testId) {
       heard = true;
       wake?.();
     }
@@ -216,10 +194,11 @@ export function usePush() {
    * something only the user can tell us. Throws if the server couldn't send.
    */
   const sendTest = useCallback(async (): Promise<"arrived" | "lost"> => {
-    await refreshWorker();
-    const listener = listenForTestPush();
+    const testId = crypto.randomUUID();
+    const listener = listenForTestPush(testId);
     try {
-      await sendTestMessage({});
+      const { delivered } = await sendTestMessage({ testId });
+      if (delivered === 0) return "lost";
       return (await listener.arrived(TEST_ARRIVAL_TIMEOUT_MS)) ? "arrived" : "lost";
     } finally {
       listener.stop();

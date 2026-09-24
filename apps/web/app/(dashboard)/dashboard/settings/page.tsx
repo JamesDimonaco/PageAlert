@@ -23,7 +23,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { useMonitors } from "@/hooks/use-monitors";
 import { useTier } from "@/hooks/use-tier";
 import { usePush } from "@/hooks/use-push";
-import { PhoneSetupQr, PushNotShownSteps } from "@/components/prowl/push-help";
+import { PushNotShownSteps, QrCode } from "@/components/prowl/push-help";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { authClient } from "@/lib/auth-client";
@@ -451,13 +451,10 @@ export default function SettingsPage() {
                     </DialogDescription>
                   </DialogHeader>
                   <div className="flex justify-center py-4">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent("https://t.me/PageAlertNotify_bot")}&bgcolor=0a0a0b&color=3b82f6&format=svg`}
-                      alt="QR code to open PageAlert bot in Telegram"
-                      width={200}
-                      height={200}
-                      className="rounded-lg"
+                    <QrCode
+                      value="https://t.me/PageAlertNotify_bot"
+                      label="QR code to open PageAlert bot in Telegram"
+                      className="h-[200px] w-[200px]"
                     />
                   </div>
                 </DialogContent>
@@ -716,6 +713,7 @@ export default function SettingsPage() {
                         onClick={async () => {
                           try {
                             await push.disable();
+                            setPushTest("idle");
                             trackNotificationChannelToggled({ channel: "push", enabled: false });
                             toast.success("Alerts turned off for this device");
                           } catch {
@@ -771,27 +769,13 @@ export default function SettingsPage() {
                   {pushTest === "lost" && (
                     <div className="rounded-lg border border-border/40 bg-muted/20 p-4 space-y-3">
                       <p className="text-sm leading-relaxed">
-                        The test never reached this browser, so its connection has gone
-                        stale. Reconnecting usually fixes it.
+                        The test hasn&apos;t reached this browser, so its connection has
+                        probably gone stale. Click <strong>Turn off</strong>, then{" "}
+                        <strong>Enable on this device</strong>, and send another test.
                       </p>
                       <div className="flex flex-wrap gap-2">
-                        <Button
-                          size="sm"
-                          disabled={push.busy}
-                          onClick={async () => {
-                            try {
-                              await push.disable();
-                              await push.enable();
-                              await runPushTest();
-                            } catch (e) {
-                              toast.error("Couldn't reconnect", {
-                                description: e instanceof Error ? e.message : "Try again",
-                              });
-                            }
-                          }}
-                        >
-                          {push.busy ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null}
-                          Reconnect and test again
+                        <Button size="sm" variant="outline" onClick={() => void runPushTest()}>
+                          Send another test
                         </Button>
                         <Button size="sm" variant="ghost" onClick={() => setPushTest("idle")}>
                           Close
@@ -834,8 +818,9 @@ export default function SettingsPage() {
                       </div>
                       {showPhoneQr && (
                         <div className="flex flex-col sm:flex-row sm:items-center gap-4">
-                          <PhoneSetupQr
-                            url={`${window.location.origin}/dashboard/settings?tab=notifications`}
+                          <QrCode
+                            value={`${window.location.origin}/dashboard/settings?tab=notifications`}
+                            label="QR code that opens PageAlert's notification settings"
                           />
                           <ol className="space-y-1.5 text-sm text-muted-foreground list-decimal list-inside">
                             <li>Point your phone&apos;s camera at the code and open the link</li>

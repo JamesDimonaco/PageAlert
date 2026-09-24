@@ -42,6 +42,8 @@ interface Payload {
   body: string;
   url: string;
   tag?: string;
+  /** Lets the page tell its own test apart from an earlier, late one */
+  testId?: string;
 }
 
 async function deliver(
@@ -113,10 +115,14 @@ export const sendToUser = internalAction({
   },
 });
 
-/** Fire a test notification at the caller's own devices */
+/**
+ * Fire a test notification at the caller's own devices. Returns zero rather
+ * than throwing when nothing took it, so the page can offer its stale-device
+ * help instead of a bare error.
+ */
 export const sendTestMessage = action({
-  args: {},
-  handler: async (ctx): Promise<{ delivered: number }> => {
+  args: { testId: v.optional(v.string()) },
+  handler: async (ctx, args): Promise<{ delivered: number }> => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Not authenticated");
 
@@ -129,13 +135,8 @@ export const sendTestMessage = action({
       body: "Push notifications are working. This is what an alert will look like.",
       url: `${APP_URL}/dashboard`,
       tag: "pagealert-test",
+      testId: args.testId,
     });
-
-    if (delivered === 0) {
-      throw new Error(
-        "No device received the notification. Try turning push off and on again."
-      );
-    }
     return { delivered };
   },
 });

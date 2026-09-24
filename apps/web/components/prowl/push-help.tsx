@@ -60,9 +60,17 @@ export function PushNotShownSteps({ device }: { device: Device }) {
   );
 }
 
-/** QR code for opening the notification settings on a phone */
-export function PhoneSetupQr({ url }: { url: string }) {
-  const { data, size } = useMemo(() => encode(url, { border: 4 }), [url]);
+/** A QR code drawn locally, so the link it encodes goes to no third party */
+export function QrCode({
+  value,
+  label,
+  className = "h-36 w-36",
+}: {
+  value: string;
+  label: string;
+  className?: string;
+}) {
+  const { data, size } = useMemo(() => encode(value, { border: 4 }), [value]);
 
   // One path for all the dark modules keeps the SVG small at any version
   const path = useMemo(() => {
@@ -78,10 +86,10 @@ export function PhoneSetupQr({ url }: { url: string }) {
   return (
     <svg
       viewBox={`0 0 ${size} ${size}`}
-      className="h-36 w-36 rounded-md"
+      className={`${className} rounded-md`}
       shapeRendering="crispEdges"
       role="img"
-      aria-label="QR code that opens PageAlert's notification settings"
+      aria-label={label}
     >
       {/* Always dark on light: cameras read inverted codes badly */}
       <rect width={size} height={size} fill="#fff" />
