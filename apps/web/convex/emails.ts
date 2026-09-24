@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { internalAction, type ActionCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
+import { MATCH_CONFIDENCE_LABEL, MATCH_SCORE_THRESHOLD, matchConfidence } from "./shared";
 
 const FROM_EMAIL = "PageAlert <alerts@pagealert.io>";
 // Onboarding/welcome emails come from a separate address so users can
@@ -30,6 +31,13 @@ export function textToHtmlParagraphs(text: string, paragraphStyle?: string): str
     .filter(Boolean)
     .map((p) => `<p${styleAttr}>${esc(p).replace(/\n/g, "<br>").replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1">$1</a>')}</p>`)
     .join("");
+}
+
+/** A judged score as a readable band. Raw numbers are not calibrated enough to show alone. */
+function confidenceNote(score: number): string {
+  const label = MATCH_CONFIDENCE_LABEL[matchConfidence(score)];
+  const colour = score >= 85 ? "#047857" : score >= MATCH_SCORE_THRESHOLD ? "#b45309" : "#6b7280";
+  return `<span style="color:${colour};font-size:12px;margin-left:6px">${label}</span>`;
 }
 
 function safeHostname(url: string): string {
@@ -133,41 +141,26 @@ export const sendMatchAlert = internalAction({
     const safeName = esc(args.monitorName);
     const safeHost = esc(safeHostname(args.url));
 
-    // Determine if this is a quick check (keyword-based) or full extraction
-    const isQuickCheck = args.matches.length > 0 && (args.matches[0] as Record<string, unknown>)?.quickCheck === true;
-
     // Use the first matched item's URL if available, otherwise fall back to the monitor URL
-    const firstItemUrl = !isQuickCheck
-      ? args.matches.find((m: Record<string, unknown>) => typeof m.url === "string" && m.url.length > 0)?.url as string | undefined
-      : undefined;
+    const firstItemUrl = args.matches.find((m: Record<string, unknown>) => typeof m.url === "string" && m.url.length > 0)?.url as string | undefined;
     const viewOnSiteUrl = firstItemUrl ?? args.url;
 
-    let matchList = "";
-    let summaryText = "";
+    const matchList = args.matches
+      .slice(0, 5)
+      .map((m: Record<string, unknown>) => {
+        const title = esc(String(m.title ?? m.name ?? "Item"));
+        const price = m.price != null ? ` — $${esc(Number(m.price).toLocaleString())}` : "";
+        const score = typeof m.matchScore === "number" ? confidenceNote(m.matchScore) : "";
+        const reason = typeof m.matchReason === "string" && m.matchReason
+          ? `<div style="color:#666;font-size:12px;margin-top:2px">${esc(m.matchReason)}</div>`
+          : "";
+        return `<li style="padding:8px 0;border-bottom:1px solid #eee">${title}${price}${score}${reason}</li>`;
+      })
+      .join("");
+    const itemsText = args.totalItems > 0 ? ` out of ${args.totalItems} items` : "";
+    const summaryText = `Your monitor found <strong>${args.matchCount} new match${args.matchCount !== 1 ? "es" : ""}</strong>${itemsText} on <a href="${safeHref(args.url)}" style="color:#4f46e5;text-decoration:none">${safeHost}</a>.`;
 
-    if (isQuickCheck) {
-      // Quick check: just say keywords were found on the page
-      const kr = (args.matches[0] as Record<string, unknown>)?.keywordResults as Record<string, unknown> | undefined;
-      const pr = (args.matches[0] as Record<string, unknown>)?.priceResults as Record<string, unknown> | undefined;
-      const keywords = Array.isArray(kr?.included) ? (kr.included as string[]).join(", ") : "your keywords";
-      const lowestPrice = pr?.lowestInRange != null ? Number(pr.lowestInRange) : NaN;
-      const priceInfo = Number.isFinite(lowestPrice) ? ` Prices from $${esc(lowestPrice.toLocaleString("en-US"))}.` : "";
-      summaryText = `Your monitor detected <strong>${esc(keywords)}</strong> on the page.${priceInfo}`;
-    } else {
-      // Full extraction: show matched items
-      matchList = args.matches
-        .slice(0, 5)
-        .map((m: Record<string, unknown>) => {
-          const title = esc(String(m.title ?? m.name ?? "Item"));
-          const price = m.price != null ? ` — $${esc(Number(m.price).toLocaleString())}` : "";
-          return `<li style="padding:8px 0;border-bottom:1px solid #eee">${title}${price}</li>`;
-        })
-        .join("");
-      const itemsText = args.totalItems > 0 ? ` out of ${args.totalItems} items` : "";
-      summaryText = `Your monitor found <strong>${args.matchCount} new match${args.matchCount !== 1 ? "es" : ""}</strong>${itemsText} on <a href="${safeHref(args.url)}" style="color:#4f46e5;text-decoration:none">${safeHost}</a>.`;
-    }
-
-    const moreText = !isQuickCheck && args.matchCount > 5 ? `<p style="color:#666;font-size:14px">+${args.matchCount - 5} more new matches</p>` : "";
+    const moreText = args.matchCount > 5 ? `<p style="color:#666;font-size:14px">+${args.matchCount - 5} more new matches</p>` : "";
 
     const priceDiscovery = args.tracksPrices
       ? `<div style="margin-top:24px;padding-top:24px;border-top:1px solid #eee">
@@ -215,9 +208,15 @@ export const sendMatchAlert = internalAction({
     const priceDiscoveryText = args.tracksPrices
       ? "\n\nThis page has prices — set up price tracking to get notified when prices change.\nSet up price alerts: " + `${APP_URL}/dashboard/monitors/${args.monitorId}?section=price-alerts`
       : "";
-    const text = isQuickCheck
-      ? `Match Found — ${args.monitorName}\n\nYour monitor detected matching keywords on ${safeHostname(args.url)}.\n\nView on site: ${viewOnSiteUrl}\nView in PageAlert: ${APP_URL}/dashboard/monitors/${args.monitorId}` + priceDiscoveryText
-      : `Match Found — ${args.monitorName}\n\nYour monitor found ${args.matchCount} new match${args.matchCount !== 1 ? "es" : ""}${plainItemsText} on ${safeHostname(args.url)}.\n\n${args.matches.slice(0, 5).map((m: Record<string, unknown>) => `• ${String(m.title ?? m.name ?? "Item")}${m.price != null ? ` — $${Number(m.price)}` : ""}`).join("\n")}\n${args.matchCount > 5 ? `+${args.matchCount - 5} more` : ""}\n\nView on site: ${viewOnSiteUrl}\nView in PageAlert: ${APP_URL}/dashboard/monitors/${args.monitorId}` + priceDiscoveryText;
+    const plainMatches = args.matches
+      .slice(0, 5)
+      .map((m: Record<string, unknown>) => {
+        const price = m.price != null ? ` — $${Number(m.price)}` : "";
+        const band = typeof m.matchScore === "number" ? ` [${MATCH_CONFIDENCE_LABEL[matchConfidence(m.matchScore)]}]` : "";
+        return `• ${String(m.title ?? m.name ?? "Item")}${price}${band}`;
+      })
+      .join("\n");
+    const text = `Match Found — ${args.monitorName}\n\nYour monitor found ${args.matchCount} new match${args.matchCount !== 1 ? "es" : ""}${plainItemsText} on ${safeHostname(args.url)}.\n\n${plainMatches}\n${args.matchCount > 5 ? `+${args.matchCount - 5} more` : ""}\n\nView on site: ${viewOnSiteUrl}\nView in PageAlert: ${APP_URL}/dashboard/monitors/${args.monitorId}` + priceDiscoveryText;
 
     await send(ctx, {
       to: args.to,
@@ -295,11 +294,14 @@ export const sendMonitorStoppedAlert = internalAction({
     monitorName: v.string(),
     monitorId: v.string(),
     url: v.string(),
+    /** Why checks stopped, from the park in scheduler.ts. */
+    reason: v.string(),
     telegramConnected: v.boolean(),
   },
   handler: async (ctx, args) => {
     const safeName = esc(args.monitorName);
     const safeHost = esc(safeHostname(args.url));
+    const safeReason = esc(args.reason);
     const monitorHref = `${APP_URL}/dashboard/monitors/${args.monitorId}`;
 
     const telegramNudge = args.telegramConnected
@@ -324,7 +326,7 @@ export const sendMonitorStoppedAlert = internalAction({
       <div style="padding:32px">
         <p style="margin:0 0 16px;color:#333;font-size:16px">
           We've stopped checking <a href="${safeHref(args.url)}" style="color:#4f46e5;text-decoration:none">${safeHost}</a>.
-          The site blocks automated access even through our proxy, so every attempt was turned away.
+          ${safeReason}
         </p>
         <p style="margin:0 0 24px;color:#555;font-size:14px">
           You won't get any more alerts for this monitor until you start it again. If the site has
@@ -349,7 +351,7 @@ export const sendMonitorStoppedAlert = internalAction({
       to: args.to,
       subject: `Checks stopped: ${args.monitorName}`,
       html,
-      text: `Checks stopped — ${args.monitorName}\n\nWe've stopped checking ${safeHostname(args.url)}. The site blocks automated access even through our proxy.\n\nYou won't get any more alerts for this monitor until you start it again.\n\nRetry: ${monitorHref}${textNudge}`,
+      text: `Checks stopped — ${args.monitorName}\n\nWe've stopped checking ${safeHostname(args.url)}. ${args.reason}\n\nYou won't get any more alerts for this monitor until you start it again.\n\nRetry: ${monitorHref}${textNudge}`,
       kind: "monitor-stopped",
       monitorId: args.monitorId,
     });
@@ -668,6 +670,134 @@ ${APP_URL}`;
       from: HELLO_FROM_EMAIL,
       userId: args.userId,
       throwOnError: true,
+    });
+  },
+});
+
+// ---- Inactivity auto-pause ----
+
+const MONTHS = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+
+/**
+ * A day as "12 June 2026". Written out rather than left to
+ * toLocaleDateString so the format cannot depend on whatever locale data the
+ * runtime happens to carry — and DMY, per house convention.
+ */
+export function formatDay(ts: number): string {
+  const d = new Date(ts);
+  return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
+}
+
+/**
+ * The one-click restart link from the pause email. No login, no signature —
+ * see inactivity.ts.
+ *
+ * The token rides in the fragment, not the query string. A fragment is never
+ * sent to the server, so it stays out of request logs, out of Next's
+ * searchParams, and out of the pageview URL PostHog captures — the resume page
+ * strips it from the address bar, but the provider builds that URL from the
+ * params it captured at render, well before any strip could run.
+ */
+export function resumeUrl(token: string): string {
+  return `${APP_URL}/resume#${encodeURIComponent(token)}`;
+}
+
+/**
+ * We have stopped checking one or more of this user's monitors because they
+ * have not been back. One email per user per run, each monitor with its own
+ * restart link.
+ */
+export const sendInactivityPaused = internalAction({
+  args: {
+    to: v.string(),
+    userId: v.string(),
+    /** When we last saw them, for the "you haven't been back since" line. */
+    lastSeenAt: v.number(),
+    monitors: v.array(v.object({
+      id: v.string(),
+      name: v.string(),
+      url: v.string(),
+      token: v.string(),
+      /** When it last matched, if that was after we last saw them. */
+      matchedSinceSeenAt: v.optional(v.number()),
+    })),
+  },
+  handler: async (ctx, args) => {
+    const { monitors } = args;
+    if (monitors.length === 0) return;
+    const single = monitors.length === 1;
+    const since = formatDay(args.lastSeenAt);
+
+    const cards = monitors
+      .map((m) => {
+        // Only said where it is true. Deliberately the match date rather than a
+        // count of notifications: error and "checks stopped" notices share that
+        // table, so counting them would promise alerts we never sent.
+        const alertLine =
+          m.matchedSinceSeenAt !== undefined
+            ? `<p style="margin:0 0 16px;color:#555;font-size:14px">It found something on ${formatDay(m.matchedSinceSeenAt)}, after you were last here.</p>`
+            : "";
+        return `
+      <div style="border-top:1px solid #eee;padding:24px 32px">
+        <p style="margin:0 0 8px;color:#111;font-size:16px;font-weight:600">${esc(m.name)}</p>
+        <p style="margin:0 0 16px;color:#333;font-size:15px">
+          We've stopped checking <a href="${safeHref(m.url)}" style="color:#4f46e5;text-decoration:none">${esc(safeHostname(m.url))}</a>.
+        </p>
+        ${alertLine}
+        <a href="${resumeUrl(m.token)}" style="display:inline-block;background:#4f46e5;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:500;font-size:14px">Restart this monitor</a>
+      </div>`;
+      })
+      .join("");
+
+    const html = `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f4f4f5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif">
+  <div style="max-width:560px;margin:0 auto;padding:40px 20px">
+    <div style="background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.1)">
+      <div style="background:#f59e0b;padding:24px 32px">
+        <h1 style="margin:0;color:#fff;font-size:20px;font-weight:600">${single ? "Monitor paused" : `${monitors.length} monitors paused`}</h1>
+      </div>
+      <div style="padding:32px 32px 0">
+        <p style="margin:0 0 16px;color:#333;font-size:16px">
+          You haven't been back to PageAlert since ${since}, so we've paused ${single ? "your monitor" : "these monitors"}.
+          Nothing is deleted. Press the button and ${single ? "it picks" : "they pick"} up where ${single ? "it" : "they"} left off, no need to sign in.
+        </p>
+      </div>
+      ${cards}
+      <div style="padding:24px 32px;border-top:1px solid #eee">
+        <p style="margin:0;color:#555;font-size:14px">If you're done with ${single ? "it" : "them"}, there's nothing to do.</p>
+      </div>
+      <div style="padding:16px 32px;background:#f9fafb;border-top:1px solid #eee">
+        <p style="margin:0;color:#999;font-size:12px"><a href="${APP_URL}/dashboard" style="color:#999">Open your dashboard</a></p>
+      </div>
+    </div>
+  </div>
+</body>
+</html>`;
+
+    const textCards = monitors
+      .map((m) => {
+        const alertLine = m.matchedSinceSeenAt !== undefined ? `\nIt found something on ${formatDay(m.matchedSinceSeenAt)}, after you were last here.` : "";
+        return `${m.name} — ${safeHostname(m.url)}${alertLine}\nRestart: ${resumeUrl(m.token)}`;
+      })
+      .join("\n\n");
+
+    await send(ctx, {
+      to: args.to,
+      subject: single ? `We paused ${monitors[0]!.name}` : `We paused ${monitors.length} of your monitors`,
+      html,
+      text:
+        `You haven't been back to PageAlert since ${since}, so we've paused ${single ? "your monitor" : "these monitors"}. ` +
+        `Nothing is deleted — the link below picks up where it left off, no need to sign in.\n\n${textCards}\n\n` +
+        `If you're done with ${single ? "it" : "them"}, there's nothing to do.`,
+      kind: "inactivity-paused",
+      userId: args.userId,
+      monitorId: single ? monitors[0]!.id : undefined,
     });
   },
 });

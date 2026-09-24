@@ -10,16 +10,14 @@ import { Label } from "@/components/ui/label";
 import { AiInsightsCard } from "@/components/prowl/ai-insights";
 import { PriceAlertCard } from "@/components/prowl/price-alert-card";
 import { IntervalSelector } from "@/components/prowl/interval-selector";
-import { ChannelSelector, type Channel } from "@/components/prowl/channel-selector";
+import { ChannelSelector, useConfiguredChannels, type Channel } from "@/components/prowl/channel-selector";
 import {
   ExternalLink,
-  Clock,
-  Zap,
+  List,
   CheckCircle2,
   ChevronDown,
   ChevronUp,
-  Quote,
-  Pencil,
+  Settings2,
   X,
   Save,
   Loader2,
@@ -28,17 +26,20 @@ import {
   Bell,
   BellOff,
   TrendingDown,
-  BarChart3,
+  TrendingUp,
+  SlidersHorizontal,
 } from "lucide-react";
 import type { Id } from "@/convex/_generated/dataModel";
-import { MAX_PROXY_BLOCKS } from "@/convex/shared";
-import type { ExtractedItem, ExtractionSchema } from "@prowl/shared";
-import { getItemKey } from "@prowl/shared";
+import type { Doc } from "@/convex/_generated/dataModel";
+import type { ExtractedItem, ExtractionSchema, PriceChange } from "@prowl/shared";
+import { getItemKey, matchConfidence, MATCH_CONFIDENCE_LABEL } from "@prowl/shared";
 import { useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
-import { timeAgo } from "@/lib/time";
+import { timeAgo, timeUntil } from "@/lib/time";
 import { formatPrice, toSafeUrl } from "@/lib/format";
+import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { trackEvent } from "@/lib/posthog";
 
 interface OverviewTabProps {
   monitorId: Id<"monitors">;
@@ -48,6 +49,7 @@ interface OverviewTabProps {
     prompt: string;
     checkInterval: string;
     lastCheckedAt?: number;
+    lastMatchAt?: number;
     matchCount: number;
     checkCount?: number;
     schema?: unknown;
@@ -62,18 +64,42 @@ interface OverviewTabProps {
   matches: ExtractedItem[];
   allItems: ExtractedItem[];
   totalItems: number;
+  results: Doc<"scrapeResults">[];
+  scores: Record<string, { matchScore: number; matchReason: string }>;
   onRescan?: (id: Id<"monitors">) => Promise<void>;
   onToggleMute?: () => Promise<unknown>;
+  settingsOpen: boolean;
+  onSettingsOpenChange: (open: boolean) => void;
+  onAdjustFilters: () => void;
+  onViewItems: () => void;
+  /** Check interval as the header shows it, already proxy-floored */
+  displayInterval: string;
 }
+
+type CheckInterval = "5m" | "15m" | "30m" | "1h" | "6h" | "24h";
 
 const RETRY_LIMIT = 3;
 const RETRY_WINDOW_MS = 60 * 60 * 1000; // 1 hour
+const ROWS_SHOWN = 8;
 
-export function OverviewTab({ monitorId, monitor, matches, allItems, totalItems, onRescan, onToggleMute }: OverviewTabProps) {
+export function OverviewTab({ monitorId, monitor, matches, allItems, totalItems, results, scores, onRescan, onToggleMute, settingsOpen, onSettingsOpenChange, onAdjustFilters, onViewItems, displayInterval }: OverviewTabProps) {
   const [insightsOpen, setInsightsOpen] = useState(false);
-  const [editing, setEditing] = useState(false);
-  const [saving, setSaving] = useState(false);
+  const [showAll, setShowAll] = useState(false);
   const [retrying, setRetrying] = useState(false);
+
+  // Dismissing the low-confidence banner is per-monitor and sticky — a
+  // monitor that works fine despite the number shouldn't nag forever.
+  const lowConfDismissKey = `pagealert_lowconf_dismissed_${monitorId}`;
+  const [lowConfDismissed, setLowConfDismissed] = useState(() => {
+    if (typeof window === "undefined") return false;
+    try {
+      return localStorage.getItem(lowConfDismissKey) === "1";
+    } catch { return false; }
+  });
+  function dismissLowConfidence() {
+    setLowConfDismissed(true);
+    try { localStorage.setItem(lowConfDismissKey, "1"); } catch { /* */ }
+  }
 
   // Persist retry timestamps to localStorage so limit survives refresh
   const storageKey = `pagealert_retry_${monitorId}`;
@@ -106,21 +132,6 @@ export function OverviewTab({ monitorId, monitor, matches, allItems, totalItems,
     }
   }
 
-  // Edit state
-  const [editName, setEditName] = useState(monitor.name);
-  const [editPrompt, setEditPrompt] = useState(monitor.prompt);
-  const [editInterval, setEditInterval] = useState(monitor.checkInterval as "5m" | "15m" | "30m" | "1h" | "6h" | "24h");
-  // Mirrors effectiveIntervalMs in convex/shared.ts — a blocked site is held
-  // at 6h however often the user asked for it
-  const proxyFloored =
-    monitor.proxyPreferred === true &&
-    ["5m", "15m", "30m", "1h"].includes(monitor.checkInterval);
-  const [editChannels, setEditChannels] = useState<Channel[]>(
-    (monitor.notificationChannels as Channel[]) ?? ["email"]
-  );
-  const [channelsTouched, setChannelsTouched] = useState(false);
-
-  const updateMutation = useMutation(api.monitors.update);
   const schema = monitor.schema as ExtractionSchema | undefined;
 
   const insights = schema?.insights;
@@ -139,57 +150,125 @@ export function OverviewTab({ monitorId, monitor, matches, allItems, totalItems,
     return [...counts.entries()].sort((a, b) => b[1] - a[1])[0]![0];
   })();
 
-  const lowestTrackedPrice = (() => {
-    if (!tracksPrices || !priceAlerts?.trackedItems?.length) return null;
-    const trackedSet = new Set(priceAlerts.trackedItems);
-    const trackedWithPrices = allItems.filter((item) => {
-      const key = getItemKey(item);
-      return trackedSet.has(key) && typeof item.price === "number";
-    });
-    if (trackedWithPrices.length === 0) return null;
-    const lowest = Math.min(...trackedWithPrices.map((i) => i.price as number));
-    return formatPrice(lowest, currency);
-  })();
+  // Titles that appeared on the most recent check. `changes.added` is the only
+  // honest source: hasNewMatches is written from matchCount on the initial-scan
+  // and full-extract paths, where the stored `matches` is every current match,
+  // so keying off it badged the whole list as new. On the very first check
+  // there is no previous result to diff, and everything really is new.
+  const titleKey = (item: ExtractedItem) =>
+    String(item.title ?? item.name ?? "").toLowerCase();
+  // On a first scan everything is new, but 28 badges teaches the reader the
+  // badge means nothing. Say it once above the list instead, so the badge only
+  // ever means "appeared since your last alert".
+  const isFirstScan = results.length <= 1;
+  const newTitles = new Set<string>(
+    isFirstScan
+      ? []
+      : ((results[0]?.changes?.added ?? []) as ExtractedItem[]).map(titleKey),
+  );
 
-  function startEditing() {
-    setEditName(monitor.name);
-    setEditPrompt(monitor.prompt);
-    setEditInterval(monitor.checkInterval as "5m" | "15m" | "30m" | "1h" | "6h" | "24h");
-    setEditChannels((monitor.notificationChannels as Channel[]) ?? ["email"]);
-    setChannelsTouched(false);
-    setEditing(true);
-  }
-
-  function cancelEditing() {
-    setEditing(false);
-  }
-
-  async function saveEdits() {
-    setSaving(true);
-    try {
-      const payload: Record<string, unknown> = {
-        id: monitorId,
-        name: editName.trim(),
-        prompt: editPrompt.trim(),
-      };
-      if (channelsTouched) {
-        payload.notificationChannels = editChannels;
-      }
-      if (editInterval !== monitor.checkInterval) {
-        payload.checkInterval = editInterval;
-      }
-      await updateMutation(payload as Parameters<typeof updateMutation>[0]);
-      setEditing(false);
-      toast.success("Monitor updated");
-    } catch (e) {
-      toast.error("Failed to update", { description: e instanceof Error ? e.message : "" });
-    } finally {
-      setSaving(false);
+  // Newest price change per title across the loaded results window, keyed by
+  // lowercase title (the same join HistoryTab uses). Only kept when the change
+  // landed on the price we are showing now, so a stale delta never appears.
+  const priceChangeByTitle = new Map<string, PriceChange>();
+  for (const r of results) {
+    for (const pc of r.changes?.priceChanges ?? []) {
+      const k = pc.title.toLowerCase();
+      if (!priceChangeByTitle.has(k)) priceChangeByTitle.set(k, pc);
     }
   }
 
+  const sortedMatches = [...matches].sort((a, b) => {
+    const aNew = newTitles.has(titleKey(a));
+    const bNew = newTitles.has(titleKey(b));
+    if (aNew !== bNew) return aNew ? -1 : 1;
+    return 0;
+  });
+  const visibleMatches = showAll ? sortedMatches : sortedMatches.slice(0, ROWS_SHOWN);
+  const hiddenCount = sortedMatches.length - visibleMatches.length;
+
+  function renderDelta(item: ExtractedItem, title: string, price: string | null) {
+    const pc = priceChangeByTitle.get(title.toLowerCase());
+    if (pc && pc.newPrice === item.price) {
+      const isDrop = pc.change < 0;
+      const Icon = isDrop ? TrendingDown : TrendingUp;
+      return (
+        <span className={cn("text-xs inline-flex items-center gap-0.5", isDrop ? "text-emerald-400" : "text-red-400")}>
+          <Icon className="h-3 w-3" />
+          {Math.abs(pc.changePercent)}% <s className="text-muted-foreground">{formatPrice(pc.oldPrice, item.currency)}</s>
+        </span>
+      );
+    }
+    const origPrice = formatPrice(item.originalPrice, item.currency);
+    if (origPrice && origPrice !== price) {
+      return <s className="text-xs text-muted-foreground">{origPrice}</s>;
+    }
+    return null;
+  }
+
+  function renderEmptyCell() {
+    if (totalItems > 0) {
+      const next = timeUntil(monitor.nextCheckAt);
+      return (
+        <div className="px-4 py-8 text-center">
+          <p className="text-sm font-medium">No matches yet.</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Watching {totalItems} items, checking every {displayInterval}.
+            {next && ` Next check ${next}.`}
+          </p>
+          <div className="mt-4 flex flex-col sm:flex-row items-center justify-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5 w-full sm:w-auto"
+              onClick={() => { trackEvent("empty_state_view_items"); onViewItems(); }}
+            >
+              <List className="h-3.5 w-3.5" />
+              See the {totalItems} items we&apos;re watching
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="gap-1.5 w-full sm:w-auto"
+              onClick={() => { trackEvent("empty_state_adjust_filters"); onAdjustFilters(); }}
+            >
+              <SlidersHorizontal className="h-3.5 w-3.5" />
+              Adjust filters
+            </Button>
+          </div>
+        </div>
+      );
+    }
+    if (monitor.status === "scanning") {
+      return (
+        <div className="px-4 py-8 text-center">
+          <p className="text-sm font-medium">First scan running.</p>
+          <p className="mt-1 text-xs text-muted-foreground">Matches show here in about a minute.</p>
+        </div>
+      );
+    }
+    return (
+      <div className="px-4 py-8 text-center">
+        <p className="text-sm font-medium">Nothing extracted yet.</p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          We loaded the page but found no items to compare. Check the URL points at the listing, or run the scan again.
+        </p>
+        <Button
+          variant="outline"
+          size="sm"
+          className="mt-3 gap-1.5"
+          onClick={() => onRescan?.(monitorId)}
+          disabled={!onRescan}
+        >
+          <RotateCw className="h-3.5 w-3.5" />
+          Rescan
+        </Button>
+      </div>
+    );
+  }
+
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       {(monitor as any).muted && (
         <Card className="border-amber-500/30 bg-amber-500/5 shadow-sm">
           <CardContent className="p-4 sm:p-5">
@@ -241,10 +320,11 @@ export function OverviewTab({ monitorId, monitor, matches, allItems, totalItems,
       {monitor.status === "error" && monitor.lastError && (() => {
         const err = monitor.lastError.toLowerCase();
         const isBlocked = err.includes("blocking") || err.includes("captcha") || err.includes("anti-bot") || err.includes("blocked");
-        // Parked: the scheduler stopped rescheduling this monitor after repeated
-        // confirmed proxy blocks. Keyed off the count, not a cleared nextCheckAt,
-        // so no other path that leaves nextCheckAt unset shows this message.
-        const isParked = (monitor.proxyBlockCount ?? 0) >= MAX_PROXY_BLOCKS;
+        // Parked: the scheduler stopped rescheduling this monitor, either for
+        // repeated proxy blocks or for never having succeeded. A cleared
+        // nextCheckAt is the signal both parks share; within status "error"
+        // nothing else clears it. lastError carries which park it was.
+        const isParked = monitor.nextCheckAt === undefined;
         return (
         <Card className="border-red-500/30 bg-red-500/5 shadow-sm">
           <CardContent className="p-4 sm:p-5">
@@ -252,12 +332,12 @@ export function OverviewTab({ monitorId, monitor, matches, allItems, totalItems,
               <AlertTriangle className="h-5 w-5 text-red-400 shrink-0 mt-0.5" />
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-semibold text-red-400 mb-1">
-                  {isParked ? "Checks stopped" : isBlocked ? "Site is blocking access" : "Monitor failed"}
+                  {isParked ? "Checks stopped" : isBlocked ? "This site blocked us" : "Monitor failed"}
                 </p>
                 <p className="text-sm text-muted-foreground break-words">{monitor.lastError}</p>
                 <p className="text-xs text-muted-foreground/60 mt-2">
                   {isParked
-                    ? "This site defeats our proxy, so we've stopped checking it automatically. Hit Retry to give it another go."
+                    ? "We've stopped checking this one automatically. Hit Retry to give it another go."
                     : isBlocked
                       ? "All retry strategies (proxy, mobile browser) were exhausted. Try a different URL for this site, or check if the page works without login."
                       : "Try pausing other monitors, checking the URL is accessible, or simplifying your prompt."}
@@ -285,144 +365,143 @@ export function OverviewTab({ monitorId, monitor, matches, allItems, totalItems,
         );
       })()}
 
-      {/* Prompt + Edit */}
-      <Card className="border-border/30 bg-card/50 shadow-sm shadow-black/5">
-        <CardContent className="p-6">
-          {editing ? (
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <Label className="text-sm font-medium">Name</Label>
-                <Input value={editName} onChange={(e) => setEditName(e.target.value)} />
-              </div>
-              <div className="space-y-2">
-                <Label className="text-sm font-medium">What are you looking for?</Label>
-                <Textarea
-                  value={editPrompt}
-                  onChange={(e) => setEditPrompt(e.target.value)}
-                  rows={3}
-                />
-                <p className="text-xs text-muted-foreground">
-                  Note: changing the prompt won&apos;t rescan automatically. You&apos;ll need to rescan to apply changes.
+      {/* Low AI confidence — only the ones the AI itself flagged as unsure */}
+      {insights && insights.confidence < 50 && monitor.status !== "error" && !lowConfDismissed && (
+        <Card className="border-amber-500/30 bg-amber-500/5 shadow-sm">
+          <CardContent className="p-4 sm:p-5">
+            <div className="flex items-start gap-3 flex-wrap">
+              <AlertTriangle className="h-5 w-5 text-amber-400 shrink-0 mt-0.5" />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold text-amber-400 mb-1">
+                  The AI wasn&apos;t sure what you meant ({insights.confidence}% confidence)
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  Check the filters it built, or reword what you&apos;re looking for in Monitor settings.
                 </p>
               </div>
-              <div className="space-y-2">
-                <Label className="text-sm font-medium">Check frequency</Label>
-                <IntervalSelector value={editInterval} onValueChange={setEditInterval} />
-                {monitor.proxyPreferred && (
-                  <p className="text-xs text-muted-foreground leading-relaxed">
-                    This site blocks direct access. Anything faster than every 6
-                    hours is held at 6 hours until it stops blocking us.
-                  </p>
-                )}
-              </div>
-              <ChannelSelector value={editChannels} onChange={(c) => { setEditChannels(c); setChannelsTouched(true); }} monitorId={monitorId} />
-              <div className="flex items-center gap-2 pt-2">
-                <Button size="sm" className="gap-1.5" onClick={saveEdits} disabled={saving}>
-                  {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
-                  Save
+              <div className="flex items-center gap-1 shrink-0">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5 border-amber-500/20 hover:bg-amber-500/10"
+                  onClick={() => { trackEvent("low_confidence_check_filters"); onAdjustFilters(); }}
+                >
+                  <SlidersHorizontal className="h-3.5 w-3.5" />
+                  Check filters
                 </Button>
-                <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={saving}>
-                  <X className="h-3.5 w-3.5 mr-1" /> Cancel
+                <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Dismiss" onClick={dismissLowConfidence}>
+                  <X className="h-4 w-4" />
                 </Button>
-              </div>
-            </div>
-          ) : (
-            <div className="flex items-start justify-between gap-4">
-              <div className="flex items-start gap-3 flex-1">
-                <Quote className="h-5 w-5 text-primary shrink-0 mt-0.5" />
-                <div>
-                  <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-2">Looking for</p>
-                  <p className="text-base font-medium leading-relaxed">{monitor.prompt}</p>
-                </div>
-              </div>
-              <Button variant="ghost" size="sm" className="gap-1.5 shrink-0" onClick={startEditing}>
-                <Pencil className="h-3.5 w-3.5" /> Edit
-              </Button>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Stats row */}
-      <div className={`grid gap-4 ${tracksPrices ? "grid-cols-2 md:grid-cols-3 lg:grid-cols-6" : "grid-cols-2 md:grid-cols-4"}`}>
-        <Card className="border-border/30 bg-card/50 shadow-sm shadow-black/5">
-          <CardContent className="p-4 sm:p-5">
-            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-1.5">URL</p>
-            <a href={monitor.url} target="_blank" rel="noopener noreferrer"
-              className="text-sm font-medium text-primary hover:underline flex items-center gap-1.5 min-w-0"
-              title={monitor.url}
-            >
-              <span className="truncate">{monitor.url.replace(/^https?:\/\//, "")}</span>
-              <ExternalLink className="h-3 w-3 shrink-0" />
-            </a>
-          </CardContent>
-        </Card>
-        <Card className="border-border/30 bg-card/50 shadow-sm shadow-black/5">
-          <CardContent className="p-4 sm:p-5">
-            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-1.5">Interval</p>
-            <p className="text-sm font-semibold flex items-center gap-1.5">
-              <Clock className="h-3.5 w-3.5 text-muted-foreground" />
-              Every {proxyFloored ? "6h" : monitor.checkInterval}
-            </p>
-            {proxyFloored && (
-              <p className="mt-1.5 text-xs text-muted-foreground leading-relaxed">
-                This site only answers through our proxy, so checks run every 6
-                hours rather than the {monitor.checkInterval} you picked.
-              </p>
-            )}
-          </CardContent>
-        </Card>
-        <Card className="border-border/30 bg-card/50 shadow-sm shadow-black/5">
-          <CardContent className="p-4 sm:p-5">
-            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-1.5">Matches</p>
-            <p className="text-sm font-semibold flex items-center gap-1.5">
-              <Zap className="h-3.5 w-3.5 text-primary" />
-              {matches.length} of {totalItems} items
-            </p>
-          </CardContent>
-        </Card>
-        <Card className="border-border/30 bg-card/50 shadow-sm shadow-black/5">
-          <CardContent className="p-4 sm:p-5">
-            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-1.5">Checks</p>
-            <p className="text-sm font-semibold">{monitor.checkCount ?? 0} total · {timeAgo(monitor.lastCheckedAt)}</p>
-          </CardContent>
-        </Card>
-        {tracksPrices && (
-          <Card className="border-border/30 bg-card/50 shadow-sm shadow-black/5">
-            <CardContent className="p-4 sm:p-5">
-              <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-1.5">Lowest Price</p>
-              <p className="text-sm font-semibold flex items-center gap-1.5">
-                <TrendingDown className="h-3.5 w-3.5 text-emerald-400" />
-                {lowestTrackedPrice ?? "—"}
-              </p>
-            </CardContent>
-          </Card>
-        )}
-        {tracksPrices && (
-          <Card className="border-border/30 bg-card/50 shadow-sm shadow-black/5">
-            <CardContent className="p-4 sm:p-5">
-              <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-1.5">Tracking</p>
-              <p className="text-sm font-semibold">
-                {priceAlerts?.trackedItems?.length ?? 0} items
-              </p>
-            </CardContent>
-          </Card>
-        )}
-      </div>
-
-      {tracksPrices && !priceAlerts && (
-        <Card className="border-primary/20 bg-primary/5 shadow-sm">
-          <CardContent className="p-4 sm:p-5">
-            <div className="flex items-center gap-3">
-              <BarChart3 className="h-5 w-5 text-primary shrink-0" />
-              <div className="flex-1">
-                <p className="text-sm font-semibold">This page has prices — track price changes?</p>
-                <p className="text-xs text-muted-foreground mt-0.5">Get notified when prices drop or cross your threshold. AI has suggested items to track.</p>
               </div>
             </div>
           </CardContent>
         </Card>
       )}
+
+      {/* Matches */}
+      <div>
+        <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 mb-3">
+          <div className="flex items-baseline gap-2">
+            <h3 className="text-sm font-semibold flex items-center gap-2">
+              <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+              Matches
+              <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-xs">
+                {matches.length}
+              </Badge>
+            </h3>
+            <span className="text-xs text-muted-foreground">of {totalItems} items</span>
+          </div>
+          {monitor.lastMatchAt !== undefined && (
+            <span className="text-xs text-muted-foreground">Last found {timeAgo(monitor.lastMatchAt)}</span>
+          )}
+        </div>
+
+        {isFirstScan && matches.length > 0 && (
+          <p className="mb-2 text-xs text-emerald-400">First scan — all of these are new to you.</p>
+        )}
+
+        <div className="rounded-xl border border-border/40 bg-card/40 divide-y divide-border/40 overflow-hidden">
+          {visibleMatches.length > 0 ? (
+            visibleMatches.map((item, i) => {
+              const key = getItemKey(item);
+              const isNew = newTitles.has(titleKey(item));
+              const title = String(item.title ?? item.name ?? `Item ${i + 1}`);
+              const safeUrl = toSafeUrl(item.url);
+              const price = formatPrice(item.price, item.currency);
+              const judged = scores[key];
+              const band = typeof judged?.matchScore === "number" ? MATCH_CONFIDENCE_LABEL[matchConfidence(judged.matchScore)] : "";
+              const reason = judged?.matchReason ?? "";
+              const delta = renderDelta(item, title, price);
+              const belowThreshold = priceAlerts?.belowThreshold;
+              // Only tracked items ever fire a below-threshold alert, so an
+              // untracked cheap item must not wear the badge that promises one.
+              const hitThreshold =
+                typeof belowThreshold === "number" &&
+                typeof item.price === "number" &&
+                item.price <= belowThreshold &&
+                (priceAlerts?.trackedItems ?? []).includes(key);
+
+              const Row = safeUrl ? "a" : "div";
+              return (
+                <Row
+                  key={`${key}-${i}`}
+                  {...(safeUrl ? { href: safeUrl, target: "_blank", rel: "noopener noreferrer" } : {})}
+                  className={cn(
+                    "group grid grid-cols-[1fr_auto] items-center gap-x-3 gap-y-1 px-4 py-3",
+                    "sm:grid-cols-[1fr_auto_auto] sm:gap-x-4",
+                    safeUrl && "transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:bg-muted/40",
+                    isNew && "bg-emerald-500/[0.06] border-l-2 border-l-emerald-400",
+                  )}
+                >
+                  {/* col 1: title + sub-line */}
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium leading-snug line-clamp-2 sm:line-clamp-1">
+                      {isNew && <Badge className="mr-1.5 align-middle bg-emerald-500/15 text-emerald-400 border-emerald-500/20">New</Badge>}
+                      {title}
+                    </p>
+                    {(band || reason) && (
+                      <p className="mt-0.5 text-xs text-muted-foreground line-clamp-1" title={reason}>
+                        {band}{band && reason ? " · " : ""}{reason}
+                      </p>
+                    )}
+                  </div>
+
+                  {/* col 1 on mobile (second row), col 2 on sm+: price */}
+                  <div className="col-start-1 sm:col-start-2 flex items-baseline gap-2 tabular-nums whitespace-nowrap">
+                    {price && <span className="text-base font-semibold">{price}</span>}
+                    {delta}
+                    {hitThreshold && (
+                      <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-xs">
+                        Under {formatPrice(belowThreshold, currency)}
+                      </Badge>
+                    )}
+                  </div>
+
+                  {/* col 2 spanning both rows on mobile, col 3 on sm+: the open chip */}
+                  {safeUrl && (
+                    <span
+                      className="col-start-2 row-start-1 row-span-2 sm:col-start-3 sm:row-start-auto sm:row-span-1
+                        inline-flex items-center gap-1 rounded-md border border-border/60 px-2 py-1
+                        text-xs font-medium text-muted-foreground
+                        group-hover:border-primary/50 group-hover:text-primary transition-colors"
+                    >
+                      Open <ExternalLink className="h-3.5 w-3.5" />
+                    </span>
+                  )}
+                </Row>
+              );
+            })
+          ) : (
+            renderEmptyCell()
+          )}
+        </div>
+
+        {hiddenCount > 0 && (
+          <Button variant="ghost" size="sm" className="mt-2" onClick={() => setShowAll(true)}>
+            Show {hiddenCount} more
+          </Button>
+        )}
+      </div>
 
       {tracksPrices && (
         <PriceAlertCard
@@ -435,63 +514,24 @@ export function OverviewTab({ monitorId, monitor, matches, allItems, totalItems,
         />
       )}
 
-      {/* Top matches */}
-      {matches.length > 0 && (
-        <div>
-          <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
-            <CheckCircle2 className="h-4 w-4 text-emerald-400" />
-            Top Matches
-            <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-xs">
-              {matches.length}
-            </Badge>
-          </h3>
-          <div className="space-y-2">
-            {matches.slice(0, 5).map((item, i) => {
-              const title = String(item.title ?? item.name ?? `Item ${i + 1}`);
-              const safeUrl = toSafeUrl(item.url);
-              const price = formatPrice(item.price, item.currency);
-              return (
-                <Card key={i} className="border-emerald-500/20 bg-emerald-500/5 shadow-sm shadow-black/5">
-                  <CardContent className="p-4">
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 sm:gap-3">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          {safeUrl ? (
-                            <a href={safeUrl} target="_blank" rel="noopener noreferrer"
-                              className="text-sm font-medium hover:text-primary hover:underline transition-colors break-words">
-                              {title}
-                            </a>
-                          ) : (
-                            <p className="text-sm font-medium break-words">{title}</p>
-                          )}
-                          {safeUrl && <ExternalLink className="h-3 w-3 text-muted-foreground shrink-0" />}
-                        </div>
-                      </div>
-                      {price && (
-                        <span className="text-sm font-bold shrink-0">{price}</span>
-                      )}
-                    </div>
-                  </CardContent>
-                </Card>
-              );
-            })}
-            {matches.length > 5 && (
-              <p className="text-xs text-muted-foreground pl-2">+{matches.length - 5} more — see Items tab</p>
-            )}
-          </div>
-        </div>
-      )}
-
-      {matches.length === 0 && totalItems > 0 && (
-        <Card className="border-border/30 bg-card/30 shadow-sm shadow-black/5">
-          <CardContent className="py-10 text-center">
-            <p className="text-sm font-medium text-muted-foreground">No matches right now</p>
-            <p className="text-xs text-muted-foreground/70 mt-1">
-              {totalItems} items being monitored. You&apos;ll be notified when something matches.
-            </p>
-          </CardContent>
-        </Card>
-      )}
+      {/* Monitor settings — collapsible */}
+      <div>
+        <button
+          onClick={() => onSettingsOpenChange(!settingsOpen)}
+          className="flex w-full items-center gap-2 text-sm font-semibold text-muted-foreground hover:text-foreground transition-colors"
+        >
+          <Settings2 className="h-4 w-4" />
+          Monitor settings
+          {settingsOpen ? <ChevronUp className="h-4 w-4 ml-auto" /> : <ChevronDown className="h-4 w-4 ml-auto" />}
+        </button>
+        {settingsOpen && (
+          <MonitorSettingsForm
+            monitorId={monitorId}
+            monitor={monitor}
+            onClose={() => onSettingsOpenChange(false)}
+          />
+        )}
+      </div>
 
       {/* AI Insights - collapsible */}
       {schema?.insights && (
@@ -501,16 +541,16 @@ export function OverviewTab({ monitorId, monitor, matches, allItems, totalItems,
             className="flex items-center gap-2 text-sm font-semibold text-muted-foreground hover:text-foreground transition-colors w-full"
           >
             {insightsOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-            AI Understanding
-            <Badge variant="outline" className={`text-xs ml-1 ${
-              (schema.insights.confidence ?? 0) >= 80
-                ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
-                : (schema.insights.confidence ?? 0) >= 50
+            How the AI read this page
+            {(schema.insights.confidence ?? 100) < 80 && (
+              <Badge variant="outline" className={`text-xs ml-1 ${
+                (schema.insights.confidence ?? 0) >= 50
                   ? "bg-amber-500/10 text-amber-400 border-amber-500/20"
                   : "bg-red-500/10 text-red-400 border-red-500/20"
-            }`}>
-              {schema.insights.confidence}%
-            </Badge>
+              }`}>
+                {schema.insights.confidence}%
+              </Badge>
+            )}
           </button>
           {insightsOpen && (
             <div className="mt-4">
@@ -520,5 +560,99 @@ export function OverviewTab({ monitorId, monitor, matches, allItems, totalItems,
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * Mounted only while the disclosure is open, so its fields seed from the
+ * monitor on mount. That is what keeps both entry points — the disclosure
+ * header and the meta-line channel button — hydrated without an effect.
+ */
+function MonitorSettingsForm({
+  monitorId,
+  monitor,
+  onClose,
+}: {
+  monitorId: Id<"monitors">;
+  monitor: OverviewTabProps["monitor"];
+  onClose: () => void;
+}) {
+  const [name, setName] = useState(monitor.name);
+  const [prompt, setPrompt] = useState(monitor.prompt);
+  const [checkInterval, setCheckInterval] = useState(monitor.checkInterval as CheckInterval);
+  // An unset list means "every configured channel" (scheduler.ts:450), so that
+  // is what the picker has to show. Seeding it to ["email"] meant toggling any
+  // one chip saved email-only and silently narrowed the monitor.
+  const explicitChannels = monitor.notificationChannels as Channel[] | undefined;
+  const configuredChannels = useConfiguredChannels();
+  const [editedChannels, setEditedChannels] = useState<Channel[] | null>(null);
+  const channels = editedChannels ?? explicitChannels ?? configuredChannels ?? ["email"];
+  const channelsUnresolved = explicitChannels === undefined && configuredChannels === undefined;
+  const [saving, setSaving] = useState(false);
+  const updateMutation = useMutation(api.monitors.update);
+
+  async function save() {
+    setSaving(true);
+    try {
+      const payload: Record<string, unknown> = {
+        id: monitorId,
+        name: name.trim(),
+        prompt: prompt.trim(),
+      };
+      if (editedChannels !== null) payload.notificationChannels = editedChannels;
+      if (checkInterval !== monitor.checkInterval) payload.checkInterval = checkInterval;
+      await updateMutation(payload as Parameters<typeof updateMutation>[0]);
+      onClose();
+      toast.success("Monitor updated");
+    } catch (e) {
+      toast.error("Failed to update", { description: e instanceof Error ? e.message : "" });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Card className="mt-4 border-border/30 bg-card/50 shadow-sm shadow-black/5">
+      <CardContent className="p-4 sm:p-6">
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <Label className="text-sm font-medium">Name</Label>
+            <Input value={name} onChange={(e) => setName(e.target.value)} />
+          </div>
+          <div className="space-y-2">
+            <Label className="text-sm font-medium">What are you looking for?</Label>
+            <Textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={3} />
+            <p className="text-xs text-muted-foreground">
+              Note: changing the prompt won&apos;t rescan automatically. You&apos;ll need to rescan to apply changes.
+            </p>
+          </div>
+          <div className="space-y-2">
+            <Label className="text-sm font-medium">Check frequency</Label>
+            <IntervalSelector value={checkInterval} onValueChange={setCheckInterval} />
+            {monitor.proxyPreferred && (
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                This site blocks direct access. Anything faster than every 6
+                hours is held at 6 hours until it stops blocking us.
+              </p>
+            )}
+          </div>
+          <ChannelSelector
+            value={channels}
+            onChange={setEditedChannels}
+            monitorId={monitorId}
+            disabled={channelsUnresolved}
+          />
+          <div className="flex items-center gap-2 pt-2">
+            <Button size="sm" className="gap-1.5" onClick={save} disabled={saving}>
+              {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+              Save
+            </Button>
+            <Button size="sm" variant="ghost" onClick={onClose} disabled={saving}>
+              <X className="h-3.5 w-3.5 mr-1" /> Cancel
+            </Button>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
   );
 }

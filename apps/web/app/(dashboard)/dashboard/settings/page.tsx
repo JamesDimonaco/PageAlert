@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useSearchParams, useRouter, usePathname } from "next/navigation";
+import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -27,14 +28,16 @@ import { api } from "@/convex/_generated/api";
 import { authClient } from "@/lib/auth-client";
 import { toast } from "sonner";
 import {
+  POSTHOG_KEY,
   trackUpgradePromptClicked,
   trackTestEmailSent,
   trackNotificationChannelToggled,
 } from "@/lib/posthog";
+import { AnalyticsToggle } from "@/components/prowl/analytics-toggle";
 
 type NotificationChannel = "email" | "telegram" | "discord" | "push";
 
-const VALID_TABS = ["profile", "notifications", "billing"] as const;
+const VALID_TABS = ["notifications", "profile", "billing"] as const;
 type SettingsTab = (typeof VALID_TABS)[number];
 
 export default function SettingsPage() {
@@ -55,7 +58,7 @@ export default function SettingsPage() {
   const tabFromQuery = searchParams.get("tab");
   const initialTab: SettingsTab = (VALID_TABS as readonly string[]).includes(tabFromQuery ?? "")
     ? (tabFromQuery as SettingsTab)
-    : "profile";
+    : "notifications";
   const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab);
 
   function handleTabChange(value: string) {
@@ -145,16 +148,16 @@ export default function SettingsPage() {
 
       <Tabs value={activeTab} onValueChange={handleTabChange}>
         <TabsList>
-          <TabsTrigger value="profile">
-            <User className="mr-2 h-4 w-4" />
-            Profile
-          </TabsTrigger>
           <TabsTrigger value="notifications" className="relative">
             <Bell className="mr-2 h-4 w-4" />
             Notifications
             {notifSettings && notifSettings.filter((s) => s.enabled).length === 0 && (
               <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-amber-400" />
             )}
+          </TabsTrigger>
+          <TabsTrigger value="profile">
+            <User className="mr-2 h-4 w-4" />
+            Profile
           </TabsTrigger>
           <TabsTrigger value="billing">
             <CreditCard className="mr-2 h-4 w-4" />
@@ -193,6 +196,21 @@ export default function SettingsPage() {
               </div>
             </CardContent>
           </Card>
+
+          {POSTHOG_KEY && (
+            <Card className="border-border/30 bg-card/50 shadow-sm shadow-black/5">
+              <CardHeader className="pb-4">
+                <CardTitle className="text-lg font-semibold">Analytics</CardTitle>
+                <CardDescription className="text-sm">How we see what the app is used for</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <AnalyticsToggle />
+                <Link href="/privacy" className="text-xs text-primary hover:underline">
+                  Privacy policy
+                </Link>
+              </CardContent>
+            </Card>
+          )}
 
           <Card className="border-destructive/20 bg-card/50 shadow-sm shadow-black/5">
             <CardHeader className="pb-4">
@@ -538,10 +556,10 @@ export default function SettingsPage() {
             <CardHeader className="pb-4">
               <CardTitle className="flex items-center gap-2 text-lg font-semibold">
                 <Bell className="h-5 w-5 text-muted-foreground" />
-                Push notifications
+                Browser & phone alerts
               </CardTitle>
               <CardDescription className="text-sm">
-                Alerts on your phone or desktop the moment a match lands, without waiting on email
+                Alerts in your browser or on your phone the moment a match lands, without waiting on email
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-5">
@@ -551,7 +569,7 @@ export default function SettingsPage() {
 
               {push.state === "unsupported" && (
                 <p className="text-sm text-muted-foreground leading-relaxed">
-                  This browser can&apos;t do push notifications. Chrome, Edge, Firefox and
+                  This browser can&apos;t show alerts here. Chrome, Edge, Firefox and
                   Safari all can — or keep using email, which works everywhere.
                 </p>
               )}
@@ -602,8 +620,8 @@ export default function SettingsPage() {
                         });
 
                         if (needsPush.length > 0) {
-                          toast.success("Push notifications on", {
-                            description: `Turn push on for your ${needsPush.length} existing monitor${needsPush.length !== 1 ? "s" : ""} too?`,
+                          toast.success("Alerts on", {
+                            description: `Turn alerts on for your ${needsPush.length} existing monitor${needsPush.length !== 1 ? "s" : ""} too?`,
                             action: {
                               label: "Enable all",
                               onClick: async () => {
@@ -618,7 +636,7 @@ export default function SettingsPage() {
                                       });
                                     })
                                   );
-                                  toast.success("Push enabled on all monitors");
+                                  toast.success("Alerts enabled on all monitors");
                                 } catch {
                                   toast.error("Failed to update monitors");
                                 }
@@ -627,12 +645,29 @@ export default function SettingsPage() {
                             duration: 10000,
                           });
                         } else {
-                          toast.success("Push notifications on", {
+                          toast.success("Alerts on", {
                             description: "Send a test to check it reaches you.",
+                            action: {
+                              label: "Send test",
+                              onClick: async () => {
+                                setPushTesting(true);
+                                try {
+                                  await sendPushTest({});
+                                  toast.success("Test sent");
+                                } catch (e) {
+                                  toast.error("Test failed", {
+                                    description: e instanceof Error ? e.message : "Try again",
+                                  });
+                                } finally {
+                                  setPushTesting(false);
+                                }
+                              },
+                            },
+                            duration: 10000,
                           });
                         }
                       } catch (e) {
-                        toast.error("Couldn't turn on push", {
+                        toast.error("Couldn't turn on alerts", {
                           description: e instanceof Error ? e.message : "Try again",
                         });
                       }
@@ -689,9 +724,9 @@ export default function SettingsPage() {
                           try {
                             await push.disable();
                             trackNotificationChannelToggled({ channel: "push", enabled: false });
-                            toast.success("Push turned off for this device");
+                            toast.success("Alerts turned off for this device");
                           } catch {
-                            toast.error("Couldn't turn off push");
+                            toast.error("Couldn't turn off alerts");
                           }
                         }}
                       >
@@ -708,19 +743,80 @@ export default function SettingsPage() {
             </CardContent>
           </Card>
 
-          <Card className="border-border/30 bg-card/50 shadow-sm shadow-black/5 opacity-60">
+          <Card className="border-border/30 bg-card/50 shadow-sm shadow-black/5">
             <CardHeader className="pb-4">
               <CardTitle className="flex items-center gap-2 text-lg font-semibold">
                 <Hash className="h-5 w-5 text-muted-foreground" />
                 Discord
-                <Badge variant="outline" className="text-[10px] gap-1 px-1.5 py-0 ml-1">
-                  Coming soon
-                </Badge>
               </CardTitle>
               <CardDescription className="text-sm">
-                Send notifications to a Discord channel via webhook. Coming in a future update.
+                {tier === "free"
+                  ? "Send Discord notifications on one monitor"
+                  : "Send notifications to a Discord channel via webhook"}
               </CardDescription>
             </CardHeader>
+            <CardContent className="space-y-5">
+              {notifSettings?.find((s) => s.channel === "discord")?.enabled ? (
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-xs">Connected</Badge>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={async () => {
+                      try {
+                        await removeSetting({ channel: "discord" });
+                        setDiscordWebhook("");
+                        trackNotificationChannelToggled({ channel: "discord", enabled: false });
+                        toast.success("Discord disconnected");
+                      } catch {
+                        toast.error("Failed to disconnect Discord");
+                      }
+                    }}
+                  >
+                    Disconnect
+                  </Button>
+                </div>
+              ) : (
+                <>
+                  <div className="space-y-2">
+                    <Label htmlFor="discord-webhook" className="text-sm font-medium">Webhook URL</Label>
+                    <Input
+                      id="discord-webhook"
+                      placeholder="https://discord.com/api/webhooks/..."
+                      value={discordWebhook}
+                      onChange={(e) => setDiscordWebhook(e.target.value)}
+                    />
+                    <p className="text-xs text-muted-foreground leading-relaxed">
+                      Discord → Server Settings → Integrations → Webhooks → New Webhook → Copy Webhook URL
+                    </p>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={!discordWebhook.trim().startsWith("https://discord.com/api/webhooks/") || discordSaving}
+                    onClick={async () => {
+                      setDiscordSaving(true);
+                      try {
+                        const webhookUrl = discordWebhook.trim();
+                        await sendDiscordTest({ webhookUrl });
+                        await upsertSetting({ channel: "discord", enabled: true, target: webhookUrl });
+                        trackNotificationChannelToggled({ channel: "discord", enabled: true });
+                        toast.success("Discord connected", { description: "Test message sent" });
+                      } catch (e) {
+                        toast.error("Failed to connect", {
+                          description: e instanceof Error ? e.message : "Check your webhook URL and try again",
+                        });
+                      } finally {
+                        setDiscordSaving(false);
+                      }
+                    }}
+                  >
+                    {discordSaving ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null}
+                    Connect & Test
+                  </Button>
+                </>
+              )}
+            </CardContent>
           </Card>
 
           <Card className="border-border/30 bg-card/50 shadow-sm shadow-black/5 opacity-60">

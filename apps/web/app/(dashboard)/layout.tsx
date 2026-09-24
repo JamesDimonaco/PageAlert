@@ -22,7 +22,9 @@ export default function DashboardLayout({
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const claimAnonymous = useMutation(api.anonymous.claimMyAnonymousMonitors);
+  const touchLastSeen = useMutation(api.account.touchLastSeen);
   const claimedRef = useRef(false);
+  const lastTouchRef = useRef(0);
   const banStatus = useQuery(api.account.myBanStatus, isAuthenticated ? {} : "skip");
 
   useEffect(() => {
@@ -37,6 +39,24 @@ export default function DashboardLayout({
       router.replace(loginUrl);
     }
   }, [isLoading, isAuthenticated, router, pathname, searchParams]);
+
+  // Say we were here. The inactivity reaper pauses monitors on the strength of
+  // this stamp, because Better Auth's session row is deleted on sign-out and
+  // on the next load after it expires — see schema.ts userActivity. Fire and
+  // forget: a failure here must never block the dashboard.
+  //
+  // Keyed off navigation rather than mount, because this layout survives every
+  // route change inside the dashboard: someone working in a tab they opened
+  // last month would otherwise carry a month-old stamp. Throttled to an hour
+  // on this side too, so ordinary clicking around costs no round trips — the
+  // mutation throttles again server-side for tabs this ref does not cover.
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const now = Date.now();
+    if (now - lastTouchRef.current < 60 * 60 * 1000) return;
+    lastTouchRef.current = now;
+    void touchLastSeen({}).catch(() => {});
+  }, [isAuthenticated, pathname, touchLastSeen]);
 
   // Transfer anonymous monitors on first dashboard load. Waits for banStatus
   // to resolve so a banned account never fires this — the mutation already
@@ -79,14 +99,12 @@ export default function DashboardLayout({
 
   if (!isAuthenticated) return null;
 
-  if (banStatus === undefined) {
-    return (
-      <div className="flex min-h-screen items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-      </div>
-    );
-  }
-
+  // Deliberately not gated on banStatus resolving: that was a second round
+  // trip in front of every dashboard render, to catch a case that almost
+  // never applies. A banned account sees the shell for the moment the query
+  // is in flight, then this screen. This was never a security boundary —
+  // only monitors.create/update and claimMyAnonymousMonitors check isBanned,
+  // and a banned account could always call the rest directly.
   if (banStatus?.banned) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center gap-4 px-6 text-center">

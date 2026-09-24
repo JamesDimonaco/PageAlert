@@ -42,10 +42,27 @@ export default defineSchema({
     // genuinely new items rather than only on the zero-to-something transition.
     // See matchKey/newMatchKeys in shared.ts. Undefined means "no baseline yet".
     matchedKeys: v.optional(v.array(v.string())),
+    // Entries the keyword filter picked on the last check, scored or not.
+    // Tracked apart from matchedKeys so an entry the AI judged a poor match is
+    // still remembered as seen — otherwise it reads as new every check and
+    // buys another scoring call forever.
+    candidateKeys: v.optional(v.array(v.string())),
     // This site only ever answers through the proxy, so skip the direct attempt
     // that would fail anyway. Re-probed periodically — see PROXY_REPROBE_EVERY.
     proxyPreferred: v.optional(v.boolean()),
     nextCheckAt: v.optional(v.number()),
+    // Set by the inactivity reaper (inactivity.ts), cleared by any resume —
+    // the dashboard toggle or the link in the pause email. Present means "we
+    // paused this because the owner had gone, and they have not come back".
+    autoPausedAt: v.optional(v.number()),
+    // Opaque restart token from the pause email. Only ever resumes a monitor
+    // the reaper paused, so an old email can never undo a manual pause.
+    resumeToken: v.optional(v.string()),
+    // When someone last pressed Restart in a pause email. Clicking that link
+    // signs nobody in, so it leaves no session for the reaper to read — this
+    // is the only record that the owner is alive, and without it the next
+    // day's run would pause the monitor again.
+    lastResumedAt: v.optional(v.number()),
     notificationChannels: v.optional(v.array(v.union(
       v.literal("email"),
       v.literal("telegram"),
@@ -76,12 +93,17 @@ export default defineSchema({
     .index("by_status_nextCheckAt", ["status", "nextCheckAt"])
     .index("by_anonymousEmail", ["anonymousEmail"])
     .index("by_isAnonymous", ["isAnonymous"])
-    .index("by_isAnonymous_expiresAt", ["isAnonymous", "expiresAt"]),
+    .index("by_isAnonymous_expiresAt", ["isAnonymous", "expiresAt"])
+    .index("by_resumeToken", ["resumeToken"]),
 
   scrapeResults: defineTable({
     monitorId: v.id("monitors"),
     matches: v.array(v.any()),
     items: v.optional(v.array(v.any())),
+    // Entries judged on this check, each carrying its score and the one-line
+    // reason. Separate from `items` (the AI's model of the page, which change
+    // detection diffs) because a routine check only ever judges a handful.
+    scoredCandidates: v.optional(v.array(v.any())),
     totalItems: v.number(),
     hasNewMatches: v.boolean(),
     scrapedAt: v.number(),
@@ -151,9 +173,34 @@ export default defineSchema({
     strategy: v.optional(v.string()),
     createdAt: v.number(),
   })
-    .index("by_userId", ["userId"])
+    // createdAt is on the user index because the logs page reads a tier-sized
+    // window rather than the whole history — see retention.ts in shared.
+    .index("by_userId_createdAt", ["userId", "createdAt"])
     .index("by_createdAt", ["createdAt"])
     .index("by_status", ["status"]),
+
+  // A user's verdict on one alerted entry. The thumbs are the only ground
+  // truth there is about whether the judged scores are any good, and they
+  // cannot be reconstructed later, so the score and the prompt that produced
+  // the match are stored alongside the verdict rather than looked up.
+  matchFeedback: defineTable({
+    userId: v.string(),
+    monitorId: v.id("monitors"),
+    /** The entry's identity — its URL, or its title where it has no link. */
+    itemKey: v.string(),
+    itemTitle: v.string(),
+    verdict: v.union(v.literal("good"), v.literal("bad")),
+    /** What the judge said at alert time. Absent on entries that were never scored. */
+    matchScore: v.optional(v.number()),
+    /** The monitor's prompt when the alert fired — it can be edited afterwards. */
+    prompt: v.string(),
+    source: v.union(v.literal("dashboard"), v.literal("telegram")),
+    createdAt: v.number(),
+  })
+    .index("by_monitorId", ["monitorId"])
+    .index("by_monitor_item", ["monitorId", "itemKey"])
+    .index("by_createdAt", ["createdAt"])
+    .index("by_userId", ["userId"]),
 
   notificationSettings: defineTable({
     userId: v.string(),
@@ -181,6 +228,11 @@ export default defineSchema({
     // the billing UI and isPayingRecord both need to know.
     grantUntil: v.optional(v.number()),
     grantSource: v.optional(v.union(v.literal("admin"), v.literal("pass"))),
+    // Polar's modified_at for polarSubscriptionId, as an ordering key. Polar
+    // retries a failed delivery up to ten times with backoff, so a stale
+    // subscription.created can land after the cancellation it predates and
+    // wipe it. Writes carrying an older stamp than this are dropped.
+    subscriptionModifiedAt: v.optional(v.number()),
     dailyScans: v.optional(v.number()),
     dailyScansDate: v.optional(v.string()),
     reviewDismissed: v.optional(v.boolean()),
@@ -243,6 +295,26 @@ export default defineSchema({
     count: v.number(),
   }).index("by_date", ["date"]),
 
+  // When each user was last in the app, stamped by the dashboard itself.
+  //
+  // Better Auth's session table looks like the natural place to read this, and
+  // the admin dashboard does, but it deletes a session row on sign-out and
+  // deletes an expired one on the next page load — so a user who signs out, or
+  // who returns after their cookie lapsed and bounces off the login page,
+  // leaves no trace at all. The inactivity reaper pauses monitors on the
+  // strength of this number, so it needs one nothing else can delete.
+  // Throttled to one write an hour per user; see account.touchLastSeen.
+  userActivity: defineTable({
+    userId: v.string(),
+    lastSeenAt: v.number(),
+    // When we first managed to read a page for this user — the moment a signup
+    // became a working product. Stored rather than derived from their monitors
+    // so deleting the monitor cannot make them "activate" a second time, and
+    // so the anonymous-scan funnel (which arrives with checkCount already set)
+    // still counts. Claimed in monitors.saveScanResult.
+    activatedAt: v.optional(v.number()),
+  }).index("by_userId", ["userId"]),
+
   // Lightweight counter for public monitor count (avoids reading all monitors)
   counters: defineTable({
     name: v.string(),
@@ -263,7 +335,7 @@ export default defineSchema({
   // `status` starts at sent/failed and is advanced by the Resend webhook.
   emailSends: defineTable({
     to: v.string(),
-    kind: v.string(), // match | error | monitor-stopped | price | anonymous-scan | onboarding-day0 | bulk
+    kind: v.string(), // match | error | monitor-stopped | inactivity-paused | price | anonymous-scan | onboarding-day0 | bulk
     userId: v.optional(v.string()),
     monitorId: v.optional(v.string()),
     resendId: v.optional(v.string()),
@@ -280,7 +352,12 @@ export default defineSchema({
   })
     .index("by_resendId", ["resendId"])
     .index("by_createdAt", ["createdAt"])
-    .index("by_status_createdAt", ["status", "createdAt"]),
+    .index("by_status_createdAt", ["status", "createdAt"])
+    .index("by_userId", ["userId"])
+    // Only two of the eight email kinds pass a userId to recordSend, so
+    // by_userId reaches almost none of a user's sends. Account deletion has
+    // to find them by address as well. See deleteAllUserData.
+    .index("by_to", ["to"]),
 
   // Audit log of bulk emails sent from the super-admin dashboard
   adminEmails: defineTable({

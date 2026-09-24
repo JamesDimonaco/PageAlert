@@ -28,7 +28,6 @@ interface CreateMonitorContextValue {
   open: () => void;
   openWithDefaults: (defaults: CloneDefaults) => void;
   close: () => void;
-  resume: (monitorId: Id<"monitors">) => void;
   activeMonitorId: Id<"monitors"> | null;
   isScanning: boolean;
   scanStage: ScanStage;
@@ -39,7 +38,6 @@ const CreateMonitorContext = createContext<CreateMonitorContextValue>({
   open: () => {},
   openWithDefaults: () => {},
   close: () => {},
-  resume: () => {},
   activeMonitorId: null,
   isScanning: false,
   scanStage: "idle",
@@ -85,11 +83,6 @@ export function CreateMonitorProvider({ children }: { children: ReactNode }) {
 
   const close = useCallback(() => {
     setSheetOpen(false);
-  }, []);
-
-  const resume = useCallback((monitorId: Id<"monitors">) => {
-    setActiveMonitorId(monitorId);
-    setSheetOpen(true);
   }, []);
 
   const startScan = useCallback(
@@ -276,10 +269,6 @@ export function CreateMonitorProvider({ children }: { children: ReactNode }) {
         // Initial scan — doesn't consume rescan budget
 
         setScanStage("done");
-
-        toast.success("Scan complete", {
-          description: `${totalItems} items found, ${matchCount} match${matchCount !== 1 ? "es" : ""}`,
-        });
       } catch (e) {
         if (e instanceof Error && e.name === "AbortError") return;
         const msg = e instanceof Error ? e.message : "Scan failed";
@@ -333,12 +322,11 @@ export function CreateMonitorProvider({ children }: { children: ReactNode }) {
   const confirmMonitor = useCallback(() => {
     setActiveMonitorId(null);
     setSheetOpen(false);
-    toast.success("Monitor is active");
   }, []);
 
   return (
     <CreateMonitorContext.Provider
-      value={{ open, openWithDefaults, close, resume, activeMonitorId, isScanning, scanStage, isOpen: sheetOpen }}
+      value={{ open, openWithDefaults, close, activeMonitorId, isScanning, scanStage, isOpen: sheetOpen }}
     >
       {children}
       <CreateMonitorSheet

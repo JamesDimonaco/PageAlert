@@ -14,7 +14,7 @@ import { requireAdmin } from "./admin";
 // full table scan.
 const MAX_PARKED = 200;
 
-/** Monitors parked by recordCheckResult's MAX_PROXY_BLOCKS branch in scheduler.ts. */
+/** Monitors recordCheckResult has stopped rescheduling — either park branch in scheduler.ts. */
 export const parkedMonitors = query({
   args: {},
   handler: async (ctx) => {

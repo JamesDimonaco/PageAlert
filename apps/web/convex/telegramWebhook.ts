@@ -1,4 +1,6 @@
 import { httpAction, internalQuery } from "./_generated/server";
+import type { GenericActionCtx } from "convex/server";
+import type { DataModel } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { v } from "convex/values";
 
@@ -30,6 +32,9 @@ export const handler = httpAction(async (ctx, request) => {
   } catch {
     return new Response("Invalid JSON", { status: 400 });
   }
+
+  const callback = body.callback_query as Record<string, unknown> | undefined;
+  if (callback) return handleFeedbackCallback(ctx, token, callback);
 
   const message = body.message as Record<string, unknown> | undefined;
   if (!message) return new Response("OK", { status: 200 });
@@ -167,3 +172,63 @@ export const getMonitorsByChatId = internalQuery({
     }));
   },
 });
+
+
+/**
+ * A 👍/👎 pressed on a match alert.
+ *
+ * Telegram allows 64 bytes of callback data, so the button carries only the
+ * result row and the entry's position in it; the entry itself is read back
+ * server-side. Every answer is acknowledged — an unanswered callback leaves
+ * the button spinning on the user's phone.
+ */
+async function handleFeedbackCallback(
+  ctx: GenericActionCtx<DataModel>,
+  token: string,
+  callback: Record<string, unknown>
+): Promise<Response> {
+  const callbackId = String(callback.id ?? "");
+  const data = String(callback.data ?? "");
+  const chatId = (callback.message as Record<string, unknown> | undefined)?.chat as
+    | Record<string, unknown>
+    | undefined;
+
+  const answer = async (text: string) => {
+    if (!callbackId) return;
+    await fetch(`https://api.telegram.org/bot${token}/answerCallbackQuery`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ callback_query_id: callbackId, text }),
+      signal: AbortSignal.timeout(TIMEOUT),
+    }).catch(() => {});
+  };
+
+  const parts = data.split(":");
+  if (parts[0] !== "fb" || parts.length !== 4 || !chatId?.id) {
+    await answer("Sorry, that button has expired.");
+    return new Response("OK", { status: 200 });
+  }
+
+  const verdict = parts[1] === "g" ? "good" : parts[1] === "b" ? "bad" : null;
+  const index = Number(parts[3]);
+  if (!verdict || !Number.isInteger(index) || index < 0) {
+    await answer("Sorry, that button has expired.");
+    return new Response("OK", { status: 200 });
+  }
+
+  const result = await ctx.runMutation(internal.feedback.submitFromTelegram, {
+    chatId: String(chatId.id),
+    resultId: parts[2]!,
+    index,
+    verdict,
+  });
+
+  if (!result.ok) {
+    await answer("Could not record that — open the monitor in PageAlert instead.");
+  } else if (verdict === "bad") {
+    await answer("Thanks — hidden, and it won't alert you again.");
+  } else {
+    await answer("Thanks — noted as a good match.");
+  }
+  return new Response("OK", { status: 200 });
+}

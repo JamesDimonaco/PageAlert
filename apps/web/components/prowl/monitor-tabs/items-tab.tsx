@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useCallback, useState, useMemo } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -27,11 +27,13 @@ import {
   ArrowUpDown,
   TrendingDown,
   TrendingUp,
+  ThumbsDown,
+  ThumbsUp,
 } from "lucide-react";
 import type { Id } from "@/convex/_generated/dataModel";
 import type { ExtractedItem, MatchConditions, ExtractionSchema } from "@prowl/shared";
-import { applyMatchConditions, getItemKey } from "@prowl/shared";
-import { useMutation } from "convex/react";
+import { applyMatchConditions, canonicalUrl, getItemKey, itemIdentity, MATCH_CONFIDENCE_LABEL, matchConfidence } from "@prowl/shared";
+import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { toast } from "sonner";
 import { trackFilterSaved, trackItemDismissed, trackItemRestored } from "@/lib/posthog";
@@ -42,35 +44,83 @@ interface ItemsTabProps {
   allItems: ExtractedItem[];
   schema: ExtractionSchema | undefined;
   blacklist: string[];
+  scores: Record<string, { matchScore: number; matchReason: string }>;
+  showFilters: boolean;
+  onShowFiltersChange: (v: boolean) => void;
+}
+
+/** Bands, not raw percentages — the judged score is the model's own estimate and is not calibrated. */
+function confidenceStyle(score: number): string {
+  const band = matchConfidence(score);
+  if (band === "strong") return "bg-emerald-500/10 text-emerald-400 border-emerald-500/20";
+  if (band === "likely") return "bg-amber-500/10 text-amber-400 border-amber-500/20";
+  return "bg-muted text-muted-foreground border-border";
 }
 
 type StatusFilter = "all" | "matches" | "non-matches" | "dismissed";
 type SortOption = "default" | "price-asc" | "price-desc" | "name-asc" | "name-desc";
 
-export function ItemsTab({ monitorId, allItems, schema, blacklist }: ItemsTabProps) {
+export function ItemsTab({ monitorId, allItems, schema, blacklist, scores, showFilters, onShowFiltersChange }: ItemsTabProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [editedConditions, setEditedConditions] = useState<MatchConditions | null>(null);
   const [saving, setSaving] = useState(false);
-  const [showFilters, setShowFilters] = useState(false);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [sortBy, setSortBy] = useState<SortOption>("default");
   const [priceMin, setPriceMin] = useState("");
   const [priceMax, setPriceMax] = useState("");
 
   const updateBlacklist = useMutation(api.monitors.updateBlacklist);
+  const submitFeedback = useMutation(api.feedback.submit);
+  const clearFeedback = useMutation(api.feedback.clear);
+  const feedback = useQuery(api.feedback.forMonitor, { monitorId }) ?? {};
+
+  async function rate(item: ExtractedItem, verdict: "good" | "bad") {
+    // Written canonical so the verdict survives the link being re-stamped.
+    const key = itemIdentity(item);
+    try {
+      await submitFeedback({
+        monitorId,
+        itemKey: key,
+        itemTitle: String(item.title ?? item.name ?? key),
+        verdict,
+        matchScore: scores[itemIdentity(item)]?.matchScore,
+      });
+      toast.success(verdict === "good" ? "Marked as a good match" : "Hidden — it won't alert you again");
+    } catch {
+      toast.error("Could not save that");
+    }
+  }
   const updateMutation = useMutation(api.monitors.update);
 
   const conditions = editedConditions ?? schema?.matchConditions ?? {};
   const hasEdits = editedConditions !== null;
 
+  // Both forms of every stored key, matching how the scheduler hides them.
+  // Entries saved before keys were canonicalised are raw, and an item whose
+  // link is re-stamped every scrape would otherwise show here as an ordinary
+  // match — Dismiss button and all — while the backend was already
+  // suppressing it, and each press would append another near-identical key.
+  const blacklistKeys = useMemo(() => {
+    const keys = new Set<string>();
+    for (const key of blacklist) {
+      keys.add(key);
+      keys.add(canonicalUrl(key));
+    }
+    return keys;
+  }, [blacklist]);
+
+  const isHidden = useCallback(
+    (item: ExtractedItem) =>
+      blacklistKeys.has(getItemKey(item)) || blacklistKeys.has(itemIdentity(item)),
+    [blacklistKeys]
+  );
+
   const matches = useMemo(() => {
     if (allItems.length === 0) return [];
-    const matched = applyMatchConditions(allItems, conditions);
-    return matched.filter((item) => !blacklist.includes(getItemKey(item)));
-  }, [allItems, conditions, blacklist]);
+    return applyMatchConditions(allItems, conditions).filter((item) => !isHidden(item));
+  }, [allItems, conditions, isHidden]);
 
   const matchKeys = useMemo(() => new Set(matches.map(getItemKey)), [matches]);
-  const blacklistKeys = useMemo(() => new Set(blacklist), [blacklist]);
 
   const filteredItems = useMemo(() => {
     let items = allItems;
@@ -83,8 +133,8 @@ export function ItemsTab({ monitorId, allItems, schema, blacklist }: ItemsTabPro
 
     // Status filter
     if (statusFilter === "matches") items = items.filter((i) => matchKeys.has(getItemKey(i)));
-    else if (statusFilter === "non-matches") items = items.filter((i) => !matchKeys.has(getItemKey(i)) && !blacklistKeys.has(getItemKey(i)));
-    else if (statusFilter === "dismissed") items = items.filter((i) => blacklistKeys.has(getItemKey(i)));
+    else if (statusFilter === "non-matches") items = items.filter((i) => !matchKeys.has(getItemKey(i)) && !isHidden(i));
+    else if (statusFilter === "dismissed") items = items.filter((i) => isHidden(i));
 
     // Price range filter
     const pMin = priceMin ? Number(priceMin) : null;
@@ -103,7 +153,7 @@ export function ItemsTab({ monitorId, allItems, schema, blacklist }: ItemsTabPro
     }
 
     return items;
-  }, [allItems, searchQuery, statusFilter, priceMin, priceMax, matchKeys, blacklistKeys]);
+  }, [allItems, searchQuery, statusFilter, priceMin, priceMax, matchKeys, isHidden]);
 
   const sortedItems = useMemo(() => {
     return [...filteredItems].sort((a, b) => {
@@ -121,15 +171,15 @@ export function ItemsTab({ monitorId, allItems, schema, blacklist }: ItemsTabPro
       // Default: matches first, dismissed last
       const aKey = getItemKey(a);
       const bKey = getItemKey(b);
-      const aBlack = blacklistKeys.has(aKey);
-      const bBlack = blacklistKeys.has(bKey);
+      const aBlack = isHidden(a);
+      const bBlack = isHidden(b);
       if (aBlack !== bBlack) return aBlack ? 1 : -1;
       const aMatch = matchKeys.has(aKey);
       const bMatch = matchKeys.has(bKey);
       if (aMatch !== bMatch) return aMatch ? -1 : 1;
       return 0;
     });
-  }, [filteredItems, sortBy, matchKeys, blacklistKeys]);
+  }, [filteredItems, sortBy, matchKeys, isHidden]);
 
   async function saveConditions() {
     if (!schema || !editedConditions) return;
@@ -149,7 +199,10 @@ export function ItemsTab({ monitorId, allItems, schema, blacklist }: ItemsTabPro
     }
   }
 
-  async function blacklistItem(key: string) {
+  /** Hidden on identity, so the entry stays hidden when its link is re-stamped. */
+  async function blacklistItem(item: ExtractedItem) {
+    const key = itemIdentity(item);
+    if (blacklistKeys.has(key)) return;
     try {
       await updateBlacklist({ id: monitorId, blacklistedItems: [...blacklist, key] });
       trackItemDismissed();
@@ -157,9 +210,21 @@ export function ItemsTab({ monitorId, allItems, schema, blacklist }: ItemsTabPro
     } catch { toast.error("Failed to dismiss"); }
   }
 
+  /**
+   * Restoring drops every stored spelling of the entry — a raw key saved
+   * before identities were canonicalised sits alongside the canonical one —
+   * and retracts the verdict that hid it, so the thumbs data keeps no answer
+   * the user took back.
+   */
   async function unblacklistItem(key: string) {
+    const canonical = canonicalUrl(key);
     try {
-      await updateBlacklist({ id: monitorId, blacklistedItems: blacklist.filter((t) => t !== key) });
+      await updateBlacklist({
+        id: monitorId,
+        blacklistedItems: blacklist.filter((t) => t !== key && canonicalUrl(t) !== canonical),
+      });
+      await clearFeedback({ monitorId, itemKey: key }).catch(() => {});
+      if (canonical !== key) await clearFeedback({ monitorId, itemKey: canonical }).catch(() => {});
       trackItemRestored();
       toast.success("Item restored");
     } catch { toast.error("Failed to restore"); }
@@ -199,7 +264,7 @@ export function ItemsTab({ monitorId, allItems, schema, blacklist }: ItemsTabPro
             variant={showFilters ? "default" : "outline"}
             size="sm"
             className="gap-1.5 h-8 shrink-0"
-            onClick={() => setShowFilters(!showFilters)}
+            onClick={() => onShowFiltersChange(!showFilters)}
           >
             <Filter className="h-3.5 w-3.5" />
             Filters
@@ -304,9 +369,16 @@ export function ItemsTab({ monitorId, allItems, schema, blacklist }: ItemsTabPro
           const key = getItemKey(item);
           const title = String(item.title ?? item.name ?? `Item ${i + 1}`);
           const isMatch = matchKeys.has(key);
-          const isBlacklisted = blacklistKeys.has(key);
+          const isBlacklisted = isHidden(item);
           const safeUrl = toSafeUrl(item.url);
           const price = formatPrice(item.price, item.currency);
+          // Verdicts come from a different scrape than the extract rendered
+          // here, so they join on identity rather than on the raw URL.
+          const identity = itemIdentity(item);
+          const judged = scores[identity];
+          const score = judged?.matchScore ?? null;
+          const reason = judged?.matchReason ?? "";
+          const verdict = feedback[identity];
           const origPrice = formatPrice(item.originalPrice, item.currency);
 
           return (
@@ -322,6 +394,11 @@ export function ItemsTab({ monitorId, allItems, schema, blacklist }: ItemsTabPro
             >
               <div className="flex-1 min-w-0 flex items-center gap-2">
                 {isMatch && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400 shrink-0" />}
+                {score != null && (
+                  <Badge variant="outline" className={`text-[10px] shrink-0 ${confidenceStyle(score)}`}>
+                    {MATCH_CONFIDENCE_LABEL[matchConfidence(score)]}
+                  </Badge>
+                )}
                 {safeUrl ? (
                   <a href={safeUrl} target="_blank" rel="noopener noreferrer"
                     className="font-medium hover:text-primary hover:underline transition-colors break-words sm:truncate">
@@ -332,6 +409,9 @@ export function ItemsTab({ monitorId, allItems, schema, blacklist }: ItemsTabPro
                 )}
                 {safeUrl && <ExternalLink className="h-3 w-3 text-muted-foreground shrink-0" />}
               </div>
+              {reason && (
+                <p className="text-xs text-muted-foreground sm:hidden">{reason}</p>
+              )}
               <div className="flex items-center gap-3 shrink-0 self-end sm:self-auto">
                 {price && (
                   <span className="font-semibold tabular-nums">{price}</span>
@@ -341,12 +421,32 @@ export function ItemsTab({ monitorId, allItems, schema, blacklist }: ItemsTabPro
                     {origPrice}
                   </span>
                 )}
+                {(isMatch || isBlacklisted) && (
+                  <div className="flex items-center gap-0.5" title={reason || undefined}>
+                    <Button
+                      variant="ghost" size="sm"
+                      className={`h-6 w-6 p-0 ${verdict === "good" ? "text-emerald-400" : "text-muted-foreground"}`}
+                      aria-label="Good match" aria-pressed={verdict === "good"}
+                      onClick={() => rate(item, "good")}
+                    >
+                      <ThumbsUp className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button
+                      variant="ghost" size="sm"
+                      className={`h-6 w-6 p-0 ${verdict === "bad" ? "text-red-400" : "text-muted-foreground"}`}
+                      aria-label="Bad match" aria-pressed={verdict === "bad"}
+                      onClick={() => rate(item, "bad")}
+                    >
+                      <ThumbsDown className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                )}
                 {isBlacklisted ? (
-                  <Button variant="ghost" size="sm" className="h-6 text-xs px-2" onClick={() => unblacklistItem(key)}>
+                  <Button variant="ghost" size="sm" className="h-6 text-xs px-2" onClick={() => unblacklistItem(identity)}>
                     Restore
                   </Button>
                 ) : isMatch ? (
-                  <Button variant="ghost" size="sm" className="h-6 text-xs px-2 text-muted-foreground" onClick={() => blacklistItem(key)}>
+                  <Button variant="ghost" size="sm" className="h-6 text-xs px-2 text-muted-foreground" onClick={() => blacklistItem(item)}>
                     Dismiss
                   </Button>
                 ) : null}

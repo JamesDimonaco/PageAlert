@@ -1,7 +1,8 @@
 import { v } from "convex/values";
 import { mutation, query, internalAction, internalQuery } from "./_generated/server";
 import { internal } from "./_generated/api";
-import { effectiveIntervalMs, ERROR_RECOVERY_INTERVAL_MS, intervalToMs, isBlockedError, MAX_RETRIES, validateMonitorUrl } from "./shared";
+import { displayHost, effectiveIntervalMs, ERROR_RECOVERY_INTERVAL_MS, intervalToMs, isBlockedError, MAX_RETRIES, validateMonitorUrl } from "./shared";
+import { itemIdentity, RESUME_TOKEN_TTL_MS } from "@prowl/shared";
 import { effectiveTier, type Tier } from "./tiers";
 import { isBanned } from "./account";
 
@@ -122,9 +123,15 @@ export const list = query({
       .withIndex("by_userId", (q) => q.eq("userId", identity.subject))
       .order("desc")
       .collect();
-    // Strip heavy schema field — dashboard only needs metadata, not full extraction data.
-    // The detail page uses the `get` query which returns the full document.
-    return monitors.map(({ schema, ...rest }) => rest);
+    // Strip the heavy schema field — the dashboard only needs metadata, not the
+    // full extraction data — and the restart token, which is a bearer
+    // credential for an unauthenticated mutation and belongs in the pause email
+    // and nowhere else. The detail page uses `get`, which strips the same.
+    return monitors.map(({ schema, resumeToken, ...rest }) => {
+      void schema;
+      void resumeToken;
+      return rest;
+    });
   },
 });
 
@@ -135,7 +142,11 @@ export const get = query({
     if (!identity) return null;
     const monitor = await ctx.db.get(id);
     if (!monitor || monitor.userId !== identity.subject) return null;
-    return monitor;
+    // The restart token belongs in the pause email and nowhere else — the
+    // dashboard has the Resume button and does not need it.
+    const { resumeToken, ...rest } = monitor;
+    void resumeToken;
+    return rest;
   },
 });
 
@@ -292,6 +303,25 @@ export const saveScanResult = mutation({
       scrapedAt: now,
     });
 
+    // Activation: the first page we ever managed to read for this user.
+    //
+    // The marker is claimed in this transaction and the alert scheduled from
+    // inside it, so the two cannot disagree — and being stored on the user
+    // rather than inferred from their monitors means deleting the monitor
+    // cannot produce a second "activated", which reading checkCount across
+    // their rows would have done.
+    const activity = await ctx.db
+      .query("userActivity")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .unique();
+    if (!activity?.activatedAt) {
+      if (activity) await ctx.db.patch(activity._id, { activatedAt: now });
+      else await ctx.db.insert("userActivity", { userId, lastSeenAt: now, activatedAt: now });
+      await ctx.scheduler.runAfter(0, internal.admin.notify, {
+        text: `🎉 Activated: ${monitor.userEmail ?? userId} got their first scan — "${monitor.name}" on ${displayHost(monitor.url)}, ${matchCount} match${matchCount === 1 ? "" : "es"}`,
+      });
+    }
+
     // Send notifications for initial scan matches
     if (matchCount > 0) {
       await ctx.scheduler.runAfter(0, internal.monitors.sendInitialScanNotifications, {
@@ -437,31 +467,90 @@ export const update = mutation({
       }
     }
 
+    // Anything that takes a monitor out of "paused" clears the auto-pause and
+    // its email link, so the monitor reads as a plain active monitor again and
+    // an old email cannot restart it later. Keyed off leaving "paused" rather
+    // than off arriving at "active", because Rescan goes paused -> "scanning"
+    // -> active and would otherwise leave a running monitor wearing the
+    // "paused automatically" note for good.
+    //
+    // nextCheckAt is set on every resume, not just an auto-paused one: without
+    // it a monitor that was parked (nextCheckAt unset) and then paused comes
+    // back active with nothing scheduled and never runs again.
+    if (fields.status !== undefined && fields.status !== "paused" && existing.status === "paused") {
+      updates.nextCheckAt = now;
+      updates.autoPausedAt = undefined;
+      updates.resumeToken = undefined;
+      if (existing.nextCheckAt === undefined) {
+        // It was parked before it was paused. Same reasoning as the interval
+        // branch below: without a fresh budget the next single failure re-parks
+        // it and sends another "checks stopped" email.
+        updates.proxyBlockCount = 0;
+        updates.retryCount = 0;
+      }
+    }
+
     // Recompute nextCheckAt when interval changes so it takes effect immediately
     if (fields.checkInterval !== undefined) {
       updates.nextCheckAt = now + effectiveIntervalMs({
         checkInterval: fields.checkInterval,
         proxyPreferred: existing.proxyPreferred,
       });
-      // This un-parks a monitor parked for repeated proxy blocks. Give it a
-      // fresh budget, or the next single block re-parks it and sends a second
-      // "checks stopped" email.
+      // This un-parks a parked monitor. Give it a fresh budget on both
+      // counters, or the next single failure re-parks it and sends a second
+      // "checks stopped" email — a never-succeeded park sits at retryCount 32
+      // and would re-park on its very first check.
       updates.proxyBlockCount = 0;
-    }
-
-    // A parked monitor has no nextCheckAt, and getMonitorsDue bounds both lanes
-    // with .gte("nextCheckAt", 0), which undefined fails. Without this, pausing
-    // and resuming a parked monitor leaves it status "active" and unscheduled:
-    // never checked again, shown as healthy, and past the status === "error"
-    // guard that renders the "Checks stopped" card. Silently dead.
-    const willBeActive = (updates.status ?? existing.status) === "active";
-    if (willBeActive && updates.nextCheckAt === undefined && existing.nextCheckAt === undefined) {
-      updates.nextCheckAt = now;
-      updates.proxyBlockCount = 0;
+      updates.retryCount = 0;
     }
 
     await ctx.db.patch(id, updates);
     return id;
+  },
+});
+
+/**
+ * Restart a monitor the inactivity reaper paused, from the link in its pause
+ * email. Public and unauthenticated: the 256-bit token in the URL is the whole
+ * credential, and the only thing it can do is start this one monitor again.
+ *
+ * A mutation behind a page rather than an HTTP GET on purpose — mail scanners
+ * and link prefetchers fetch every URL in an email, and a GET that resumed
+ * would restart monitors nobody clicked, forever.
+ */
+export const resumeByToken = mutation({
+  args: { token: v.string() },
+  handler: async (ctx, { token }) => {
+    const monitor = await ctx.db
+      .query("monitors")
+      .withIndex("by_resumeToken", (q) => q.eq("resumeToken", token))
+      .unique();
+    // Same answer for a tampered link and one already used: there is nothing
+    // useful to say about the difference, and no reason to confirm a guess.
+    if (!monitor || monitor.autoPausedAt === undefined) return { status: "invalid" as const };
+    if (Date.now() - monitor.autoPausedAt > RESUME_TOKEN_TTL_MS) return { status: "expired" as const };
+    // banUser only pauses monitors that were live at the time, so one the
+    // reaper had already paused keeps its token and would otherwise start
+    // checking again on behalf of a suspended account.
+    if (await isBanned(ctx, monitor.userId)) return { status: "invalid" as const };
+
+    const now = Date.now();
+    await ctx.db.patch(monitor._id, {
+      status: "active",
+      nextCheckAt: now,
+      autoPausedAt: undefined,
+      resumeToken: undefined,
+      // The proof of life. A dashboard resume moves the session instead, which
+      // is what the reaper normally reads; this path has no session to move.
+      lastResumedAt: now,
+      updatedAt: now,
+    });
+    return {
+      status: "ok" as const,
+      monitorId: monitor._id,
+      name: monitor.name,
+      url: monitor.url,
+    };
   },
 });
 
@@ -539,6 +628,50 @@ export const getResults = query({
       .withIndex("by_monitorId", (q) => q.eq("monitorId", monitorId))
       .order("desc")
       .take(safeLimit);
+  },
+});
+
+/**
+ * Judged scores from the most recent check, keyed by entry.
+ *
+ * The items tab renders `monitor.schema.items`, which is the AI's model of the
+ * page and is only rewritten on a full extract. Scores come from the routine
+ * checks in between, so they live on the result row and are joined back here
+ * rather than written into the schema, which would mix two different views of
+ * the page.
+ */
+/** Checks looked back through for verdicts. Enough to outlast a quiet spell without paging history. */
+const SCORE_LOOKBACK_RESULTS = 20;
+
+export const latestScores = query({
+  args: { monitorId: v.id("monitors") },
+  handler: async (ctx, { monitorId }) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return {};
+    const monitor = await ctx.db.get(monitorId);
+    if (!monitor || monitor.userId !== identity.subject) return {};
+
+    // Not simply the newest row: a check that found nothing new judges nothing
+    // and stores no verdicts, so reading only the latest would blank every
+    // score on the tab one check after a match arrived.
+    const recent = await ctx.db
+      .query("scrapeResults")
+      .withIndex("by_monitorId_scrapedAt", (q) => q.eq("monitorId", monitorId))
+      .order("desc")
+      .take(SCORE_LOOKBACK_RESULTS);
+
+    const scored: Record<string, { matchScore: number; matchReason: string }> = {};
+    // Oldest first, so a newer verdict on the same entry wins.
+    for (const result of [...recent].reverse()) {
+      for (const item of (result.scoredCandidates ?? []) as Record<string, unknown>[]) {
+        if (typeof item.matchScore !== "number") continue;
+        scored[itemIdentity(item)] = {
+          matchScore: item.matchScore,
+          matchReason: typeof item.matchReason === "string" ? item.matchReason : "",
+        };
+      }
+    }
+    return scored;
   },
 });
 

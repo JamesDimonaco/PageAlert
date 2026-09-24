@@ -70,6 +70,13 @@ export const queueWelcomeSequence = internalMutation({
     // gated by ONBOARDING_EMAILS_ENABLED so this is safe even before
     // the kill switch is flipped.
     await ctx.scheduler.runAfter(0, internal.onboarding.processDueEmails, {});
+
+    // Tell the operator. This function is the once-per-user new-signup hook —
+    // it returns early above if anything is already queued — so the alert
+    // inherits that guard and a retried signup cannot send a second one.
+    await ctx.scheduler.runAfter(0, internal.admin.notify, {
+      text: `New signup: ${email}`,
+    });
   },
 });
 

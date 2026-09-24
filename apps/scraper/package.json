@@ -19,15 +19,15 @@
     "@opentelemetry/sdk-node": "^0.222.0",
     "@posthog/ai": "^7.21.0",
     "@prowl/shared": "workspace:*",
-    "hono": "^4.13.7",
+    "hono": "^4.13.8",
     "playwright": "1.63.0",
-    "posthog-node": "^5.51.6",
+    "posthog-node": "^5.52.4",
     "zod": "^3.25.76"
   },
   "devDependencies": {
-    "@types/node": "^22.20.1",
+    "@types/node": "^22.20.4",
     "tsup": "^8.5.1",
-    "tsx": "^4.23.13",
+    "tsx": "^4.23.15",
     "typescript": "^5.9.3"
   }
 }

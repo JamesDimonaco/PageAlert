@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { internalAction, action } from "./_generated/server";
 import { displayHost } from "./shared";
+import { formatDay, resumeUrl } from "./emails";
 
 const APP_URL = process.env.SITE_URL ?? "https://pagealert.io";
 const TIMEOUT = 10_000;
@@ -68,16 +69,45 @@ export const sendMonitorStoppedAlert = internalAction({
     monitorName: v.string(),
     monitorId: v.string(),
     url: v.string(),
+    /** Why checks stopped, from the park in scheduler.ts. */
+    reason: v.string(),
   },
   handler: async (_ctx, args) => {
     await sendWebhook(args.webhookUrl, {
       embeds: [
         {
           title: `🛑 ${args.monitorName} — Checks stopped`,
-          description: `${displayHost(args.url)} blocks automated access even through our proxy, so we have stopped checking it. No more alerts for this monitor until you start it again.`,
+          description: `We have stopped checking ${displayHost(args.url)}. ${args.reason} No more alerts for this monitor until you start it again.`,
           color: 0xf59e0b,
           fields: [
             { name: "Dashboard", value: `[Retry this monitor](${APP_URL}/dashboard/monitors/${args.monitorId})`, inline: true },
+          ],
+          timestamp: new Date().toISOString(),
+        },
+      ],
+    });
+  },
+});
+
+/** We have paused this monitor because the owner has not been back. */
+export const sendInactivityPaused = internalAction({
+  args: {
+    webhookUrl: v.string(),
+    monitorName: v.string(),
+    url: v.string(),
+    lastSeenAt: v.number(),
+    /** Restart token — the link needs no login. See inactivity.ts. */
+    token: v.string(),
+  },
+  handler: async (_ctx, args) => {
+    await sendWebhook(args.webhookUrl, {
+      embeds: [
+        {
+          title: `⏸️ ${args.monitorName} — Paused`,
+          description: `You have not been back to PageAlert since ${formatDay(args.lastSeenAt)}, so we have stopped checking ${displayHost(args.url)}. Nothing is deleted.`,
+          color: 0xf59e0b,
+          fields: [
+            { name: "Restart", value: `[Start checking again](${resumeUrl(args.token)})`, inline: true },
           ],
           timestamp: new Date().toISOString(),
         },

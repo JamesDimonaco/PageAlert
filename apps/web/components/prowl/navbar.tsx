@@ -1,6 +1,6 @@
 "use client";
 
-import { Radar, LogOut, Settings, ShieldCheck } from "lucide-react";
+import { Radar, LogOut, Settings, ShieldCheck, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { NotificationBell } from "@/components/prowl/notification-bell";
 import {
@@ -15,17 +15,22 @@ import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/hooks/use-auth";
 import { useTier } from "@/hooks/use-tier";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
+import { useCreateMonitor } from "@/hooks/use-create-monitor";
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 
 export function Navbar() {
   const router = useRouter();
+  const pathname = usePathname();
+  const { open: openCreate } = useCreateMonitor();
   const { user, signOut } = useAuth();
   const { tier, grantUntil } = useTier();
   const isAdmin = useQuery(api.admin.isAdmin) === true;
 
   const initials = user?.name?.charAt(0)?.toUpperCase() ?? user?.email?.charAt(0)?.toUpperCase() ?? "?";
+  // The dashboard index already leads with its own New Monitor CTA
+  const showCreate = pathname !== "/dashboard";
 
   return (
     <header className="sticky top-0 z-50 border-b border-border/30 bg-background/80 backdrop-blur-xl">
@@ -51,6 +56,13 @@ export function Navbar() {
         </div>
 
         <div className="flex items-center gap-3">
+          {showCreate && (
+            <Button size="sm" onClick={openCreate} className="gap-1.5 shadow-sm shadow-primary/15">
+              <Plus className="h-4 w-4" />
+              <span className="hidden sm:inline">New Monitor</span>
+            </Button>
+          )}
+
           <Badge className={`text-[10px] px-1.5 py-0 hidden sm:inline-flex ${
             tier === "max"
               ? "bg-amber-500/10 text-amber-400 border-amber-500/20"
