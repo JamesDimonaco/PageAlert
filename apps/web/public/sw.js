@@ -29,9 +29,20 @@ self.addEventListener("push", (event) => {
   if (payload.tag) options.renotify = true;
 
   event.waitUntil(
-    self.registration.showNotification(payload.title ?? "PageAlert", options)
+    self.registration
+      .showNotification(payload.title ?? "PageAlert", options)
+      .then(() => tellPages(payload.tag))
   );
 });
+
+// Tell any open PageAlert tab the push landed. The settings test uses this to
+// split "never reached this browser" from "arrived but the OS hid it" — the
+// browser reports notifications as allowed even when the OS blocks them, so
+// that second case can only be caught by asking the user.
+async function tellPages(tag) {
+  const clients = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+  for (const client of clients) client.postMessage({ type: "push-received", tag });
+}
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
