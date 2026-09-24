@@ -4,7 +4,7 @@ import { internal } from "./_generated/api";
 import { displayHost, effectiveIntervalMs, ERROR_RECOVERY_INTERVAL_MS, intervalToMs, isBlockedError, MAX_RETRIES, validateMonitorUrl } from "./shared";
 import { itemIdentity, RESUME_TOKEN_TTL_MS } from "@prowl/shared";
 import { effectiveTier, type Tier } from "./tiers";
-import { isBanned } from "./account";
+import { isBanned, requireLiveAccount } from "./account";
 
 // ---- Resource Limits ----
 const MAX_NAME_LENGTH = 200;
@@ -175,6 +175,8 @@ export const create = mutation({
     const userEmail = identity.email ?? undefined;
 
     if (await isBanned(ctx, userId)) throw new Error("This account has been suspended.");
+    // A token outlives the account it was minted for; see requireLiveAccount.
+    await requireLiveAccount(ctx, userId);
 
     // Dynamic tier-based enforcement
     const tier = await getUserTier(ctx, userId);

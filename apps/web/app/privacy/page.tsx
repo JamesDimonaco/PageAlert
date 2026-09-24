@@ -78,8 +78,8 @@ export default function PrivacyPage() {
 
           <h2>How long we keep it</h2>
           <p>Everything tied to your account is kept while the account exists, including your check history. How far back you can read that history depends on your plan: older checks are hidden rather than deleted, and upgrading brings them back. Scans run without an account are deleted after 7 days, or 30 days if you left an email address.</p>
-          <p>You can delete your account from <strong>Settings → Profile</strong>. That removes your monitors, results, check history, notifications, connected channels, push subscriptions, feedback, reviews, email delivery records, and the login itself, including your email and name. The check history is cleared in the background and is gone within a few minutes.</p>
-          <p>Three things stay after deletion: if your account was suspended, the record of the suspension; the record of any account-wide email we sent, which lists the addresses it went to; and the IDs of Polar orders we have applied, alongside Polar&apos;s own record of your payments. A suspended account cannot be deleted from Settings — email us instead.</p>
+          <p>You can delete your account from <strong>Settings → Profile</strong>. That removes your monitors, results, check history, notifications, connected channels, push subscriptions, feedback, reviews, email delivery records, and the login itself, including your email and name. Deletion runs in the background: most accounts are cleared straight away, and a large account takes a few minutes. Checks that ran before you signed up, on a monitor you later claimed, are removed as well.</p>
+          <p>Two things stay after deletion: the record of any account-wide email we sent, which lists the addresses it went to; and the IDs of Polar orders we have applied, alongside Polar&apos;s own record of your payments. A suspended account cannot be deleted from Settings — email us instead.</p>
 
           <h2>Your rights</h2>
           <p>Under UK data protection law you can:</p>

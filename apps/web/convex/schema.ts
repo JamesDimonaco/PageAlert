@@ -176,6 +176,9 @@ export default defineSchema({
     // createdAt is on the user index because the logs page reads a tier-sized
     // window rather than the whole history — see retention.ts in shared.
     .index("by_userId_createdAt", ["userId", "createdAt"])
+    // Account deletion sweeps a monitor's logs by monitor: a scan that ran
+    // anonymously wrote them under an `anon_` id the claim never re-keys.
+    .index("by_monitorId", ["monitorId"])
     .index("by_createdAt", ["createdAt"])
     .index("by_status", ["status"]),
 

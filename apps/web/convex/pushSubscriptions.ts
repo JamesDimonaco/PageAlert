@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { internalMutation, internalQuery, mutation, query } from "./_generated/server";
+import { requireLiveAccount } from "./account";
 
 /**
  * Device registrations for web push. Kept apart from convex/push.ts because
@@ -18,6 +19,7 @@ export const subscribe = mutation({
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Not authenticated");
+    await requireLiveAccount(ctx, identity.subject);
 
     const existing = await ctx.db
       .query("pushSubscriptions")

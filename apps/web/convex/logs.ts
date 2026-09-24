@@ -1,6 +1,5 @@
 import { v } from "convex/values";
 import { mutation, query, internalMutation, type QueryCtx } from "./_generated/server";
-import { internal } from "./_generated/api";
 import {
   HISTORY_WINDOW_DAYS,
   MAX_LOG_ROW_BYTES,
@@ -9,6 +8,7 @@ import {
   isWithinHistoryWindow,
 } from "@prowl/shared";
 import { effectiveTier } from "./tiers";
+import { requireLiveAccount } from "./account";
 import type { Doc } from "./_generated/dataModel";
 
 /** Shared validator for scrape log fields */
@@ -40,6 +40,7 @@ export const create = mutation({
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Not authenticated");
+    await requireLiveAccount(ctx, identity.subject);
 
     return ctx.db.insert("scrapeLogs", {
       ...capLogFields(args),
@@ -154,58 +155,6 @@ export const list = query({
       windowDays,
       capped: page.length > safeLimit,
     };
-  },
-});
-
-/**
- * Rows deleted per run of purgeForUser. A Max user on 5-minute checks writes
- * ~300 logs a day per monitor, and a row can reach MAX_LOG_ROW_BYTES (~60KB),
- * so one transaction cannot hold a heavy user's history: it runs in batches
- * and reschedules itself until the index is empty.
- *
- * 25 rather than 100 because of that row size: a hundred heavy rows is ~6MB
- * read and written in one transaction, close enough to Convex's limits that
- * the batch that trips it is the one belonging to the user with the most
- * history.
- */
-const PURGE_BATCH = 25;
-
-/** Deletes a user's check history. Scheduled by account.deleteAllUserData. */
-export const purgeForUser = internalMutation({
-  args: { userId: v.string() },
-  handler: async (ctx, { userId }) => {
-    const batch = await ctx.db
-      .query("scrapeLogs")
-      .withIndex("by_userId_createdAt", (q) => q.eq("userId", userId))
-      .take(PURGE_BATCH);
-    for (const log of batch) {
-      await ctx.db.delete(log._id);
-    }
-    if (batch.length === PURGE_BATCH) {
-      await ctx.scheduler.runAfter(0, internal.logs.purgeForUser, { userId });
-    }
-  },
-});
-
-/**
- * Checks the purge chain actually finished, and shouts if it did not.
- *
- * The chain only continues from inside a run that succeeded, so one throw ends
- * it silently with half a user's history still on disk — and the privacy page
- * says that history is gone within minutes. Nothing else would ever notice.
- * Scheduled by deleteAllUserData for well after the chain should be done.
- */
-export const auditPurge = internalMutation({
-  args: { userId: v.string() },
-  handler: async (ctx, { userId }) => {
-    const leftover = await ctx.db
-      .query("scrapeLogs")
-      .withIndex("by_userId_createdAt", (q) => q.eq("userId", userId))
-      .take(1);
-    if (leftover.length === 0) return;
-    await ctx.scheduler.runAfter(0, internal.admin.notify, {
-      text: `⚠️ Check history survived account deletion for ${userId}. The purge chain stopped early — delete the rest by hand.`,
-    });
   },
 });
 

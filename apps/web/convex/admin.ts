@@ -28,7 +28,7 @@ import {
 import { components, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { authComponent } from "./betterAuth/auth";
-import { deleteAllUserData, deleteAuthRows } from "./account";
+import { deleteAllUserData, deleteAuthIdentity } from "./account";
 import { APP_URL, HELLO_FROM_EMAIL, RESEND_TIMEOUT, textToHtmlParagraphs } from "./emails";
 import { displayHost, isBlockedError } from "./shared";
 import { effectiveTier, TIER_RANK, type Tier } from "./tiers";
@@ -880,10 +880,11 @@ export const deleteUser = mutation({
     const adminEmail = await requireAdmin(ctx);
 
     await deleteAllUserData(ctx, userId, email);
-    await deleteAuthRows(ctx, userId);
+    await deleteAuthIdentity(ctx, userId);
 
-    // Safe to drop the ban record here (unlike self-service deleteAccount):
-    // the identity it was blocking no longer exists to reuse it.
+    // Safe to drop the ban record here, unlike the self-service path: an admin
+    // deleting a banned account means it to be gone, and the identity the ban
+    // named has just been destroyed, so nothing is left to re-ban.
     const banned = await ctx.db
       .query("bannedUsers")
       .withIndex("by_userId", (q) => q.eq("userId", userId))
