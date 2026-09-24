@@ -4,20 +4,88 @@ import { convexTest } from "convex-test";
 import schema from "./schema";
 import {
   deleteAllUserData,
+  deleteAuthIdentity,
   KEPT_ON_DELETE,
   ONE_CONVEX_DOCUMENT_BYTES,
   SWEEP_BUDGET_BYTES,
   SWEEP_BUDGET_ROWS,
   SWEPT_ON_DELETE,
 } from "./account";
-import { internal } from "./_generated/api";
+import { api, components, internal } from "./_generated/api";
+import betterAuthSchema from "./betterAuth/schema";
 import type { Doc, Id, TableNames } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
 
 const modules = import.meta.glob("./**/*.*s");
+const betterAuthModules = import.meta.glob("./betterAuth/**/*.*s");
 
 const LEAVING = "user_leaving";
 const STAYING = "user_staying";
+
+/** A test harness that can also reach the Better Auth component's tables. */
+function withAuth() {
+  const t = convexTest(schema, modules);
+  t.registerComponent("betterAuth", betterAuthSchema, betterAuthModules);
+  return t;
+}
+
+type AuthTest = ReturnType<typeof withAuth>;
+
+/**
+ * A signed-up identity: the user row, one live session, one linked provider
+ * account. Returns the user id, which is what `identity.subject` carries.
+ */
+async function seedIdentity(t: AuthTest, email: string): Promise<string> {
+  const now = Date.now();
+  const user = (await t.mutation(components.betterAuth.adapter.create, {
+    input: {
+      model: "user",
+      data: { name: "A Person", email, emailVerified: true, createdAt: now, updatedAt: now },
+    },
+  })) as { _id: string };
+
+  await t.mutation(components.betterAuth.adapter.create, {
+    input: {
+      model: "session",
+      data: {
+        userId: user._id,
+        token: `tok_${email}`,
+        expiresAt: now + 86_400_000,
+        createdAt: now,
+        updatedAt: now,
+      },
+    },
+  });
+  await t.mutation(components.betterAuth.adapter.create, {
+    input: {
+      model: "account",
+      data: {
+        userId: user._id,
+        accountId: `google_${email}`,
+        providerId: "google",
+        createdAt: now,
+        updatedAt: now,
+      },
+    },
+  });
+
+  return user._id;
+}
+
+/** Which of this identity's auth rows are still there. */
+async function authRowsLeft(t: AuthTest, userId: string) {
+  const one = async (model: "user" | "session" | "account", field: string, value: string) =>
+    (await t.query(components.betterAuth.adapter.findOne, {
+      model,
+      where: [{ field, operator: "eq", value }],
+    })) !== null;
+
+  return {
+    user: await one("user", "_id", userId),
+    session: await one("session", "userId", userId),
+    account: await one("account", "userId", userId),
+  };
+}
 
 /**
  * Every table whose rows carry a userId, read off the schema rather than
@@ -645,5 +713,111 @@ test("an account holding more rows than one batch is still emptied", async () =>
     const sends: Doc<"emailSends">[] = await ctx.db.query("emailSends").collect();
     expect(logs).toHaveLength(0);
     expect(sends).toHaveLength(0);
+  });
+});
+
+/**
+ * "Permanently delete your account" has to mean the account, not only its
+ * contents. Until now the sweep cleared every app table and left the Better
+ * Auth identity — name, email, image, and the linked provider account —
+ * sitting behind it, with the same userId re-attaching on the next sign-in.
+ */
+test("deleting an account destroys the identity behind it", async () => {
+  const t = withAuth();
+  const email = "leaving@example.com";
+  const userId = await seedIdentity(t, email);
+
+  await t.run(async (ctx) => {
+    await seed(ctx as MutationCtx, userId);
+    // seed() bans the user so the sweep has a keep-list row to prove it keeps.
+    // This one is not banned — that case is the test below.
+    const ban = await ctx.db
+      .query("bannedUsers")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .unique();
+    if (ban) await ctx.db.delete(ban._id);
+  });
+
+  await t.withIdentity({ subject: userId, email }).mutation(api.account.deleteAccount, {});
+  await t.finishAllScheduledFunctions(() => {});
+
+  expect(await authRowsLeft(t, userId)).toEqual({
+    user: false,
+    session: false,
+    account: false,
+  });
+  // Nothing is kept: KEPT_ON_DELETE holds bannedUsers, and an account with no
+  // ban has no such row to keep.
+  await t.run(async (ctx) => {
+    expect(await remaining(ctx as MutationCtx, userId)).toEqual([]);
+  });
+});
+
+/**
+ * Every ban is enforced by userId, so destroying the identity would hand a
+ * banned person a clean one: delete, sign up again, new userId, no ban. Their
+ * content still goes — the identity is what has to stay, because it is the
+ * only thing the ban is attached to.
+ */
+test("a banned account keeps the identity its ban is attached to", async () => {
+  const t = withAuth();
+  const email = "banned@example.com";
+  const userId = await seedIdentity(t, email);
+
+  // seed() already writes the ban row this test turns on.
+  await t.run(async (ctx) => {
+    await seed(ctx as MutationCtx, userId);
+  });
+
+  await t.withIdentity({ subject: userId, email }).mutation(api.account.deleteAccount, {});
+  await t.finishAllScheduledFunctions(() => {});
+
+  expect(await authRowsLeft(t, userId)).toEqual({
+    user: true,
+    session: true,
+    account: true,
+  });
+  await t.run(async (ctx) => {
+    // Their data is still erased; only the ban and the identity it names stay.
+    expect(await remaining(ctx as MutationCtx, userId)).toEqual(["bannedUsers"]);
+    expect(await ctx.db.query("monitors").collect()).toHaveLength(0);
+    expect(await ctx.db.query("scrapeLogs").collect()).toHaveLength(0);
+  });
+});
+
+test("one account's deletion leaves another's identity alone", async () => {
+  const t = withAuth();
+  const leaving = await seedIdentity(t, "leaving@example.com");
+  const staying = await seedIdentity(t, "staying@example.com");
+
+  await t
+    .withIdentity({ subject: leaving, email: "leaving@example.com" })
+    .mutation(api.account.deleteAccount, {});
+  await t.finishAllScheduledFunctions(() => {});
+
+  expect(await authRowsLeft(t, staying)).toEqual({
+    user: true,
+    session: true,
+    account: true,
+  });
+});
+
+/**
+ * The admin's forced delete already removed the auth rows, by its own copy of
+ * this logic. Both paths go through one helper now, so neither can drift from
+ * the other's idea of what deleting an account means.
+ */
+test("the shared helper clears sessions, provider accounts and the user", async () => {
+  const t = withAuth();
+  const userId = await seedIdentity(t, "forced@example.com");
+
+  await t.run(async (ctx) => {
+    await deleteAuthIdentity(ctx as MutationCtx, userId);
+  });
+
+  expect(await authRowsLeft(t, userId)).toEqual({
+    user: false,
+    session: false,
+    account: false,
   });
 });

@@ -28,7 +28,7 @@ import {
 import { components, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { authComponent } from "./betterAuth/auth";
-import { deleteAllUserData } from "./account";
+import { deleteAllUserData, deleteAuthIdentity } from "./account";
 import { APP_URL, HELLO_FROM_EMAIL, RESEND_TIMEOUT, textToHtmlParagraphs } from "./emails";
 import { displayHost, isBlockedError } from "./shared";
 import { effectiveTier, TIER_RANK, type Tier } from "./tiers";
@@ -864,22 +864,6 @@ export const unbanUser = mutation({
   },
 });
 
-type UserIdRow = { field: "userId"; operator: "eq"; value: string };
-
-/** Deletes every matching row for a user, a page at a time until none remain. */
-async function deleteAllRowsByUser(
-  ctx: MutationCtx,
-  input: { model: "session"; where: UserIdRow[] } | { model: "account"; where: UserIdRow[] },
-): Promise<void> {
-  for (let page = 0; page < 40; page++) {
-    const result = await ctx.runMutation(components.betterAuth.adapter.deleteMany, {
-      input,
-      paginationOpts: { numItems: 200, cursor: null },
-    });
-    if (result.count === 0 || result.isDone) break;
-  }
-}
-
 /**
  * Permanently deletes the user's account and every row this app owns for
  * them (monitors, scrape results, notifications, settings, tier record),
@@ -891,16 +875,11 @@ export const deleteUser = mutation({
     const adminEmail = await requireAdmin(ctx);
 
     await deleteAllUserData(ctx, userId, email);
+    await deleteAuthIdentity(ctx, userId);
 
-    const idFilter: UserIdRow[] = [{ field: "userId", operator: "eq", value: userId }];
-    await deleteAllRowsByUser(ctx, { model: "session", where: idFilter });
-    await deleteAllRowsByUser(ctx, { model: "account", where: idFilter });
-    await ctx.runMutation(components.betterAuth.adapter.deleteOne, {
-      input: { model: "user", where: [{ field: "_id", operator: "eq", value: userId }] },
-    });
-
-    // Safe to drop the ban record here (unlike self-service deleteAccount):
-    // the identity it was blocking no longer exists to reuse it.
+    // Safe to drop the ban record here, unlike the self-service path: an admin
+    // deleting a banned account means it to be gone, and the identity the ban
+    // named has just been destroyed, so nothing is left to re-ban.
     const banned = await ctx.db
       .query("bannedUsers")
       .withIndex("by_userId", (q) => q.eq("userId", userId))

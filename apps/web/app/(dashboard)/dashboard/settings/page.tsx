@@ -198,7 +198,7 @@ export default function SettingsPage() {
             <CardHeader className="pb-4">
               <CardTitle className="text-lg font-semibold text-destructive">Danger Zone</CardTitle>
               <CardDescription className="text-sm">
-                Permanently delete your account and all data including monitors, scrape history, and notification settings.
+                Permanently delete your account, your sign-in, and all data including monitors, scrape history, and notification settings.
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -213,8 +213,10 @@ export default function SettingsPage() {
                       Delete Account
                     </DialogTitle>
                     <DialogDescription>
-                      This will permanently delete your account and all associated data including
-                      all monitors, scrape results, and notification settings. This cannot be undone.
+                      This will permanently delete your sign-in and everything attached to it —
+                      every monitor, scrape result, notification setting, and the record of
+                      emails we sent you. Signing up again starts from scratch. This cannot be
+                      undone.
                     </DialogDescription>
                   </DialogHeader>
                   <DialogFooter>

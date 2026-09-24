@@ -1,6 +1,6 @@
 import { getDocumentSize, v, type Value } from "convex/values";
 import { internalMutation, mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
-import { internal } from "./_generated/api";
+import { components, internal } from "./_generated/api";
 import type { Id, TableNames } from "./_generated/dataModel";
 
 /** Is this user currently banned? Shared by every mutation that gates on ban status. */
@@ -10,6 +10,41 @@ export async function isBanned(ctx: QueryCtx | MutationCtx, userId: string): Pro
     .withIndex("by_userId", (q) => q.eq("userId", userId))
     .unique();
   return !!row;
+}
+
+type UserIdRow = { field: "userId"; operator: "eq"; value: string };
+
+/** Deletes every matching row for a user, a page at a time until none remain. */
+async function deleteAllAuthRows(
+  ctx: MutationCtx,
+  input: { model: "session"; where: UserIdRow[] } | { model: "account"; where: UserIdRow[] }
+): Promise<void> {
+  for (let page = 0; page < 40; page++) {
+    const result = await ctx.runMutation(components.betterAuth.adapter.deleteMany, {
+      input,
+      paginationOpts: { numItems: 200, cursor: null },
+    });
+    if (result.count === 0 || result.isDone) break;
+  }
+}
+
+/**
+ * Removes the Better Auth identity behind a userId: every session, every
+ * linked provider account, then the user row carrying the name and email.
+ *
+ * Sessions go first so the identity cannot act on the way out — nothing it
+ * creates can survive the sweep rounds still running behind it.
+ *
+ * Shared by the admin's forced delete and the user's own, which is the point:
+ * these were separate before, and only one of them did it.
+ */
+export async function deleteAuthIdentity(ctx: MutationCtx, userId: string): Promise<void> {
+  const where: UserIdRow[] = [{ field: "userId", operator: "eq", value: userId }];
+  await deleteAllAuthRows(ctx, { model: "session", where });
+  await deleteAllAuthRows(ctx, { model: "account", where });
+  await ctx.runMutation(components.betterAuth.adapter.deleteOne, {
+    input: { model: "user", where: [{ field: "_id", operator: "eq", value: userId }] },
+  });
 }
 
 /**
@@ -239,12 +274,12 @@ export const SWEPT_ON_DELETE: readonly string[] = [
 /**
  * Tables that go on holding a userId after the account is gone.
  *
- * Only bannedUsers, and only on the self-service path: deleteAccount does not
- * remove the caller's Better Auth session, so the same still-logged-in
- * identity outlives the delete — dropping the ban row would let a banned user
- * delete their way back to an unbanned session. admin.deleteUser does remove
- * it, because that path also destroys the session, account and user rows the
- * ban was blocking, so the userId can never come back to use it.
+ * Only bannedUsers, and only for a banned account. Every ban is enforced by
+ * userId (see isBanned's callers), so the ban row and the identity it names
+ * have to survive together or not at all: destroy the identity and the next
+ * signup gets a fresh userId no ban can reach, keep the identity without the
+ * ban and the same person walks back in unbanned. A banned account's *data*
+ * is still erased — it is the name on the door that stays.
  */
 export const KEPT_ON_DELETE: readonly string[] = ["bannedUsers"];
 
@@ -331,7 +366,23 @@ export const deleteAccount = mutation({
   handler: async (ctx) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Not authenticated");
+
+    // Read before the sweep: it takes the ban row's neighbours with it, and
+    // this decides whether the identity survives.
+    const banned = await isBanned(ctx, identity.subject);
+
     await deleteAllUserData(ctx, identity.subject, identity.email);
+
+    // The dialog says "permanently delete your account", so the identity goes
+    // too — otherwise the name, email and linked provider account outlive the
+    // data and the same userId re-attaches at the next sign-in.
+    //
+    // Except for a banned account. The ban is enforced by userId and nothing
+    // else, so a banned user who could destroy their identity would be handed
+    // a clean one by signing up again. Their data is erased eitherway; the
+    // identity stays behind as the thing the ban is written against.
+    if (!banned) await deleteAuthIdentity(ctx, identity.subject);
+
     // The churn no webhook reports: someone leaving of their own accord.
     // admin.deleteUser has its own alert naming the admin who did it.
     await ctx.scheduler.runAfter(0, internal.admin.notify, {
