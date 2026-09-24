@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
+import { isLiveAccount } from "./account";
 
 const MAX_QUOTE_LENGTH = 200;
 const MAX_NAME_LENGTH = 50;
@@ -69,6 +70,8 @@ export const dismiss = mutation({
     if (record) {
       await ctx.db.patch(record._id, { reviewDismissed: true } as any);
     } else {
+      // A deleted account has no tier row to patch and must not get a new one.
+      if (!(await isLiveAccount(ctx, userId))) return;
       await ctx.db.insert("userTiers", {
         userId,
         tier: "free",

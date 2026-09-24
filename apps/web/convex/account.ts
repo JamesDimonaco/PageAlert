@@ -13,26 +13,37 @@ export async function isBanned(ctx: QueryCtx | MutationCtx, userId: string): Pro
 }
 
 /**
- * Refuses a caller whose account has been deleted.
+ * Does the account behind this userId still exist?
  *
  * A signed-in call carries a JWT, and Convex verifies it against the JWKS
  * endpoint rather than the session table — so a token minted before the
  * deletion keeps working for the rest of its 15 minutes, and every mutation
  * trusts `identity.subject` without asking whether that user still exists.
  *
- * Only the mutations that write *new* personal data need this. A monitor
- * created in that window is unreachable forever, because its owner has no
- * account left to sign in with, and it goes on scanning and emailing; a
- * notification setting puts the deleted address straight back in the
- * database. Reads and edits of the user's own rows need no guard: the rows
- * are gone, so they find nothing.
+ * Only the mutations that write a row keyed to the userId need to ask. A
+ * monitor created in that window is unreachable forever, because its owner
+ * has no account left to sign in with, and it goes on scanning and emailing;
+ * a notification setting puts the deleted address straight back in the
+ * database; an activity stamp makes the erasure audit cry wolf. Reads and
+ * edits of the user's own rows need no guard: the rows are gone, so they
+ * find nothing.
+ *
+ * Mutations behind a button call requireLiveAccount and throw. The ones the
+ * dashboard fires on its own on every load check this directly and write
+ * nothing, because the layout retries a claim that throws on every render
+ * and a dead session would spend its last quarter hour filling the console.
  */
-export async function requireLiveAccount(ctx: MutationCtx, userId: string): Promise<void> {
+export async function isLiveAccount(ctx: MutationCtx, userId: string): Promise<boolean> {
   const user = await ctx.runQuery(components.betterAuth.adapter.findOne, {
     model: "user",
     where: [{ field: "_id", operator: "eq", value: userId }],
   });
-  if (!user) throw new Error("This account no longer exists.");
+  return user !== null;
+}
+
+/** Refuses a caller whose account has been deleted. See isLiveAccount. */
+export async function requireLiveAccount(ctx: MutationCtx, userId: string): Promise<void> {
+  if (!(await isLiveAccount(ctx, userId))) throw new Error("This account no longer exists.");
 }
 
 type UserIdRow = { field: "userId"; operator: "eq"; value: string };
@@ -415,6 +426,8 @@ export const touchLastSeen = mutation({
       .withIndex("by_userId", (q) => q.eq("userId", identity.subject))
       .unique();
     if (!row) {
+      // Fires on every navigation, so a dead session gets silence, not an error.
+      if (!(await isLiveAccount(ctx, identity.subject))) return;
       await ctx.db.insert("userActivity", { userId: identity.subject, lastSeenAt: now });
       return;
     }

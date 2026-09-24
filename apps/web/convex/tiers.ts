@@ -9,6 +9,7 @@ import {
   type MutationCtx,
 } from "./_generated/server";
 import { internal } from "./_generated/api";
+import { requireLiveAccount } from "./account";
 import {
   cancellationAction,
   isStaleSubscriptionEvent,
@@ -503,6 +504,7 @@ export const consumeScan = mutation({
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Not authenticated");
     const userId = identity.subject;
+    await requireLiveAccount(ctx, userId);
 
     const record = await ctx.db
       .query("userTiers")

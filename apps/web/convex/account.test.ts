@@ -37,10 +37,14 @@ async function settle(t: AnyTest): Promise<void> {
 }
 
 /** How many times the admin was alerted, whatever became of the alert. */
-async function adminAlerts(t: AnyTest): Promise<number> {
+async function adminAlerts(t: AnyTest, saying = ""): Promise<number> {
   return t.run(async (ctx) => {
     const jobs = await ctx.db.system.query("_scheduled_functions").collect();
-    return jobs.filter((job) => job.name === "admin:notify").length;
+    return jobs.filter((job) => {
+      if (job.name !== "admin:notify") return false;
+      const [args] = job.args as [{ text: string }];
+      return args.text.includes(saying);
+    }).length;
   });
 }
 
@@ -924,4 +928,157 @@ test("a live account is not blocked by the guard", async () => {
   });
 
   expect(id).toBeTruthy();
+});
+
+/**
+ * The writers that fire on their own. The dashboard layout calls
+ * claimMyAnonymousMonitors and touchLastSeen on every load, so a dead
+ * session's token reaches them without anybody clicking anything. Each has
+ * to write nothing, and quietly: the layout retries a claim that throws on
+ * every render, so a throw here would be a console full of errors for the
+ * rest of the token's life.
+ */
+test("a deleted account's leftover token cannot claim an anonymous monitor", async () => {
+  const t = withAuth();
+  const email = "ghost@example.test";
+  const userId = await seedIdentity(t, email);
+  const as = t.withIdentity({ subject: userId, email });
+  const ANON = "anon_11111111-2222-3333-4444-555555555555";
+
+  const monitorId = await t.run((ctx) =>
+    ctx.db.insert(
+      "monitors",
+      monitorRow(ANON, { isAnonymous: true, anonymousEmail: email, checkInterval: "24h" })
+    )
+  );
+
+  await as.mutation(api.account.deleteAccount, {});
+  await settle(t);
+
+  await expect(
+    as.mutation(api.anonymous.claimMyAnonymousMonitors, { monitorId, anonId: ANON })
+  ).resolves.toEqual({ transferred: 0 });
+
+  await t.run(async (ctx) => {
+    const monitor = await ctx.db.get(monitorId);
+    expect(monitor?.userId).toBe(ANON);
+    expect(monitor?.isAnonymous).toBe(true);
+  });
+});
+
+test("a deleted account's leftover token leaves no activity stamp behind", async () => {
+  const t = withAuth();
+  const email = "ghost@example.test";
+  const userId = await seedIdentity(t, email);
+  const as = t.withIdentity({ subject: userId, email });
+
+  await as.mutation(api.account.deleteAccount, {});
+  await settle(t);
+
+  await expect(as.mutation(api.account.touchLastSeen, {})).resolves.toBeNull();
+
+  await t.run(async (ctx) => {
+    expect(await ctx.db.query("userActivity").collect()).toHaveLength(0);
+  });
+});
+
+test("a deleted account's leftover token cannot dismiss the review prompt into a new tier row", async () => {
+  const t = withAuth();
+  const email = "ghost@example.test";
+  const userId = await seedIdentity(t, email);
+  const as = t.withIdentity({ subject: userId, email });
+
+  await as.mutation(api.account.deleteAccount, {});
+  await settle(t);
+
+  await expect(as.mutation(api.reviews.dismiss, {})).resolves.toBeNull();
+
+  await t.run(async (ctx) => {
+    expect(await ctx.db.query("userTiers").collect()).toHaveLength(0);
+  });
+});
+
+/**
+ * A dead session that keeps navigating used to write a fresh activity stamp
+ * on every page, and ten minutes later the audit found it and raised the
+ * "sweep stopped early" alarm for a sweep that had finished fine.
+ */
+test("a deleted session that keeps navigating does not trip the erasure alarm", async () => {
+  const t = withAuth();
+  const email = "ghost@example.test";
+  const userId = await seedIdentity(t, email);
+  const as = t.withIdentity({ subject: userId, email });
+
+  await as.mutation(api.account.deleteAccount, {});
+  await as.mutation(api.account.touchLastSeen, {});
+  await as.mutation(api.anonymous.claimMyAnonymousMonitors, {});
+  await as.mutation(api.reviews.dismiss, {});
+  await settle(t);
+
+  expect(await adminAlerts(t, "survived")).toBe(0);
+});
+
+/**
+ * The writers behind a button. Each puts a row keyed to the dead id back in
+ * the database, so each refuses the way monitors.create does.
+ */
+test("a deleted account cannot register a push device", async () => {
+  const t = withAuth();
+  const email = "ghost@example.test";
+  const userId = await seedIdentity(t, email);
+  const as = t.withIdentity({ subject: userId, email });
+
+  await as.mutation(api.account.deleteAccount, {});
+  await settle(t);
+
+  await expect(
+    as.mutation(api.pushSubscriptions.subscribe, {
+      endpoint: "https://push.test/ghost",
+      p256dh: "key",
+      auth: "auth",
+    })
+  ).rejects.toThrow(/no longer exists/i);
+
+  await t.run(async (ctx) => {
+    expect(await ctx.db.query("pushSubscriptions").collect()).toHaveLength(0);
+  });
+});
+
+test("a deleted account cannot write a check log", async () => {
+  const t = withAuth();
+  const email = "ghost@example.test";
+  const userId = await seedIdentity(t, email);
+  const as = t.withIdentity({ subject: userId, email });
+
+  await as.mutation(api.account.deleteAccount, {});
+  await settle(t);
+
+  await expect(
+    as.mutation(api.logs.create, {
+      url: "https://shop.test/laptops",
+      prompt: "MacBook under £1000",
+      status: "success",
+      durationMs: 1,
+    })
+  ).rejects.toThrow(/no longer exists/i);
+
+  await t.run(async (ctx) => {
+    expect(await ctx.db.query("scrapeLogs").collect()).toHaveLength(0);
+  });
+});
+
+test("a deleted account cannot consume a scan into a new tier row", async () => {
+  const t = withAuth();
+  const email = "ghost@example.test";
+  const userId = await seedIdentity(t, email);
+  const as = t.withIdentity({ subject: userId, email });
+
+  await as.mutation(api.account.deleteAccount, {});
+  await settle(t);
+
+  await expect(as.mutation(api.tiers.consumeScan, {})).rejects.toThrow(/no longer exists/i);
+
+  await t.run(async (ctx) => {
+    expect(await ctx.db.query("userTiers").collect()).toHaveLength(0);
+  });
 });

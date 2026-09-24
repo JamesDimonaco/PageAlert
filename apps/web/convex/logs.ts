@@ -8,6 +8,7 @@ import {
   isWithinHistoryWindow,
 } from "@prowl/shared";
 import { effectiveTier } from "./tiers";
+import { requireLiveAccount } from "./account";
 import type { Doc } from "./_generated/dataModel";
 
 /** Shared validator for scrape log fields */
@@ -39,6 +40,7 @@ export const create = mutation({
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Not authenticated");
+    await requireLiveAccount(ctx, identity.subject);
 
     return ctx.db.insert("scrapeLogs", {
       ...capLogFields(args),
