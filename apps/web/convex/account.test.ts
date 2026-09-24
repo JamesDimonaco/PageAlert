@@ -1,6 +1,7 @@
 /// <reference types="vite/client" />
-import { expect, test } from "vitest";
 import { convexTest } from "convex-test";
+import type { WithoutSystemFields } from "convex/server";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import schema from "./schema";
 import {
   deleteAllUserData,
@@ -19,8 +20,29 @@ import type { MutationCtx } from "./_generated/server";
 const modules = import.meta.glob("./**/*.*s");
 const betterAuthModules = import.meta.glob("./betterAuth/**/*.*s");
 
-const LEAVING = "user_leaving";
-const STAYING = "user_staying";
+const NOW = 1_700_000_000_000;
+const LEAVING = "user-leaving";
+const STAYING = "user-staying";
+
+// The erasure audit is scheduled ten minutes out, so every test that runs a
+// deletion has to be able to jump the clock past it.
+beforeEach(() => vi.useFakeTimers());
+afterEach(() => vi.useRealTimers());
+
+type AnyTest = ReturnType<typeof convexTest>;
+
+/** Runs every scheduled function, however far out it was queued. */
+async function settle(t: AnyTest): Promise<void> {
+  await t.finishAllScheduledFunctions(vi.runAllTimers);
+}
+
+/** How many times the admin was alerted, whatever became of the alert. */
+async function adminAlerts(t: AnyTest): Promise<number> {
+  return t.run(async (ctx) => {
+    const jobs = await ctx.db.system.query("_scheduled_functions").collect();
+    return jobs.filter((job) => job.name === "admin:notify").length;
+  });
+}
 
 /** A test harness that can also reach the Better Auth component's tables. */
 function withAuth() {
@@ -29,18 +51,15 @@ function withAuth() {
   return t;
 }
 
-type AuthTest = ReturnType<typeof withAuth>;
-
 /**
  * A signed-up identity: the user row, one live session, one linked provider
  * account. Returns the user id, which is what `identity.subject` carries.
  */
-async function seedIdentity(t: AuthTest, email: string): Promise<string> {
-  const now = Date.now();
+async function seedIdentity(t: AnyTest, email: string): Promise<string> {
   const user = (await t.mutation(components.betterAuth.adapter.create, {
     input: {
       model: "user",
-      data: { name: "A Person", email, emailVerified: true, createdAt: now, updatedAt: now },
+      data: { name: "A Person", email, emailVerified: true, createdAt: NOW, updatedAt: NOW },
     },
   })) as { _id: string };
 
@@ -50,9 +69,9 @@ async function seedIdentity(t: AuthTest, email: string): Promise<string> {
       data: {
         userId: user._id,
         token: `tok_${email}`,
-        expiresAt: now + 86_400_000,
-        createdAt: now,
-        updatedAt: now,
+        expiresAt: NOW + 86_400_000,
+        createdAt: NOW,
+        updatedAt: NOW,
       },
     },
   });
@@ -63,8 +82,8 @@ async function seedIdentity(t: AuthTest, email: string): Promise<string> {
         userId: user._id,
         accountId: `google_${email}`,
         providerId: "google",
-        createdAt: now,
-        updatedAt: now,
+        createdAt: NOW,
+        updatedAt: NOW,
       },
     },
   });
@@ -73,7 +92,7 @@ async function seedIdentity(t: AuthTest, email: string): Promise<string> {
 }
 
 /** Which of this identity's auth rows are still there. */
-async function authRowsLeft(t: AuthTest, userId: string) {
+async function authRowsLeft(t: AnyTest, userId: string) {
   const one = async (model: "user" | "session" | "account", field: string, value: string) =>
     (await t.query(components.betterAuth.adapter.findOne, {
       model,
@@ -87,134 +106,171 @@ async function authRowsLeft(t: AuthTest, userId: string) {
   };
 }
 
+type Row<T extends TableNames> = WithoutSystemFields<Doc<T>>;
+type Refs = { userId: string; monitorId: Id<"monitors"> };
+
+function monitorRow(userId: string, extra: Partial<Row<"monitors">> = {}): Row<"monitors"> {
+  return {
+    userId,
+    userEmail: `${userId}@example.test`,
+    name: "Laptops",
+    url: "https://shop.test/laptops",
+    prompt: "MacBook under £1000",
+    status: "active",
+    checkInterval: "1h",
+    matchCount: 0,
+    createdAt: NOW,
+    updatedAt: NOW,
+    ...extra,
+  };
+}
+
+function resultRow(monitorId: Id<"monitors">, extra: Partial<Row<"scrapeResults">> = {}): Row<"scrapeResults"> {
+  return { monitorId, matches: [], totalItems: 0, hasNewMatches: false, scrapedAt: NOW, ...extra };
+}
+
+function logRow(userId: string, extra: Partial<Row<"scrapeLogs">> = {}): Row<"scrapeLogs"> {
+  return {
+    userId,
+    url: "https://shop.test/laptops",
+    prompt: "MacBook under £1000",
+    status: "success",
+    durationMs: 1,
+    createdAt: NOW,
+    ...extra,
+  };
+}
+
+/**
+ * One row per table, belonging to `userId`. The mapped type means a table
+ * added to the schema does not compile until it has a fixture here and a
+ * verdict in KEPT or in the sweep. That is the point: "delete everything" is
+ * a promise in the privacy policy, and the last two tables added to the
+ * schema were both missed.
+ */
+const FIXTURES: { [T in TableNames]: (refs: Refs) => Row<T> } = {
+  monitors: ({ userId }) => monitorRow(userId),
+  scrapeResults: ({ monitorId }) => resultRow(monitorId),
+  notifications: ({ userId, monitorId }) => ({
+    userId,
+    monitorId,
+    channel: "email",
+    title: "Match",
+    message: "Found one",
+    sentAt: NOW,
+    read: false,
+  }),
+  scrapeLogs: ({ userId, monitorId }) => logRow(userId, { monitorId }),
+  matchFeedback: ({ userId, monitorId }) => ({
+    userId,
+    monitorId,
+    itemKey: "https://shop.test/mbp",
+    itemTitle: "MacBook Pro",
+    verdict: "good",
+    prompt: "MacBook under £1000",
+    source: "dashboard",
+    createdAt: NOW,
+  }),
+  notificationSettings: ({ userId }) => ({
+    userId,
+    channel: "telegram",
+    enabled: true,
+    target: `chat-${userId}`,
+  }),
+  userTiers: ({ userId }) => ({ userId, tier: "free", updatedAt: NOW }),
+  pushSubscriptions: ({ userId }) => ({
+    userId,
+    endpoint: `https://push.test/${userId}`,
+    p256dh: "key",
+    auth: "auth",
+    createdAt: NOW,
+  }),
+  appliedOrders: ({ userId }) => ({ orderId: `order-${userId}`, userId, appliedAt: NOW }),
+  bannedUsers: ({ userId }) => ({
+    userId,
+    email: `${userId}@example.test`,
+    bannedBy: "admin@example.test",
+    bannedAt: NOW,
+  }),
+  channelClaims: ({ userId }) => ({
+    channel: "telegram",
+    target: `chat-${userId}`,
+    userId,
+    claimedAt: NOW,
+  }),
+  reviews: ({ userId }) => ({ userId, displayName: "Sam", quote: "Handy", createdAt: NOW }),
+  anonymousScanCounter: () => ({ date: "2026-09-23", count: 1 }),
+  userActivity: ({ userId }) => ({ userId, lastSeenAt: NOW }),
+  counters: ({ userId }) => ({ name: `counter-${userId}`, value: 1 }),
+  monitorCreations: ({ userId }) => ({ userId, createdAt: NOW }),
+  emailSends: ({ userId }) => ({
+    to: `${userId}@example.test`,
+    kind: "match",
+    userId,
+    status: "sent",
+    createdAt: NOW,
+    updatedAt: NOW,
+  }),
+  adminEmails: ({ userId }) => ({
+    sentBy: "admin@example.test",
+    subject: "Hello",
+    body: "Hi",
+    recipients: [`${userId}@example.test`],
+    failedRecipients: [],
+    sentAt: NOW,
+  }),
+  onboardingEmails: ({ userId }) => ({
+    userId,
+    email: `${userId}@example.test`,
+    step: "day0",
+    scheduledFor: NOW,
+    status: "pending",
+  }),
+};
+
+/** Tables deleteAllUserData leaves alone, each with the reason it is allowed to. */
+const KEPT: Partial<Record<TableNames, string>> = {
+  bannedUsers: "a ban has to outlive the account it was placed on",
+  appliedOrders:
+    "opaque Polar order ids; Polar redelivers webhooks for up to a day, and this is what stops a redelivery re-granting the tier",
+  adminEmails: "the operator's record of what was sent and to whom",
+  counters: "aggregate, holds no personal data",
+  anonymousScanCounter: "aggregate, holds no personal data",
+};
+
+const TABLES = Object.keys(schema.tables) as TableNames[];
+
 /**
  * Every table whose rows carry a userId, read off the schema rather than
  * listed here. A new table with a userId lands in this set the moment it is
  * defined, so the completeness test below fails until somebody decides
  * whether deletion should take it.
  */
-function tablesCarryingUserId(): string[] {
+function tablesCarryingUserId(): TableNames[] {
   const tables = schema.tables as unknown as Record<
     string,
     { validator: { fields: Record<string, unknown> } }
   >;
-  return Object.entries(tables)
-    .filter(([, def]) => "userId" in def.validator.fields)
-    .map(([name]) => name);
+  return TABLES.filter((name) => "userId" in tables[name].validator.fields);
 }
 
-/** One row in each userId-carrying table, so deletion has something to miss. */
-async function seed(ctx: MutationCtx, userId: string): Promise<Id<"monitors">> {
-  const monitorId = await ctx.db.insert("monitors", {
-    userId,
-    name: "watch",
-    url: "https://example.com/deals",
-    prompt: "tell me about deals",
-    status: "active",
-    checkInterval: "1h",
-    matchCount: 0,
-    createdAt: 1,
-    updatedAt: 1,
-  });
-
-  await ctx.db.insert("scrapeResults", {
-    monitorId,
-    matches: [],
-    totalItems: 0,
-    hasNewMatches: false,
-    scrapedAt: 1,
-  });
-  await ctx.db.insert("notifications", {
-    userId,
-    monitorId,
-    channel: "email",
-    title: "match",
-    message: "found one",
-    sentAt: 1,
-    read: false,
-  });
-  await ctx.db.insert("scrapeLogs", {
-    userId,
-    monitorId,
-    url: "https://example.com/deals",
-    prompt: "tell me about deals",
-    status: "success",
-    durationMs: 1,
-    createdAt: 1,
-  });
-  await ctx.db.insert("matchFeedback", {
-    userId,
-    monitorId,
-    itemKey: "https://example.com/deals/1",
-    itemTitle: "a deal",
-    verdict: "bad",
-    prompt: "tell me about deals",
-    source: "dashboard",
-    createdAt: 1,
-  });
-  await ctx.db.insert("notificationSettings", {
-    userId,
-    channel: "email",
-    enabled: true,
-    target: `${userId}@example.com`,
-  });
-  await ctx.db.insert("userTiers", { userId, tier: "pro", updatedAt: 1 });
-  await ctx.db.insert("pushSubscriptions", {
-    userId,
-    endpoint: `https://push.example.com/${userId}`,
-    p256dh: "key",
-    auth: "auth",
-    createdAt: 1,
-  });
-  await ctx.db.insert("appliedOrders", { orderId: `order_${userId}`, userId, appliedAt: 1 });
-  await ctx.db.insert("bannedUsers", {
-    userId,
-    email: `${userId}@example.com`,
-    bannedBy: "admin@example.com",
-    bannedAt: 1,
-  });
-  await ctx.db.insert("channelClaims", {
-    channel: "telegram",
-    target: userId,
-    userId,
-    claimedAt: 1,
-  });
-  await ctx.db.insert("reviews", {
-    userId,
-    displayName: "A Name",
-    quote: "it works",
-    createdAt: 1,
-  });
-  await ctx.db.insert("userActivity", { userId, lastSeenAt: 1 });
-  await ctx.db.insert("monitorCreations", { userId, createdAt: 1 });
-  await ctx.db.insert("emailSends", {
-    to: `${userId}@example.com`,
-    kind: "match",
-    userId,
-    status: "sent",
-    createdAt: 1,
-    updatedAt: 1,
-  });
-  await ctx.db.insert("onboardingEmails", {
-    userId,
-    email: `${userId}@example.com`,
-    step: "day0",
-    scheduledFor: 1,
-    status: "pending",
-  });
-
-  return monitorId;
-}
-
-/** Rows still holding this userId, per table. */
-async function remaining(ctx: MutationCtx, userId: string): Promise<string[]> {
-  const left: string[] = [];
-  for (const table of tablesCarryingUserId()) {
-    const rows = (await ctx.db.query(table as TableNames).collect()) as Array<{ userId?: string }>;
-    if (rows.some((row) => row.userId === userId)) left.push(table);
+/** One row in every table for `userId`, keyed by table so a test can ask after each. */
+async function insertRowsFor(
+  ctx: MutationCtx,
+  userId: string
+): Promise<Record<TableNames, Id<TableNames>>> {
+  const monitorId = await ctx.db.insert("monitors", monitorRow(userId));
+  const ids = { monitors: monitorId } as Record<TableNames, Id<TableNames>>;
+  for (const table of TABLES) {
+    if (table === "monitors") continue;
+    ids[table] = await ctx.db.insert(table, FIXTURES[table]({ userId, monitorId }));
   }
-  return left.sort();
+  return ids;
 }
+
+// ---------------------------------------------------------------------------
+// Budget
+// ---------------------------------------------------------------------------
 
 /**
  * A round runs in one transaction, and Convex rolls the whole thing back on
@@ -244,49 +300,70 @@ test("a round can always afford at least one document", () => {
   expect(SWEEP_BUDGET_ROWS).toBeGreaterThan(1);
 });
 
+// ---------------------------------------------------------------------------
+// Which tables
+// ---------------------------------------------------------------------------
+
+test("the fixture has a verdict for every table in the schema", () => {
+  // The mapped type catches this at compile time; vitest does not type-check,
+  // so the same claim is asserted at runtime.
+  expect(Object.keys(FIXTURES).sort()).toEqual([...TABLES].sort());
+});
+
 test("every table carrying a userId is either swept on delete or deliberately kept", () => {
   const decided = new Set<string>([...SWEPT_ON_DELETE, ...KEPT_ON_DELETE]);
   const undecided = tablesCarryingUserId().filter((table) => !decided.has(table));
   expect(undecided).toEqual([]);
+
+  // The code's keep-list and this file's are the same list, so neither can
+  // quietly grow a table the other still expects to be erased.
+  const keptWithUserId = tablesCarryingUserId().filter((table) => table in KEPT);
+  expect(keptWithUserId.sort()).toEqual([...KEPT_ON_DELETE].sort());
 });
 
-test("the test fixture seeds every table a deletion has to clear", async () => {
+test("deletion removes the user's rows from every table not deliberately kept, and nobody else's", async () => {
   const t = convexTest(schema, modules);
-  await t.run(async (ctx) => {
-    await seed(ctx as MutationCtx, LEAVING);
-    expect(await remaining(ctx as MutationCtx, LEAVING)).toEqual(
-      tablesCarryingUserId().sort()
-    );
-  });
-});
 
-test("deleting an account leaves no row carrying its userId", async () => {
-  const t = convexTest(schema, modules);
-  await t.run(async (ctx) => {
-    await seed(ctx as MutationCtx, LEAVING);
-    await deleteAllUserData(ctx as MutationCtx, LEAVING);
-  });
-  await t.finishAllScheduledFunctions(() => {});
+  const { mine, theirs } = await t.run(async (ctx) => ({
+    mine: await insertRowsFor(ctx, LEAVING),
+    theirs: await insertRowsFor(ctx, STAYING),
+  }));
+
+  await t.run((ctx) => deleteAllUserData(ctx, LEAVING, `${LEAVING}@example.test`));
+  await settle(t);
 
   await t.run(async (ctx) => {
-    expect(await remaining(ctx as MutationCtx, LEAVING)).toEqual([...KEPT_ON_DELETE].sort());
+    for (const table of TABLES) {
+      const survivor = await ctx.db.get(mine[table]);
+      if (table in KEPT) {
+        expect(survivor, `${table} is listed as kept but was deleted`).not.toBeNull();
+      } else {
+        expect(survivor, `${table} row survived account deletion`).toBeNull();
+      }
+      expect(await ctx.db.get(theirs[table]), `${table} row of another user was deleted`).not.toBeNull();
+    }
   });
 });
 
 test("the deleted account's email address and watched URL are gone with it", async () => {
   const t = convexTest(schema, modules);
+  const email = `${LEAVING}@example.test`;
+
   await t.run(async (ctx) => {
-    await seed(ctx as MutationCtx, LEAVING);
-    await deleteAllUserData(ctx as MutationCtx, LEAVING);
+    await insertRowsFor(ctx, LEAVING);
+    await deleteAllUserData(ctx, LEAVING, email);
   });
-  await t.finishAllScheduledFunctions(() => {});
+  await settle(t);
 
   await t.run(async (ctx) => {
     const sends = await ctx.db.query("emailSends").collect();
-    expect(sends.map((row) => row.to)).not.toContain(`${LEAVING}@example.com`);
+    expect(sends.map((row) => row.to)).not.toContain(email);
 
     const onboarding = await ctx.db.query("onboardingEmails").collect();
-    expect(onboarding.map((row) => row.email)).not.toContain(`${LEAVING}@example.com`);
+    expect(onboarding.map((row) => row.email)).not.toContain(email);
+
+    const monitors = await ctx.db.query("monitors").collect();
+    expect(monitors.map((row) => row.url)).toEqual([]);
 
     const feedback = await ctx.db.query("matchFeedback").collect();
     expect(feedback.map((row) => row.itemKey)).toEqual([]);
@@ -296,54 +373,44 @@ test("the deleted account's email address and watched URL are gone with it", asy
   });
 });
 
-test("one account's deletion leaves every other account untouched", async () => {
-  const t = convexTest(schema, modules);
-  await t.run(async (ctx) => {
-    await seed(ctx as MutationCtx, LEAVING);
-    await seed(ctx as MutationCtx, STAYING);
-    await deleteAllUserData(ctx as MutationCtx, LEAVING);
-  });
-  await t.finishAllScheduledFunctions(() => {});
-
-  await t.run(async (ctx) => {
-    expect(await remaining(ctx as MutationCtx, STAYING)).toEqual(tablesCarryingUserId().sort());
-    const results = await ctx.db.query("scrapeResults").collect();
-    expect(results).toHaveLength(1);
-  });
-});
+// ---------------------------------------------------------------------------
+// Email records
+// ---------------------------------------------------------------------------
 
 /**
- * Six of the eight send sites record no userId — a match alert, an error, an
- * anonymous scan and an admin bulk all write the address to `to` and leave
- * the owner blank. Sweeping by userId alone would leave most of a user's
- * email history behind, addressed to them by name.
+ * The fixture above tags its emailSends row with a userId, which only the
+ * onboarding and inactivity emails actually do. Match, error,
+ * monitor-stopped, price, anonymous-scan and bulk all record with userId
+ * undefined, so a by_userId sweep leaves a year of alerts behind with the
+ * address still in `to` — and the privacy policy promises otherwise.
  */
-test("sends recorded without a userId go too, on the address", async () => {
+test("email records that were never tagged with a userId go too, on the address", async () => {
   const t = convexTest(schema, modules);
-  const email = `${LEAVING}@example.com`;
+  const email = `${LEAVING}@example.test`;
 
-  await t.run(async (ctx) => {
-    await ctx.db.insert("emailSends", {
+  const { untagged, otherPerson } = await t.run(async (ctx) => ({
+    untagged: await ctx.db.insert("emailSends", {
       to: email,
       kind: "match",
       status: "sent",
-      createdAt: 1,
-      updatedAt: 1,
-    });
-    await ctx.db.insert("emailSends", {
-      to: "someone.else@example.com",
+      createdAt: NOW,
+      updatedAt: NOW,
+    }),
+    otherPerson: await ctx.db.insert("emailSends", {
+      to: "someone-else@example.test",
       kind: "match",
       status: "sent",
-      createdAt: 1,
-      updatedAt: 1,
-    });
-    await deleteAllUserData(ctx as MutationCtx, LEAVING, email);
-  });
-  await t.finishAllScheduledFunctions(() => {});
+      createdAt: NOW,
+      updatedAt: NOW,
+    }),
+  }));
+
+  await t.run((ctx) => deleteAllUserData(ctx, LEAVING, email));
+  await settle(t);
 
   await t.run(async (ctx) => {
-    const sends = await ctx.db.query("emailSends").collect();
-    expect(sends.map((row) => row.to)).toEqual(["someone.else@example.com"]);
+    expect(await ctx.db.get(untagged), "an untagged send to this address survived").toBeNull();
+    expect(await ctx.db.get(otherPerson), "another person's send was deleted").not.toBeNull();
   });
 });
 
@@ -351,29 +418,59 @@ test("sends recorded without a userId go too, on the address", async () => {
  * The sweep finds sends on an exact index match, so the address it looks for
  * and the address that was stored have to agree on case. Some send sites
  * lowercase and some pass identity.email through untouched, so the agreement
- * has to be made rather than hoped for — at the one mutation every send goes
+ * has to be made rather than hoped for — at the mutations every send goes
  * through, and at the sweep.
  */
 test("a send recorded in mixed case still goes", async () => {
   const t = convexTest(schema, modules);
 
   await t.mutation(internal.emailEvents.recordSend, {
-    to: "User.Leaving@Example.COM",
+    to: "User.Leaving@Example.TEST",
     kind: "match",
     ok: true,
   });
 
   await t.run(async (ctx) => {
     const [stored] = await ctx.db.query("emailSends").collect();
-    expect(stored.to).toBe("user.leaving@example.com");
-    await deleteAllUserData(ctx as MutationCtx, LEAVING, "USER.LEAVING@example.com");
+    expect(stored.to).toBe("user.leaving@example.test");
+    await deleteAllUserData(ctx, LEAVING, "USER.LEAVING@example.test");
   });
-  await t.finishAllScheduledFunctions(() => {});
+  await settle(t);
 
   await t.run(async (ctx) => {
     expect(await ctx.db.query("emailSends").collect()).toHaveLength(0);
   });
 });
+
+/** The bulk sender records its recipients through a second mutation, which has to agree too. */
+test("a bulk send recorded in mixed case still goes", async () => {
+  const t = convexTest(schema, modules);
+
+  await t.mutation(internal.emailEvents.recordSends, {
+    kind: "bulk",
+    sends: [{ to: "User.Leaving@Example.TEST" }, { to: "Someone.Else@Example.TEST" }],
+    ok: true,
+  });
+
+  await t.run(async (ctx) => {
+    const stored = await ctx.db.query("emailSends").collect();
+    expect(stored.map((row) => row.to).sort()).toEqual([
+      "someone.else@example.test",
+      "user.leaving@example.test",
+    ]);
+    await deleteAllUserData(ctx, LEAVING, "USER.LEAVING@example.test");
+  });
+  await settle(t);
+
+  await t.run(async (ctx) => {
+    const left = await ctx.db.query("emailSends").collect();
+    expect(left.map((row) => row.to)).toEqual(["someone.else@example.test"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Heavy accounts
+// ---------------------------------------------------------------------------
 
 /**
  * Characters are not bytes. A CJK character is one UTF-16 code unit and three
@@ -389,35 +486,18 @@ test("the byte budget holds when rows are multi-byte", async () => {
   const ROWS = 60;
 
   await t.run(async (ctx) => {
-    const monitorId = await ctx.db.insert("monitors", {
-      userId: LEAVING,
-      name: "watch",
-      url: "https://example.com/deals",
-      prompt: "tell me about deals",
-      status: "active",
-      checkInterval: "1h",
-      matchCount: 0,
-      createdAt: 1,
-      updatedAt: 1,
-    });
+    const monitorId = await ctx.db.insert("monitors", monitorRow(LEAVING));
     for (let i = 0; i < ROWS; i++) {
-      await ctx.db.insert("scrapeResults", {
-        monitorId,
-        matches: [FILLER],
-        totalItems: 0,
-        hasNewMatches: false,
-        scrapedAt: i,
-      });
+      await ctx.db.insert("scrapeResults", resultRow(monitorId, { matches: [FILLER], scrapedAt: i }));
     }
-    await deleteAllUserData(ctx as MutationCtx, LEAVING);
+    await deleteAllUserData(ctx, LEAVING, undefined);
   });
 
+  // No scheduled round has run yet, so this is what one round alone managed.
   await t.run(async (ctx) => {
     const deleted = ROWS - (await ctx.db.query("scrapeResults").collect()).length;
     expect(deleted).toBeGreaterThan(0);
-    expect(deleted * ROW_BYTES).toBeLessThanOrEqual(
-      SWEEP_BUDGET_BYTES + ONE_CONVEX_DOCUMENT_BYTES
-    );
+    expect(deleted * ROW_BYTES).toBeLessThanOrEqual(SWEEP_BUDGET_BYTES + ONE_CONVEX_DOCUMENT_BYTES);
   });
 });
 
@@ -432,36 +512,20 @@ test("logs from a monitor's anonymous life go when the account does", async () =
   const ANON = "anon_11111111-2222-3333-4444-555555555555";
 
   await t.run(async (ctx) => {
-    const monitorId = await ctx.db.insert("monitors", {
-      userId: ANON,
-      name: "watch",
-      url: "https://example.com/deals",
-      prompt: "tell me about deals",
-      status: "active",
-      checkInterval: "24h",
-      matchCount: 0,
-      isAnonymous: true,
-      createdAt: 1,
-      updatedAt: 1,
-    });
+    const monitorId = await ctx.db.insert(
+      "monitors",
+      monitorRow(ANON, { checkInterval: "24h", isAnonymous: true })
+    );
     // Two checks while anonymous, then one after the claim.
     for (const userId of [ANON, ANON, LEAVING]) {
-      await ctx.db.insert("scrapeLogs", {
-        userId,
-        monitorId,
-        url: "https://example.com/deals",
-        prompt: "tell me about deals",
-        status: "success",
-        durationMs: 1,
-        createdAt: 1,
-      });
+      await ctx.db.insert("scrapeLogs", logRow(userId, { monitorId }));
     }
     // What anonymous.claim does: the monitor is re-keyed, the logs are not.
     await ctx.db.patch(monitorId, { userId: LEAVING, isAnonymous: undefined });
 
-    await deleteAllUserData(ctx as MutationCtx, LEAVING);
+    await deleteAllUserData(ctx, LEAVING, undefined);
   });
-  await t.finishAllScheduledFunctions(() => {});
+  await settle(t);
 
   await t.run(async (ctx) => {
     expect(await ctx.db.query("scrapeLogs").collect()).toHaveLength(0);
@@ -478,21 +542,13 @@ test("a document holding a bigint does not break the sweep", async () => {
   const t = convexTest(schema, modules);
 
   await t.run(async (ctx) => {
-    await ctx.db.insert("monitors", {
-      userId: LEAVING,
-      name: "watch",
-      url: "https://example.com/deals",
-      prompt: "tell me about deals",
-      status: "active",
-      checkInterval: "1h",
-      matchCount: 0,
-      schema: { seen: 12n, blob: new ArrayBuffer(64) },
-      createdAt: 1,
-      updatedAt: 1,
-    });
-    await deleteAllUserData(ctx as MutationCtx, LEAVING);
+    await ctx.db.insert(
+      "monitors",
+      monitorRow(LEAVING, { schema: { seen: 12n, blob: new ArrayBuffer(64) } })
+    );
+    await deleteAllUserData(ctx, LEAVING, undefined);
   });
-  await t.finishAllScheduledFunctions(() => {});
+  await settle(t);
 
   await t.run(async (ctx) => {
     expect(await ctx.db.query("monitors").collect()).toHaveLength(0);
@@ -511,28 +567,15 @@ test("the monitors themselves are charged to the byte budget", async () => {
 
   await t.run(async (ctx) => {
     for (let i = 0; i < MONITORS; i++) {
-      await ctx.db.insert("monitors", {
-        userId: LEAVING,
-        name: "watch",
-        url: "https://example.com/deals",
-        prompt: "tell me about deals",
-        status: "active",
-        checkInterval: "1h",
-        matchCount: 0,
-        blacklistedItems: [FILLER],
-        createdAt: 1,
-        updatedAt: 1,
-      });
+      await ctx.db.insert("monitors", monitorRow(LEAVING, { blacklistedItems: [FILLER] }));
     }
-    await deleteAllUserData(ctx as MutationCtx, LEAVING);
+    await deleteAllUserData(ctx, LEAVING, undefined);
   });
 
   await t.run(async (ctx) => {
     const deleted = MONITORS - (await ctx.db.query("monitors").collect()).length;
     expect(deleted).toBeGreaterThan(0);
-    expect(deleted * FILLER.length).toBeLessThanOrEqual(
-      SWEEP_BUDGET_BYTES + ONE_CONVEX_DOCUMENT_BYTES
-    );
+    expect(deleted * FILLER.length).toBeLessThanOrEqual(SWEEP_BUDGET_BYTES + ONE_CONVEX_DOCUMENT_BYTES);
   });
 });
 
@@ -546,34 +589,17 @@ test("the monitors themselves are charged to the byte budget", async () => {
 test("a monitor that breaks the budget is the last row its round reads", async () => {
   const t = convexTest(schema, modules);
   const FAT = "x".repeat(990_000);
-  const monitor = (extra: object) => ({
-    userId: LEAVING,
-    name: "watch",
-    url: "https://example.com/deals",
-    prompt: "tell me about deals",
-    status: "active" as const,
-    checkInterval: "1h" as const,
-    matchCount: 0,
-    blacklistedItems: [FAT],
-    createdAt: 1,
-    updatedAt: 1,
-    ...extra,
-  });
 
   await t.run(async (ctx) => {
     // Four monitors bring the round to the edge of its budget; the fifth
     // crosses it on its own weight, before any child is looked at.
-    for (let i = 0; i < 4; i++) await ctx.db.insert("monitors", monitor({}));
-    const last = await ctx.db.insert("monitors", monitor({}));
-    await ctx.db.insert("scrapeResults", {
-      monitorId: last,
-      matches: [FAT],
-      totalItems: 0,
-      hasNewMatches: false,
-      scrapedAt: 1,
-    });
+    for (let i = 0; i < 4; i++) {
+      await ctx.db.insert("monitors", monitorRow(LEAVING, { blacklistedItems: [FAT] }));
+    }
+    const last = await ctx.db.insert("monitors", monitorRow(LEAVING, { blacklistedItems: [FAT] }));
+    await ctx.db.insert("scrapeResults", resultRow(last, { matches: [FAT] }));
 
-    await deleteAllUserData(ctx as MutationCtx, LEAVING);
+    await deleteAllUserData(ctx, LEAVING, undefined);
   });
 
   // Before any scheduled round runs: the fifth monitor's child is untouched,
@@ -584,7 +610,7 @@ test("a monitor that breaks the budget is the last row its round reads", async (
     expect(readBytes).toBeLessThanOrEqual(SWEEP_BUDGET_BYTES + ONE_CONVEX_DOCUMENT_BYTES);
   });
 
-  await t.finishAllScheduledFunctions(() => {});
+  await settle(t);
   await t.run(async (ctx) => {
     expect(await ctx.db.query("monitors").collect()).toHaveLength(0);
     expect(await ctx.db.query("scrapeResults").collect()).toHaveLength(0);
@@ -601,29 +627,13 @@ test("a monitor with more results than one round can read is still deleted", asy
   const RESULTS = SWEEP_BUDGET_ROWS * 2 + 5;
 
   await t.run(async (ctx) => {
-    const monitorId = await ctx.db.insert("monitors", {
-      userId: LEAVING,
-      name: "watch",
-      url: "https://example.com/deals",
-      prompt: "tell me about deals",
-      status: "active",
-      checkInterval: "1h",
-      matchCount: 0,
-      createdAt: 1,
-      updatedAt: 1,
-    });
+    const monitorId = await ctx.db.insert("monitors", monitorRow(LEAVING));
     for (let i = 0; i < RESULTS; i++) {
-      await ctx.db.insert("scrapeResults", {
-        monitorId,
-        matches: [],
-        totalItems: 0,
-        hasNewMatches: false,
-        scrapedAt: i,
-      });
+      await ctx.db.insert("scrapeResults", resultRow(monitorId, { scrapedAt: i }));
     }
-    await deleteAllUserData(ctx as MutationCtx, LEAVING);
+    await deleteAllUserData(ctx, LEAVING, undefined);
   });
-  await t.finishAllScheduledFunctions(() => {});
+  await settle(t);
 
   await t.run(async (ctx) => {
     expect(await ctx.db.query("scrapeResults").collect()).toHaveLength(0);
@@ -642,27 +652,11 @@ test("a round stops once it has spent its byte budget", async () => {
   const ROWS = 60;
 
   await t.run(async (ctx) => {
-    const monitorId = await ctx.db.insert("monitors", {
-      userId: LEAVING,
-      name: "watch",
-      url: "https://example.com/deals",
-      prompt: "tell me about deals",
-      status: "active",
-      checkInterval: "1h",
-      matchCount: 0,
-      createdAt: 1,
-      updatedAt: 1,
-    });
+    const monitorId = await ctx.db.insert("monitors", monitorRow(LEAVING));
     for (let i = 0; i < ROWS; i++) {
-      await ctx.db.insert("scrapeResults", {
-        monitorId,
-        matches: [FILLER],
-        totalItems: 0,
-        hasNewMatches: false,
-        scrapedAt: i,
-      });
+      await ctx.db.insert("scrapeResults", resultRow(monitorId, { matches: [FILLER], scrapedAt: i }));
     }
-    await deleteAllUserData(ctx as MutationCtx, LEAVING);
+    await deleteAllUserData(ctx, LEAVING, undefined);
   });
 
   // No scheduled rounds run yet, so this is what one round alone managed.
@@ -670,12 +664,10 @@ test("a round stops once it has spent its byte budget", async () => {
     const left = await ctx.db.query("scrapeResults").collect();
     const deleted = ROWS - left.length;
     expect(deleted).toBeGreaterThan(0);
-    expect(deleted * FILLER.length).toBeLessThanOrEqual(
-      SWEEP_BUDGET_BYTES + ONE_CONVEX_DOCUMENT_BYTES
-    );
+    expect(deleted * FILLER.length).toBeLessThanOrEqual(SWEEP_BUDGET_BYTES + ONE_CONVEX_DOCUMENT_BYTES);
   });
 
-  await t.finishAllScheduledFunctions(() => {});
+  await settle(t);
   await t.run(async (ctx) => {
     expect(await ctx.db.query("scrapeResults").collect()).toHaveLength(0);
   });
@@ -687,16 +679,9 @@ test("an account holding more rows than one batch is still emptied", async () =>
 
   await t.run(async (ctx) => {
     for (let i = 0; i < OVER_ONE_BATCH; i++) {
-      await ctx.db.insert("scrapeLogs", {
-        userId: LEAVING,
-        url: "https://example.com/deals",
-        prompt: "tell me about deals",
-        status: "success",
-        durationMs: 1,
-        createdAt: i,
-      });
+      await ctx.db.insert("scrapeLogs", logRow(LEAVING, { createdAt: i }));
       await ctx.db.insert("emailSends", {
-        to: `${LEAVING}@example.com`,
+        to: `${LEAVING}@example.test`,
         kind: "match",
         userId: LEAVING,
         status: "sent",
@@ -704,17 +689,80 @@ test("an account holding more rows than one batch is still emptied", async () =>
         updatedAt: i,
       });
     }
-    await deleteAllUserData(ctx as MutationCtx, LEAVING);
+    await deleteAllUserData(ctx, LEAVING, undefined);
   });
-  await t.finishAllScheduledFunctions(() => {});
+  await settle(t);
 
   await t.run(async (ctx) => {
-    const logs: Doc<"scrapeLogs">[] = await ctx.db.query("scrapeLogs").collect();
-    const sends: Doc<"emailSends">[] = await ctx.db.query("emailSends").collect();
-    expect(logs).toHaveLength(0);
-    expect(sends).toHaveLength(0);
+    expect(await ctx.db.query("scrapeLogs").collect()).toHaveLength(0);
+    expect(await ctx.db.query("emailSends").collect()).toHaveLength(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// The audit
+// ---------------------------------------------------------------------------
+
+/**
+ * Past the first round the sweep is a chain of scheduled mutations, and a
+ * chain only continues from inside a run that succeeded: one throw ends it
+ * silently with half a user's data still on disk, and nothing else would
+ * ever notice. The audit is what notices.
+ */
+test("the audit alerts the admin when a deleted account's rows are still there", async () => {
+  const leftovers: { name: string; insert: (ctx: MutationCtx) => Promise<unknown> }[] = [
+    { name: "a check log", insert: (ctx) => ctx.db.insert("scrapeLogs", logRow(LEAVING)) },
+    { name: "a monitor", insert: (ctx) => ctx.db.insert("monitors", monitorRow(LEAVING)) },
+    {
+      name: "an untagged send, stored lowercase",
+      insert: (ctx) =>
+        ctx.db.insert("emailSends", {
+          to: `${LEAVING}@example.test`,
+          kind: "match",
+          status: "sent",
+          createdAt: NOW,
+          updatedAt: NOW,
+        }),
+    },
+  ];
+
+  for (const leftover of leftovers) {
+    const t = convexTest(schema, modules);
+    await t.run((ctx) => leftover.insert(ctx));
+
+    await t.mutation(internal.account.auditErasure, {
+      userId: LEAVING,
+      email: `${LEAVING.toUpperCase()}@Example.TEST`,
+    });
+
+    expect(await adminAlerts(t), `${leftover.name} survived and nobody was told`).toBe(1);
+  }
+});
+
+test("the audit is queued by the deletion and stays silent when nothing is left", async () => {
+  const t = convexTest(schema, modules);
+
+  await t.run(async (ctx) => {
+    await insertRowsFor(ctx, LEAVING);
+    await deleteAllUserData(ctx, LEAVING, `${LEAVING}@example.test`);
+  });
+
+  const audits = await t.run(async (ctx) => {
+    const jobs = await ctx.db.system.query("_scheduled_functions").collect();
+    return jobs.filter((job) => job.name === "account:auditErasure");
+  });
+  expect(audits).toHaveLength(1);
+  // Long after the heaviest account's chain would be done, so a survivor means
+  // the chain stopped early rather than that it is still going.
+  expect(audits[0].scheduledTime - Date.now()).toBe(10 * 60 * 1000);
+
+  await settle(t);
+  expect(await adminAlerts(t)).toBe(0);
+});
+
+// ---------------------------------------------------------------------------
+// The identity
+// ---------------------------------------------------------------------------
 
 /**
  * "Permanently delete your account" has to mean the account, not only its
@@ -724,82 +772,66 @@ test("an account holding more rows than one batch is still emptied", async () =>
  */
 test("deleting an account destroys the identity behind it", async () => {
   const t = withAuth();
-  const email = "leaving@example.com";
+  const email = "leaving@example.test";
   const userId = await seedIdentity(t, email);
 
   await t.run(async (ctx) => {
-    await seed(ctx as MutationCtx, userId);
-    // seed() bans the user so the sweep has a keep-list row to prove it keeps.
-    // This one is not banned — that case is the test below.
-    const ban = await ctx.db
-      .query("bannedUsers")
-      .withIndex("by_userId", (q) => q.eq("userId", userId))
-      .unique();
-    if (ban) await ctx.db.delete(ban._id);
+    const ids = await insertRowsFor(ctx, userId);
+    // The fixture bans everyone it seeds. This person is not banned; that
+    // case is the test below.
+    await ctx.db.delete(ids.bannedUsers);
   });
 
   await t.withIdentity({ subject: userId, email }).mutation(api.account.deleteAccount, {});
-  await t.finishAllScheduledFunctions(() => {});
+  await settle(t);
 
-  expect(await authRowsLeft(t, userId)).toEqual({
-    user: false,
-    session: false,
-    account: false,
-  });
-  // Nothing is kept: KEPT_ON_DELETE holds bannedUsers, and an account with no
-  // ban has no such row to keep.
+  expect(await authRowsLeft(t, userId)).toEqual({ user: false, session: false, account: false });
   await t.run(async (ctx) => {
-    expect(await remaining(ctx as MutationCtx, userId)).toEqual([]);
+    expect(await ctx.db.query("monitors").collect()).toHaveLength(0);
   });
 });
 
 /**
  * Every ban is enforced by userId, so destroying the identity would hand a
- * banned person a clean one: delete, sign up again, new userId, no ban. Their
- * content still goes — the identity is what has to stay, because it is the
- * only thing the ban is attached to.
+ * banned person a clean one: delete, sign up again, new userId, no ban. And a
+ * half-measure that erased the data but kept the identity would leave the
+ * app in a state nothing else expects. So the self-service path refuses
+ * outright and points at the contact address; erasure for a banned account
+ * is the admin's forced delete, which drops the ban with the identity.
  */
-test("a banned account keeps the identity its ban is attached to", async () => {
+test("a banned account is refused, and nothing of it is deleted", async () => {
   const t = withAuth();
-  const email = "banned@example.com";
+  const email = "banned@example.test";
   const userId = await seedIdentity(t, email);
 
-  // seed() already writes the ban row this test turns on.
-  await t.run(async (ctx) => {
-    await seed(ctx as MutationCtx, userId);
-  });
+  // The fixture already writes the ban row this test turns on.
+  const ids = await t.run((ctx) => insertRowsFor(ctx, userId));
 
-  await t.withIdentity({ subject: userId, email }).mutation(api.account.deleteAccount, {});
-  await t.finishAllScheduledFunctions(() => {});
+  await expect(
+    t.withIdentity({ subject: userId, email }).mutation(api.account.deleteAccount, {})
+  ).rejects.toThrow(/suspended/i);
+  await settle(t);
 
-  expect(await authRowsLeft(t, userId)).toEqual({
-    user: true,
-    session: true,
-    account: true,
-  });
+  expect(await authRowsLeft(t, userId)).toEqual({ user: true, session: true, account: true });
   await t.run(async (ctx) => {
-    // Their data is still erased; only the ban and the identity it names stay.
-    expect(await remaining(ctx as MutationCtx, userId)).toEqual(["bannedUsers"]);
-    expect(await ctx.db.query("monitors").collect()).toHaveLength(0);
-    expect(await ctx.db.query("scrapeLogs").collect()).toHaveLength(0);
+    for (const table of TABLES) {
+      expect(await ctx.db.get(ids[table]), `${table} row was deleted for a banned account`).not.toBeNull();
+    }
   });
+  expect(await adminAlerts(t)).toBe(0);
 });
 
 test("one account's deletion leaves another's identity alone", async () => {
   const t = withAuth();
-  const leaving = await seedIdentity(t, "leaving@example.com");
-  const staying = await seedIdentity(t, "staying@example.com");
+  const leaving = await seedIdentity(t, "leaving@example.test");
+  const staying = await seedIdentity(t, "staying@example.test");
 
   await t
-    .withIdentity({ subject: leaving, email: "leaving@example.com" })
+    .withIdentity({ subject: leaving, email: "leaving@example.test" })
     .mutation(api.account.deleteAccount, {});
-  await t.finishAllScheduledFunctions(() => {});
+  await settle(t);
 
-  expect(await authRowsLeft(t, staying)).toEqual({
-    user: true,
-    session: true,
-    account: true,
-  });
+  expect(await authRowsLeft(t, staying)).toEqual({ user: true, session: true, account: true });
 });
 
 /**
@@ -809,18 +841,16 @@ test("one account's deletion leaves another's identity alone", async () => {
  */
 test("the shared helper clears sessions, provider accounts and the user", async () => {
   const t = withAuth();
-  const userId = await seedIdentity(t, "forced@example.com");
+  const userId = await seedIdentity(t, "forced@example.test");
 
-  await t.run(async (ctx) => {
-    await deleteAuthIdentity(ctx as MutationCtx, userId);
-  });
+  await t.run((ctx) => deleteAuthIdentity(ctx, userId));
 
-  expect(await authRowsLeft(t, userId)).toEqual({
-    user: false,
-    session: false,
-    account: false,
-  });
+  expect(await authRowsLeft(t, userId)).toEqual({ user: false, session: false, account: false });
 });
+
+// ---------------------------------------------------------------------------
+// The token that outlives the account
+// ---------------------------------------------------------------------------
 
 /**
  * Deleting the sessions does not cut off access: Convex verifies a JWT against
@@ -837,18 +867,18 @@ test("the shared helper clears sessions, provider accounts and the user", async 
  */
 test("a deleted account cannot create a monitor with its leftover token", async () => {
   const t = withAuth();
-  const email = "ghost@example.com";
+  const email = "ghost@example.test";
   const userId = await seedIdentity(t, email);
   const as = t.withIdentity({ subject: userId, email });
 
   await as.mutation(api.account.deleteAccount, {});
-  await t.finishAllScheduledFunctions(() => {});
+  await settle(t);
 
   await expect(
     as.mutation(api.monitors.create, {
       name: "after the grave",
-      url: "https://example.com/deals",
-      prompt: "tell me about deals",
+      url: "https://shop.test/laptops",
+      prompt: "MacBook under £1000",
       checkInterval: "1h",
     })
   ).rejects.toThrow(/no longer exists/i);
@@ -860,19 +890,15 @@ test("a deleted account cannot create a monitor with its leftover token", async 
 
 test("a deleted account cannot put its email address back", async () => {
   const t = withAuth();
-  const email = "ghost@example.com";
+  const email = "ghost@example.test";
   const userId = await seedIdentity(t, email);
   const as = t.withIdentity({ subject: userId, email });
 
   await as.mutation(api.account.deleteAccount, {});
-  await t.finishAllScheduledFunctions(() => {});
+  await settle(t);
 
   await expect(
-    as.mutation(api.notificationSettings.upsert, {
-      channel: "email",
-      enabled: true,
-      target: email,
-    })
+    as.mutation(api.notificationSettings.upsert, { channel: "email", enabled: true, target: email })
   ).rejects.toThrow(/no longer exists/i);
 
   await t.run(async (ctx) => {
@@ -887,17 +913,15 @@ test("a deleted account cannot put its email address back", async () => {
  */
 test("a live account is not blocked by the guard", async () => {
   const t = withAuth();
-  const email = "alive@example.com";
+  const email = "alive@example.test";
   const userId = await seedIdentity(t, email);
 
-  const id = await t
-    .withIdentity({ subject: userId, email })
-    .mutation(api.monitors.create, {
-      name: "first one",
-      url: "https://example.com/deals",
-      prompt: "tell me about deals",
-      checkInterval: "1h",
-    });
+  const id = await t.withIdentity({ subject: userId, email }).mutation(api.monitors.create, {
+    name: "first one",
+    url: "https://shop.test/laptops",
+    prompt: "MacBook under £1000",
+    checkInterval: "1h",
+  });
 
   expect(id).toBeTruthy();
 });

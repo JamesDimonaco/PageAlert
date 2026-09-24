@@ -111,7 +111,6 @@ export const reserveFallbackCall = internalMutation({
     const now = new Date();
     const month = now.toISOString().slice(0, 7);
     const hour = now.toISOString().slice(0, 13);
-    const prevHour = new Date(now.getTime() - 60 * 60 * 1000).toISOString().slice(0, 13);
     const get = (name: string) =>
       ctx.db.query("counters").withIndex("by_name", (q) => q.eq("name", name)).unique();
 
@@ -152,11 +151,17 @@ export const reserveFallbackCall = internalMutation({
       if (hourRow) await ctx.db.patch(hourRow._id, { value: hourRow.value + 1 });
       else {
         await ctx.db.insert("counters", { name: `fallback:escalations:${hour}`, value: 1 });
-        // Rolling window of one hour, so the hour before it is finished with.
-        // Left alone these rows accumulate at ~17k a year.
-        for (const stale of [`fallback:escalations:${prevHour}`, `fallback:hour-alerted:${prevHour}`]) {
-          const row = await get(stale);
-          if (row) await ctx.db.delete(row._id);
+        // Only this hour's rows are still needed. Sweeping every earlier one by
+        // name range, rather than just the previous hour, is what makes this
+        // reliable: escalation is bursty by design, so most hours are quiet and
+        // a previous-hour-only delete orphans a row every time one is skipped.
+        // The keys end in an ISO hour, so lexical order is chronological order.
+        for (const prefix of ["fallback:escalations:", "fallback:hour-alerted:"]) {
+          const stale = await ctx.db
+            .query("counters")
+            .withIndex("by_name", (q) => q.gte("name", prefix).lt("name", `${prefix}${hour}`))
+            .take(48);
+          for (const row of stale) await ctx.db.delete(row._id);
         }
       }
     }
@@ -976,17 +981,14 @@ export const sendBulkEmail = action({
       ids: { id?: string }[],
       error?: string
     ) => {
-      for (const [i, r] of chunk.entries()) {
-        await ctx
-          .runMutation(internal.emailEvents.recordSend, {
-            to: r.email,
-            kind: "bulk",
-            resendId: ids[i]?.id,
-            ok: !error,
-            error,
-          })
-          .catch((e) => console.error("[admin] could not record bulk send:", e));
-      }
+      await ctx
+        .runMutation(internal.emailEvents.recordSends, {
+          kind: "bulk",
+          sends: chunk.map((r, i) => ({ to: r.email, resendId: ids[i]?.id })),
+          ok: !error,
+          error,
+        })
+        .catch((e) => console.error("[admin] could not record bulk sends:", e));
     };
 
     let sent = 0;

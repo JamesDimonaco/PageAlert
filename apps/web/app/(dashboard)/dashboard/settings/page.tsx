@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useSearchParams, useRouter, usePathname } from "next/navigation";
+import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -22,17 +23,23 @@ import { useAuth } from "@/hooks/use-auth";
 import { useMonitors } from "@/hooks/use-monitors";
 import { useTier } from "@/hooks/use-tier";
 import { usePush } from "@/hooks/use-push";
+import { PushNotShownSteps, QrCode } from "@/components/prowl/push-help";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { authClient } from "@/lib/auth-client";
 import { toast } from "sonner";
 import {
+  POSTHOG_KEY,
   trackUpgradePromptClicked,
   trackTestEmailSent,
   trackNotificationChannelToggled,
 } from "@/lib/posthog";
+import { AnalyticsToggle } from "@/components/prowl/analytics-toggle";
 
 type NotificationChannel = "email" | "telegram" | "discord" | "push";
+
+/** Where the push test is: waiting on the send, asking the user, or showing a fix */
+type PushTestStage = "idle" | "sending" | "asking" | "not-seen" | "lost";
 
 const VALID_TABS = ["notifications", "profile", "billing"] as const;
 type SettingsTab = (typeof VALID_TABS)[number];
@@ -40,8 +47,21 @@ type SettingsTab = (typeof VALID_TABS)[number];
 export default function SettingsPage() {
   const { user, signOut } = useAuth();
   const push = usePush();
-  const sendPushTest = useAction(api.push.sendTestMessage);
-  const [pushTesting, setPushTesting] = useState(false);
+  const [pushTest, setPushTest] = useState<PushTestStage>("idle");
+  const [showPhoneQr, setShowPhoneQr] = useState(false);
+  const onMobile = push.device?.os === "ios" || push.device?.os === "android";
+
+  const runPushTest = async () => {
+    setPushTest("sending");
+    try {
+      setPushTest((await push.sendTest()) === "arrived" ? "asking" : "lost");
+    } catch (e) {
+      setPushTest("idle");
+      toast.error("Test failed", {
+        description: e instanceof Error ? e.message : "Try again",
+      });
+    }
+  };
   const { monitors } = useMonitors();
   const { tier, maxMonitors, description: tierDescription, isLoading: tierLoading, refetch: refetchTier, isCancelled, daysRemaining, periodEnd, grantUntil, grantSource } = useTier();
   const [name, setName] = useState(user?.name ?? "");
@@ -193,6 +213,21 @@ export default function SettingsPage() {
               </div>
             </CardContent>
           </Card>
+
+          {POSTHOG_KEY && (
+            <Card className="border-border/30 bg-card/50 shadow-sm shadow-black/5">
+              <CardHeader className="pb-4">
+                <CardTitle className="text-lg font-semibold">Analytics</CardTitle>
+                <CardDescription className="text-sm">How we see what the app is used for</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <AnalyticsToggle />
+                <Link href="/privacy" className="text-xs text-primary hover:underline">
+                  Privacy policy
+                </Link>
+              </CardContent>
+            </Card>
+          )}
 
           <Card className="border-destructive/20 bg-card/50 shadow-sm shadow-black/5">
             <CardHeader className="pb-4">
@@ -418,13 +453,10 @@ export default function SettingsPage() {
                     </DialogDescription>
                   </DialogHeader>
                   <div className="flex justify-center py-4">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent("https://t.me/PageAlertNotify_bot")}&bgcolor=0a0a0b&color=3b82f6&format=svg`}
-                      alt="QR code to open PageAlert bot in Telegram"
-                      width={200}
-                      height={200}
-                      className="rounded-lg"
+                    <QrCode
+                      value="https://t.me/PageAlertNotify_bot"
+                      label="QR code to open PageAlert bot in Telegram"
+                      className="h-[200px] w-[200px]"
                     />
                   </div>
                 </DialogContent>
@@ -590,6 +622,9 @@ export default function SettingsPage() {
                     className="shrink-0"
                     disabled={push.busy}
                     onClick={async () => {
+                      // A dead device drops to "off" mid-test, which can leave
+                      // the lost panel waiting to reappear on re-enable
+                      setPushTest("idle");
                       try {
                         await push.enable();
                         trackNotificationChannelToggled({ channel: "push", enabled: true });
@@ -633,19 +668,7 @@ export default function SettingsPage() {
                             description: "Send a test to check it reaches you.",
                             action: {
                               label: "Send test",
-                              onClick: async () => {
-                                setPushTesting(true);
-                                try {
-                                  await sendPushTest({});
-                                  toast.success("Test sent");
-                                } catch (e) {
-                                  toast.error("Test failed", {
-                                    description: e instanceof Error ? e.message : "Try again",
-                                  });
-                                } finally {
-                                  setPushTesting(false);
-                                }
-                              },
+                              onClick: () => void runPushTest(),
                             },
                             duration: 10000,
                           });
@@ -682,22 +705,10 @@ export default function SettingsPage() {
                       <Button
                         variant="outline"
                         size="sm"
-                        disabled={pushTesting}
-                        onClick={async () => {
-                          setPushTesting(true);
-                          try {
-                            await sendPushTest({});
-                            toast.success("Test sent");
-                          } catch (e) {
-                            toast.error("Test failed", {
-                              description: e instanceof Error ? e.message : "Try again",
-                            });
-                          } finally {
-                            setPushTesting(false);
-                          }
-                        }}
+                        disabled={pushTest === "sending"}
+                        onClick={() => void runPushTest()}
                       >
-                        {pushTesting ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Send className="h-3.5 w-3.5 mr-1" />}
+                        {pushTest === "sending" ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Send className="h-3.5 w-3.5 mr-1" />}
                         Send test
                       </Button>
                       <Button
@@ -707,6 +718,7 @@ export default function SettingsPage() {
                         onClick={async () => {
                           try {
                             await push.disable();
+                            setPushTest("idle");
                             trackNotificationChannelToggled({ channel: "push", enabled: false });
                             toast.success("Alerts turned off for this device");
                           } catch {
@@ -718,11 +730,123 @@ export default function SettingsPage() {
                       </Button>
                     </div>
                   </div>
+
+                  {pushTest === "sending" && (
+                    <p className="text-xs text-muted-foreground">
+                      Waiting for the test to arrive. This can take up to 30 seconds.
+                    </p>
+                  )}
+
+                  {pushTest === "asking" && (
+                    <div className="rounded-lg border border-border/40 bg-muted/20 p-4 space-y-3">
+                      <p className="text-sm">
+                        The test reached this browser. Did a notification pop up?
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          size="sm"
+                          onClick={() => {
+                            setPushTest("idle");
+                            toast.success("You're all set");
+                          }}
+                        >
+                          Yes, I saw it
+                        </Button>
+                        <Button size="sm" variant="outline" onClick={() => setPushTest("not-seen")}>
+                          No, nothing appeared
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+
+                  {pushTest === "not-seen" && push.device && (
+                    <div className="rounded-lg border border-border/40 bg-muted/20 p-4 space-y-3">
+                      <p className="text-sm leading-relaxed">
+                        The alert got through, so your device is hiding it. Your system
+                        settings can block notifications even when the browser allows them:
+                      </p>
+                      <PushNotShownSteps device={push.device} />
+                      <div className="flex flex-wrap gap-2">
+                        <Button size="sm" variant="outline" onClick={() => void runPushTest()}>
+                          Send another test
+                        </Button>
+                        <Button size="sm" variant="ghost" onClick={() => setPushTest("idle")}>
+                          Close
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+
+                  {pushTest === "lost" && (
+                    <div className="rounded-lg border border-border/40 bg-muted/20 p-4 space-y-3">
+                      <p className="text-sm leading-relaxed">
+                        The test hasn&apos;t reached this browser, so its connection has
+                        probably gone stale. Click <strong>Turn off</strong>, then{" "}
+                        <strong>Enable on this device</strong>, and send another test.
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        <Button size="sm" variant="outline" onClick={() => void runPushTest()}>
+                          Send another test
+                        </Button>
+                        <Button size="sm" variant="ghost" onClick={() => setPushTest("idle")}>
+                          Close
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+
                   <p className="text-xs text-muted-foreground leading-relaxed">
                     Turning it off here only affects this device. Your other devices keep
                     getting alerts.
                   </p>
                 </>
+              )}
+
+              {push.state !== "loading" && (
+                <div className="space-y-3 border-t border-border/30 pt-4">
+                  {onMobile ? (
+                    <p className="text-xs text-muted-foreground leading-relaxed">
+                      Want alerts on your computer too? Open pagealert.io there, sign in, go
+                      to Settings → Notifications and click{" "}
+                      <strong className="text-foreground">Enable on this device</strong>.
+                    </p>
+                  ) : (
+                    <>
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <p className="text-xs text-muted-foreground leading-relaxed">
+                          Each device is turned on separately. Get alerts on your phone
+                          by scanning a code with its camera.
+                        </p>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="shrink-0"
+                          onClick={() => setShowPhoneQr((v) => !v)}
+                        >
+                          <Smartphone className="h-3.5 w-3.5 mr-1" />
+                          {showPhoneQr ? "Hide code" : "Set up your phone"}
+                        </Button>
+                      </div>
+                      {showPhoneQr && (
+                        <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+                          <QrCode
+                            value={`${window.location.origin}/dashboard/settings?tab=notifications`}
+                            label="QR code that opens PageAlert's notification settings"
+                          />
+                          <ol className="space-y-1.5 text-sm text-muted-foreground list-decimal list-inside">
+                            <li>Point your phone&apos;s camera at the code and open the link</li>
+                            <li>Sign in if it asks</li>
+                            <li>
+                              Tap <strong className="text-foreground">Enable on this device</strong>.
+                              On iPhone, PageAlert shows you how to add it to your home screen
+                              first
+                            </li>
+                          </ol>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
               )}
             </CardContent>
           </Card>

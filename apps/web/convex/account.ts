@@ -77,13 +77,23 @@ export async function deleteAuthIdentity(ctx: MutationCtx, userId: string): Prom
 }
 
 /**
+ * Ten minutes is far longer than the sweep needs even for the heaviest
+ * account, so anything still there when the audit runs means the chain
+ * stopped early rather than that it is still going.
+ */
+const AUDIT_DELAY_MS = 10 * 60 * 1000;
+
+/**
  * Deletes every row this app owns for a user, over as many rounds as it takes.
  *
  * Shared by the user's own deleteAccount and the admin dashboard's forced
- * delete, so both paths agree on what "all data" means. Pass the account's
- * email where it is known: six of the eight email send sites record no userId,
- * so without it most of a user's send history stays behind under their own
- * address.
+ * delete, so both paths agree on what "all data" means.
+ *
+ * `email` is required rather than optional because emailSends is only
+ * reachable by address for most of its rows, and a caller that forgot to
+ * pass it would silently leave a user's alert history behind — the exact bug
+ * this function keeps being fixed for. Pass undefined only when there is
+ * genuinely no address on record.
  *
  * SWEPT_ON_DELETE and KEPT_ON_DELETE together name every table carrying a
  * userId, and account.test.ts fails if the schema grows one they don't cover.
@@ -91,9 +101,11 @@ export async function deleteAuthIdentity(ctx: MutationCtx, userId: string): Prom
 export async function deleteAllUserData(
   ctx: MutationCtx,
   userId: string,
-  email?: string
+  email: string | undefined
 ): Promise<void> {
-  await sweep(ctx, { userId, email });
+  const target: Target = { userId, email };
+  await sweep(ctx, target);
+  await ctx.scheduler.runAfter(AUDIT_DELAY_MS, internal.account.auditErasure, target);
 }
 
 /**
@@ -130,6 +142,9 @@ const spent = (left: Allowance): boolean => left.bytes <= 0 || left.rows <= 0;
  */
 const byteSize = (row: Record<string, Value>): number => getDocumentSize(row);
 
+/** A query the sweep can stream and the audit can peek at. */
+type Rows = AsyncIterable<{ _id: Id<TableNames> }> & { first(): Promise<unknown> };
+
 /**
  * Deletes rows from one query until the allowance runs out.
  *
@@ -137,11 +152,7 @@ const byteSize = (row: Record<string, Value>): number => getDocumentSize(row);
  * weigh, and the byte budget can only be honest if it is measured against
  * what was actually read.
  */
-async function drain(
-  ctx: MutationCtx,
-  rows: AsyncIterable<{ _id: Id<TableNames> }>,
-  left: Allowance
-): Promise<void> {
+async function drain(ctx: MutationCtx, rows: Rows, left: Allowance): Promise<void> {
   for await (const row of rows) {
     await ctx.db.delete(row._id);
     left.bytes -= byteSize(row);
@@ -152,6 +163,17 @@ async function drain(
 
 /** Who the sweep is erasing. The email reaches sends that carry no userId. */
 type Target = { userId: string; email?: string };
+
+const monitorsOf = (ctx: MutationCtx, userId: string) =>
+  ctx.db.query("monitors").withIndex("by_userId", (q) => q.eq("userId", userId));
+
+/**
+ * Sends addressed to the account, whoever recorded them. Most send sites
+ * record no userId, so this is how most of a user's history is reached; the
+ * index is exact-match, and recordSend lowercases on the way in.
+ */
+const sendsTo = (ctx: MutationCtx, email: string) =>
+  ctx.db.query("emailSends").withIndex("by_to", (q) => q.eq("to", email.toLowerCase()));
 
 /**
  * A monitor and everything hanging off it.
@@ -164,9 +186,7 @@ type Target = { userId: string; email?: string };
  * and the daily cron expires it.
  */
 async function sweepMonitors(ctx: MutationCtx, userId: string, left: Allowance): Promise<void> {
-  for await (const monitor of ctx.db
-    .query("monitors")
-    .withIndex("by_userId", (q) => q.eq("userId", userId))) {
+  for await (const monitor of monitorsOf(ctx, userId)) {
     // Charged on read, not on delete: a monitor carries `schema: v.any()` and
     // three arrays with no size limit, and the round has already paid to read
     // it even if it runs out before deleting it. Checked straight afterwards
@@ -208,21 +228,20 @@ async function sweepMonitors(ctx: MutationCtx, userId: string, left: Allowance):
 }
 
 /**
- * Every table keyed by userId, and the query that finds a user's rows in it.
+ * Every table keyed by userId that deletion clears, and the query that finds
+ * a user's rows in it.
  *
  * `monitorCreations` survives *monitor* deletion (see monitors.ts) so a
  * delete-and-remake cannot bypass the creation rate limit, but a new signup
  * gets a new userId regardless, so after account deletion those rows are
- * orphaned personal data and nothing else. `appliedOrders` goes for the same
- * reason: Polar holds the receipt, and this table only exists to stop a
- * redelivered webhook granting one pass twice to a userId that cannot come
- * back. `reviews` goes too, which takes the quote off the public homepage
- * along with the name it was signed with — erasure has to mean that, but it
- * is a visible change and not only a database one.
+ * orphaned personal data and nothing else. `reviews` goes too, which takes
+ * the quote off the public homepage along with the name it was signed with —
+ * erasure has to mean that, but it is a visible change and not only a
+ * database one.
  */
 const SWEEPS: readonly {
   table: TableNames;
-  rows: (ctx: MutationCtx, userId: string) => AsyncIterable<{ _id: Id<TableNames> }>;
+  rows: (ctx: MutationCtx, userId: string) => Rows;
 }[] = [
   {
     table: "scrapeLogs",
@@ -270,11 +289,6 @@ const SWEEPS: readonly {
       ctx.db.query("monitorCreations").withIndex("by_userId_createdAt", (q) => q.eq("userId", userId)),
   },
   {
-    table: "appliedOrders",
-    rows: (ctx, userId) =>
-      ctx.db.query("appliedOrders").withIndex("by_userId", (q) => q.eq("userId", userId)),
-  },
-  {
     table: "reviews",
     rows: (ctx, userId) =>
       ctx.db.query("reviews").withIndex("by_userId", (q) => q.eq("userId", userId)),
@@ -303,14 +317,15 @@ export const SWEPT_ON_DELETE: readonly string[] = [
 /**
  * Tables that go on holding a userId after the account is gone.
  *
- * Only bannedUsers, and only for a banned account. Every ban is enforced by
- * userId (see isBanned's callers), so the ban row and the identity it names
- * have to survive together or not at all: destroy the identity and the next
- * signup gets a fresh userId no ban can reach, keep the identity without the
- * ban and the same person walks back in unbanned. A banned account's *data*
- * is still erased — it is the name on the door that stays.
+ * - bannedUsers: every ban is enforced by userId (see isBanned's callers), so
+ *   the ban row and the identity it names have to survive together or not at
+ *   all. deleteAccount refuses a banned user outright; admin.deleteUser drops
+ *   the row itself, with the identity.
+ * - appliedOrders: opaque Polar order ids. Polar redelivers webhooks for up
+ *   to a day, and this is what stops a redelivered order recreating a tier
+ *   row for a user who no longer exists.
  */
-export const KEPT_ON_DELETE: readonly string[] = ["bannedUsers"];
+export const KEPT_ON_DELETE: readonly string[] = ["bannedUsers", "appliedOrders"];
 
 /**
  * Deletes up to one allowance of this user's rows and queues another round if
@@ -335,15 +350,8 @@ async function sweep(ctx: MutationCtx, target: Target): Promise<void> {
     await drain(ctx, table.rows(ctx, target.userId), left);
   }
 
-  // Match alerts, errors, anonymous scans and admin bulk sends all record the
-  // address and no userId, so the index above misses most of a user's history.
   if (!spent(left) && target.email) {
-    const to = target.email.toLowerCase();
-    await drain(
-      ctx,
-      ctx.db.query("emailSends").withIndex("by_to", (q) => q.eq("to", to)),
-      left
-    );
+    await drain(ctx, sendsTo(ctx, target.email), left);
   }
 
   if (spent(left)) {
@@ -356,6 +364,31 @@ export const sweepRemainingUserData = internalMutation({
   args: { userId: v.string(), email: v.optional(v.string()) },
   handler: async (ctx, target) => {
     await sweep(ctx, target);
+  },
+});
+
+/**
+ * Checks the sweep actually finished, and shouts if it did not.
+ *
+ * Past the first round the sweep is a chain of scheduled mutations, and the
+ * chain only continues from inside a run that succeeded: one throw ends it
+ * silently with half a user's data still on disk, and the privacy page says
+ * that data is gone within minutes. Nothing else would ever notice.
+ * Scheduled by deleteAllUserData for well after the chain should be done.
+ */
+export const auditErasure = internalMutation({
+  args: { userId: v.string(), email: v.optional(v.string()) },
+  handler: async (ctx, { userId, email }) => {
+    const peeks: Rows[] = [monitorsOf(ctx, userId), ...SWEEPS.map((table) => table.rows(ctx, userId))];
+    if (email) peeks.push(sendsTo(ctx, email));
+
+    for (const rows of peeks) {
+      if ((await rows.first()) === null) continue;
+      await ctx.scheduler.runAfter(0, internal.admin.notify, {
+        text: `⚠️ Data survived account deletion for ${email ?? userId} (${userId}). The sweep stopped early — delete the rest by hand.`,
+      });
+      return;
+    }
   },
 });
 
@@ -396,19 +429,18 @@ export const deleteAccount = mutation({
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Not authenticated");
 
-    const banned = await isBanned(ctx, identity.subject);
+    // With the login rows gone, the same person signs up again as a fresh,
+    // unbanned userId. Erasure for a banned user goes through the contact email.
+    if (await isBanned(ctx, identity.subject)) {
+      throw new Error("This account is suspended. Email us to have it deleted.");
+    }
 
     await deleteAllUserData(ctx, identity.subject, identity.email);
 
     // The dialog says "permanently delete your account", so the identity goes
     // too — otherwise the name, email and linked provider account outlive the
     // data and the same userId re-attaches at the next sign-in.
-    //
-    // Except for a banned account. The ban is enforced by userId and nothing
-    // else, so a banned user who could destroy their identity would be handed
-    // a clean one by signing up again. Their data is erased eitherway; the
-    // identity stays behind as the thing the ban is written against.
-    if (!banned) await deleteAuthIdentity(ctx, identity.subject);
+    await deleteAuthIdentity(ctx, identity.subject);
 
     // The churn no webhook reports: someone leaving of their own accord.
     // admin.deleteUser has its own alert naming the admin who did it.

@@ -11,6 +11,7 @@ let initStarted = false;
 let pendingPageViews: string[] = [];
 let pendingIdentify: { userId: string; properties?: Record<string, unknown> } | null = null;
 let pendingUserProperties: Record<string, unknown> | null = null;
+let readyCallbacks: Array<(posthog: PostHog) => void> = [];
 
 export function initPostHog() {
   if (typeof window === "undefined") return;
@@ -53,6 +54,13 @@ export function initPostHog() {
     }
     pendingPageViews = [];
 
+    for (const cb of readyCallbacks) cb(posthog);
+    readyCallbacks = [];
+
+    // init reads the stored opt-out back, so capture() is already dropping
+    // events by now; recording is gated here too so that stays visibly true.
+    if (posthog.has_opted_out_capturing()) return;
+
     // Lazily start session recording after main thread is idle
     if ("requestIdleCallback" in window) {
       requestIdleCallback(() => posthog.startSessionRecording());
@@ -93,7 +101,39 @@ export function resetUser() {
   pendingIdentify = null;
   pendingUserProperties = null;
   if (!ph) return;
+  // reset() wipes the stored consent along with the identity, which would
+  // opt the next sign-in back in. The opt-out belongs to the browser.
+  const optedOut = ph.has_opted_out_capturing();
   ph.reset();
+  if (optedOut) ph.opt_out_capturing();
+}
+
+// ---- Analytics opt-out ----
+// PostHog stores consent itself, per browser, and reads it back on init.
+// Nothing is synced to the account: the Settings copy says "this browser".
+
+/** Runs once posthog-js has loaded; triggers the load if nothing has yet. */
+export function onPostHogReady(cb: (posthog: PostHog) => void): () => void {
+  if (ph) {
+    cb(ph);
+    return () => {};
+  }
+  readyCallbacks.push(cb);
+  initPostHog();
+  return () => {
+    readyCallbacks = readyCallbacks.filter((c) => c !== cb);
+  };
+}
+
+export function setAnalyticsOptOut(optOut: boolean) {
+  if (!ph) return;
+  if (optOut) {
+    ph.opt_out_capturing();
+    ph.stopSessionRecording();
+  } else {
+    ph.opt_in_capturing();
+    ph.startSessionRecording();
+  }
 }
 
 export function trackEvent(event: string, properties?: Record<string, unknown>) {

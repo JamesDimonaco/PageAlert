@@ -137,7 +137,7 @@ export function AdminOverview() {
             <CardTitle className="text-sm font-semibold">Email delivery, last {emails.sampled} sends</CardTitle>
           </CardHeader>
           <CardContent className="divide-y divide-border/30">
-                        <Row label="Delivered" value={emails.delivered} />
+            <Row label="Delivered" value={emails.delivered} />
             <Row label="Bounced" value={emails.bounced} />
             <Row label="Spam reports" value={emails.complained} />
             <Row label="Rejected by Resend" value={emails.failed} />

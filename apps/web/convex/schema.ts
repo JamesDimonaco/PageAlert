@@ -200,10 +200,10 @@ export default defineSchema({
     source: v.union(v.literal("dashboard"), v.literal("telegram")),
     createdAt: v.number(),
   })
-    .index("by_userId", ["userId"])
     .index("by_monitorId", ["monitorId"])
     .index("by_monitor_item", ["monitorId", "itemKey"])
-    .index("by_createdAt", ["createdAt"]),
+    .index("by_createdAt", ["createdAt"])
+    .index("by_userId", ["userId"]),
 
   notificationSettings: defineTable({
     userId: v.string(),
@@ -264,9 +264,7 @@ export default defineSchema({
     orderId: v.string(),
     userId: v.string(),
     appliedAt: v.number(),
-  })
-    .index("by_orderId", ["orderId"])
-    .index("by_userId", ["userId"]),
+  }).index("by_orderId", ["orderId"]),
   // Super-admin bans. Blocks monitor creation and dashboard access; existing
   // monitors are paused when the ban is applied (see admin.banUser).
   bannedUsers: defineTable({
@@ -355,12 +353,14 @@ export default defineSchema({
     createdAt: v.number(),
     updatedAt: v.number(),
   })
-    .index("by_userId", ["userId"])
-    // Most sends record no userId, so erasure has to find them by address.
-    .index("by_to", ["to"])
     .index("by_resendId", ["resendId"])
     .index("by_createdAt", ["createdAt"])
-    .index("by_status_createdAt", ["status", "createdAt"]),
+    .index("by_status_createdAt", ["status", "createdAt"])
+    .index("by_userId", ["userId"])
+    // Only two of the eight email kinds pass a userId to recordSend, so
+    // by_userId reaches almost none of a user's sends. Account deletion has
+    // to find them by address as well. See deleteAllUserData.
+    .index("by_to", ["to"]),
 
   // Audit log of bulk emails sent from the super-admin dashboard
   adminEmails: defineTable({
