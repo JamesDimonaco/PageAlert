@@ -341,6 +341,37 @@ test("the byte budget holds when rows are multi-byte", async () => {
 });
 
 /**
+ * `schema: v.any()` accepts every Convex value, Int64 and Bytes included, and
+ * JSON cannot serialise either. Weighing a row by serialising it would throw
+ * on the first such document and take the whole account deletion with it —
+ * the one row nobody can work around, because the owner cannot edit it.
+ */
+test("a document holding a bigint does not break the sweep", async () => {
+  const t = convexTest(schema, modules);
+
+  await t.run(async (ctx) => {
+    await ctx.db.insert("monitors", {
+      userId: LEAVING,
+      name: "watch",
+      url: "https://example.com/deals",
+      prompt: "tell me about deals",
+      status: "active",
+      checkInterval: "1h",
+      matchCount: 0,
+      schema: { seen: 12n, blob: new ArrayBuffer(64) },
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    await deleteAllUserData(ctx as MutationCtx, LEAVING);
+  });
+  await t.finishAllScheduledFunctions(() => {});
+
+  await t.run(async (ctx) => {
+    expect(await ctx.db.query("monitors").collect()).toHaveLength(0);
+  });
+});
+
+/**
  * A monitor carries `schema: v.any()` and three arrays with no size limit, so
  * an account of fat monitors and no children can outrun the budget while the
  * row counter barely moves.

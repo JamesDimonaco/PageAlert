@@ -1,4 +1,4 @@
-import { v } from "convex/values";
+import { getDocumentSize, v, type Value } from "convex/values";
 import { internalMutation, mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Id, TableNames } from "./_generated/dataModel";
@@ -53,17 +53,18 @@ type Allowance = { bytes: number; rows: number };
 
 const spent = (left: Allowance): boolean => left.bytes <= 0 || left.rows <= 0;
 
-const encoder = new TextEncoder();
-
 /**
- * What a row weighs, in bytes.
+ * What a row weighs, by Convex's own reckoning — the same calculation behind
+ * the document size and bandwidth limits the budget is defending.
  *
- * Encoded rather than `.length`: a string's length counts UTF-16 code units,
- * and a CJK character is one of those and three UTF-8 bytes. Scraped page text
- * is where non-ASCII lives, so measuring by length would let a round read
- * three times its budget on the pages most likely to be heavy.
+ * Not a JSON proxy. Serialising to measure gets two things wrong: a string's
+ * length counts UTF-16 code units, so a CJK character reads as one where it
+ * costs three bytes, and JSON.stringify *throws* on Int64. Both `schema` and
+ * `matchConditions` are `v.any()`, which accepts Int64 and Bytes, so a row
+ * holding either would have taken the whole deletion down with it — and the
+ * owner cannot edit that row to get themselves unstuck.
  */
-const byteSize = (row: unknown): number => encoder.encode(JSON.stringify(row)).length;
+const byteSize = (row: Record<string, Value>): number => getDocumentSize(row);
 
 /**
  * Deletes rows from one query until the allowance runs out.
