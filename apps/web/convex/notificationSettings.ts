@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { effectiveTier, type Tier } from "./tiers";
+import { requireLiveAccount } from "./account";
 import { mutation, query } from "./_generated/server";
 
 const channelValidator = v.union(
@@ -48,6 +49,8 @@ export const upsert = mutation({
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Not authenticated");
     const userId = identity.subject;
+    // Otherwise a token outliving its account puts the deleted address back.
+    await requireLiveAccount(ctx, userId);
 
     // Enforce tier-based channel access
     const tier = await getUserTier(ctx, userId);

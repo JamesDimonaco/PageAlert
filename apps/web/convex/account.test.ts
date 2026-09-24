@@ -821,3 +821,83 @@ test("the shared helper clears sessions, provider accounts and the user", async 
     account: false,
   });
 });
+
+/**
+ * Deleting the sessions does not cut off access: Convex verifies a JWT against
+ * the JWKS endpoint rather than reading the session table, and those tokens
+ * live 15 minutes. So a token already in hand still works after the account
+ * behind it is gone — and every mutation trusts `identity.subject` without
+ * asking whether that user exists.
+ *
+ * Two of them write new personal data under the dead id. A monitor created
+ * this way is unreachable forever: its owner has no account to sign in with,
+ * so nobody can pause or delete it while it scans and emails on. And a
+ * notification setting brings the deleted address back into the database,
+ * which is the one thing this whole change exists to prevent.
+ */
+test("a deleted account cannot create a monitor with its leftover token", async () => {
+  const t = withAuth();
+  const email = "ghost@example.com";
+  const userId = await seedIdentity(t, email);
+  const as = t.withIdentity({ subject: userId, email });
+
+  await as.mutation(api.account.deleteAccount, {});
+  await t.finishAllScheduledFunctions(() => {});
+
+  await expect(
+    as.mutation(api.monitors.create, {
+      name: "after the grave",
+      url: "https://example.com/deals",
+      prompt: "tell me about deals",
+      checkInterval: "1h",
+    })
+  ).rejects.toThrow(/no longer exists/i);
+
+  await t.run(async (ctx) => {
+    expect(await ctx.db.query("monitors").collect()).toHaveLength(0);
+  });
+});
+
+test("a deleted account cannot put its email address back", async () => {
+  const t = withAuth();
+  const email = "ghost@example.com";
+  const userId = await seedIdentity(t, email);
+  const as = t.withIdentity({ subject: userId, email });
+
+  await as.mutation(api.account.deleteAccount, {});
+  await t.finishAllScheduledFunctions(() => {});
+
+  await expect(
+    as.mutation(api.notificationSettings.upsert, {
+      channel: "email",
+      enabled: true,
+      target: email,
+    })
+  ).rejects.toThrow(/no longer exists/i);
+
+  await t.run(async (ctx) => {
+    expect(await ctx.db.query("notificationSettings").collect()).toHaveLength(0);
+  });
+});
+
+/**
+ * The guard must not cost anybody their first monitor. A signed-in user whose
+ * identity is intact has to pass it, whether or not they have ever created
+ * anything before.
+ */
+test("a live account is not blocked by the guard", async () => {
+  const t = withAuth();
+  const email = "alive@example.com";
+  const userId = await seedIdentity(t, email);
+
+  const id = await t
+    .withIdentity({ subject: userId, email })
+    .mutation(api.monitors.create, {
+      name: "first one",
+      url: "https://example.com/deals",
+      prompt: "tell me about deals",
+      checkInterval: "1h",
+    });
+
+  expect(id).toBeTruthy();
+});

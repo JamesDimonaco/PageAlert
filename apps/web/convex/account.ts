@@ -12,6 +12,29 @@ export async function isBanned(ctx: QueryCtx | MutationCtx, userId: string): Pro
   return !!row;
 }
 
+/**
+ * Refuses a caller whose account has been deleted.
+ *
+ * A signed-in call carries a JWT, and Convex verifies it against the JWKS
+ * endpoint rather than the session table — so a token minted before the
+ * deletion keeps working for the rest of its 15 minutes, and every mutation
+ * trusts `identity.subject` without asking whether that user still exists.
+ *
+ * Only the mutations that write *new* personal data need this. A monitor
+ * created in that window is unreachable forever, because its owner has no
+ * account left to sign in with, and it goes on scanning and emailing; a
+ * notification setting puts the deleted address straight back in the
+ * database. Reads and edits of the user's own rows need no guard: the rows
+ * are gone, so they find nothing.
+ */
+export async function requireLiveAccount(ctx: MutationCtx, userId: string): Promise<void> {
+  const user = await ctx.runQuery(components.betterAuth.adapter.findOne, {
+    model: "user",
+    where: [{ field: "_id", operator: "eq", value: userId }],
+  });
+  if (!user) throw new Error("This account no longer exists.");
+}
+
 type UserIdRow = { field: "userId"; operator: "eq"; value: string };
 
 /** Deletes every matching row for a user, a page at a time until none remain. */
@@ -32,8 +55,14 @@ async function deleteAllAuthRows(
  * Removes the Better Auth identity behind a userId: every session, every
  * linked provider account, then the user row carrying the name and email.
  *
- * Sessions go first so the identity cannot act on the way out — nothing it
- * creates can survive the sweep rounds still running behind it.
+ * This does NOT cut off access straight away, and it is worth being exact
+ * about why. Convex authenticates a call by verifying a JWT against the JWKS
+ * endpoint (auth.config.ts), never by reading the session table, and the
+ * convex plugin mints those tokens with a 15 minute life. Deleting the
+ * sessions stops the cookie minting a *new* token; a token already in hand
+ * goes on working until it expires, and every mutation trusts
+ * `identity.subject` without checking the user still exists. So for up to 15
+ * minutes after this runs, the deleted identity can still call the API.
  *
  * Shared by the admin's forced delete and the user's own, which is the point:
  * these were separate before, and only one of them did it.
@@ -367,8 +396,6 @@ export const deleteAccount = mutation({
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Not authenticated");
 
-    // Read before the sweep: it takes the ban row's neighbours with it, and
-    // this decides whether the identity survives.
     const banned = await isBanned(ctx, identity.subject);
 
     await deleteAllUserData(ctx, identity.subject, identity.email);
