@@ -1,7 +1,7 @@
 "use client";
 
 import { use, useState } from "react";
-import { useQuery } from "convex/react";
+import { useConvexAuth, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 
 import { formatStrategy } from "@/lib/strategy";
@@ -25,7 +25,6 @@ interface LogExtended {
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
 import {
   ArrowLeft,
   Loader2,
@@ -40,6 +39,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCreateMonitor } from "@/hooks/use-create-monitor";
 import type { Id } from "@/convex/_generated/dataModel";
+import { MAX_HISTORY_WINDOW_DAYS } from "@prowl/shared";
 
 function formatDuration(ms: number): string {
   if (ms < 1000) return `${ms}ms`;
@@ -52,13 +52,17 @@ export default function LogDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = use(params);
-  const rawLog = useQuery(api.logs.get, { id: id as Id<"scrapeLogs"> });
-  const log = rawLog as (typeof rawLog & LogExtended) | null | undefined;
+  const result = useQuery(api.logs.get, { id: id as Id<"scrapeLogs"> });
+  const { isLoading: convexAuthLoading } = useConvexAuth();
+  const log = result?.log as (NonNullable<typeof result>["log"] & LogExtended) | null | undefined;
   const [showRaw, setShowRaw] = useState(false);
   const { open: openCreate } = useCreateMonitor();
   const router = useRouter();
 
-  if (log === undefined) {
+  // A null window means the query saw no identity — worth waiting out while
+  // Convex auth is still settling, but not past that, or the page spins
+  // forever on the split where Better Auth is signed in and the socket is not.
+  if (result === undefined || (result.windowDays == null && convexAuthLoading)) {
     return (
       <div className="flex items-center justify-center py-32">
         <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
@@ -66,13 +70,33 @@ export default function LogDetailPage({
     );
   }
 
-  if (log === null) {
+  if (!log) {
+    // The server decides this from the log's own age, not from whether a
+    // bigger plan exists: a check older than every window is gone from the
+    // page on any plan, so nobody should be sold one to get it back.
+    const upgradeWouldHelp = result.upgradeWouldShow;
     return (
-      <div className="flex flex-col items-center justify-center py-32">
-        <p className="text-lg font-semibold mb-2">Log not found</p>
-        <Link href="/dashboard/logs">
-          <Button variant="outline">Back to logs</Button>
-        </Link>
+      <div className="flex flex-col items-center justify-center py-32 px-6 text-center">
+        <p className="text-lg font-semibold mb-2">
+          {result.outsideWindow ? "Older than your plan shows" : "Log not found"}
+        </p>
+        {result.outsideWindow && (
+          <p className="text-sm text-muted-foreground mb-4 max-w-sm">
+            {upgradeWouldHelp
+              ? `This check is still here — your plan shows the last ${result.windowDays} days. Upgrade and it comes back.`
+              : `This check is older than the ${MAX_HISTORY_WINDOW_DAYS} days any plan shows.`}
+          </p>
+        )}
+        <div className="flex gap-2">
+          <Link href="/dashboard/logs">
+            <Button variant="outline">Back to logs</Button>
+          </Link>
+          {upgradeWouldHelp && (
+            <Link href="/dashboard/settings?tab=billing">
+              <Button>Upgrade</Button>
+            </Link>
+          )}
+        </div>
       </div>
     );
   }

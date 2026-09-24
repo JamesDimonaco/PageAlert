@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useMemo } from "react";
-import { useQuery } from "convex/react";
+import { useConvexAuth, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -24,6 +24,7 @@ import {
   Search,
   ChevronDown,
   ChevronRight,
+  Ban,
 } from "lucide-react";
 import Link from "next/link";
 import { timeAgo } from "@/lib/time";
@@ -42,14 +43,34 @@ const statusConfig = {
 
 const PAGE_SIZE = 25;
 
+/**
+ * How many logs to ask for. The server clamps this to its own ceiling — see
+ * MAX_LIST_LIMIT in convex/logs.ts, which is the query read budget divided by
+ * what one row can cost — so ask for more than that and read the count that
+ * actually came back off the result.
+ */
+const FETCH_LIMIT = 500;
+
+type StatusFilter = "all" | "success" | "error" | "timeout" | "blocked";
+
 export default function LogsPage() {
-  const logs = useQuery(api.logs.list, { limit: 500 });
+  const data = useQuery(api.logs.list, { limit: FETCH_LIMIT });
+  const logs = data?.logs;
+  // Convex's own auth state, not Better Auth's. A null window means the query
+  // saw no identity, which is normal while this is still settling and
+  // terminal once it has — without the second half the page spins forever on
+  // the split where Better Auth is signed in and the Convex socket is not.
+  const { isLoading: convexAuthLoading } = useConvexAuth();
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [monitorFilter, setMonitorFilter] = useState<string>("all");
   const [groupBy, setGroupBy] = useState<"none" | "monitor">("none");
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+
+  function resetPaging() {
+    setVisibleCount(PAGE_SIZE);
+  }
 
   // Derive unique monitors for the filter dropdown (keyed by stable monitorId)
   const monitors = useMemo(() => {
@@ -64,11 +85,24 @@ export default function LogsPage() {
       .sort(([, a], [, b]) => a.localeCompare(b));
   }, [logs]);
 
+  const counts = useMemo(() => {
+    const tally = { success: 0, error: 0, timeout: 0, blocked: 0 };
+    for (const log of logs ?? []) {
+      tally[log.status]++;
+      if (log.blocked) tally.blocked++;
+    }
+    return tally;
+  }, [logs]);
+
   // Apply filters
   const filtered = useMemo(() => {
     if (!logs) return [];
     return logs.filter((log) => {
-      if (statusFilter !== "all" && log.status !== statusFilter) return false;
+      if (statusFilter === "blocked") {
+        if (!log.blocked) return false;
+      } else if (statusFilter !== "all" && log.status !== statusFilter) {
+        return false;
+      }
       if (monitorFilter !== "all" && (log.monitorId ?? log.url) !== monitorFilter) return false;
       if (search) {
         const q = search.toLowerCase();
@@ -103,7 +137,9 @@ export default function LogsPage() {
     return map;
   }, [logs]);
 
-  // Group logs by monitor (keyed by monitorId)
+  // Group logs by monitor (keyed by monitorId), newest group first. Sorting on
+  // each group's newest log rather than its first element, so the order holds
+  // even if the query ever stops arriving newest-first.
   const grouped = useMemo(() => {
     if (groupBy !== "monitor") return null;
     const map = new Map<string, typeof filtered>();
@@ -112,34 +148,75 @@ export default function LogsPage() {
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(log);
     }
-    return Array.from(map.entries()).sort(([, a], [, b]) => b[0].createdAt - a[0].createdAt);
+    return Array.from(map.entries()).sort(
+      ([, a], [, b]) =>
+        Math.max(...b.map((l) => l.createdAt)) - Math.max(...a.map((l) => l.createdAt))
+    );
   }, [filtered, groupBy]);
+
+  const windowDays = data?.windowDays;
+  const isFiltered = filtered.length !== (logs?.length ?? 0);
+  // Every count on this page is of the rows we fetched. When that is a slice
+  // of the window, each one is a floor — say so on all of them, not just the
+  // total, or "12 errors" reads as the whole week's errors.
+  const atLeast = data?.capped ? "+" : "";
+  // Groups hold their own page size. Remounting them when the filters change
+  // keeps the two views paging alike — otherwise a group expanded to 50 rows
+  // stays at 50 while the flat view snaps back to 25.
+  const filterKey = `${statusFilter}|${monitorFilter}|${search}`;
 
   return (
     <div className="space-y-8">
       <div>
         <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Scrape Logs</h1>
         <p className="text-muted-foreground mt-2 text-sm leading-relaxed">
-          Debug log of all scrape attempts with raw AI responses
+          Every check we ran for you, with what the AI made of the page.
+          {windowDays != null && ` Your plan shows the last ${windowDays} days.`}
         </p>
       </div>
 
-      {/* Summary bar */}
-      {logs && logs.length > 0 && (() => {
-        const successCount = logs.filter((l) => l.status === "success").length;
-        const errorCount = logs.filter((l) => l.status === "error").length;
-        const timeoutCount = logs.filter((l) => l.status === "timeout").length;
-        const blockedCount = logs.filter((l) => l.blocked).length;
-        return (
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
-            <span>{logs.length} total</span>
-            <span className="text-emerald-400">{successCount} success</span>
-            <span className="text-red-400">{errorCount} errors</span>
-            {timeoutCount > 0 && <span className="text-amber-400">{timeoutCount} timeouts</span>}
-            {blockedCount > 0 && <span className="text-red-400">{blockedCount} blocked</span>}
-          </div>
-        );
-      })()}
+      {/* Summary bar — doubles as the status filter, since the counts are
+          already here and clicking a number is what people try first. */}
+      {logs && logs.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <StatChip
+            label={`${logs.length}${atLeast} check${logs.length === 1 ? "" : "s"}`}
+            active={statusFilter === "all"}
+            onClick={() => { setStatusFilter("all"); resetPaging(); }}
+          />
+          <StatChip
+            label={`${counts.success}${atLeast} ok`}
+            tone="text-emerald-400"
+            active={statusFilter === "success"}
+            onClick={() => { setStatusFilter("success"); resetPaging(); }}
+          />
+          {counts.error > 0 && (
+            <StatChip
+              label={`${counts.error}${atLeast} error${counts.error === 1 ? "" : "s"}`}
+              tone="text-red-400"
+              active={statusFilter === "error"}
+              onClick={() => { setStatusFilter("error"); resetPaging(); }}
+            />
+          )}
+          {counts.timeout > 0 && (
+            <StatChip
+              label={`${counts.timeout}${atLeast} timeout${counts.timeout === 1 ? "" : "s"}`}
+              tone="text-amber-400"
+              active={statusFilter === "timeout"}
+              onClick={() => { setStatusFilter("timeout"); resetPaging(); }}
+            />
+          )}
+          {counts.blocked > 0 && (
+            <StatChip
+              label={`${counts.blocked}${atLeast} blocked`}
+              tone="text-red-400"
+              icon={Ban}
+              active={statusFilter === "blocked"}
+              onClick={() => { setStatusFilter("blocked"); resetPaging(); }}
+            />
+          )}
+        </div>
+      )}
 
       {/* Filters */}
       <div className="flex flex-col sm:flex-row sm:items-end gap-3">
@@ -151,14 +228,14 @@ export default function LogsPage() {
               id="log-search"
               placeholder="Search URL, monitor, or error..."
               value={search}
-              onChange={(e) => { setSearch(e.target.value); setVisibleCount(PAGE_SIZE); }}
+              onChange={(e) => { setSearch(e.target.value); resetPaging(); }}
               className="pl-9"
             />
           </div>
         </div>
         <div>
           <label htmlFor="log-status" className="text-xs text-muted-foreground mb-1 block">Status</label>
-          <Select value={statusFilter} onValueChange={(v) => { if (v) { setStatusFilter(v); setVisibleCount(PAGE_SIZE); } }}>
+          <Select value={statusFilter} onValueChange={(v) => { if (v) { setStatusFilter(v as StatusFilter); resetPaging(); } }}>
             <SelectTrigger id="log-status" className="w-full sm:w-[140px]">
               <SelectValue />
             </SelectTrigger>
@@ -167,13 +244,14 @@ export default function LogsPage() {
               <SelectItem value="success">Success</SelectItem>
               <SelectItem value="error">Error</SelectItem>
               <SelectItem value="timeout">Timeout</SelectItem>
+              <SelectItem value="blocked">Blocked</SelectItem>
             </SelectContent>
           </Select>
         </div>
         {monitors.length > 1 && (
           <div>
             <label htmlFor="log-monitor" className="text-xs text-muted-foreground mb-1 block">Monitor</label>
-            <Select value={monitorFilter} onValueChange={(v) => { if (v) { setMonitorFilter(v); setVisibleCount(PAGE_SIZE); } }}>
+            <Select value={monitorFilter} onValueChange={(v) => { if (v) { setMonitorFilter(v); resetPaging(); } }}>
               <SelectTrigger id="log-monitor" className="w-full sm:w-[180px]">
                 <SelectValue />
               </SelectTrigger>
@@ -191,7 +269,7 @@ export default function LogsPage() {
         {monitors.length > 1 && (
           <div>
             <label htmlFor="log-groupby" className="text-xs text-muted-foreground mb-1 block">Group by</label>
-            <Select value={groupBy} onValueChange={(v) => setGroupBy(v as "none" | "monitor")}>
+            <Select value={groupBy} onValueChange={(v) => { setGroupBy(v as "none" | "monitor"); resetPaging(); }}>
               <SelectTrigger id="log-groupby" className="w-full sm:w-[150px]">
                 <SelectValue />
               </SelectTrigger>
@@ -204,14 +282,23 @@ export default function LogsPage() {
         )}
       </div>
 
-      {logs === undefined ? (
+      {/* windowDays is null until Convex has the identity, so an empty result
+          here is "not looked yet" — but only while that is still resolving. */}
+      {logs === undefined || (windowDays == null && convexAuthLoading) ? (
         <div className="flex items-center justify-center py-20">
           <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
         </div>
       ) : logs.length === 0 ? (
-        <div className="flex flex-col items-center justify-center rounded-xl bg-card/30 py-20">
+        <div className="flex flex-col items-center justify-center rounded-xl bg-card/30 py-20 px-6 text-center">
           <Clock className="h-8 w-8 text-muted-foreground mb-4" />
-          <p className="text-sm text-muted-foreground">No scrape logs yet</p>
+          <p className="text-sm font-medium mb-1">No checks to show</p>
+          {/* Says what the page covers without claiming there is anything
+              behind it — a new account and a downgraded one both land here. */}
+          {windowDays != null && (
+            <p className="text-xs text-muted-foreground">
+              This page shows your last {windowDays} days.
+            </p>
+          )}
         </div>
       ) : filtered.length === 0 ? (
         <div className="flex flex-col items-center justify-center rounded-xl bg-card/30 py-20">
@@ -220,43 +307,18 @@ export default function LogsPage() {
           <p className="text-sm text-muted-foreground">Try adjusting your search or filters.</p>
         </div>
       ) : grouped ? (
-        // Grouped view
+        // Grouped view. Each group pages independently — one busy monitor used
+        // to render every one of its logs the moment the group opened.
         <div className="space-y-4">
-          {grouped.map(([groupKey, groupLogs]) => {
-            const isCollapsed = collapsedGroups.has(groupKey);
-            const label = monitorLabels.get(groupKey) ?? groupKey;
-            const successCount = groupLogs.filter((l) => l.status === "success").length;
-            const errorCount = groupLogs.filter((l) => l.status !== "success").length;
-            return (
-              <div key={groupKey} className="rounded-xl border border-border/30 bg-card/30 overflow-hidden">
-                <button
-                  onClick={() => toggleGroup(groupKey)}
-                  className="w-full flex items-center justify-between p-4 hover:bg-card/50 transition-colors text-left"
-                >
-                  <div className="flex items-center gap-3 min-w-0">
-                    {isCollapsed ? (
-                      <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
-                    ) : (
-                      <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
-                    )}
-                    <span className="text-sm font-semibold truncate">{label}</span>
-                  </div>
-                  <div className="flex items-center gap-3 text-xs text-muted-foreground shrink-0">
-                    <span>{groupLogs.length} log{groupLogs.length !== 1 ? "s" : ""}</span>
-                    {successCount > 0 && <span className="text-emerald-400">{successCount} ok</span>}
-                    {errorCount > 0 && <span className="text-red-400">{errorCount} failed</span>}
-                  </div>
-                </button>
-                {!isCollapsed && (
-                  <div className="border-t border-border/20 space-y-1 p-2">
-                    {groupLogs.map((log) => (
-                      <LogEntry key={log._id} log={log} />
-                    ))}
-                  </div>
-                )}
-              </div>
-            );
-          })}
+          {grouped.map(([groupKey, groupLogs]) => (
+            <MonitorGroup
+              key={`${groupKey}|${filterKey}`}
+              label={monitorLabels.get(groupKey) ?? groupKey}
+              logs={groupLogs}
+              collapsed={collapsedGroups.has(groupKey)}
+              onToggle={() => toggleGroup(groupKey)}
+            />
+          ))}
         </div>
       ) : (
         // Flat view with pagination
@@ -278,12 +340,110 @@ export default function LogsPage() {
         </div>
       )}
 
-      {/* Summary */}
+      {/* What you are looking at, said exactly. The old line called the loaded
+          slice the total, which read as data loss once the cap bit. Grouped
+          view counts monitors rather than rows, because each group pages on
+          its own and no single number describes what is on screen. */}
       {logs && logs.length > 0 && (
         <p className="text-xs text-muted-foreground text-center">
-          Showing {grouped ? filtered.length : Math.min(visibleCount, filtered.length)} of {filtered.length} logs
-          {filtered.length !== logs.length && ` (filtered from ${logs.length})`}
+          {grouped
+            ? `${filtered.length} log${filtered.length === 1 ? "" : "s"} across ${grouped.length} monitor${grouped.length === 1 ? "" : "s"}`
+            : `Showing ${Math.min(visibleCount, filtered.length)} of ${filtered.length}`}
+          {isFiltered && `, filtered from ${logs.length}`}
+          {data?.capped
+            ? ` — the ${logs.length} most recent of your last ${windowDays} days`
+            /* "every check" only reads true of an unfiltered view; next to a
+               filter clause it would contradict the sentence it ends. */
+            : !isFiltered && ` — every check in your last ${windowDays} days`}
         </p>
+      )}
+    </div>
+  );
+}
+
+function StatChip({
+  label,
+  tone,
+  icon: Icon,
+  active,
+  onClick,
+}: {
+  label: string;
+  tone?: string;
+  icon?: typeof Ban;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      aria-pressed={active}
+      className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs transition-colors ${
+        active
+          ? "border-primary/40 bg-primary/10 text-foreground"
+          : "border-border/30 bg-card/30 text-muted-foreground hover:bg-card/60"
+      }`}
+    >
+      {Icon && <Icon className="h-3 w-3" />}
+      <span className={active ? undefined : tone}>{label}</span>
+    </button>
+  );
+}
+
+const GROUP_PAGE_SIZE = 10;
+
+function MonitorGroup({
+  label,
+  logs,
+  collapsed,
+  onToggle,
+}: {
+  label: string;
+  logs: Log[];
+  collapsed: boolean;
+  onToggle: () => void;
+}) {
+  const [shown, setShown] = useState(GROUP_PAGE_SIZE);
+  const successCount = logs.filter((l) => l.status === "success").length;
+  const errorCount = logs.length - successCount;
+
+  return (
+    <div className="rounded-xl border border-border/30 bg-card/30 overflow-hidden">
+      <button
+        onClick={onToggle}
+        className="w-full flex items-center justify-between p-4 hover:bg-card/50 transition-colors text-left"
+      >
+        <div className="flex items-center gap-3 min-w-0">
+          {collapsed ? (
+            <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
+          ) : (
+            <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
+          )}
+          <span className="text-sm font-semibold truncate">{label}</span>
+        </div>
+        <div className="flex items-center gap-3 text-xs text-muted-foreground shrink-0">
+          <span>{logs.length} log{logs.length !== 1 ? "s" : ""}</span>
+          {successCount > 0 && <span className="text-emerald-400">{successCount} ok</span>}
+          {errorCount > 0 && <span className="text-red-400">{errorCount} failed</span>}
+        </div>
+      </button>
+      {!collapsed && (
+        <div className="border-t border-border/20 space-y-1 p-2">
+          {logs.slice(0, shown).map((log) => (
+            <LogEntry key={log._id} log={log} />
+          ))}
+          {shown < logs.length && (
+            <div className="flex justify-center py-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setShown((c) => c + GROUP_PAGE_SIZE)}
+              >
+                Show {Math.min(GROUP_PAGE_SIZE, logs.length - shown)} more
+              </Button>
+            </div>
+          )}
+        </div>
       )}
     </div>
   );
@@ -300,10 +460,8 @@ interface Log {
   itemCount?: number;
   matchCount?: number;
   error?: string;
-  aiConfidence?: number;
   strategy?: string;
   blocked?: boolean;
-  blockReason?: string;
   retryAttempt?: number;
 }
 
