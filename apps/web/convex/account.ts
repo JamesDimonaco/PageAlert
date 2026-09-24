@@ -1,6 +1,5 @@
-import { v } from "convex/values";
-import { internalMutation, mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
-import { internal } from "./_generated/api";
+import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
+import { components, internal } from "./_generated/api";
 
 /** Is this user currently banned? Shared by every mutation that gates on ban status. */
 export async function isBanned(ctx: QueryCtx | MutationCtx, userId: string): Promise<boolean> {
@@ -12,34 +11,40 @@ export async function isBanned(ctx: QueryCtx | MutationCtx, userId: string): Pro
 }
 
 /**
- * Deletes every row this app owns for a user: monitors and their scrape
- * results/notifications, notification settings, remaining notifications,
- * channel claims, the tier record, the creation-rate-limit log, the
- * last-seen record, and the scrape log.
- * Shared by the user's own deleteAccount and the admin dashboard's
- * forced delete, so both paths agree on what "all data" means — a
- * userTiers row surviving account deletion was a known gap this closes
- * for both callers.
+ * Deletes every row this app owns for a user. Shared by the user's own
+ * deleteAccount and the admin dashboard's forced delete, so both paths
+ * agree on what "all data" means. account.test.ts checks it against the
+ * schema: a new table has to be handled here or listed as kept there.
  *
- * Two tables still hold an email address after this runs: emailSends and
- * onboardingEmails. Both are small (one and four rows for the worst account)
- * and both are deliberately left for a separate decision, not overlooked.
+ * Kept on purpose:
+ * - bannedUsers: a ban has to outlive the account it was placed on, or
+ *   deleting the account would be the way round it. deleteAccount refuses
+ *   banned users; admin.deleteUser drops the row itself.
+ * - appliedOrders: opaque Polar order ids. Polar redelivers webhooks for
+ *   up to a day, and this is what stops a redelivered order recreating a
+ *   tier row for a user who no longer exists.
+ * - adminEmails: the operator's record of what was sent and to whom.
+ * - counters, anonymousScanCounter: aggregates, no personal data.
  *
  * monitorCreations rows are kept across *monitor* deletion (see
  * monitors.ts) to stop a delete-and-remake bypassing the creation rate
  * limit, but a full account delete gets a fresh userId on re-signup
- * regardless, so retaining them here serves no anti-abuse purpose —
- * they're just orphaned personal data at that point.
+ * regardless, so retaining them here serves no anti-abuse purpose.
  *
- * Deliberately does NOT touch bannedUsers: deleteAccount (self-service)
- * doesn't remove the caller's Better Auth session, so the same still-
- * logged-in identity would remain — dropping the ban row here would let
- * a banned user delete their way back to an unbanned session. Only
- * admin.deleteUser removes the ban record, because that path also
- * destroys the Better Auth session/account/user rows the ban was
- * blocking, so the userId can never come back to use it.
+ * scrapeLogs can run to tens of thousands of rows for one user, more than
+ * a transaction holds, so that table is purged in scheduled batches.
+ *
+ * `email` is required rather than optional because emailSends is only
+ * reachable by address for most of its rows, and a caller that forgot to
+ * pass it would silently leave a user's alert history behind — the exact bug
+ * this function keeps being fixed for. Pass undefined only when there is
+ * genuinely no address on record.
  */
-export async function deleteAllUserData(ctx: MutationCtx, userId: string): Promise<void> {
+export async function deleteAllUserData(
+  ctx: MutationCtx,
+  userId: string,
+  email: string | undefined,
+): Promise<void> {
   const monitors = await ctx.db
     .query("monitors")
     .withIndex("by_userId", (q) => q.eq("userId", userId))
@@ -109,58 +114,99 @@ export async function deleteAllUserData(ctx: MutationCtx, userId: string): Promi
     .unique();
   if (activity) await ctx.db.delete(activity._id);
 
-  await deleteScrapeLogs(ctx, userId);
+  const subscriptions = await ctx.db
+    .query("pushSubscriptions")
+    .withIndex("by_userId", (q) => q.eq("userId", userId))
+    .collect();
+  for (const subscription of subscriptions) {
+    await ctx.db.delete(subscription._id);
+  }
+
+  const feedback = await ctx.db
+    .query("matchFeedback")
+    .withIndex("by_userId", (q) => q.eq("userId", userId))
+    .collect();
+  for (const row of feedback) {
+    await ctx.db.delete(row._id);
+  }
+
+  const reviews = await ctx.db
+    .query("reviews")
+    .withIndex("by_userId", (q) => q.eq("userId", userId))
+    .collect();
+  for (const review of reviews) {
+    await ctx.db.delete(review._id);
+  }
+
+  // Two sweeps, because only the onboarding and inactivity emails pass a
+  // userId to recordSend. Match, error, monitor-stopped, price,
+  // anonymous-scan and bulk all record with it undefined, so by_userId alone
+  // would leave a user's whole alert history behind with their address in
+  // `to`. The address is what reaches those; the userId still matters for the
+  // rows written before an address change.
+  const sends = await ctx.db
+    .query("emailSends")
+    .withIndex("by_userId", (q) => q.eq("userId", userId))
+    .collect();
+  if (email) {
+    sends.push(
+      ...(await ctx.db
+        .query("emailSends")
+        .withIndex("by_to", (q) => q.eq("to", email))
+        .collect())
+    );
+  }
+  const seen = new Set<string>();
+  for (const send of sends) {
+    if (seen.has(send._id)) continue;
+    seen.add(send._id);
+    await ctx.db.delete(send._id);
+  }
+
+  const onboarding = await ctx.db
+    .query("onboardingEmails")
+    .withIndex("by_userId", (q) => q.eq("userId", userId))
+    .collect();
+  for (const row of onboarding) {
+    await ctx.db.delete(row._id);
+  }
+
+  await ctx.scheduler.runAfter(0, internal.logs.purgeForUser, { userId });
+  // Ten minutes is far longer than the chain needs even for the heaviest
+  // account, so anything still there means it stopped early. See auditPurge.
+  await ctx.scheduler.runAfter(10 * 60 * 1000, internal.logs.auditPurge, { userId });
+}
+
+type UserIdRow = { field: "userId"; operator: "eq"; value: string };
+
+/** Deletes every matching Better Auth row for a user, a page at a time until none remain. */
+async function deleteAllRowsByUser(
+  ctx: MutationCtx,
+  input: { model: "session"; where: UserIdRow[] } | { model: "account"; where: UserIdRow[] },
+): Promise<void> {
+  for (let page = 0; page < 40; page++) {
+    const result = await ctx.runMutation(components.betterAuth.adapter.deleteMany, {
+      input,
+      paginationOpts: { numItems: 200, cursor: null },
+    });
+    if (result.count === 0 || result.isDone) break;
+  }
 }
 
 /**
- * Scrape logs removed per mutation.
- *
- * 100 because a row carries rawResponse: the heaviest in prod is 23KB, so a
- * batch costs roughly 2.4MB of a transaction's ~8MB read budget even at that
- * size, alongside everything else the sweep reads. Taking them all at once
- * looked fine on today's numbers and was the wrong bet — nothing prunes this
- * table, deliberately, so the accounts holding the most would be exactly the
- * ones whose deletion blew the budget, threw, and rolled back. A user who
- * cannot delete their account is worse than a delete that takes ten rounds.
+ * Removes the user's Better Auth session, OAuth account and user rows: the
+ * email, name and sign-in identity. Without this, "delete my account" left
+ * the login itself behind, and the privacy policy's "permanently removed"
+ * was untrue for the most personal data we hold.
  */
-const LOG_DELETE_BATCH = 100;
-
-/**
- * Takes one batch of a user's scrape logs, and queues another if more remain.
- *
- * The log is the last and largest of it: every URL they watched, every prompt
- * they wrote, and the raw AI response for each check. It survived account
- * deletion until now because the per-monitor sweep does not take it — a log
- * outlives its monitor on purpose, so the logs page can still show checks for
- * one you have since deleted (1,372 of prod's 7,420 rows point at a monitor
- * that is gone). That leaves the account as the only thing that removes them.
- *
- * Past the first batch this is no longer atomic with the account deletion,
- * which is the right way round: the goal is erasure, so partial progress
- * toward it is acceptable where refusing to start is not.
- */
-async function deleteScrapeLogs(ctx: MutationCtx, userId: string): Promise<void> {
-  const batch = await ctx.db
-    .query("scrapeLogs")
-    .withIndex("by_userId_createdAt", (q) => q.eq("userId", userId))
-    .take(LOG_DELETE_BATCH);
-
-  for (const log of batch) {
-    await ctx.db.delete(log._id);
-  }
-
-  if (batch.length === LOG_DELETE_BATCH) {
-    await ctx.scheduler.runAfter(0, internal.account.deleteRemainingScrapeLogs, { userId });
-  }
+export async function deleteAuthRows(ctx: MutationCtx, userId: string): Promise<void> {
+  const idFilter: UserIdRow[] = [{ field: "userId", operator: "eq", value: userId }];
+  await deleteAllRowsByUser(ctx, { model: "session", where: idFilter });
+  await deleteAllRowsByUser(ctx, { model: "account", where: idFilter });
+  await ctx.runMutation(components.betterAuth.adapter.deleteOne, {
+    input: { model: "user", where: [{ field: "_id", operator: "eq", value: userId }] },
+  });
 }
-
-/** Continues deleteScrapeLogs for an account holding more than one batch. */
-export const deleteRemainingScrapeLogs = internalMutation({
-  args: { userId: v.string() },
-  handler: async (ctx, { userId }) => {
-    await deleteScrapeLogs(ctx, userId);
-  },
-});
 
 /**
  * Record that this user is in the app right now. Called from the dashboard
@@ -198,7 +244,13 @@ export const deleteAccount = mutation({
   handler: async (ctx) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Not authenticated");
-    await deleteAllUserData(ctx, identity.subject);
+    // With the login rows gone, the same person signs up again as a fresh,
+    // unbanned userId. Erasure for a banned user goes through the contact email.
+    if (await isBanned(ctx, identity.subject)) {
+      throw new Error("This account is suspended. Email us to have it deleted.");
+    }
+    await deleteAllUserData(ctx, identity.subject, identity.email);
+    await deleteAuthRows(ctx, identity.subject);
     // The churn no webhook reports: someone leaving of their own accord.
     // admin.deleteUser has its own alert naming the admin who did it.
     await ctx.scheduler.runAfter(0, internal.admin.notify, {

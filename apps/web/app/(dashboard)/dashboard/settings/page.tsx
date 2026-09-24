@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useSearchParams, useRouter, usePathname } from "next/navigation";
+import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -27,10 +28,12 @@ import { api } from "@/convex/_generated/api";
 import { authClient } from "@/lib/auth-client";
 import { toast } from "sonner";
 import {
+  POSTHOG_KEY,
   trackUpgradePromptClicked,
   trackTestEmailSent,
   trackNotificationChannelToggled,
 } from "@/lib/posthog";
+import { AnalyticsToggle } from "@/components/prowl/analytics-toggle";
 
 type NotificationChannel = "email" | "telegram" | "discord" | "push";
 
@@ -193,6 +196,21 @@ export default function SettingsPage() {
               </div>
             </CardContent>
           </Card>
+
+          {POSTHOG_KEY && (
+            <Card className="border-border/30 bg-card/50 shadow-sm shadow-black/5">
+              <CardHeader className="pb-4">
+                <CardTitle className="text-lg font-semibold">Analytics</CardTitle>
+                <CardDescription className="text-sm">How we see what the app is used for</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <AnalyticsToggle />
+                <Link href="/privacy" className="text-xs text-primary hover:underline">
+                  Privacy policy
+                </Link>
+              </CardContent>
+            </Card>
+          )}
 
           <Card className="border-destructive/20 bg-card/50 shadow-sm shadow-black/5">
             <CardHeader className="pb-4">
