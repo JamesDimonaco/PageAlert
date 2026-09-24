@@ -45,7 +45,7 @@ export async function deleteAllUserData(
  * it. Convex will accept a document up to ONE_CONVEX_DOCUMENT_BYTES, so a
  * round reads at most its byte budget plus the one row that crossed it.
  */
-export const ONE_CONVEX_DOCUMENT_BYTES = 1_000_000;
+export const ONE_CONVEX_DOCUMENT_BYTES = 1024 * 1024;
 export const SWEEP_BUDGET_BYTES = 4_000_000;
 export const SWEEP_BUDGET_ROWS = 1_000;
 
@@ -105,12 +105,27 @@ async function sweepMonitors(ctx: MutationCtx, userId: string, left: Allowance):
     .withIndex("by_userId", (q) => q.eq("userId", userId))) {
     // Charged on read, not on delete: a monitor carries `schema: v.any()` and
     // three arrays with no size limit, and the round has already paid to read
-    // it even if it runs out before deleting it.
+    // it even if it runs out before deleting it. Checked straight afterwards
+    // so the monitor that crosses the budget is the last thing the round
+    // reads, rather than the round going on to read a child as well.
     left.bytes -= byteSize(monitor);
+    if (spent(left)) return;
 
     await drain(
       ctx,
       ctx.db.query("scrapeResults").withIndex("by_monitorId", (q) => q.eq("monitorId", monitor._id)),
+      left
+    );
+    if (spent(left)) return;
+
+    // By monitor, not by userId: a scan that ran anonymously wrote its logs
+    // under an `anon_` id, and claiming the monitor at signup re-keys the
+    // monitor alone (anonymous.ts). Those logs hold the URL, the prompt and
+    // the raw AI response of every check, and the sweep by userId below
+    // cannot see them.
+    await drain(
+      ctx,
+      ctx.db.query("scrapeLogs").withIndex("by_monitorId", (q) => q.eq("monitorId", monitor._id)),
       left
     );
     if (spent(left)) return;

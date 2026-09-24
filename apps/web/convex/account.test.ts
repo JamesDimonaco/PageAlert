@@ -155,12 +155,25 @@ async function remaining(ctx: MutationCtx, userId: string): Promise<string[]> {
  * a round can read is its byte budget plus the one document that crossed it.
  */
 test("a round's budget leaves room for the document that overruns it", () => {
+  // A read is checked after the fact, so a round reads its budget plus the one
+  // document that crossed it — and Convex reads at most 8 MiB per mutation.
   expect(SWEEP_BUDGET_BYTES).toBeGreaterThan(0);
-  expect(SWEEP_BUDGET_BYTES + ONE_CONVEX_DOCUMENT_BYTES).toBeLessThanOrEqual(8_000_000);
-  // Convex writes at most 8,192 documents in a transaction, and the monitor
-  // sweep deletes children alongside what the allowance counts.
+  expect(SWEEP_BUDGET_BYTES + ONE_CONVEX_DOCUMENT_BYTES).toBeLessThanOrEqual(8 * 1024 * 1024);
+  // Every row the allowance counts is one document deleted, and Convex writes
+  // at most 8,192 per mutation.
   expect(SWEEP_BUDGET_ROWS).toBeGreaterThan(0);
-  expect(SWEEP_BUDGET_ROWS * 2).toBeLessThanOrEqual(8_192);
+  expect(SWEEP_BUDGET_ROWS).toBeLessThanOrEqual(8_192);
+});
+
+/**
+ * The one thing standing between this sweep and an account that can never be
+ * deleted: a round has to be able to afford the largest document Convex will
+ * store. If a single row could exhaust a whole round, the round would reach
+ * its limit having deleted nothing, reschedule, and meet the same row again.
+ */
+test("a round can always afford at least one document", () => {
+  expect(SWEEP_BUDGET_BYTES).toBeGreaterThan(ONE_CONVEX_DOCUMENT_BYTES);
+  expect(SWEEP_BUDGET_ROWS).toBeGreaterThan(1);
 });
 
 test("every table carrying a userId is either swept on delete or deliberately kept", () => {
@@ -341,6 +354,53 @@ test("the byte budget holds when rows are multi-byte", async () => {
 });
 
 /**
+ * An anonymous scan writes its logs under an `anon_` id, and claiming the
+ * monitor at signup re-keys the monitor alone. The logs keep the anon id, so
+ * a sweep by userId walks straight past them — leaving the URL, the prompt
+ * and the raw AI response of every check the scan ever ran.
+ */
+test("logs from a monitor's anonymous life go when the account does", async () => {
+  const t = convexTest(schema, modules);
+  const ANON = "anon_11111111-2222-3333-4444-555555555555";
+
+  await t.run(async (ctx) => {
+    const monitorId = await ctx.db.insert("monitors", {
+      userId: ANON,
+      name: "watch",
+      url: "https://example.com/deals",
+      prompt: "tell me about deals",
+      status: "active",
+      checkInterval: "24h",
+      matchCount: 0,
+      isAnonymous: true,
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    // Two checks while anonymous, then one after the claim.
+    for (const userId of [ANON, ANON, LEAVING]) {
+      await ctx.db.insert("scrapeLogs", {
+        userId,
+        monitorId,
+        url: "https://example.com/deals",
+        prompt: "tell me about deals",
+        status: "success",
+        durationMs: 1,
+        createdAt: 1,
+      });
+    }
+    // What anonymous.claim does: the monitor is re-keyed, the logs are not.
+    await ctx.db.patch(monitorId, { userId: LEAVING, isAnonymous: undefined });
+
+    await deleteAllUserData(ctx as MutationCtx, LEAVING);
+  });
+  await t.finishAllScheduledFunctions(() => {});
+
+  await t.run(async (ctx) => {
+    expect(await ctx.db.query("scrapeLogs").collect()).toHaveLength(0);
+  });
+});
+
+/**
  * `schema: v.any()` accepts every Convex value, Int64 and Bytes included, and
  * JSON cannot serialise either. Weighing a row by serialising it would throw
  * on the first such document and take the whole account deletion with it —
@@ -405,6 +465,61 @@ test("the monitors themselves are charged to the byte budget", async () => {
     expect(deleted * FILLER.length).toBeLessThanOrEqual(
       SWEEP_BUDGET_BYTES + ONE_CONVEX_DOCUMENT_BYTES
     );
+  });
+});
+
+/**
+ * The budget is checked after a read, so a round overruns it by whatever
+ * crossed the line — and that has to be one document, not two. A monitor
+ * whose own weight breaks the budget must be the last thing the round reads:
+ * going on to read one of its children would put the round a second full
+ * document over, and the ceiling asserted above would be a fiction.
+ */
+test("a monitor that breaks the budget is the last row its round reads", async () => {
+  const t = convexTest(schema, modules);
+  const FAT = "x".repeat(990_000);
+  const monitor = (extra: object) => ({
+    userId: LEAVING,
+    name: "watch",
+    url: "https://example.com/deals",
+    prompt: "tell me about deals",
+    status: "active" as const,
+    checkInterval: "1h" as const,
+    matchCount: 0,
+    blacklistedItems: [FAT],
+    createdAt: 1,
+    updatedAt: 1,
+    ...extra,
+  });
+
+  await t.run(async (ctx) => {
+    // Four monitors bring the round to the edge of its budget; the fifth
+    // crosses it on its own weight, before any child is looked at.
+    for (let i = 0; i < 4; i++) await ctx.db.insert("monitors", monitor({}));
+    const last = await ctx.db.insert("monitors", monitor({}));
+    await ctx.db.insert("scrapeResults", {
+      monitorId: last,
+      matches: [FAT],
+      totalItems: 0,
+      hasNewMatches: false,
+      scrapedAt: 1,
+    });
+
+    await deleteAllUserData(ctx as MutationCtx, LEAVING);
+  });
+
+  // Before any scheduled round runs: the fifth monitor's child is untouched,
+  // so the round read five monitors and stopped, not five and a result.
+  await t.run(async (ctx) => {
+    expect(await ctx.db.query("scrapeResults").collect()).toHaveLength(1);
+    const readBytes = 5 * FAT.length;
+    expect(readBytes).toBeLessThanOrEqual(SWEEP_BUDGET_BYTES + ONE_CONVEX_DOCUMENT_BYTES);
+  });
+
+  await t.finishAllScheduledFunctions(() => {});
+  await t.run(async (ctx) => {
+    expect(await ctx.db.query("monitors").collect()).toHaveLength(0);
+    expect(await ctx.db.query("scrapeResults").collect()).toHaveLength(0);
   });
 });
 
