@@ -1,3 +1,5 @@
+import { HISTORY_WINDOW_DAYS } from "@prowl/shared";
+
 export interface PlanFeature {
   text: string;
   comingSoon?: boolean;
@@ -25,7 +27,7 @@ export const PLANS: Plan[] = [
       { text: "3 monitors" },
       { text: "1 hour check interval" },
       { text: "Email and push, plus Telegram or Discord on one monitor" },
-      { text: "Full check history" },
+      { text: `${HISTORY_WINDOW_DAYS.free} days of scrape logs` },
       { text: "AI-powered extraction" },
       { text: "Change detection" },
     ],
@@ -40,7 +42,7 @@ export const PLANS: Plan[] = [
       { text: "10 monitors" },
       { text: "30 minute check interval" },
       { text: "Email, push, Telegram & Discord" },
-      { text: "Full check history" },
+      { text: `${HISTORY_WINDOW_DAYS.sprint} days of scrape logs` },
       { text: "AI-powered extraction" },
       { text: "No subscription — expires on its own" },
     ],
@@ -56,7 +58,7 @@ export const PLANS: Plan[] = [
       { text: "25 monitors" },
       { text: "15 minute check interval" },
       { text: "Email, push, Telegram & Discord" },
-      { text: "Full check history" },
+      { text: `${HISTORY_WINDOW_DAYS.pro} days of scrape logs` },
       { text: "Priority scraping" },
       { text: "AI-powered extraction" },
       { text: "Change detection" },
@@ -73,7 +75,7 @@ export const PLANS: Plan[] = [
       { text: "Unlimited monitors" },
       { text: "5 minute check interval" },
       { text: "All notification channels" },
-      { text: "Full check history" },
+      { text: `${HISTORY_WINDOW_DAYS.max} days of scrape logs` },
       { text: "Priority scraping" },
       { text: "AI-powered extraction" },
       { text: "Change detection" },

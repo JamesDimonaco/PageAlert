@@ -173,7 +173,9 @@ export default defineSchema({
     strategy: v.optional(v.string()),
     createdAt: v.number(),
   })
-    .index("by_userId", ["userId"])
+    // createdAt is on the user index because the logs page reads a tier-sized
+    // window rather than the whole history — see retention.ts in shared.
+    .index("by_userId_createdAt", ["userId", "createdAt"])
     .index("by_createdAt", ["createdAt"])
     .index("by_status", ["status"]),
 
@@ -197,7 +199,8 @@ export default defineSchema({
   })
     .index("by_monitorId", ["monitorId"])
     .index("by_monitor_item", ["monitorId", "itemKey"])
-    .index("by_createdAt", ["createdAt"]),
+    .index("by_createdAt", ["createdAt"])
+    .index("by_userId", ["userId"]),
 
   notificationSettings: defineTable({
     userId: v.string(),
@@ -225,6 +228,11 @@ export default defineSchema({
     // the billing UI and isPayingRecord both need to know.
     grantUntil: v.optional(v.number()),
     grantSource: v.optional(v.union(v.literal("admin"), v.literal("pass"))),
+    // Polar's modified_at for polarSubscriptionId, as an ordering key. Polar
+    // retries a failed delivery up to ten times with backoff, so a stale
+    // subscription.created can land after the cancellation it predates and
+    // wipe it. Writes carrying an older stamp than this are dropped.
+    subscriptionModifiedAt: v.optional(v.number()),
     dailyScans: v.optional(v.number()),
     dailyScansDate: v.optional(v.string()),
     reviewDismissed: v.optional(v.boolean()),
@@ -344,7 +352,12 @@ export default defineSchema({
   })
     .index("by_resendId", ["resendId"])
     .index("by_createdAt", ["createdAt"])
-    .index("by_status_createdAt", ["status", "createdAt"]),
+    .index("by_status_createdAt", ["status", "createdAt"])
+    .index("by_userId", ["userId"])
+    // Only two of the eight email kinds pass a userId to recordSend, so
+    // by_userId reaches almost none of a user's sends. Account deletion has
+    // to find them by address as well. See deleteAllUserData.
+    .index("by_to", ["to"]),
 
   // Audit log of bulk emails sent from the super-admin dashboard
   adminEmails: defineTable({
