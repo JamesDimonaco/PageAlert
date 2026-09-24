@@ -116,6 +116,13 @@ export function usePush() {
   const sendTestMessage = useAction(api.push.sendTestMessage);
 
   useEffect(() => {
+    // Pull in a new sw.js now rather than whenever the browser gets round to
+    // it: a worker from before per-test ids makes the first test read as lost
+    void navigator.serviceWorker
+      ?.getRegistration()
+      .then((registration) => registration?.update())
+      .catch(() => {});
+
     let cancelled = false;
     void detectState().then((next) => {
       if (cancelled) return;

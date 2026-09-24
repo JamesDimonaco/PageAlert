@@ -620,6 +620,9 @@ export default function SettingsPage() {
                     className="shrink-0"
                     disabled={push.busy}
                     onClick={async () => {
+                      // A dead device drops to "off" mid-test, which can leave
+                      // the lost panel waiting to reappear on re-enable
+                      setPushTest("idle");
                       try {
                         await push.enable();
                         trackNotificationChannelToggled({ channel: "push", enabled: true });
@@ -725,6 +728,12 @@ export default function SettingsPage() {
                       </Button>
                     </div>
                   </div>
+
+                  {pushTest === "sending" && (
+                    <p className="text-xs text-muted-foreground">
+                      Waiting for the test to arrive. This can take up to 30 seconds.
+                    </p>
+                  )}
 
                   {pushTest === "asking" && (
                     <div className="rounded-lg border border-border/40 bg-muted/20 p-4 space-y-3">
