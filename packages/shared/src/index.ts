@@ -7,3 +7,4 @@ export * from "./dormancy";
 export * from "./subscription";
 export * from "./retention";
 export * from "./log-size";
+export * from "./device";
