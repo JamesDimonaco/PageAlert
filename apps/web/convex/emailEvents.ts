@@ -34,11 +34,39 @@ export const recordSend = internalMutation({
   },
 });
 
+/**
+ * Record a whole batch of sends in one transaction. sendBulkEmail allows 1000
+ * recipients, so a mutation per recipient would be 1000 round-trips from an
+ * action that is already sleeping between chunks.
+ */
+export const recordSends = internalMutation({
+  args: {
+    kind: v.string(),
+    sends: v.array(v.object({ to: v.string(), resendId: v.optional(v.string()) })),
+    ok: v.boolean(),
+    error: v.optional(v.string()),
+  },
+  handler: async (ctx, { kind, sends, ok, error }) => {
+    const now = Date.now();
+    for (const s of sends) {
+      await ctx.db.insert("emailSends", {
+        to: s.to,
+        kind,
+        resendId: s.resendId,
+        status: ok ? "sent" : "failed",
+        error,
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+  },
+});
+
 /** Advance a send row from a Resend delivery event. Unknown ids are ignored. */
 export const applyEvent = internalMutation({
   args: {
     resendId: v.string(),
-    status: v.union(v.literal("delivered"), v.literal("bounced"), v.literal("complained")),
+    status: v.union(v.literal("delivered"), v.literal("bounced"), v.literal("complained"), v.literal("failed")),
   },
   handler: async (ctx, { resendId, status }) => {
     const row = await ctx.db
@@ -51,7 +79,7 @@ export const applyEvent = internalMutation({
     if (status === "delivered" && row.status !== "sent") return "applied";
     await ctx.db.patch(row._id, { status, updatedAt: Date.now() });
 
-    if (status === "bounced" || status === "complained") {
+    if (status === "bounced" || status === "complained" || status === "failed") {
       // Volume is low enough that a single bounce is worth knowing about, so
       // alert on any of them and let claimAlertSlot keep it to one an hour.
       const send = await ctx.runMutation(internal.admin.claimAlertSlot, {
@@ -123,10 +151,15 @@ async function verifySvix(
   return false;
 }
 
-const EVENT_STATUS: Record<string, "delivered" | "bounced" | "complained"> = {
+// email.failed is a hard send failure after Resend accepted the request. Without
+// it the row sits at "sent" forever, which the dashboard reads as "awaiting
+// webhook" — indistinguishable from a send that simply hasn't reported yet, and
+// exactly the case this table exists to surface.
+const EVENT_STATUS: Record<string, "delivered" | "bounced" | "complained" | "failed"> = {
   "email.delivered": "delivered",
   "email.bounced": "bounced",
   "email.complained": "complained",
+  "email.failed": "failed",
 };
 
 /** Five minutes, matching Svix's own replay window. */

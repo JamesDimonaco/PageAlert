@@ -90,7 +90,24 @@ export function matchKey(item: { url?: unknown; title?: unknown; name?: unknown 
   // every product link, so the raw URL made one unchanged listing a new
   // arrival on every single check.
   if (url) return canonicalUrl(url);
-  return String(item.title ?? item.name ?? "").trim().toLowerCase();
+  const title = String(item.title ?? item.name ?? "").trim().toLowerCase();
+  if (title) return title;
+  // An AI schema is free to produce items with neither a url nor a title —
+  // {description, price}, say. Falling through to "" there would make every key
+  // empty, so newMatchKeys would filter them all out and the monitor would
+  // never alert again. Hash the item instead: stable for an unchanged item,
+  // different for a new one, which is all the diff needs.
+  return `#${hash(JSON.stringify(item))}`;
+}
+
+/** FNV-1a. Short, synchronous, and good enough to tell two items apart. */
+function hash(input: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < input.length; i++) {
+    h ^= input.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(36);
 }
 
 /**
