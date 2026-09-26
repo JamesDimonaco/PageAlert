@@ -2,7 +2,13 @@ import { chromium, type Browser, type Page } from "playwright";
 import type { ScrapeResponse } from "@prowl/shared";
 import { validateUrlForScraping } from "../utils/url-validation.js";
 
-let browser: Browser | null = null;
+type LaunchedBrowser = { instance: Browser; userAgent: string };
+
+/**
+ * Shared by every caller: scrapes arrive in bursts, and a caller that
+ * launched its own browser would leave the others' running unclosed.
+ */
+let browserLaunch: Promise<LaunchedBrowser> | null = null;
 
 /**
  * Maximum number of concurrent browser contexts. Each one is a live renderer,
@@ -43,23 +49,54 @@ const MAX_RESPONSE_SIZE = 5 * 1024 * 1024;
 /** Hard cap on timeout to prevent indefinite resource consumption */
 const MAX_TIMEOUT = 60000;
 
-async function getBrowser(): Promise<Browser> {
-  if (!browser || !browser.isConnected()) {
-    browser = await chromium.launch({
-      headless: true,
-      args: [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage",
-        "--disable-gpu",
-        // Prevent the browser from accessing file:// and other dangerous protocols
-        "--disable-file-system",
-        // Limit process memory
-        "--js-flags=--max-old-space-size=256",
-      ],
-    });
+async function getBrowser(relaunched = false): Promise<LaunchedBrowser> {
+  const launch = browserLaunch ?? (browserLaunch = launchBrowser());
+  let launched: LaunchedBrowser;
+  try {
+    launched = await launch;
+  } catch (error) {
+    // Let the next caller retry rather than inherit this failure forever
+    if (browserLaunch === launch) browserLaunch = null;
+    throw error;
   }
-  return browser;
+  if (launched.instance.isConnected()) return launched;
+  // Crashed or killed. Only the first caller to notice starts the relaunch.
+  if (browserLaunch === launch) browserLaunch = null;
+  // One that dies straight after launching would otherwise respawn in a loop
+  if (relaunched) throw new Error("Browser disconnected right after launch");
+  return getBrowser(true);
+}
+
+async function launchBrowser(): Promise<LaunchedBrowser> {
+  const instance = await chromium.launch({
+    // The full browser in new headless mode. The default headless shell
+    // sends "HeadlessChrome" in sec-ch-ua on every request.
+    channel: "chromium",
+    headless: true,
+    args: [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-gpu",
+      // Prevent the browser from accessing file:// and other dangerous protocols
+      "--disable-file-system",
+      // Limit process memory
+      "--js-flags=--max-old-space-size=256",
+    ],
+  });
+  try {
+    // New headless still says "HeadlessChrome" in the user agent. Keep the
+    // rest of the real string: a made-up one contradicts the version and
+    // platform the engine reports in its client hints, itself a bot signal.
+    const probe = await instance.newPage();
+    const userAgent = (await probe.evaluate(() => navigator.userAgent)).replace("HeadlessChrome", "Chrome");
+    await probe.close();
+    return { instance, userAgent };
+  } catch (error) {
+    // The probe's error is the one worth reporting
+    await instance.close().catch(() => {});
+    throw error;
+  }
 }
 
 /** Prefix for failures of the fallback provider itself, as opposed to the site blocking us. */
@@ -139,16 +176,18 @@ export async function scrapeUrl(
   try {
     const b = await getBrowser();
 
-    // Vary scraping strategy on retries to bypass anti-bot
-    const isMobileRetry = retry >= 2;
-    const ua = isMobileRetry ? getMobileUserAgent() : getRandomUserAgent();
-    const viewport = isMobileRetry
-      ? { width: 390, height: 844 }  // iPhone viewport
-      : { width: 1920, height: 1080 };
-
-    const context = await b.newContext({ userAgent: ua, viewport });
+    const context = await b.instance.newContext({ userAgent: b.userAgent, viewport: { width: 1920, height: 1080 } });
 
     const page = await context.newPage();
+
+    // Status of the last main-frame document, so a challenge that clears
+    // itself and navigates to the real page is judged by where it ended up.
+    let documentStatus: number | undefined;
+    page.on("response", (response) => {
+      if (response.request().isNavigationRequest() && response.frame() === page.mainFrame()) {
+        documentStatus = response.status();
+      }
+    });
 
     // Intercept all requests: block dangerous protocols and heavy resources
     const BLOCKED_EXTENSIONS = /\.(png|jpg|jpeg|gif|webp|svg|ico|woff|woff2|ttf|mp4|webm)$/i;
@@ -200,7 +239,9 @@ export async function scrapeUrl(
       // Scrapfly only returns success once its anti-bot pass got a real page,
       // and real pages embed captcha widgets in forms, so only run our own
       // detector on direct fetches.
-      const botCheck = unblockedHtml !== null ? { blocked: false as const } : await detectAntiBot(page);
+      const botCheck = unblockedHtml !== null
+        ? { blocked: false as const }
+        : blockedByStatus(documentStatus) ?? await detectAntiBot(page);
 
       const html = await getCleanHtml(page);
       const text = await getTextWithLinks(page);
@@ -300,6 +341,16 @@ async function getTextWithLinks(page: Page): Promise<string> {
 }
 
 /**
+ * Anti-bot services answer with a 403 whatever the page text says, and their
+ * block pages often match none of detectAntiBot's markers. 503 is left out as
+ * often a site outage, and 429 as usually our own burst being rate limited:
+ * flagging either sends a healthy monitor to the proxy and its 6h interval.
+ */
+function blockedByStatus(status: number | undefined): { blocked: true; reason: string } | null {
+  return status === 403 ? { blocked: true, reason: "HTTP 403" } : null;
+}
+
+/**
  * Check if a page is serving an anti-bot challenge instead of real content.
  * High-confidence markers trigger immediately. Ambiguous markers only trigger
  * when the page has very little content (< 500 chars), since real pages can
@@ -353,25 +404,4 @@ export async function detectAntiBot(page: Page): Promise<{ blocked: boolean; rea
   } catch {
     return { blocked: false };
   }
-}
-
-const userAgents = [
-  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.2 Safari/605.1.15",
-  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-];
-
-function getRandomUserAgent(): string {
-  return userAgents[Math.floor(Math.random() * userAgents.length)];
-}
-
-const mobileUserAgents = [
-  "Mozilla/5.0 (iPhone; CPU iPhone OS 18_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.2 Mobile/15E148 Safari/604.1",
-  "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36",
-  "Mozilla/5.0 (iPhone; CPU iPhone OS 18_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/131.0.6778.103 Mobile/15E148 Safari/604.1",
-];
-
-function getMobileUserAgent(): string {
-  return mobileUserAgents[Math.floor(Math.random() * mobileUserAgents.length)];
 }
