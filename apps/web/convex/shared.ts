@@ -50,10 +50,13 @@ export const ERROR_RECOVERY_INTERVAL_MS = 6 * 60 * 60 * 1000;
 export const MAX_NEVER_SUCCEEDED_RETRIES = 32;
 
 /**
- * Roughly how long a monitor that has never been read keeps retrying before
- * it parks. The fast ladder ends at MAX_RETRIES; every failure after that is
- * ERROR_RECOVERY_INTERVAL_MS apart until MAX_NEVER_SUCCEEDED_RETRIES. The
- * blocked-first-scan toast quotes it, so the promise moves with the constants.
+ * The longest a monitor that has never been read keeps retrying before it
+ * parks. The fast ladder ends at MAX_RETRIES; every failure after that is
+ * ERROR_RECOVERY_INTERVAL_MS apart until MAX_NEVER_SUCCEEDED_RETRIES. A ceiling,
+ * not a promise: a site that also refuses our proxy parks after
+ * MAX_PROXY_BLOCKS recovery-lane attempts, about half a day. The
+ * blocked-first-scan toast quotes it as "up to", which holds either way, and
+ * both parks send the email that toast mentions.
  */
 export const NEVER_SUCCEEDED_RETRY_DAYS = Math.round(
   ((MAX_NEVER_SUCCEEDED_RETRIES - MAX_RETRIES) * ERROR_RECOVERY_INTERVAL_MS) / DAY_MS,
