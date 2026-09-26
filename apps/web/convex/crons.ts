@@ -32,6 +32,11 @@ crons.interval("scraper-health", { minutes: 10 }, internal.admin.checkScraperHea
 // Drop expired manual Pro grants back to free
 crons.interval("expire-tier-grants", { hours: 24 }, internal.admin.expireGrants);
 
+// Delete phone numbers left behind by verification codes nobody finished.
+// Hourly rather than daily because the row exists for 10 minutes by design,
+// and anything still there is a number we have no reason to hold.
+crons.interval("expire-phone-verifications", { hours: 1 }, internal.sms.expireVerifications, {});
+
 // Pause monitors whose owners have gone. Gated by INACTIVITY_PAUSE_ENABLED —
 // until that is "true" the run only logs what it would pause. See inactivity.ts.
 // 10:00 UTC is the hour onboarding.ts already picked as globally inoffensive,

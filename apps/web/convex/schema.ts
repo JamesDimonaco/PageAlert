@@ -317,7 +317,11 @@ export default defineSchema({
     /** Codes sent on sentDate — the cap that makes this a bad pumping target. */
     sentCount: v.number(),
     sentDate: v.string(), // YYYY-MM-DD UTC
-  }).index("by_userId", ["userId"]),
+  })
+    .index("by_userId", ["userId"])
+    // The sweep reads oldest-expiry-first, so a cron run does bounded work
+    // however many rows are waiting. See sms.expireVerifications.
+    .index("by_expiresAt", ["expiresAt"]),
 
   reviews: defineTable({
     userId: v.string(),

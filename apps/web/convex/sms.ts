@@ -83,11 +83,17 @@ function twilioConfig(): TwilioConfig {
  * is the cheap in-code guard; the one that actually holds is Twilio's Geo
  * Permissions, which has to be narrowed to match before SMS_ENABLED goes on.
  *
- * UK and EU only at launch. The US and Canada are absent on purpose: they ban
- * alphanumeric sender IDs, so reaching them means a toll-free number and a
- * verification that takes weeks.
+ * "1" is the one entry this list cannot police on its own. +1 is not the US and
+ * Canada, it is the whole North American Numbering Plan, and that includes
+ * Caribbean destinations — +1 809, +1 876 and friends — which are a standing
+ * premium-rate pumping target. Prefix matching cannot tell them apart without
+ * carrying 300-odd area codes, so the guard for those has to be Twilio's Geo
+ * Permissions, narrowed to the United States and Canada specifically. Twilio
+ * treats them as separate countries there even though they share the code.
+ * Leave "1" out until that is set.
  */
 const ALLOWED_DIAL_CODES = [
+  "1", // United States and Canada — see the Geo Permissions note above
   "44", // United Kingdom
   "353", // Ireland
   "33", // France
@@ -398,6 +404,38 @@ export const startVerification = action({
       throw e;
     }
     return { sent: true, phone: maskPhone(phone) };
+  },
+});
+
+/** Rows one sweep will clear. Bounded so a backlog cannot blow a transaction. */
+const EXPIRY_SWEEP_BATCH = 200;
+
+/**
+ * Deletes verification rows that have expired.
+ *
+ * A row here holds a raw E.164 number. It dies on a confirmed code, on a later
+ * failed one, or on releaseVerification when the user has no codes left — but
+ * a code requested and simply never entered has none of those happen to it, so
+ * without this sweep the number stays on disk for good. The privacy page says
+ * a code you do not finish is deleted after it expires, and this is the only
+ * thing that makes that true.
+ *
+ * `now` is a parameter so the test does not have to fake the clock.
+ */
+export const expireVerifications = internalMutation({
+  args: { now: v.optional(v.number()) },
+  handler: async (ctx, { now }) => {
+    const cutoff = now ?? Date.now();
+    const stale = await ctx.db
+      .query("phoneVerifications")
+      .withIndex("by_expiresAt", (q) => q.lt("expiresAt", cutoff))
+      .take(EXPIRY_SWEEP_BATCH);
+    for (const row of stale) {
+      await ctx.db.delete(row._id);
+    }
+    if (stale.length > 0) {
+      console.log(`[sms] swept ${stale.length} expired verification(s)`);
+    }
   },
 });
 

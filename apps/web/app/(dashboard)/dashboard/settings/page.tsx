@@ -129,6 +129,9 @@ export default function SettingsPage() {
   const [smsPhone, setSmsPhone] = useState("");
   const [smsCode, setSmsCode] = useState("");
   const [smsStep, setSmsStep] = useState<"phone" | "code">("phone");
+  // Unchecked by default and never persisted: consent is given at the
+  // moment a number is submitted, not remembered from last time.
+  const [smsConsent, setSmsConsent] = useState(false);
   const [smsSending, setSmsSending] = useState(false);
   const deleteAccountMutation = useMutation(api.account.deleteAccount);
   const sendTestEmail = useAction(api.notifications.sendTestEmail);
@@ -411,6 +414,7 @@ export default function SettingsPage() {
                           await removeSetting({ channel: "sms" });
                           setSmsPhone("");
                           setSmsStep("phone");
+                          setSmsConsent(false);
                           trackNotificationChannelToggled({ channel: "sms", enabled: false });
                           toast.success("Text alerts turned off");
                         } catch {
@@ -498,13 +502,41 @@ export default function SettingsPage() {
                       onChange={(e) => setSmsPhone(e.target.value)}
                     />
                     <p className="text-xs text-muted-foreground leading-relaxed">
-                      Start with your country code, not 0. UK and EU numbers for now.
+                      Start with your country code, not 0. UK, EU, US and Canada.
                     </p>
                   </div>
+
+                  {/*
+                    The consent tick. Carriers require a standalone, unchecked
+                    action that names text messages, says what arrives and how
+                    often, and warns about carrier charges — separate from
+                    signing up and from accepting the terms. Our first toll-free
+                    registration was rejected (Twilio 30513) because the screen
+                    collected a number and said none of that. Changing the
+                    wording here without updating /sms-policy, which quotes it
+                    for reviewers, puts the two out of step.
+                  */}
+                  <label className="flex items-start gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={smsConsent}
+                      onChange={(e) => setSmsConsent(e.target.checked)}
+                      className="rounded border-border accent-primary h-4 w-4 mt-0.5 shrink-0"
+                    />
+                    <span className="text-xs text-muted-foreground leading-relaxed">
+                      I agree to receive <strong className="text-foreground">text messages</strong> from
+                      PageAlert about the pages I monitor. How many depends on the monitors I choose,
+                      up to my plan&apos;s limit. Message and data rates may apply. Reply STOP to a text
+                      to stop them, or turn them off here any time. See the{" "}
+                      <Link href="/terms" className="text-primary hover:underline">terms</Link> and{" "}
+                      <Link href="/privacy" className="text-primary hover:underline">privacy policy</Link>.
+                    </span>
+                  </label>
+
                   <Button
                     variant="outline"
                     size="sm"
-                    disabled={smsPhone.trim().length < 8 || smsSending}
+                    disabled={!smsConsent || smsPhone.trim().length < 8 || smsSending}
                     onClick={async () => {
                       setSmsSending(true);
                       try {
