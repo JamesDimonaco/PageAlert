@@ -1004,3 +1004,291 @@ export const reconcile = internalAction({
     }
   },
 });
+
+// ---- SMS allowance ----
+
+/**
+ * Texts a user may be sent per month and per day.
+ *
+ * SMS is the only channel that costs money per send, so unlike monitors or
+ * scans these numbers are a budget rather than a product limit. At the UK rate
+ * (~$0.056) a free user who spends their month costs about $0.56 against no
+ * revenue, and a Max user about $11.20 against $29.
+ *
+ * The two windows stop different things. The month caps spend. The day stops a
+ * page that starts flapping from burning a whole month before lunch — and from
+ * texting someone ten times at 3am, which loses the user either way.
+ *
+ * Set low on purpose. Raising an allowance once real usage is visible costs
+ * nothing; lowering one takes something away from people already using it.
+ */
+export const SMS_LIMITS: Record<Tier, { month: number; day: number }> = {
+  free: { month: 10, day: 3 },
+  sprint: { month: 25, day: 10 },
+  pro: { month: 60, day: 20 },
+  max: { month: 200, day: 50 },
+};
+
+const SMS_BUDGET_DEFAULT = 2000;
+
+/**
+ * Ceiling on texts across every user, in case a bug or an abuser defeats the
+ * per-user caps. Past it SMS stops and alerts fall back to email, which is the
+ * failure an operator would pick. 2000 sends is roughly $112 a month.
+ *
+ * Read through Number.isFinite rather than `??`, because an env var is a
+ * string: a dashboard value of "" is not null, so `??` would not fire and
+ * Number("") is 0 — SMS dead on arrival. A typo is worse. `used >= NaN` is
+ * always false, so the backstop would quietly stop existing in exactly the
+ * "the code is wrong" case it was written for.
+ */
+function smsMonthlyBudget(): number {
+  // Trim first: a dashboard value of "" or "  " is not null, and Number("") is
+  // 0 — finite, non-negative, and therefore a budget of zero that refuses
+  // every text including verification codes. Only an unset var, a blank one or
+  // a typo may reach the default.
+  const raw = process.env.SMS_MONTHLY_BUDGET?.trim();
+  if (!raw) return SMS_BUDGET_DEFAULT;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : SMS_BUDGET_DEFAULT;
+}
+
+/**
+ * Count one text against the ceiling that applies to everyone, or refuse.
+ *
+ * Shared by alerts and verification codes. A verification code is a real text
+ * with a real cost, and it is the one send an unpaid attacker can reach, so
+ * leaving it outside the budget would leave the backstop guarding the wrong
+ * door. Called only once a send is actually going to happen, so a refusal
+ * never consumes budget.
+ */
+export async function spendSmsBudget(ctx: MutationCtx): Promise<boolean> {
+  const month = new Date().toISOString().slice(0, 7);
+  const key = `sms:sends:${month}`;
+  const budget = smsMonthlyBudget();
+
+  const row = await ctx.db
+    .query("counters")
+    .withIndex("by_name", (q) => q.eq("name", key))
+    .unique();
+  const used = row?.value ?? 0;
+
+  if (used >= budget) {
+    const alertKey = `sms:cap-alerted:${month}`;
+    const alerted = await ctx.db
+      .query("counters")
+      .withIndex("by_name", (q) => q.eq("name", alertKey))
+      .unique();
+    if (!alerted) {
+      await ctx.db.insert("counters", { name: alertKey, value: Date.now() });
+      await ctx.scheduler.runAfter(0, internal.admin.notify, {
+        text: `PageAlert: the SMS budget for ${month} is spent (${budget} sends). Alerts fall back to email until next month.`,
+      });
+    }
+    return false;
+  }
+
+  if (row) await ctx.db.patch(row._id, { value: used + 1 });
+  else await ctx.db.insert("counters", { name: key, value: 1 });
+  return true;
+}
+
+/** Why a send was refused. "budget" is ours; the others are the user's. */
+export type SmsRefusal = "day" | "month" | "budget";
+
+export interface SmsReservation {
+  ok: boolean;
+  reason?: SmsRefusal;
+  /**
+   * True on the one refusal that should still cost a text: the monthly
+   * allowance has just run out and the user has not been told. The caller
+   * sends that notice and nothing else until the month turns over.
+   */
+  notifyExhausted: boolean;
+  monthLimit: number;
+}
+
+/**
+ * Counts one text against the day, the month and the global budget, or refuses.
+ *
+ * A mutation rather than a check inside the sending action, so two monitors
+ * firing in the same minute cannot both read "9 used" and both send.
+ */
+/**
+ * Count one verification code against the account's daily allowance, or refuse.
+ *
+ * Lives on userTiers rather than on the phoneVerifications row because that row
+ * is deleted on every terminal path — a confirmed code, an expired one, five
+ * wrong guesses, the hourly sweep — so a counter held there would hand the
+ * account a fresh three each time. The carrier-facing policy at /sms-policy
+ * promises three a day, and this is what makes that true.
+ *
+ * The stamp is stored beside the count, like every other window in this file:
+ * a stale day reads as zero and no cron has to reset anything.
+ */
+export const spendSmsCode = internalMutation({
+  args: { userId: v.string(), day: v.string(), limit: v.number() },
+  handler: async (ctx, { userId, day, limit }): Promise<{ ok: boolean }> => {
+    const record = await ctx.db
+      .query("userTiers")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .unique();
+
+    const used = record?.smsCodeDay === day ? (record.smsCodeDayCount ?? 0) : 0;
+    if (used >= limit) return { ok: false };
+
+    if (record) {
+      await ctx.db.patch(record._id, {
+        smsCodeDay: day,
+        smsCodeDayCount: used + 1,
+        updatedAt: Date.now(),
+      });
+    } else {
+      // A user who has never been near billing still has no userTiers row, and
+      // the code request is the first thing that needs one.
+      await ctx.db.insert("userTiers", {
+        userId,
+        tier: "free",
+        smsCodeDay: day,
+        smsCodeDayCount: 1,
+        updatedAt: Date.now(),
+      });
+    }
+    return { ok: true };
+  },
+});
+
+/**
+ * Give back an alert slot reserved for a text Twilio never accepted.
+ *
+ * reserveSmsSend spends the month, the day and the global budget before the
+ * send, so a 500, a 429 or a timeout costs a user three things and delivers
+ * nothing. The global counter is deliberately left alone: it is a spend
+ * ceiling, refunding it needs a second write on the hot path, and erring
+ * towards under-spending is the right way for a budget to be wrong.
+ */
+export const refundSmsSend = internalMutation({
+  args: { userId: v.string() },
+  handler: async (ctx, { userId }) => {
+    const record = await ctx.db
+      .query("userTiers")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .unique();
+    if (!record) return;
+    const patch: { smsMonthCount?: number; smsDayCount?: number; updatedAt: number } = {
+      updatedAt: Date.now(),
+    };
+    if ((record.smsMonthCount ?? 0) > 0) patch.smsMonthCount = record.smsMonthCount! - 1;
+    if ((record.smsDayCount ?? 0) > 0) patch.smsDayCount = record.smsDayCount! - 1;
+    await ctx.db.patch(record._id, patch);
+  },
+});
+
+/**
+ * Give back a code slot spent on a send that never landed.
+ *
+ * Without it a number Twilio rejects — a geo block, a dead line, a
+ * half-configured account — costs one of three daily attempts, and three of
+ * those lock the user out until UTC midnight holding no working code.
+ */
+export const refundSmsCode = internalMutation({
+  args: { userId: v.string() },
+  handler: async (ctx, { userId }) => {
+    const record = await ctx.db
+      .query("userTiers")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .unique();
+    const used = record?.smsCodeDayCount ?? 0;
+    if (!record || used <= 0) return;
+    await ctx.db.patch(record._id, { smsCodeDayCount: used - 1, updatedAt: Date.now() });
+  },
+});
+
+export const reserveSmsSend = internalMutation({
+  args: { userId: v.string() },
+  handler: async (ctx, { userId }): Promise<SmsReservation> => {
+    const now = new Date();
+    const month = now.toISOString().slice(0, 7);
+    const day = now.toISOString().slice(0, 10);
+
+    const record = await ctx.db
+      .query("userTiers")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .unique();
+
+    const tier = effectiveTier(record);
+    const limits = SMS_LIMITS[tier];
+
+    const monthUsed = record?.smsMonth === month ? (record.smsMonthCount ?? 0) : 0;
+    const dayUsed = record?.smsDay === day ? (record.smsDayCount ?? 0) : 0;
+
+    if (monthUsed >= limits.month) {
+      // The "you are out" notice is itself a text, so it only goes out if the
+      // global budget can carry it — and is marked spent in the same write
+      // that refuses this alert, so it costs one text a month, not one per
+      // refused alert.
+      const owed =
+        !!record && record.smsCapNotifiedMonth !== month && (await spendSmsBudget(ctx));
+      if (owed && record) await ctx.db.patch(record._id, { smsCapNotifiedMonth: month });
+      return { ok: false, reason: "month", notifyExhausted: owed, monthLimit: limits.month };
+    }
+
+    if (dayUsed >= limits.day) {
+      return { ok: false, reason: "day", notifyExhausted: false, monthLimit: limits.month };
+    }
+
+    // Last, so that a send refused on either per-user cap costs no budget.
+    if (!(await spendSmsBudget(ctx))) {
+      return { ok: false, reason: "budget", notifyExhausted: false, monthLimit: limits.month };
+    }
+
+    if (record) {
+      await ctx.db.patch(record._id, {
+        smsMonth: month,
+        smsMonthCount: monthUsed + 1,
+        smsDay: day,
+        smsDayCount: dayUsed + 1,
+      });
+    } else {
+      await ctx.db.insert("userTiers", {
+        userId,
+        tier: "free",
+        smsMonth: month,
+        smsMonthCount: 1,
+        smsDay: day,
+        smsDayCount: 1,
+        updatedAt: Date.now(),
+      });
+    }
+
+    return { ok: true, notifyExhausted: false, monthLimit: limits.month };
+  },
+});
+
+/** What the settings page shows: texts left this month, and the allowance. */
+export const smsAllowance = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return null;
+
+    const record = await ctx.db
+      .query("userTiers")
+      .withIndex("by_userId", (q) => q.eq("userId", identity.subject))
+      .unique();
+
+    const limits = SMS_LIMITS[effectiveTier(record)];
+    const now = new Date();
+    const usedThisMonth =
+      record?.smsMonth === now.toISOString().slice(0, 7) ? (record.smsMonthCount ?? 0) : 0;
+    const usedToday =
+      record?.smsDay === now.toISOString().slice(0, 10) ? (record.smsDayCount ?? 0) : 0;
+
+    return {
+      monthLimit: limits.month,
+      monthRemaining: Math.max(0, limits.month - usedThisMonth),
+      dayLimit: limits.day,
+      dayRemaining: Math.max(0, limits.day - usedToday),
+    };
+  },
+});

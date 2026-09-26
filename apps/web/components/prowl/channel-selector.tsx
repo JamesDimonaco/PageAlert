@@ -1,7 +1,7 @@
 "use client";
 
 import { Badge } from "@/components/ui/badge";
-import { Mail, MessageCircle, Hash, Bell, Check, Settings } from "lucide-react";
+import { Mail, MessageCircle, Hash, Bell, Check, Settings, Smartphone } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useTier } from "@/hooks/use-tier";
 import { useCreateMonitor } from "@/hooks/use-create-monitor";
@@ -11,14 +11,45 @@ import { api } from "@/convex/_generated/api";
 import { useMonitors } from "@/hooks/use-monitors";
 import { toast } from "sonner";
 
-export type Channel = "email" | "telegram" | "discord" | "push";
+export type Channel = "email" | "telegram" | "discord" | "push" | "sms";
 
 const CHANNEL_CONFIG: Record<Channel, { label: string; icon: typeof Mail }> = {
   email: { label: "Email", icon: Mail },
+  sms: { label: "Text", icon: Smartphone },
   telegram: { label: "Telegram", icon: MessageCircle },
   discord: { label: "Discord", icon: Hash },
   push: { label: "Browser", icon: Bell },
 };
+
+/**
+ * Channels the free tier allows on one monitor only. Mirrors
+ * isRestrictedChannel in convex/monitors.ts, which is what actually enforces it.
+ */
+const RESTRICTED: Channel[] = ["telegram", "discord", "sms"];
+
+/**
+ * Channels whose availability is a notificationSettings row. Equal to
+ * RESTRICTED today, but by coincidence rather than by rule — email needs no
+ * row, push is proved by a device, and a future paid-but-unrationed channel
+ * would belong here and not there. Kept separate so adding one cannot quietly
+ * change who gets rationed.
+ */
+const SETTINGS_BACKED: Channel[] = ["telegram", "discord", "sms"];
+
+/**
+ * Channels a new monitor does NOT inherit from the account.
+ *
+ * Every other channel is free to fan out: one more email or push costs
+ * nothing. A text costs money and arrives on a phone, so /sms-policy tells
+ * carriers "SMS is off by default on every monitor" and that verifying a
+ * number alone never produces a text. Seeding it here would make both false.
+ */
+const NOT_INHERITED: Channel[] = ["sms"];
+
+/** The channels a new or legacy monitor should start with. */
+export function defaultChannels(configured: Channel[] | undefined): Channel[] | undefined {
+  return configured?.filter((c) => !NOT_INHERITED.includes(c));
+}
 
 /**
  * Channels the user has actually set up. Email is always available; push has no
@@ -36,8 +67,8 @@ export function useConfiguredChannels(): Channel[] | undefined {
     const configured: Channel[] = ["email"];
     if (pushDevices > 0) configured.push("push");
     for (const s of notifSettings) {
-      if (s.enabled && (s.channel === "telegram" || s.channel === "discord")) {
-        configured.push(s.channel);
+      if (s.enabled && (SETTINGS_BACKED as string[]).includes(s.channel)) {
+        configured.push(s.channel as Channel);
       }
     }
     return configured;
@@ -60,21 +91,23 @@ export function ChannelSelector({ value, onChange, monitorId, disabled }: Channe
   const updateMonitor = useMutation(api.monitors.update);
 
   const configuredChannels = new Set<Channel>(useConfiguredChannels() ?? ["email"]);
+  const smsEnabled = useQuery(api.sms.isEnabled);
 
   // For free tier: find if another monitor already uses non-email channels
   const freeMonitorWithChannels = tier === "free"
     ? monitors.find((m) =>
         m._id !== monitorId &&
-        (m as any).notificationChannels?.some((c: string) => c === "telegram" || c === "discord")
+        (m as any).notificationChannels?.some((c: string) => (RESTRICTED as string[]).includes(c))
       )
     : null;
 
   function isChannelAvailable(channel: Channel): boolean {
     if (!configuredChannels.has(channel)) return false;
     if (tier !== "free") return true;
-    // Free tier rations Telegram and Discord to one monitor. Email and push
-    // are unrestricted — see isRestrictedChannel in convex/monitors.ts.
-    if (channel === "email" || channel === "push") return true;
+    // Free tier rations Telegram, Discord and text alerts to one monitor.
+    // Email and push are unrestricted — see isRestrictedChannel in
+    // convex/monitors.ts.
+    if (!RESTRICTED.includes(channel)) return true;
     if (freeMonitorWithChannels) return false;
     return true;
   }
@@ -144,7 +177,11 @@ export function ChannelSelector({ value, onChange, monitorId, disabled }: Channe
     <div className="space-y-2">
       <p className="text-xs font-medium text-muted-foreground">Notification channels</p>
       <div className="flex flex-wrap gap-2">
-        {(["email", "push", "telegram", "discord"] as Channel[]).map((channel) => {
+        {(["email", "sms", "push", "telegram", "discord"] as Channel[])
+          // While text alerts are off there is no settings card to send anyone
+          // to, so offering the chip would be a dead end.
+          .filter((channel) => channel !== "sms" || smsEnabled)
+          .map((channel) => {
           const config = CHANNEL_CONFIG[channel];
           const Icon = config.icon;
           const isActive = value.includes(channel);

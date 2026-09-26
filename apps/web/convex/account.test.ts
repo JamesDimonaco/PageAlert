@@ -223,6 +223,13 @@ const FIXTURES: { [T in TableNames]: (refs: Refs) => Row<T> } = {
     failedRecipients: [],
     sentAt: NOW,
   }),
+  phoneVerifications: ({ userId }) => ({
+    userId,
+    phone: "+447911123456",
+    code: "481920",
+    expiresAt: NOW + 600_000,
+    attempts: 0,
+  }),
   onboardingEmails: ({ userId }) => ({
     userId,
     email: `${userId}@example.test`,

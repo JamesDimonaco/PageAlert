@@ -1,0 +1,555 @@
+import { v } from "convex/values";
+import {
+  internalAction,
+  internalMutation,
+  action,
+  mutation,
+  query,
+  type ActionCtx,
+  type MutationCtx,
+} from "./_generated/server";
+import { internal } from "./_generated/api";
+import { effectiveTier, spendSmsBudget } from "./tiers";
+import { requireLiveAccount } from "./account";
+import {
+  formatMatchSms,
+  formatPriceSms,
+  formatQuotaExhaustedSms,
+  formatVerificationSms,
+} from "@prowl/shared";
+
+/**
+ * Text-message alerts.
+ *
+ * The channel most users actually want — no app to install, no account to make
+ * — and the only one that costs money per send. Two consequences run through
+ * this file. Every send passes through tiers.reserveSmsSend first, and no
+ * number becomes a destination until a code sent to it comes back.
+ *
+ * SMS deliberately carries match and price alerts only. Errors, parks and
+ * inactivity pauses stay on email: they are not worth 160 characters and a
+ * push notification at 3am, and a monitor that starts failing would otherwise
+ * spend a user's whole allowance telling them so.
+ */
+
+const APP_URL = process.env.SITE_URL ?? "https://pagealert.io";
+const TIMEOUT = 10_000;
+
+/** Off until the Twilio console guards are in place — see .env.example. */
+function smsEnabled(): boolean {
+  return process.env.SMS_ENABLED === "true";
+}
+
+/**
+ * Whether to offer text alerts in the UI at all.
+ *
+ * A query rather than a NEXT_PUBLIC_ twin because SMS_ENABLED is read inside
+ * Convex actions, and two copies of a kill switch drift. Without this the
+ * settings card ships visible and errors on every click for as long as the
+ * flag is off.
+ */
+export const isEnabled = query({
+  args: {},
+  handler: async () => smsEnabled(),
+});
+
+interface TwilioConfig {
+  accountSid: string;
+  authToken: string;
+  messagingServiceSid: string;
+}
+
+/**
+ * A Messaging Service rather than a bare `From`, so the sender pool can change
+ * — an alphanumeric sender ID today, a long code once a country needs one —
+ * without a deploy.
+ */
+function twilioConfig(): TwilioConfig {
+  const accountSid = process.env.TWILIO_ACCOUNT_SID;
+  const authToken = process.env.TWILIO_AUTH_TOKEN;
+  const messagingServiceSid = process.env.TWILIO_MESSAGING_SERVICE_SID;
+  if (!accountSid || !authToken || !messagingServiceSid) {
+    throw new Error("Twilio is not configured");
+  }
+  return { accountSid, authToken, messagingServiceSid };
+}
+
+// ---- Destinations ----
+
+/**
+ * Countries we will text, by dialling code.
+ *
+ * An allowlist rather than a blocklist because the failure mode is paying for
+ * traffic to a premium-rate destination someone set up to bill us. This list
+ * is the cheap in-code guard; the one that actually holds is Twilio's Geo
+ * Permissions, which has to be narrowed to match before SMS_ENABLED goes on.
+ *
+ * "1" is the one entry this list cannot police on its own. +1 is not the US and
+ * Canada, it is the whole North American Numbering Plan, and that includes
+ * Caribbean destinations — +1 809, +1 876 and friends — which are a standing
+ * premium-rate pumping target. Prefix matching cannot tell them apart without
+ * carrying 300-odd area codes, so the guard for those has to be Twilio's Geo
+ * Permissions, narrowed to the United States and Canada specifically. Twilio
+ * treats them as separate countries there even though they share the code.
+ * So for +1, and only +1, this list is not a guard at all — the console is.
+ * Narrow it before SMS_ENABLED goes true on any deployment.
+ */
+const ALLOWED_DIAL_CODES = [
+  "1", // United States and Canada — see the Geo Permissions note above
+  "44", // United Kingdom
+  "353", // Ireland
+  "33", // France
+  "49", // Germany
+  "34", // Spain
+  "39", // Italy
+  "351", // Portugal
+  "31", // Netherlands
+  "32", // Belgium
+  "352", // Luxembourg
+  "43", // Austria
+  "41", // Switzerland
+  "45", // Denmark
+  "46", // Sweden
+  "47", // Norway
+  "358", // Finland
+  "354", // Iceland
+  "48", // Poland
+  "420", // Czechia
+  "421", // Slovakia
+  "36", // Hungary
+  "40", // Romania
+  "359", // Bulgaria
+  "385", // Croatia
+  "386", // Slovenia
+  "372", // Estonia
+  "371", // Latvia
+  "370", // Lithuania
+  "30", // Greece
+  "357", // Cyprus
+  "356", // Malta
+];
+
+export class PhoneError extends Error {}
+
+/**
+ * Turn what someone typed into E.164, or explain why it cannot be.
+ *
+ * Deliberately refuses to guess a country from a national number: "07911
+ * 123456" is a valid mobile in several places and picking one silently would
+ * text a stranger.
+ */
+export function normalisePhone(input: string): string {
+  // "+44 (0)7911 123456" is how UK sites write a number, and it is what people
+  // paste. Stripping punctuation blindly turns it into +4407911123456, which
+  // looks valid to every check below and is only rejected by Twilio — after a
+  // daily code slot has been spent on it.
+  const raw = input.trim().replace(/\(\s*0\s*\)/, "");
+  let digits = raw.replace(/[^\d+]/g, "");
+
+  if (digits.startsWith("00")) digits = `+${digits.slice(2)}`;
+  if (!digits.startsWith("+")) digits = `+${digits}`;
+  const body = digits.slice(1);
+
+  if (!/^\d+$/.test(body)) throw new PhoneError("Enter digits only, starting with your country code");
+  if (body.startsWith("0")) {
+    throw new PhoneError("Start with your country code (44 for the UK), not 0");
+  }
+  if (body.length < 7 || body.length > 15) throw new PhoneError("That does not look like a phone number");
+
+  // Longest match wins, so a three-digit code is never mistaken for a
+  // two-digit one that happens to share its opening digits.
+  const code = [...ALLOWED_DIAL_CODES]
+    .sort((a, b) => b.length - a.length)
+    .find((c) => body.startsWith(c));
+  if (!code) {
+    throw new PhoneError("We can text UK, EU, US and Canadian numbers. Email and Telegram work everywhere.");
+  }
+
+  return `+${body}`;
+}
+
+/** The last four digits, for showing a number back without printing it. */
+export function maskPhone(phone: string): string {
+  return `••• ••• ${phone.slice(-4)}`;
+}
+
+// ---- Sending ----
+
+async function postToTwilio(to: string, body: string): Promise<void> {
+  const { accountSid, authToken, messagingServiceSid } = twilioConfig();
+
+  const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`, {
+    method: "POST",
+    headers: {
+      Authorization: `Basic ${btoa(`${accountSid}:${authToken}`)}`,
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: new URLSearchParams({ To: to, MessagingServiceSid: messagingServiceSid, Body: body }),
+    signal: AbortSignal.timeout(TIMEOUT),
+  });
+
+  if (!res.ok) {
+    // Twilio's error body quotes the To number back on an invalid-number
+    // error, and the success path below masks it — so log the code, not the body.
+    const text = await res.text().catch(() => "");
+    const code = text.match(/"code"\s*:\s*(\d+)/)?.[1] ?? "unknown";
+    console.error(`[sms] send failed to ${maskPhone(to)}: HTTP ${res.status}, Twilio code ${code}`);
+    throw new Error("Failed to send SMS");
+  }
+  console.log(`[sms] sent to ${maskPhone(to)} (${body.length} chars)`);
+}
+
+/**
+ * Reserve an allowance slot, then send. Returns whether anything went out.
+ *
+ * A refusal is not an error: the user has simply had their texts for the
+ * period, and the email alert has already gone. The one refusal that still
+ * sends is the notice saying so, which is why it is handled here rather than
+ * by each caller.
+ */
+async function sendAlert(
+  ctx: ActionCtx,
+  userId: string,
+  to: string,
+  body: string,
+): Promise<boolean> {
+  if (!smsEnabled()) {
+    console.log("[sms] SMS_ENABLED is not true — skipping send");
+    return false;
+  }
+
+  // Before reserving, not after. Reserving spends the user's allowance and the
+  // global budget; if the credentials are half-configured — SMS_ENABLED flipped
+  // on in the dashboard before the Messaging Service id is in — postToTwilio
+  // throws, the scheduler swallows it, and a free user's ten texts drain to
+  // zero having delivered nothing.
+  try {
+    twilioConfig();
+  } catch {
+    console.error("[sms] SMS_ENABLED is true but Twilio is not configured — not reserving");
+    return false;
+  }
+
+  const reservation = await ctx.runMutation(internal.tiers.reserveSmsSend, { userId });
+
+  if (!reservation.ok) {
+    if (reservation.notifyExhausted) {
+      await postToTwilio(to, formatQuotaExhaustedSms(reservation.monthLimit));
+      return true;
+    }
+    console.log(`[sms] refused for ${userId}: ${reservation.reason}`);
+    return false;
+  }
+
+  try {
+    await postToTwilio(to, body);
+  } catch (e) {
+    // The reservation above already spent a monthly slot, a daily slot and a
+    // unit of global budget. A Twilio 500, a 429 or a timeout delivered
+    // nothing, and the scheduler swallows the throw, so without this a free
+    // user silently loses a third of their day per blip.
+    await ctx.runMutation(internal.tiers.refundSmsSend, { userId });
+    throw e;
+  }
+  return true;
+}
+
+export const sendMatchAlert = internalAction({
+  args: {
+    userId: v.string(),
+    phone: v.string(),
+    monitorName: v.string(),
+    monitorId: v.string(),
+    matchCount: v.number(),
+  },
+  handler: async (ctx, args) => {
+    await sendAlert(
+      ctx,
+      args.userId,
+      args.phone,
+      formatMatchSms({
+        monitorName: args.monitorName,
+        newCount: args.matchCount,
+        link: `${APP_URL}/m/${args.monitorId}`,
+      }),
+    );
+  },
+});
+
+export const sendPriceAlert = internalAction({
+  args: {
+    userId: v.string(),
+    phone: v.string(),
+    monitorName: v.string(),
+    monitorId: v.string(),
+    variant: v.union(v.literal("threshold"), v.literal("single_drop"), v.literal("multiple")),
+    changes: v.array(
+      v.object({
+        title: v.string(),
+        oldPrice: v.number(),
+        newPrice: v.number(),
+        changePercent: v.number(),
+      }),
+    ),
+  },
+  handler: async (ctx, args) => {
+    await sendAlert(
+      ctx,
+      args.userId,
+      args.phone,
+      formatPriceSms({
+        monitorName: args.monitorName,
+        variant: args.variant,
+        changes: args.changes,
+        link: `${APP_URL}/m/${args.monitorId}`,
+      }),
+    );
+  },
+});
+
+// ---- Verification ----
+
+/** Wrong guesses before the code is burned. */
+const MAX_CODE_ATTEMPTS = 5;
+/** Codes one account may have sent in a day. The anti-pumping cap. */
+const MAX_CODES_PER_DAY = 3;
+const CODE_TTL_MS = 10 * 60 * 1000;
+
+function sixDigits(): string {
+  // crypto.getRandomValues over Math.random: the code is the only thing
+  // standing between an attacker and someone else's phone as a destination.
+  const buf = new Uint32Array(1);
+  crypto.getRandomValues(buf);
+  return String(buf[0]! % 1_000_000).padStart(6, "0");
+}
+
+/**
+ * Record a pending verification and hand back the code to send.
+ *
+ * The daily cap lives here rather than in the action so that two parallel
+ * requests cannot both read "2 sent today" and both send a third.
+ */
+export const claimVerification = internalMutation({
+  args: { userId: v.string(), phone: v.string() },
+  handler: async (ctx, { userId, phone }) => {
+    const today = new Date().toISOString().slice(0, 10);
+    const existing = await ctx.db
+      .query("phoneVerifications")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .unique();
+
+    // Counted on userTiers, not on the row above: every terminal path deletes
+    // that row, so a counter living there gives the account another three
+    // codes on each confirm, expiry, fifth wrong guess and hourly sweep.
+    const sentToday = await ctx.runMutation(internal.tiers.spendSmsCode, {
+      userId,
+      day: today,
+      limit: MAX_CODES_PER_DAY,
+    });
+    if (!sentToday.ok) {
+      throw new Error(`That is ${MAX_CODES_PER_DAY} codes today. Try again tomorrow.`);
+    }
+
+    // A code is a real text with a real cost, and this is the one send an
+    // unpaid attacker can reach — the classic SMS-pumping target. The per-day
+    // cap above is per account, and accounts are free, so the global budget
+    // has to apply here too or it is guarding the wrong door.
+    if (!(await spendSmsBudget(ctx))) {
+      throw new Error("Text alerts are paused right now. Try again later.");
+    }
+
+    const code = sixDigits();
+    const row = {
+      userId,
+      phone,
+      code,
+      expiresAt: Date.now() + CODE_TTL_MS,
+      attempts: 0,
+    };
+
+    if (existing) await ctx.db.replace(existing._id, row);
+    else await ctx.db.insert("phoneVerifications", row);
+
+    return code;
+  },
+});
+
+/** requireLiveAccount, reachable from an action. See startVerification. */
+export const assertLiveAccount = internalMutation({
+  args: { userId: v.string() },
+  handler: async (ctx, { userId }) => requireLiveAccount(ctx, userId),
+});
+
+/**
+ * Give back a slot claimed for a send that never landed.
+ *
+ * Without it a number Twilio rejects — a geo block, a dead line, a
+ * half-configured account — costs one of three daily attempts and destroys
+ * whatever code was pending. Three of those and the user is locked out until
+ * UTC midnight holding no working code at all.
+ */
+export const releaseVerification = internalMutation({
+  args: { userId: v.string() },
+  handler: async (ctx, { userId }) => {
+    const row = await ctx.db
+      .query("phoneVerifications")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .unique();
+    // The daily slot goes back wherever it was counted, which is userTiers —
+    // the pending row below may not even exist if the send failed before it
+    // was written.
+    await ctx.runMutation(internal.tiers.refundSmsCode, { userId });
+    // The code went nowhere, so the row is useless.
+    if (row) await ctx.db.delete(row._id);
+  },
+});
+
+/** Send a code to a number the user wants alerts on. */
+export const startVerification = action({
+  args: { phone: v.string() },
+  handler: async (ctx, args): Promise<{ sent: true; phone: string }> => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Not authenticated");
+    if (!smsEnabled()) throw new Error("Text alerts are not available yet");
+    // A JWT outlives its account by up to ~15 minutes. Without this a held
+    // token spends SMS budget on a code after the account is gone.
+    await ctx.runMutation(internal.sms.assertLiveAccount, { userId: identity.subject });
+
+    let phone: string;
+    try {
+      phone = normalisePhone(args.phone);
+    } catch (e) {
+      throw new Error(e instanceof PhoneError ? e.message : "That does not look like a phone number");
+    }
+
+    const code: string = await ctx.runMutation(internal.sms.claimVerification, {
+      userId: identity.subject,
+      phone,
+    });
+
+    try {
+      await postToTwilio(phone, formatVerificationSms(code));
+    } catch (e) {
+      await ctx.runMutation(internal.sms.releaseVerification, { userId: identity.subject });
+      throw e;
+    }
+    return { sent: true, phone: maskPhone(phone) };
+  },
+});
+
+/** Rows one sweep will clear. Bounded so a backlog cannot blow a transaction. */
+const EXPIRY_SWEEP_BATCH = 200;
+
+/**
+ * Deletes verification rows that have expired.
+ *
+ * A row here holds a raw E.164 number. It dies on a confirmed code, on a later
+ * failed one, or on releaseVerification when the user has no codes left — but
+ * a code requested and simply never entered has none of those happen to it, so
+ * without this sweep the number stays on disk for good. The privacy page says
+ * a code you do not finish is deleted after it expires, and this is the only
+ * thing that makes that true.
+ *
+ * `now` is a parameter so the test does not have to fake the clock.
+ */
+export const expireVerifications = internalMutation({
+  args: { now: v.optional(v.number()) },
+  handler: async (ctx, { now }) => {
+    const cutoff = now ?? Date.now();
+    const stale = await ctx.db
+      .query("phoneVerifications")
+      .withIndex("by_expiresAt", (q) => q.lt("expiresAt", cutoff))
+      .take(EXPIRY_SWEEP_BATCH);
+    for (const row of stale) {
+      await ctx.db.delete(row._id);
+    }
+    if (stale.length > 0) {
+      console.log(`[sms] swept ${stale.length} expired verification(s)`);
+    }
+  },
+});
+
+/**
+ * Check the code and, if it matches, make the number a destination.
+ *
+ * Writes the notificationSettings row directly rather than going through
+ * notificationSettings.upsert — that mutation refuses "sms" on purpose, so
+ * this handshake is the only way a number can become one.
+ */
+export const confirmVerification = mutation({
+  args: { code: v.string() },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Not authenticated");
+    const userId = identity.subject;
+    // Same window as startVerification, and worse here: this mutation writes
+    // notificationSettings and channelClaims, so a token outliving its account
+    // would put the raw number back after deletion removed it.
+    await requireLiveAccount(ctx, userId);
+
+    const pending = await ctx.db
+      .query("phoneVerifications")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .unique();
+
+    if (!pending) throw new Error("Ask for a code first");
+    if (pending.expiresAt < Date.now()) {
+      await ctx.db.delete(pending._id);
+      throw new Error("That code has expired. Ask for a new one.");
+    }
+    if (pending.attempts >= MAX_CODE_ATTEMPTS) {
+      await ctx.db.delete(pending._id);
+      throw new Error("Too many wrong codes. Ask for a new one.");
+    }
+    if (pending.code !== args.code.trim()) {
+      await ctx.db.patch(pending._id, { attempts: pending.attempts + 1 });
+      const left = MAX_CODE_ATTEMPTS - pending.attempts - 1;
+      throw new Error(left > 0 ? `That code is wrong — ${left} attempts left` : "That code is wrong");
+    }
+
+    // One phone, one free account. Same rule as Telegram and Discord: without
+    // it a free allowance is a per-signup allowance.
+    if ((await tierOf(ctx, userId)) === "free") {
+      const claim = await ctx.db
+        .query("channelClaims")
+        .withIndex("by_channel_target", (q) => q.eq("channel", "sms").eq("target", pending.phone))
+        .unique();
+      if (claim && claim.userId !== userId) {
+        await ctx.db.delete(pending._id);
+        throw new Error("That number is already in use on another free account");
+      }
+      if (!claim) {
+        const mine = await ctx.db
+          .query("channelClaims")
+          .withIndex("by_userId", (q) => q.eq("userId", userId))
+          .collect();
+        for (const c of mine) if (c.channel === "sms") await ctx.db.delete(c._id);
+        await ctx.db.insert("channelClaims", {
+          channel: "sms",
+          target: pending.phone,
+          userId,
+          claimedAt: Date.now(),
+        });
+      }
+    }
+
+    const existing = await ctx.db
+      .query("notificationSettings")
+      .withIndex("by_userId_channel", (q) => q.eq("userId", userId).eq("channel", "sms"))
+      .unique();
+
+    if (existing) await ctx.db.patch(existing._id, { enabled: true, target: pending.phone });
+    else await ctx.db.insert("notificationSettings", { userId, channel: "sms", enabled: true, target: pending.phone });
+
+    await ctx.db.delete(pending._id);
+    return { phone: maskPhone(pending.phone) };
+  },
+});
+
+async function tierOf(ctx: MutationCtx, userId: string) {
+  const record = await ctx.db
+    .query("userTiers")
+    .withIndex("by_userId", (q) => q.eq("userId", userId))
+    .unique();
+  return effectiveTier(record);
+}

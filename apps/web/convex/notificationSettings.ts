@@ -3,10 +3,24 @@ import { effectiveTier, type Tier } from "./tiers";
 import { requireLiveAccount } from "./account";
 import { mutation, query } from "./_generated/server";
 
+/**
+ * Channels `upsert` will set. "sms" is absent on purpose — a phone number only
+ * becomes a destination by answering a code sent to it, so sms.confirmVerification
+ * writes that row itself. Accepting it here would let anyone point alerts at
+ * any number, which is both a way to text strangers and a way to bill us.
+ */
 const channelValidator = v.union(
   v.literal("email"),
   v.literal("telegram"),
   v.literal("discord")
+);
+
+/** Disconnecting needs no proof of ownership, so this one does include sms. */
+const removableChannelValidator = v.union(
+  v.literal("email"),
+  v.literal("telegram"),
+  v.literal("discord"),
+  v.literal("sms")
 );
 
 // All tiers can connect channels — per-monitor limits are enforced in monitors.create/update
@@ -130,7 +144,7 @@ export const upsert = mutation({
 
 /** Remove a notification channel setting */
 export const remove = mutation({
-  args: { channel: channelValidator },
+  args: { channel: removableChannelValidator },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Not authenticated");
@@ -144,6 +158,20 @@ export const remove = mutation({
 
     if (existing) {
       await ctx.db.delete(existing._id);
+      // The claim row holds the destination too — for sms that is the raw
+      // E.164 number, and both /sms-policy and the privacy page say turning
+      // texts off deletes it. Leaving it would keep the number until account
+      // deletion. Email is never claimed, hence the narrowing.
+      if (args.channel !== "email") {
+        const channel = args.channel;
+        const claim = await ctx.db
+          .query("channelClaims")
+          .withIndex("by_channel_target", (q) =>
+            q.eq("channel", channel).eq("target", existing.target)
+          )
+          .unique();
+        if (claim && claim.userId === identity.subject) await ctx.db.delete(claim._id);
+      }
     }
   },
 });

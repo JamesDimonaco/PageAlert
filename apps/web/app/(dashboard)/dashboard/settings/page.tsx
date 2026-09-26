@@ -36,7 +36,7 @@ import {
 } from "@/lib/posthog";
 import { AnalyticsToggle } from "@/components/prowl/analytics-toggle";
 
-type NotificationChannel = "email" | "telegram" | "discord" | "push";
+type NotificationChannel = "email" | "telegram" | "discord" | "push" | "sms";
 
 /** Where the push test is: waiting on the send, asking the user, or showing a fix */
 type PushTestStage = "idle" | "sending" | "asking" | "not-seen" | "lost";
@@ -123,12 +123,26 @@ export default function SettingsPage() {
   const [telegramSaving, setTelegramSaving] = useState(false);
   const [telegramTesting, setTelegramTesting] = useState(false);
   const [discordSaving, setDiscordSaving] = useState(false);
+  // Texts are the one channel with a two-step connect: a number is not a
+  // destination until a code sent to it comes back. "code" means one is in
+  // flight. See convex/sms.ts.
+  const [smsPhone, setSmsPhone] = useState("");
+  const [smsCode, setSmsCode] = useState("");
+  const [smsStep, setSmsStep] = useState<"phone" | "code">("phone");
+  // Unchecked by default and never persisted: consent is given at the
+  // moment a number is submitted, not remembered from last time.
+  const [smsConsent, setSmsConsent] = useState(false);
+  const [smsSending, setSmsSending] = useState(false);
   const deleteAccountMutation = useMutation(api.account.deleteAccount);
   const sendTestEmail = useAction(api.notifications.sendTestEmail);
   const upsertSetting = useMutation(api.notificationSettings.upsert);
   const removeSetting = useMutation(api.notificationSettings.remove);
   const sendTelegramTest = useAction(api.telegram.sendTestMessage);
   const sendDiscordTest = useAction(api.discord.sendTestMessage);
+  const startSmsVerification = useAction(api.sms.startVerification);
+  const confirmSmsVerification = useMutation(api.sms.confirmVerification);
+  const smsAllowance = useQuery(api.tiers.smsAllowance);
+  const smsEnabled = useQuery(api.sms.isEnabled);
   const updateMonitor = useMutation(api.monitors.update);
   const notifSettings = useQuery(api.notificationSettings.list);
 
@@ -371,6 +385,181 @@ export default function SettingsPage() {
               </div>
             </CardContent>
           </Card>
+
+          {smsEnabled && (
+          <Card className="border-border/30 bg-card/50 shadow-sm shadow-black/5">
+            <CardHeader className="pb-4">
+              <CardTitle className="flex items-center gap-2 text-lg font-semibold">
+                <Smartphone className="h-5 w-5 text-muted-foreground" />
+                Text message
+              </CardTitle>
+              <CardDescription className="text-sm">
+                {tier === "free"
+                  ? "Get a text when something changes, on one monitor"
+                  : "Get a text when something changes"}
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              {notifSettings?.find((s) => s.channel === "sms")?.enabled ? (
+                <>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-xs">
+                      ••• ••• {notifSettings.find((s) => s.channel === "sms")!.target.slice(-4)}
+                    </Badge>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={async () => {
+                        try {
+                          await removeSetting({ channel: "sms" });
+                          setSmsPhone("");
+                          setSmsStep("phone");
+                          setSmsConsent(false);
+                          trackNotificationChannelToggled({ channel: "sms", enabled: false });
+                          toast.success("Text alerts turned off");
+                        } catch {
+                          toast.error("Failed to turn off text alerts");
+                        }
+                      }}
+                    >
+                      Turn off
+                    </Button>
+                  </div>
+                  {smsAllowance && (
+                    <p className="text-xs text-muted-foreground leading-relaxed">
+                      {smsAllowance.monthRemaining} of {smsAllowance.monthLimit} texts left this month
+                      {" · "}
+                      {smsAllowance.dayRemaining} of {smsAllowance.dayLimit} left today.
+                      {" "}
+                      Once they run out, alerts keep arriving by email.
+                    </p>
+                  )}
+                </>
+              ) : smsStep === "code" ? (
+                <>
+                  <div className="space-y-2">
+                    <Label htmlFor="sms-code" className="text-sm font-medium">Enter the 6-digit code</Label>
+                    <Input
+                      id="sms-code"
+                      inputMode="numeric"
+                      autoComplete="one-time-code"
+                      maxLength={6}
+                      placeholder="123456"
+                      value={smsCode}
+                      onChange={(e) => setSmsCode(e.target.value.replace(/\D/g, ""))}
+                    />
+                    <p className="text-xs text-muted-foreground leading-relaxed">
+                      Sent to {smsPhone}. It expires in 10 minutes.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={smsCode.length !== 6 || smsSending}
+                      onClick={async () => {
+                        setSmsSending(true);
+                        try {
+                          await confirmSmsVerification({ code: smsCode });
+                          setSmsCode("");
+                          setSmsStep("phone");
+                          trackNotificationChannelToggled({ channel: "sms", enabled: true });
+                          toast.success("Text alerts on", { description: "Pick the monitors you want them for" });
+                        } catch (e) {
+                          toast.error("Could not confirm", {
+                            description: e instanceof Error ? e.message : "Check the code and try again",
+                          });
+                        } finally {
+                          setSmsSending(false);
+                        }
+                      }}
+                    >
+                      {smsSending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null}
+                      Confirm
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        setSmsStep("phone");
+                        setSmsCode("");
+                      }}
+                    >
+                      Use a different number
+                    </Button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="space-y-2">
+                    <Label htmlFor="sms-phone" className="text-sm font-medium">Mobile number</Label>
+                    <Input
+                      id="sms-phone"
+                      type="tel"
+                      autoComplete="tel"
+                      placeholder="+44 7911 123456"
+                      value={smsPhone}
+                      onChange={(e) => setSmsPhone(e.target.value)}
+                    />
+                    <p className="text-xs text-muted-foreground leading-relaxed">
+                      Start with your country code, not 0. UK, EU, US and Canada.
+                    </p>
+                  </div>
+
+                  {/*
+                    The consent tick. Carriers require a standalone, unchecked
+                    action that names text messages, says what arrives and how
+                    often, and warns about carrier charges — separate from
+                    signing up and from accepting the terms. Our first toll-free
+                    registration was rejected (Twilio 30513) because the screen
+                    collected a number and said none of that. Changing the
+                    wording here without updating /sms-policy, which quotes it
+                    for reviewers, puts the two out of step.
+                  */}
+                  <label className="flex items-start gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={smsConsent}
+                      onChange={(e) => setSmsConsent(e.target.checked)}
+                      className="rounded border-border accent-primary h-4 w-4 mt-0.5 shrink-0"
+                    />
+                    <span className="text-xs text-muted-foreground leading-relaxed">
+                      I agree to receive <strong className="text-foreground">text messages</strong> from
+                      PageAlert about the pages I monitor. How many depends on the monitors I choose,
+                      up to my plan&apos;s limit. Message and data rates may apply. Reply STOP to a text
+                      to stop them, or turn them off here any time. See the{" "}
+                      <Link href="/terms" className="text-primary hover:underline">terms</Link> and{" "}
+                      <Link href="/privacy" className="text-primary hover:underline">privacy policy</Link>.
+                    </span>
+                  </label>
+
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={!smsConsent || smsPhone.trim().length < 8 || smsSending}
+                    onClick={async () => {
+                      setSmsSending(true);
+                      try {
+                        await startSmsVerification({ phone: smsPhone.trim() });
+                        setSmsStep("code");
+                        toast.success("Code sent", { description: "Check your messages" });
+                      } catch (e) {
+                        toast.error("Could not send a code", {
+                          description: e instanceof Error ? e.message : "Check the number and try again",
+                        });
+                      } finally {
+                        setSmsSending(false);
+                      }
+                    }}
+                  >
+                    {smsSending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null}
+                    Send me a code
+                  </Button>
+                </>
+              )}
+            </CardContent>
+          </Card>
+          )}
 
           <Card className="border-border/30 bg-card/50 shadow-sm shadow-black/5">
             <CardHeader className="pb-4">

@@ -8,7 +8,7 @@
  * See PROWL-038 Phase 3.
  */
 
-export type MonitorDraftChannel = "email" | "telegram" | "discord" | "push";
+export type MonitorDraftChannel = "email" | "telegram" | "discord" | "push" | "sms";
 export type MonitorDraftCheckInterval = "5m" | "15m" | "30m" | "1h" | "6h" | "24h";
 
 export interface MonitorDraft {
@@ -27,7 +27,7 @@ const VALID_INTERVALS: MonitorDraftCheckInterval[] = ["5m", "15m", "30m", "1h", 
 // Runtime twin of MonitorDraftChannel. A channel missing here fails
 // isValidDraft, and readMonitorDraft throws the whole draft away — so adding a
 // channel to the type without adding it here silently eats the user's form.
-const VALID_CHANNELS: MonitorDraftChannel[] = ["email", "telegram", "discord", "push"];
+const VALID_CHANNELS: MonitorDraftChannel[] = ["email", "telegram", "discord", "push", "sms"];
 
 function isValidDraft(value: unknown): value is MonitorDraft {
   if (!value || typeof value !== "object") return false;

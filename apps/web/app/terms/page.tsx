@@ -72,6 +72,20 @@ export default function TermsPage() {
             <li>We may change pricing with 30 days notice</li>
           </ul>
 
+          <h2>Text message alerts</h2>
+          <ul className="list-disc pl-6 space-y-2">
+            <li>Texts are off until you add a mobile number in Settings, tick the box agreeing to receive them, and confirm the code we send. Only the monitors you pick send texts</li>
+            <li>Your mobile carrier may charge you to receive texts — check your plan. We do not charge for them beyond your plan price</li>
+            <li>How many you get depends on your monitors, up to a monthly and daily allowance per plan. The current numbers are on the <Link href="/pricing" className="text-primary hover:underline">pricing page</Link> and in Settings</li>
+            <li>When the allowance runs out we send one text saying so, then stop. Alerts keep coming by email and any other channel you have on, and texts resume when it resets</li>
+            <li>We can text UK, EU, US and Canadian numbers</li>
+            <li>Reply <strong>STOP</strong> to any text to stop them, or turn them off in Settings. Reply <strong>HELP</strong> for help. Stopping texts does not stop your monitors — alerts continue on your other channels</li>
+            <li>Carriers can delay or drop texts. Don&apos;t rely on a text alone for anything time-critical; the email alert is always sent as well</li>
+            <li>On the free plan, one mobile number can be used on one account</li>
+            <li>We only ever text you about your own monitors, or to send a verification code. We never send marketing by text</li>
+          </ul>
+          <p>How we collect that consent, in full, is set out in our <Link href="/sms-policy" className="text-primary hover:underline">SMS opt-in and messaging policy</Link>.</p>
+
           <h2>Inactive accounts</h2>
           <p>If you are on the free plan and stop using the app, we pause your monitors — after 30 days if an alert has gone unread, or after 90 days otherwise. We email you a link that restarts them, and signing in works too. Paid plans are not paused this way.</p>
 

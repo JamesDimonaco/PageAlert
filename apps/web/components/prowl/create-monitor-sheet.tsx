@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { ChannelSelector, useConfiguredChannels, type Channel } from "@/components/prowl/channel-selector";
+import { ChannelSelector, defaultChannels, useConfiguredChannels, type Channel } from "@/components/prowl/channel-selector";
 import { IntervalSelector } from "@/components/prowl/interval-selector";
 import {
   Radar,
@@ -160,7 +160,7 @@ export function CreateMonitorSheet({
   useEffect(() => {
     if (!open || activeMonitorId || isScanning) return;
     if (channelsSeededRef.current || !configuredChannels) return;
-    setChannels(configuredChannels);
+    setChannels(defaultChannels(configuredChannels) ?? ["email"]);
     channelsSeededRef.current = true;
   }, [open, activeMonitorId, isScanning, configuredChannels]);
 

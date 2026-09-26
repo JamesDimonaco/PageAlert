@@ -314,6 +314,15 @@ const SWEEPS: readonly {
     rows: (ctx, userId) =>
       ctx.db.query("userActivity").withIndex("by_userId", (q) => q.eq("userId", userId)),
   },
+  {
+    // A row here holds a raw E.164 number. It normally dies when the code is
+    // confirmed or abandoned, but a code requested and never entered sits
+    // there until sms.expireVerifications sweeps it — and account deletion
+    // must not wait on that.
+    table: "phoneVerifications",
+    rows: (ctx, userId) =>
+      ctx.db.query("phoneVerifications").withIndex("by_userId", (q) => q.eq("userId", userId)),
+  },
 ];
 
 /**
