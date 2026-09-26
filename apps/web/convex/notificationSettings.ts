@@ -158,6 +158,20 @@ export const remove = mutation({
 
     if (existing) {
       await ctx.db.delete(existing._id);
+      // The claim row holds the destination too — for sms that is the raw
+      // E.164 number, and both /sms-policy and the privacy page say turning
+      // texts off deletes it. Leaving it would keep the number until account
+      // deletion. Email is never claimed, hence the narrowing.
+      if (args.channel !== "email") {
+        const channel = args.channel;
+        const claim = await ctx.db
+          .query("channelClaims")
+          .withIndex("by_channel_target", (q) =>
+            q.eq("channel", channel).eq("target", existing.target)
+          )
+          .unique();
+        if (claim && claim.userId === identity.subject) await ctx.db.delete(claim._id);
+      }
     }
   },
 });

@@ -253,6 +253,13 @@ export default defineSchema({
     // The month we last told this user their texts had run out, so the notice
     // costs one SMS a month rather than one per refused alert.
     smsCapNotifiedMonth: v.optional(v.string()),
+    // Verification codes sent today. Counted here rather than on the
+    // phoneVerifications row because every terminal path deletes that row — a
+    // confirmed code, an expired one, five wrong guesses, the hourly sweep —
+    // and a counter that dies with it hands out a fresh three each time. The
+    // carrier-facing policy promises three a day. See sms.claimVerification.
+    smsCodeDay: v.optional(v.string()), // YYYY-MM-DD UTC
+    smsCodeDayCount: v.optional(v.number()),
     reviewDismissed: v.optional(v.boolean()),
     updatedAt: v.number(),
   }).index("by_userId", ["userId"]),
@@ -314,9 +321,6 @@ export default defineSchema({
     expiresAt: v.number(),
     /** Wrong guesses so far. See MAX_CODE_ATTEMPTS in sms.ts. */
     attempts: v.number(),
-    /** Codes sent on sentDate — the cap that makes this a bad pumping target. */
-    sentCount: v.number(),
-    sentDate: v.string(), // YYYY-MM-DD UTC
   })
     .index("by_userId", ["userId"])
     // The sweep reads oldest-expiry-first, so a cron run does bounded work

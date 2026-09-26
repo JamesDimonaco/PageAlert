@@ -15,8 +15,6 @@ function verification(userId: string, expiresAt: number) {
     code: "481920",
     expiresAt,
     attempts: 0,
-    sentCount: 1,
-    sentDate: "2026-09-26",
   };
 }
 
@@ -27,6 +25,49 @@ function verification(userId: string, expiresAt: number) {
  * number sits there for good. The privacy page says a code you do not finish
  * is deleted after it expires, which is only true because of this.
  */
+/**
+ * The cap /sms-policy promises carriers: "An account may request at most 3
+ * codes per day." A counter living on the verification row cannot deliver
+ * that, because every terminal path deletes the row — a confirmed code, an
+ * expired one, five wrong guesses, and the hourly sweep. Each one hands the
+ * account a fresh three.
+ */
+describe("claimVerification daily cap", () => {
+  async function claim(t: ReturnType<typeof convexTest>) {
+    return t.mutation(internal.sms.claimVerification, {
+      userId: "user-capped",
+      phone: "+447911123456",
+    });
+  }
+
+  it("counts codes for the day even when the pending row is gone", async () => {
+    const t = convexTest(schema, modules);
+
+    for (let i = 0; i < 3; i++) await claim(t);
+    await expect(claim(t)).rejects.toThrow(/3 codes today/);
+
+    // What a confirmed code, an expired one, or the sweep all leave behind.
+    await t.run(async (ctx) => {
+      const row = await ctx.db
+        .query("phoneVerifications")
+        .withIndex("by_userId", (q) => q.eq("userId", "user-capped"))
+        .unique();
+      if (row) await ctx.db.delete(row._id);
+    });
+
+    await expect(claim(t)).rejects.toThrow(/3 codes today/);
+  });
+
+  it("does not let one account's codes count against another's", async () => {
+    const t = convexTest(schema, modules);
+
+    for (let i = 0; i < 3; i++) await claim(t);
+    await expect(
+      t.mutation(internal.sms.claimVerification, { userId: "user-other", phone: "+447911999888" })
+    ).resolves.toMatch(/^\d{6}$/);
+  });
+});
+
 describe("expireVerifications", () => {
   it("deletes rows past their expiry and leaves live ones alone", async () => {
     const t = convexTest(schema, modules);
@@ -44,13 +85,14 @@ describe("expireVerifications", () => {
     });
   });
 
-  it("sweeps a row whose expiry was zeroed by releaseVerification", async () => {
-    // releaseVerification sets expiresAt to 0 rather than deleting, when the
-    // user has codes left on the day. That row still holds the number.
+  it("sweeps a row left with a zero expiry", async () => {
+    // Nothing writes expiresAt: 0 today — releaseVerification deletes the row
+    // outright — but rows written before that change carry it, and a zero read
+    // as "no expiry" rather than "long expired" would strand the number.
     const t = convexTest(schema, modules);
 
     const released = await t.run((ctx) =>
-      ctx.db.insert("phoneVerifications", { ...verification("user-released", 0), sentCount: 2 })
+      ctx.db.insert("phoneVerifications", verification("user-released", 0))
     );
 
     await t.mutation(internal.sms.expireVerifications, { now: NOW });

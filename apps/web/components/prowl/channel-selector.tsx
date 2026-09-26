@@ -37,6 +37,21 @@ const RESTRICTED: Channel[] = ["telegram", "discord", "sms"];
 const SETTINGS_BACKED: Channel[] = ["telegram", "discord", "sms"];
 
 /**
+ * Channels a new monitor does NOT inherit from the account.
+ *
+ * Every other channel is free to fan out: one more email or push costs
+ * nothing. A text costs money and arrives on a phone, so /sms-policy tells
+ * carriers "SMS is off by default on every monitor" and that verifying a
+ * number alone never produces a text. Seeding it here would make both false.
+ */
+const NOT_INHERITED: Channel[] = ["sms"];
+
+/** The channels a new or legacy monitor should start with. */
+export function defaultChannels(configured: Channel[] | undefined): Channel[] | undefined {
+  return configured?.filter((c) => !NOT_INHERITED.includes(c));
+}
+
+/**
  * Channels the user has actually set up. Email is always available; push has no
  * settings row, so a registered device is what makes it available.
  *

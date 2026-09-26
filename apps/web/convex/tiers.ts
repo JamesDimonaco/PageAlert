@@ -1043,8 +1043,14 @@ const SMS_BUDGET_DEFAULT = 2000;
  * "the code is wrong" case it was written for.
  */
 function smsMonthlyBudget(): number {
-  const raw = Number(process.env.SMS_MONTHLY_BUDGET);
-  return Number.isFinite(raw) && raw >= 0 ? raw : SMS_BUDGET_DEFAULT;
+  // Trim first: a dashboard value of "" or "  " is not null, and Number("") is
+  // 0 — finite, non-negative, and therefore a budget of zero that refuses
+  // every text including verification codes. Only an unset var, a blank one or
+  // a typo may reach the default.
+  const raw = process.env.SMS_MONTHLY_BUDGET?.trim();
+  if (!raw) return SMS_BUDGET_DEFAULT;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : SMS_BUDGET_DEFAULT;
 }
 
 /**
@@ -1108,6 +1114,96 @@ export interface SmsReservation {
  * A mutation rather than a check inside the sending action, so two monitors
  * firing in the same minute cannot both read "9 used" and both send.
  */
+/**
+ * Count one verification code against the account's daily allowance, or refuse.
+ *
+ * Lives on userTiers rather than on the phoneVerifications row because that row
+ * is deleted on every terminal path — a confirmed code, an expired one, five
+ * wrong guesses, the hourly sweep — so a counter held there would hand the
+ * account a fresh three each time. The carrier-facing policy at /sms-policy
+ * promises three a day, and this is what makes that true.
+ *
+ * The stamp is stored beside the count, like every other window in this file:
+ * a stale day reads as zero and no cron has to reset anything.
+ */
+export const spendSmsCode = internalMutation({
+  args: { userId: v.string(), day: v.string(), limit: v.number() },
+  handler: async (ctx, { userId, day, limit }): Promise<{ ok: boolean }> => {
+    const record = await ctx.db
+      .query("userTiers")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .unique();
+
+    const used = record?.smsCodeDay === day ? (record.smsCodeDayCount ?? 0) : 0;
+    if (used >= limit) return { ok: false };
+
+    if (record) {
+      await ctx.db.patch(record._id, {
+        smsCodeDay: day,
+        smsCodeDayCount: used + 1,
+        updatedAt: Date.now(),
+      });
+    } else {
+      // A user who has never been near billing still has no userTiers row, and
+      // the code request is the first thing that needs one.
+      await ctx.db.insert("userTiers", {
+        userId,
+        tier: "free",
+        smsCodeDay: day,
+        smsCodeDayCount: 1,
+        updatedAt: Date.now(),
+      });
+    }
+    return { ok: true };
+  },
+});
+
+/**
+ * Give back an alert slot reserved for a text Twilio never accepted.
+ *
+ * reserveSmsSend spends the month, the day and the global budget before the
+ * send, so a 500, a 429 or a timeout costs a user three things and delivers
+ * nothing. The global counter is deliberately left alone: it is a spend
+ * ceiling, refunding it needs a second write on the hot path, and erring
+ * towards under-spending is the right way for a budget to be wrong.
+ */
+export const refundSmsSend = internalMutation({
+  args: { userId: v.string() },
+  handler: async (ctx, { userId }) => {
+    const record = await ctx.db
+      .query("userTiers")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .unique();
+    if (!record) return;
+    const patch: { smsMonthCount?: number; smsDayCount?: number; updatedAt: number } = {
+      updatedAt: Date.now(),
+    };
+    if ((record.smsMonthCount ?? 0) > 0) patch.smsMonthCount = record.smsMonthCount! - 1;
+    if ((record.smsDayCount ?? 0) > 0) patch.smsDayCount = record.smsDayCount! - 1;
+    await ctx.db.patch(record._id, patch);
+  },
+});
+
+/**
+ * Give back a code slot spent on a send that never landed.
+ *
+ * Without it a number Twilio rejects — a geo block, a dead line, a
+ * half-configured account — costs one of three daily attempts, and three of
+ * those lock the user out until UTC midnight holding no working code.
+ */
+export const refundSmsCode = internalMutation({
+  args: { userId: v.string() },
+  handler: async (ctx, { userId }) => {
+    const record = await ctx.db
+      .query("userTiers")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .unique();
+    const used = record?.smsCodeDayCount ?? 0;
+    if (!record || used <= 0) return;
+    await ctx.db.patch(record._id, { smsCodeDayCount: used - 1, updatedAt: Date.now() });
+  },
+});
+
 export const reserveSmsSend = internalMutation({
   args: { userId: v.string() },
   handler: async (ctx, { userId }): Promise<SmsReservation> => {

@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label";
 import { AiInsightsCard } from "@/components/prowl/ai-insights";
 import { PriceAlertCard } from "@/components/prowl/price-alert-card";
 import { IntervalSelector } from "@/components/prowl/interval-selector";
-import { ChannelSelector, useConfiguredChannels, type Channel } from "@/components/prowl/channel-selector";
+import { ChannelSelector, defaultChannels, useConfiguredChannels, type Channel } from "@/components/prowl/channel-selector";
 import {
   ExternalLink,
   List,
@@ -586,7 +586,7 @@ function MonitorSettingsForm({
   const explicitChannels = monitor.notificationChannels as Channel[] | undefined;
   const configuredChannels = useConfiguredChannels();
   const [editedChannels, setEditedChannels] = useState<Channel[] | null>(null);
-  const channels = editedChannels ?? explicitChannels ?? configuredChannels ?? ["email"];
+  const channels = editedChannels ?? explicitChannels ?? defaultChannels(configuredChannels) ?? ["email"];
   const channelsUnresolved = explicitChannels === undefined && configuredChannels === undefined;
   const [saving, setSaving] = useState(false);
   const updateMutation = useMutation(api.monitors.update);

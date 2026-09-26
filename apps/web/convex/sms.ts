@@ -10,6 +10,7 @@ import {
 } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { effectiveTier, spendSmsBudget } from "./tiers";
+import { requireLiveAccount } from "./account";
 import {
   formatMatchSms,
   formatPriceSms,
@@ -90,7 +91,8 @@ function twilioConfig(): TwilioConfig {
  * carrying 300-odd area codes, so the guard for those has to be Twilio's Geo
  * Permissions, narrowed to the United States and Canada specifically. Twilio
  * treats them as separate countries there even though they share the code.
- * Leave "1" out until that is set.
+ * So for +1, and only +1, this list is not a guard at all — the console is.
+ * Narrow it before SMS_ENABLED goes true on any deployment.
  */
 const ALLOWED_DIAL_CODES = [
   "1", // United States and Canada — see the Geo Permissions note above
@@ -160,7 +162,7 @@ export function normalisePhone(input: string): string {
     .sort((a, b) => b.length - a.length)
     .find((c) => body.startsWith(c));
   if (!code) {
-    throw new PhoneError("We can only text UK and EU numbers at the moment. Email and Telegram work everywhere.");
+    throw new PhoneError("We can text UK, EU, US and Canadian numbers. Email and Telegram work everywhere.");
   }
 
   return `+${body}`;
@@ -187,8 +189,11 @@ async function postToTwilio(to: string, body: string): Promise<void> {
   });
 
   if (!res.ok) {
+    // Twilio's error body quotes the To number back on an invalid-number
+    // error, and the success path below masks it — so log the code, not the body.
     const text = await res.text().catch(() => "");
-    console.error("[sms] Send failed:", res.status, text);
+    const code = text.match(/"code"\s*:\s*(\d+)/)?.[1] ?? "unknown";
+    console.error(`[sms] send failed to ${maskPhone(to)}: HTTP ${res.status}, Twilio code ${code}`);
     throw new Error("Failed to send SMS");
   }
   console.log(`[sms] sent to ${maskPhone(to)} (${body.length} chars)`);
@@ -236,7 +241,16 @@ async function sendAlert(
     return false;
   }
 
-  await postToTwilio(to, body);
+  try {
+    await postToTwilio(to, body);
+  } catch (e) {
+    // The reservation above already spent a monthly slot, a daily slot and a
+    // unit of global budget. A Twilio 500, a 429 or a timeout delivered
+    // nothing, and the scheduler swallows the throw, so without this a free
+    // user silently loses a third of their day per blip.
+    await ctx.runMutation(internal.tiers.refundSmsSend, { userId });
+    throw e;
+  }
   return true;
 }
 
@@ -324,8 +338,15 @@ export const claimVerification = internalMutation({
       .withIndex("by_userId", (q) => q.eq("userId", userId))
       .unique();
 
-    const sentToday = existing?.sentDate === today ? existing.sentCount : 0;
-    if (sentToday >= MAX_CODES_PER_DAY) {
+    // Counted on userTiers, not on the row above: every terminal path deletes
+    // that row, so a counter living there gives the account another three
+    // codes on each confirm, expiry, fifth wrong guess and hourly sweep.
+    const sentToday = await ctx.runMutation(internal.tiers.spendSmsCode, {
+      userId,
+      day: today,
+      limit: MAX_CODES_PER_DAY,
+    });
+    if (!sentToday.ok) {
       throw new Error(`That is ${MAX_CODES_PER_DAY} codes today. Try again tomorrow.`);
     }
 
@@ -344,8 +365,6 @@ export const claimVerification = internalMutation({
       code,
       expiresAt: Date.now() + CODE_TTL_MS,
       attempts: 0,
-      sentCount: sentToday + 1,
-      sentDate: today,
     };
 
     if (existing) await ctx.db.replace(existing._id, row);
@@ -353,6 +372,12 @@ export const claimVerification = internalMutation({
 
     return code;
   },
+});
+
+/** requireLiveAccount, reachable from an action. See startVerification. */
+export const assertLiveAccount = internalMutation({
+  args: { userId: v.string() },
+  handler: async (ctx, { userId }) => requireLiveAccount(ctx, userId),
 });
 
 /**
@@ -370,10 +395,12 @@ export const releaseVerification = internalMutation({
       .query("phoneVerifications")
       .withIndex("by_userId", (q) => q.eq("userId", userId))
       .unique();
-    if (!row) return;
-    // The code went nowhere, so the row is useless; the slot goes back.
-    if (row.sentCount <= 1) await ctx.db.delete(row._id);
-    else await ctx.db.patch(row._id, { sentCount: row.sentCount - 1, expiresAt: 0 });
+    // The daily slot goes back wherever it was counted, which is userTiers —
+    // the pending row below may not even exist if the send failed before it
+    // was written.
+    await ctx.runMutation(internal.tiers.refundSmsCode, { userId });
+    // The code went nowhere, so the row is useless.
+    if (row) await ctx.db.delete(row._id);
   },
 });
 
@@ -384,6 +411,9 @@ export const startVerification = action({
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Not authenticated");
     if (!smsEnabled()) throw new Error("Text alerts are not available yet");
+    // A JWT outlives its account by up to ~15 minutes. Without this a held
+    // token spends SMS budget on a code after the account is gone.
+    await ctx.runMutation(internal.sms.assertLiveAccount, { userId: identity.subject });
 
     let phone: string;
     try {
@@ -452,6 +482,10 @@ export const confirmVerification = mutation({
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Not authenticated");
     const userId = identity.subject;
+    // Same window as startVerification, and worse here: this mutation writes
+    // notificationSettings and channelClaims, so a token outliving its account
+    // would put the raw number back after deletion removed it.
+    await requireLiveAccount(ctx, userId);
 
     const pending = await ctx.db
       .query("phoneVerifications")

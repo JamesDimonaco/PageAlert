@@ -229,8 +229,6 @@ const FIXTURES: { [T in TableNames]: (refs: Refs) => Row<T> } = {
     code: "481920",
     expiresAt: NOW + 600_000,
     attempts: 0,
-    sentCount: 1,
-    sentDate: "2026-09-26",
   }),
   onboardingEmails: ({ userId }) => ({
     userId,
