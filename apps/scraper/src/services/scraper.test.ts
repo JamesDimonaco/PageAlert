@@ -1,6 +1,11 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
+import { chromium } from "playwright";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+
+// Every scrape launches or reuses a real browser and then waits 3s for
+// the page's scripts, so vitest's 5s default is not enough.
+vi.setConfig({ testTimeout: 30_000 });
 
 // The SSRF guard rejects loopback, which is the only place a test server can live.
 vi.mock("../utils/url-validation.js", () => ({ validateUrlForScraping: async () => {} }));
@@ -80,5 +85,22 @@ describe("scrapeUrl browser fingerprint", () => {
     const hintVersion = text.match(/"Chromium";v="(\d+)"/)?.[1];
     expect(uaVersion).toBeDefined();
     expect(uaVersion).toBe(hintVersion);
+  });
+});
+
+describe("scrapeUrl browser launch", () => {
+  // Checks arrive in bursts. Before the launch was shared, each scrape that
+  // found no browser launched its own and all but the last were never
+  // closed: whole Chromium processes left running on Railway.
+  it("launches one browser for concurrent scrapes on a cold start", async () => {
+    vi.resetModules();
+    const fresh = await import("./scraper.js");
+    const launch = vi.spyOn(chromium, "launch");
+    try {
+      await Promise.all([1, 2, 3].map(() => fresh.scrapeUrl(`${base}/status/200`)));
+      expect(launch).toHaveBeenCalledTimes(1);
+    } finally {
+      launch.mockRestore();
+    }
   });
 });

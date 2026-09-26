@@ -2,7 +2,13 @@ import { chromium, type Browser, type Page } from "playwright";
 import type { ScrapeResponse } from "@prowl/shared";
 import { validateUrlForScraping } from "../utils/url-validation.js";
 
-let browser: { instance: Browser; userAgent: string } | null = null;
+type LaunchedBrowser = { instance: Browser; userAgent: string };
+
+/**
+ * Shared by every caller: scrapes arrive in bursts, and a caller that
+ * launched its own browser would leave the others' running unclosed.
+ */
+let browserLaunch: Promise<LaunchedBrowser> | null = null;
 
 /**
  * Maximum number of concurrent browser contexts. Each one is a live renderer,
@@ -43,33 +49,51 @@ const MAX_RESPONSE_SIZE = 5 * 1024 * 1024;
 /** Hard cap on timeout to prevent indefinite resource consumption */
 const MAX_TIMEOUT = 60000;
 
-async function getBrowser(): Promise<{ instance: Browser; userAgent: string }> {
-  if (!browser || !browser.instance.isConnected()) {
-    const instance = await chromium.launch({
-      // The full browser in new headless mode. The default headless shell
-      // sends "HeadlessChrome" in sec-ch-ua on every request.
-      channel: "chromium",
-      headless: true,
-      args: [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage",
-        "--disable-gpu",
-        // Prevent the browser from accessing file:// and other dangerous protocols
-        "--disable-file-system",
-        // Limit process memory
-        "--js-flags=--max-old-space-size=256",
-      ],
-    });
+async function getBrowser(): Promise<LaunchedBrowser> {
+  const launch = browserLaunch ?? (browserLaunch = launchBrowser());
+  let launched: LaunchedBrowser;
+  try {
+    launched = await launch;
+  } catch (error) {
+    // Let the next caller retry rather than inherit this failure forever
+    if (browserLaunch === launch) browserLaunch = null;
+    throw error;
+  }
+  if (launched.instance.isConnected()) return launched;
+  // Crashed or killed. Only the first caller to notice starts the relaunch.
+  if (browserLaunch === launch) browserLaunch = null;
+  return getBrowser();
+}
+
+async function launchBrowser(): Promise<LaunchedBrowser> {
+  const instance = await chromium.launch({
+    // The full browser in new headless mode. The default headless shell
+    // sends "HeadlessChrome" in sec-ch-ua on every request.
+    channel: "chromium",
+    headless: true,
+    args: [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-gpu",
+      // Prevent the browser from accessing file:// and other dangerous protocols
+      "--disable-file-system",
+      // Limit process memory
+      "--js-flags=--max-old-space-size=256",
+    ],
+  });
+  try {
     // New headless still says "HeadlessChrome" in the user agent. Keep the
     // rest of the real string: a made-up one contradicts the version and
     // platform the engine reports in its client hints, itself a bot signal.
     const probe = await instance.newPage();
     const userAgent = (await probe.evaluate(() => navigator.userAgent)).replace("HeadlessChrome", "Chrome");
     await probe.close();
-    browser = { instance, userAgent };
+    return { instance, userAgent };
+  } catch (error) {
+    await instance.close();
+    throw error;
   }
-  return browser;
 }
 
 /** Prefix for failures of the fallback provider itself, as opposed to the site blocking us. */
