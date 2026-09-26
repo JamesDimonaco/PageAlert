@@ -4,7 +4,8 @@ import { apiKeyHint, formatApiKey, hashApiKey, looksLikeApiKey } from "@prowl/sh
 import { isBanned, requireLiveAccount } from "./account";
 
 const MAX_NAME_LENGTH = 100;
-const MAX_LISTED_KEYS = 50;
+/** Every key has to fit on the Settings page, since that is the only place to revoke one. */
+const MAX_KEYS_PER_USER = 20;
 /** lastUsedAt is for "is this key still in use?", so hourly is plenty and saves a write per call. */
 const LAST_USED_RESOLUTION_MS = 60 * 60 * 1000;
 
@@ -47,6 +48,13 @@ export const create = mutation({
     if (trimmed.length > MAX_NAME_LENGTH) throw new Error(`Name exceeds ${MAX_NAME_LENGTH} characters`);
     if (await isBanned(ctx, identity.subject)) throw new Error("This account has been suspended.");
     await requireLiveAccount(ctx, identity.subject);
+    const held = await ctx.db
+      .query("apiKeys")
+      .withIndex("by_userId", (q) => q.eq("userId", identity.subject))
+      .take(MAX_KEYS_PER_USER);
+    if (held.length >= MAX_KEYS_PER_USER) {
+      throw new Error(`You can have up to ${MAX_KEYS_PER_USER} API keys. Revoke one to make another.`);
+    }
 
     const bytes = new Uint8Array(32);
     crypto.getRandomValues(bytes);
@@ -82,7 +90,7 @@ export const listMine = query({
       .query("apiKeys")
       .withIndex("by_userId", (q) => q.eq("userId", identity.subject))
       .order("desc")
-      .take(MAX_LISTED_KEYS);
+      .take(MAX_KEYS_PER_USER);
     return rows.map(({ _id, name, hint, createdAt, lastUsedAt }) => ({ _id, name, hint, createdAt, lastUsedAt }));
   },
 });

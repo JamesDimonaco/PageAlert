@@ -5,7 +5,9 @@ import {
   DEFAULT_AGENT_MATCHES,
   MAX_AGENT_MATCHES,
   MAX_AGENT_MONITORS,
+  itemIdentity,
   toAgentItem,
+  type AgentItem,
 } from "@prowl/shared";
 import { requireKeyOwner } from "./apiKeys";
 import {
@@ -77,16 +79,25 @@ export const getMatches = query({
       .order("desc")
       .take(MATCH_LOOKBACK_RESULTS);
 
-    const matches = [];
+    // A full extract stores every current match, not only the new ones, so an
+    // item on the page for a week is in every row. Keep one entry per item,
+    // dated from the oldest row it appears in.
+    const byIdentity = new Map<string, AgentItem & { matchedAt: number }>();
     for (const result of results) {
       if (!result.hasNewMatches) continue;
       for (const raw of result.matches) {
         const item = toAgentItem(raw);
-        if (item) matches.push({ ...item, matchedAt: new Date(result.scrapedAt).toISOString() });
-        if (matches.length >= max) return matches;
+        if (!item) continue;
+        const key = itemIdentity(item);
+        const seen = byIdentity.get(key);
+        if (seen) seen.matchedAt = result.scrapedAt;
+        else byIdentity.set(key, { ...item, matchedAt: result.scrapedAt });
       }
     }
-    return matches;
+    return [...byIdentity.values()]
+      .sort((a, b) => b.matchedAt - a.matchedAt)
+      .slice(0, max)
+      .map((m) => ({ ...m, matchedAt: new Date(m.matchedAt).toISOString() }));
   },
 });
 

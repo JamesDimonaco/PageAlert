@@ -63,8 +63,8 @@ export function ApiKeysCard() {
       <CardHeader className="pb-4">
         <CardTitle className="text-lg font-semibold">API keys</CardTitle>
         <CardDescription className="text-sm">
-          Let an AI agent such as Claude create monitors and read matches for you, over MCP. A key can do anything
-          you can do with monitors, so treat it like a password.
+          Let an AI agent such as Claude create monitors and read matches for you, over MCP. Anyone with a key can
+          do that as you, so treat it like a password.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">

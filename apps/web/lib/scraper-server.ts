@@ -96,7 +96,10 @@ export async function urlRejection(url: string): Promise<string | null> {
 }
 
 /** Scrape and extract in one scraper call. Run urlRejection first. */
-export async function extractPage(body: { url: string; prompt: string; name?: string }): Promise<ExtractOutcome> {
+export async function extractPage(
+  body: { url: string; prompt: string; name?: string },
+  timeoutMs = 110_000
+): Promise<ExtractOutcome> {
   const scraperUrl = process.env.SCRAPER_URL;
   const scraperKey = process.env.SCRAPER_API_KEY;
   if (!scraperUrl || !scraperKey) return { ok: false, error: "Scraper not configured", status: 503 };
@@ -109,7 +112,7 @@ export async function extractPage(body: { url: string; prompt: string; name?: st
         "x-api-key": scraperKey,
       },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(110000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
 
     const text = await res.text();

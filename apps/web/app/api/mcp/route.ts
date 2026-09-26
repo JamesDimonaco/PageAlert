@@ -17,14 +17,18 @@ import { isBlockedError } from "@/convex/shared";
 import { extractPage, urlRejection, type ExtractResponse } from "@/lib/scraper-server";
 import { logger } from "@/lib/server-logger";
 
-// A first scan (scrape plus AI extract) takes about 25s and is cut off at 110s.
+// A first scan (scrape plus AI extract) takes about 25s.
 export const maxDuration = 120;
+/**
+ * create_monitor has already inserted the monitor when the scan starts, and a
+ * function killed at maxDuration would leave it in "scanning", which the
+ * scheduler never picks up. This leaves room for the saves either side.
+ */
+const FIRST_SCAN_TIMEOUT_MS = 80_000;
 
 const SITE_URL = "https://pagealert.io";
 /** Matches shown from a scan. The dashboard has the rest. */
 const MAX_SCAN_MATCHES = 20;
-
-const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL!);
 
 type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean };
 
@@ -63,7 +67,14 @@ const prompt = z
   .max(2000)
   .describe("What to look for on the page, in plain words, e.g. 'any hut booking in February under $100'.");
 
-function registerTools(server: McpServer, apiKey: string) {
+/** What saveScanError will have done with the monitor, in words for the agent. */
+function afterFailedScan(error: string) {
+  return isBlockedError(error)
+    ? { status: "retrying", next: "The site blocked the first scan. The monitor is kept and will retry through a proxy." }
+    : { status: "error", next: "The first scan failed. The user can fix the monitor or retry it from the dashboard." };
+}
+
+function registerTools(server: McpServer, convex: ConvexHttpClient, apiKey: string) {
   server.registerTool(
     "preview_page",
     {
@@ -110,31 +121,20 @@ function registerTools(server: McpServer, apiKey: string) {
       }
       const dashboardUrl = `${SITE_URL}/dashboard/monitors/${monitorId}`;
 
-      const outcome = await extractPage({ url: args.url, prompt: args.prompt, name: args.name });
+      const outcome = await extractPage({ url: args.url, prompt: args.prompt, name: args.name }, FIRST_SCAN_TIMEOUT_MS);
       try {
         if (!outcome.ok) {
           await convex.mutation(api.mcp.saveScanError, { apiKey, id: monitorId, error: outcome.error });
-          // Same split as saveScanError: a block keeps the monitor and retries
-          // through the proxy, anything else leaves it in error.
-          const retrying = isBlockedError(outcome.error);
-          return ok({
-            monitorId,
-            dashboardUrl,
-            status: retrying ? "retrying" : "error",
-            firstScan: {
-              error: outcome.error,
-              next: retrying
-                ? "The site blocked the first scan. The monitor is kept and will retry through a proxy."
-                : "The first scan failed. The user can fix the monitor or retry it from the dashboard.",
-            },
-          });
+          const { status, next } = afterFailedScan(outcome.error);
+          return ok({ monitorId, dashboardUrl, status, firstScan: { error: outcome.error, next } });
         }
 
         const summary = scanSummary(outcome.data);
         if (!summary.readable) {
           const reason = summary.notices[0] ?? "Page appears inaccessible - no data could be extracted";
           await convex.mutation(api.mcp.saveScanError, { apiKey, id: monitorId, error: reason });
-          return ok({ monitorId, dashboardUrl, status: "error", firstScan: summary });
+          const { status, next } = afterFailedScan(reason);
+          return ok({ monitorId, dashboardUrl, status, firstScan: { ...summary, next } });
         }
 
         await convex.mutation(api.mcp.saveScanResult, {
@@ -146,6 +146,10 @@ function registerTools(server: McpServer, apiKey: string) {
         });
         return ok({ monitorId, dashboardUrl, status: "active", firstScan: summary });
       } catch (e) {
+        // Get it out of "scanning", where nothing would ever check it again.
+        await convex
+          .mutation(api.mcp.saveScanError, { apiKey, id: monitorId, error: "Saving the first scan failed" })
+          .catch(() => {});
         return fail(`The monitor was created (${dashboardUrl}) but saving its first scan failed: ${errorMessage(e)}`);
       }
     }
@@ -204,6 +208,9 @@ function bearerToken(request: Request): string | null {
 }
 
 async function handler(request: Request): Promise<Response> {
+  // Per request: a ConvexHttpClient runs its mutations one at a time, so a
+  // shared one would queue every agent on this instance behind each other.
+  const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL!);
   const apiKey = bearerToken(request);
   const owner = apiKey ? await convex.mutation(api.apiKeys.verify, { key: apiKey }) : null;
   if (!apiKey || !owner) {
@@ -213,10 +220,16 @@ async function handler(request: Request): Promise<Response> {
     );
   }
 
-  const response = await createMcpHandler((server) => registerTools(server, apiKey), {
+  const response = await createMcpHandler((server) => registerTools(server, convex, apiKey), {
     serverInfo: { name: "pagealert", version: "1.0.0" },
     onEvent: (event) => {
-      if (event.type === "ERROR") logger.error("mcp: error", { userId: owner.userId });
+      if (event.type === "ERROR") {
+        logger.error("mcp: error", {
+          userId: owner.userId,
+          error: event.error instanceof Error ? event.error.message : event.error,
+          context: event.context,
+        });
+      }
     },
   })(request);
   after(() => logger.flush());

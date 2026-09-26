@@ -180,13 +180,54 @@ test("a saved first scan makes the monitor active and its matches readable", asy
   ]);
 });
 
-test("the web flow still saves every item as the first scan's history", async () => {
+test("the web flow saves the matches, not every item, as the first scan's history", async () => {
   const t = setup();
   const { asUser } = await seedUser(t, "a@example.com");
   const id = await asUser.mutation(api.monitors.create, { ...MONITOR, checkInterval: "1h" });
   const items = [{ title: "one" }, { title: "two" }];
-  await asUser.mutation(api.monitors.saveScanResult, { id, schema: { items }, matchCount: 1 });
+  await asUser.mutation(api.monitors.saveScanResult, { id, schema: { items }, matchCount: 1, matches: [items[0]] });
 
   const rows = await t.run((ctx) => ctx.db.query("scrapeResults").collect());
-  expect(rows.map((r) => r.matches)).toEqual([items]);
+  expect(rows.map((r) => r.matches)).toEqual([[items[0]]]);
+});
+
+test("a free user cannot use MCP to put Telegram or Discord on a second monitor", async () => {
+  const t = setup();
+  const { asUser, key } = await seedUser(t, "a@example.com");
+  await asUser.mutation(api.monitors.create, { ...MONITOR, checkInterval: "1h", notificationChannels: ["telegram"] });
+
+  // No channels given means "all of them", which must still respect the ration.
+  const id = await t.mutation(api.mcp.createMonitor, { apiKey: key, ...MONITOR });
+  const monitor = await t.run((ctx) => ctx.db.get(id));
+  expect(monitor!.notificationChannels).toBeDefined();
+  expect(monitor!.notificationChannels).not.toContain("telegram");
+  expect(monitor!.notificationChannels).not.toContain("discord");
+  expect(monitor!.notificationChannels).toContain("email");
+});
+
+test("an item still matching on every check comes back once, dated from when it first matched", async () => {
+  const t = setup();
+  const { key } = await seedUser(t, "a@example.com");
+  const id = await t.mutation(api.mcp.createMonitor, { apiKey: key, ...MONITOR });
+  const hut = { title: "Clinton Hut 3 Feb", url: "https://example.com/3feb" };
+  const newer = { title: "Mintaro Hut 4 Feb", url: "https://example.com/4feb" };
+  await t.run(async (ctx) => {
+    // The scheduler's full extract stores every current match, not only new ones.
+    for (const [at, matches] of [[NOW, [hut]], [NOW + MINUTE, [hut, newer]], [NOW + 2 * MINUTE, [hut, newer]]] as const) {
+      await ctx.db.insert("scrapeResults", { monitorId: id, matches: [...matches], totalItems: 5, hasNewMatches: true, scrapedAt: at });
+    }
+  });
+
+  expect(await t.query(api.mcp.getMatches, { apiKey: key, monitorId: id })).toEqual([
+    { ...newer, matchedAt: new Date(NOW + MINUTE).toISOString() },
+    { ...hut, matchedAt: new Date(NOW).toISOString() },
+  ]);
+});
+
+test("a user can hold at most 20 keys, so every key stays on the page that revokes it", async () => {
+  const t = setup();
+  const { asUser } = await seedUser(t, "a@example.com");
+  for (let i = 1; i < 20; i++) await asUser.mutation(api.apiKeys.create, { name: `k${i}` });
+  await expect(asUser.mutation(api.apiKeys.create, { name: "k20" })).rejects.toThrow(/20 API keys/);
+  expect(await asUser.query(api.apiKeys.listMine, {})).toHaveLength(20);
 });
