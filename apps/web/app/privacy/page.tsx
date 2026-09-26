@@ -37,6 +37,7 @@ export default function PrivacyPage() {
           <p><strong>Your monitors.</strong> The <strong>URLs</strong> you give us, your <strong>search prompts</strong>, and what we find on each check. Every check is logged — when it ran, what we read from the page, and whether it matched. That log is the check history you see in the dashboard.</p>
           <p><strong>Trying it before you sign up.</strong> A scan run without an account stores the URL and prompt for 7 days. If you leave an email address so we can tell you about matches, we keep the address with the scan for 30 days. Sign up with that address and the monitor moves into your account.</p>
           <p><strong>Notification channels.</strong> If you connect one, we store your <strong>Telegram chat ID</strong> or <strong>Discord webhook URL</strong>. For browser push we store a subscription address and keys for each device you allow it on, along with that browser&apos;s user agent string.</p>
+          <p><strong>Your mobile number.</strong> If you turn on text alerts we store your <strong>mobile number</strong>. We send a code to it first, and only a number that answers the code ever receives an alert. A code you do not finish with is deleted when it expires. We use the number for nothing but the texts you asked for, and never for marketing. Full detail is in our <Link href="/sms-policy" className="text-primary hover:underline">SMS opt-in and messaging policy</Link>.</p>
           <p><strong>Feedback and reviews.</strong> A thumbs up or down on an alert is stored with the entry it was about and the prompt you had at the time. If you leave a review, the display name and words you give us are shown on our homepage.</p>
           <p><strong>Emails we send you.</strong> One record per email: the address, what kind of email it was, and whether it was delivered, bounced, or marked as spam.</p>
           <p><strong>Activity.</strong> When you were last in the app, and when you created each monitor.</p>
@@ -60,6 +61,7 @@ export default function PrivacyPage() {
             <li><strong>Anthropic (Claude)</strong> — the text of each page we check is sent to Claude, with your prompt, to pull out the entries and judge whether they match.</li>
             <li><strong>Scrapfly</strong> — when a site blocks us, we fetch the page through Scrapfly&apos;s proxy service instead. They see the URL and return the page.</li>
             <li><strong>Resend</strong> — sends our email and tells us when one bounces.</li>
+            <li><strong>Twilio</strong> — sends our text messages. Twilio is in the US and receives your mobile number and the content of each text: the monitor name, what changed, and a link. Twilio is certified under the UK–US data bridge and the EU–US Data Privacy Framework.</li>
             <li><strong>Polar</strong> — payments and subscriptions.</li>
             <li><strong>PostHog</strong> — analytics and session replay, hosted in the United States.</li>
             <li><strong>Vercel</strong> — hosts the site and provides the aggregate page analytics.</li>
@@ -78,7 +80,7 @@ export default function PrivacyPage() {
 
           <h2>How long we keep it</h2>
           <p>Everything tied to your account is kept while the account exists, including your check history. How far back you can read that history depends on your plan: older checks are hidden rather than deleted, and upgrading brings them back. Scans run without an account are deleted after 7 days, or 30 days if you left an email address.</p>
-          <p>You can delete your account from <strong>Settings → Profile</strong>. That removes your monitors, results, check history, notifications, connected channels, push subscriptions, feedback, reviews, email delivery records, and the login itself, including your email and name. Deletion runs in the background: most accounts are cleared straight away, and a large account takes a few minutes. Checks that ran before you signed up, on a monitor you later claimed, are removed as well.</p>
+          <p>You can delete your account from <strong>Settings → Profile</strong>. That removes your monitors, results, check history, notifications, connected channels, your mobile number, push subscriptions, feedback, reviews, email delivery records, and the login itself, including your email and name. Deletion runs in the background: most accounts are cleared straight away, and a large account takes a few minutes. Checks that ran before you signed up, on a monitor you later claimed, are removed as well.</p>
           <p>Two things stay after deletion: the record of any account-wide email we sent, which lists the addresses it went to; and the IDs of Polar orders we have applied, alongside Polar&apos;s own record of your payments. A suspended account cannot be deleted from Settings — email us instead.</p>
 
           <h2>Your rights</h2>
