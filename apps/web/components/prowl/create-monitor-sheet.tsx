@@ -27,6 +27,7 @@ import { useRouter } from "next/navigation";
 import { useMonitor } from "@/hooks/use-monitors";
 import type { Id } from "@/convex/_generated/dataModel";
 import { toast } from "sonner";
+import { sessionBoundParams } from "@prowl/shared";
 import {
   readMonitorDraft,
   writeMonitorDraft,
@@ -191,6 +192,7 @@ export function CreateMonitorSheet({
   }, [cloneDefaults, open, onCloneDefaultsConsumed]);
 
   const selectedMode = MONITOR_MODES.find((m) => m.id === mode) ?? null;
+  const sessionParams = sessionBoundParams(url);
 
   function resetForm() {
     setName("");
@@ -352,8 +354,19 @@ export function CreateMonitorSheet({
                     placeholder="https://apple.com/shop/refurbished/mac"
                     value={url}
                     onChange={(e) => setUrl(e.target.value)}
+                    aria-describedby={sessionParams.length > 0 ? "create-url-session-warning" : undefined}
                     required
                   />
+                  {sessionParams.length > 0 && (
+                    <p id="create-url-session-warning" className="flex gap-1.5 text-xs text-amber-400 leading-relaxed">
+                      <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                      <span>
+                        This link includes {new Intl.ListFormat("en").format(sessionParams)}, which{" "}
+                        {sessionParams.length === 1 ? "belongs" : "belong"} to your browser session. We
+                        won&apos;t be able to open it later. Try the page you reach before any form steps.
+                      </span>
+                    </p>
+                  )}
                 </div>
                 <div className="space-y-2">
                   <Label className="text-sm font-medium">What are you watching?</Label>

@@ -11,6 +11,7 @@ import {
 import { useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
+import { NEVER_SUCCEEDED_RETRY_DAYS } from "@/convex/shared";
 import { CreateMonitorSheet } from "@/components/prowl/create-monitor-sheet";
 import type { Channel } from "@/components/prowl/channel-selector";
 import { toast } from "sonner";
@@ -291,8 +292,8 @@ export function CreateMonitorProvider({ children }: { children: ReactNode }) {
 
         const isBlocked = msg.includes("blocking") || msg.includes("anti-bot") || msg.includes("CAPTCHA") || msg.includes("blocked");
         if (isBlocked) {
-          toast("Site blocked initial scan", {
-            description: "We'll automatically retry with different strategies (proxy, mobile browser). Check back in a few minutes.",
+          toast("This site blocked our first look", {
+            description: `That often clears up, so we'll keep trying for up to ${NEVER_SUCCEEDED_RETRY_DAYS} days and email you if we never get in.`,
             duration: 8000,
           });
         } else {
