@@ -375,6 +375,22 @@ export default defineSchema({
   })
     .index("by_userId_createdAt", ["userId", "createdAt"]),
 
+  // Keys for the MCP endpoint. Only the SHA-256 of a key is stored; the
+  // plaintext is shown once at creation. userEmail is copied from the session
+  // that made the key, because a key-authenticated call has no identity to
+  // read it from and monitors need it for alert emails.
+  apiKeys: defineTable({
+    userId: v.string(),
+    userEmail: v.optional(v.string()),
+    name: v.string(),
+    keyHash: v.string(),
+    hint: v.string(),
+    createdAt: v.number(),
+    lastUsedAt: v.optional(v.number()),
+  })
+    .index("by_keyHash", ["keyHash"])
+    .index("by_userId", ["userId"]),
+
   // One row per email we hand to Resend. Without it a bounce and a delivery
   // look identical from inside the product: the sends are fire-and-forget and
   // the prod Resend key is send-only, so its API can't be asked either.
