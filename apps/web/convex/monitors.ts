@@ -167,6 +167,7 @@ const channelValidator = v.array(v.union(
 ));
 
 type ChannelList = Infer<typeof channelValidator>;
+const ALL_CHANNELS: ChannelList = channelValidator.element.members.map((m) => m.value);
 
 /**
  * Create a monitor in "scanning" state for this user. The caller runs the
@@ -222,11 +223,15 @@ export async function createMonitorForUser(
   // restricted channels. Push is not one of them — it costs us nothing per
   // message and a subscription is bound to a device the user already owns,
   // so there is nothing here to ration or to abuse.
+  //
+  // No list means every channel, so it is rationed as one. The web form always
+  // sends a list; MCP leaves it out.
   let channels = args.notificationChannels;
-  if (tier === "free" && channels) {
+  if (tier === "free") {
+    channels ??= ALL_CHANNELS;
     if (channels.some(isRestrictedChannel)) {
       const existingWithChannels = existingMonitors.find((m) =>
-        (m as any).notificationChannels?.some(isRestrictedChannel)
+        m.notificationChannels?.some(isRestrictedChannel)
       );
       if (existingWithChannels) {
         channels = channels.filter((c) => !isRestrictedChannel(c));
@@ -286,8 +291,8 @@ export const create = mutation({
 /**
  * Save scan results to a monitor. Transitions from "scanning" to "active".
  *
- * `matches` is the matched items when the caller has them. The web flow only
- * sends a count, so its history row lists every item on the page instead.
+ * `matches` is the matched items. Without it, the history row falls back to
+ * every item on the page, which is what the web flow sent before it had them.
  */
 export async function saveScanResultForUser(
   ctx: MutationCtx,
@@ -324,8 +329,7 @@ export async function saveScanResultForUser(
     lastMatchAt: matchCount > 0 ? now : undefined,
     lastAiExtractAt: now,
     nextCheckAt: now + effectiveIntervalMs(monitor),
-    // A scan reports its own matches to the user, and only carries a count,
-    // not the matched items. Drop the baseline so the next scheduled extract
+    // A scan reports its own matches to the user. Drop the baseline so the next scheduled extract
     // re-seeds it silently rather than re-announcing what the scan just
     // showed. The cost is the other half of that trade: anything appearing
     // between the scan and that extract goes unannounced.
@@ -379,6 +383,8 @@ export const saveScanResult = mutation({
     schema: v.any(),
     matchCount: v.number(),
     contentFingerprint: v.optional(v.string()),
+    // Optional only so a browser still running the previous bundle can save.
+    matches: v.optional(v.array(v.any())),
   },
   handler: async (ctx, args) => saveScanResultForUser(ctx, await getAuthUserId(ctx), args),
 });
