@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { User, Bell, CreditCard, Mail, MessageCircle, Hash, Trash2, Send, CheckCircle2, Loader2, ExternalLink, Sparkles, Lock, Smartphone } from "lucide-react";
+import { User, Bell, CreditCard, Mail, MessageCircle, Hash, Trash2, Send, CheckCircle2, Loader2, ExternalLink, Sparkles, Lock, Smartphone, KeyRound } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -35,13 +35,14 @@ import {
   trackNotificationChannelToggled,
 } from "@/lib/posthog";
 import { AnalyticsToggle } from "@/components/prowl/analytics-toggle";
+import { ApiKeysCard } from "@/components/prowl/api-keys-card";
 
 type NotificationChannel = "email" | "telegram" | "discord" | "push" | "sms";
 
 /** Where the push test is: waiting on the send, asking the user, or showing a fix */
 type PushTestStage = "idle" | "sending" | "asking" | "not-seen" | "lost";
 
-const VALID_TABS = ["notifications", "profile", "billing"] as const;
+const VALID_TABS = ["notifications", "profile", "billing", "api"] as const;
 type SettingsTab = (typeof VALID_TABS)[number];
 
 export default function SettingsPage() {
@@ -194,7 +195,15 @@ export default function SettingsPage() {
             <CreditCard className="mr-2 h-4 w-4" />
             Billing
           </TabsTrigger>
+          <TabsTrigger value="api">
+            <KeyRound className="mr-2 h-4 w-4" />
+            API
+          </TabsTrigger>
         </TabsList>
+
+        <TabsContent value="api" className="mt-8 space-y-8">
+          <ApiKeysCard />
+        </TabsContent>
 
         <TabsContent value="profile" className="mt-8 space-y-8">
           <Card className="border-border/30 bg-card/50 shadow-sm shadow-black/5">
