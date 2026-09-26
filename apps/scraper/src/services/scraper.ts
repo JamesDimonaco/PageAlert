@@ -49,7 +49,7 @@ const MAX_RESPONSE_SIZE = 5 * 1024 * 1024;
 /** Hard cap on timeout to prevent indefinite resource consumption */
 const MAX_TIMEOUT = 60000;
 
-async function getBrowser(): Promise<LaunchedBrowser> {
+async function getBrowser(relaunched = false): Promise<LaunchedBrowser> {
   const launch = browserLaunch ?? (browserLaunch = launchBrowser());
   let launched: LaunchedBrowser;
   try {
@@ -62,7 +62,9 @@ async function getBrowser(): Promise<LaunchedBrowser> {
   if (launched.instance.isConnected()) return launched;
   // Crashed or killed. Only the first caller to notice starts the relaunch.
   if (browserLaunch === launch) browserLaunch = null;
-  return getBrowser();
+  // One that dies straight after launching would otherwise respawn in a loop
+  if (relaunched) throw new Error("Browser disconnected right after launch");
+  return getBrowser(true);
 }
 
 async function launchBrowser(): Promise<LaunchedBrowser> {
@@ -91,7 +93,8 @@ async function launchBrowser(): Promise<LaunchedBrowser> {
     await probe.close();
     return { instance, userAgent };
   } catch (error) {
-    await instance.close();
+    // The probe's error is the one worth reporting
+    await instance.close().catch(() => {});
     throw error;
   }
 }
@@ -338,12 +341,13 @@ async function getTextWithLinks(page: Page): Promise<string> {
 }
 
 /**
- * Anti-bot services answer with a 403 or 429 whatever the page text says, and
- * their block pages often match none of detectAntiBot's markers. 503 is left
- * out: it is as often a site outage, which the proxy cannot fix.
+ * Anti-bot services answer with a 403 whatever the page text says, and their
+ * block pages often match none of detectAntiBot's markers. 503 is left out as
+ * often a site outage, and 429 as usually our own burst being rate limited:
+ * flagging either sends a healthy monitor to the proxy and its 6h interval.
  */
 function blockedByStatus(status: number | undefined): { blocked: true; reason: string } | null {
-  return status === 403 || status === 429 ? { blocked: true, reason: `HTTP ${status}` } : null;
+  return status === 403 ? { blocked: true, reason: "HTTP 403" } : null;
 }
 
 /**

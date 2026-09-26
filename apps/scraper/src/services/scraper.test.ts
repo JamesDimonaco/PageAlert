@@ -35,31 +35,35 @@ beforeAll(async () => {
       res.end(html(`<p>${FILLER}</p><script>setTimeout(() => location.replace("/status/200"), 200)</script>`));
       return;
     }
+    // Anything else, like the favicon the full browser asks for, is a 404:
+    // a NaN status throws inside the server and takes the test worker down.
     const status = Number(path.split("/")[2]);
-    res.statusCode = status;
+    res.statusCode = Number.isInteger(status) ? status : 404;
     res.end(html(`<p>${FILLER}</p>`));
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 });
 
-afterAll(() => {
-  server.close();
+afterAll(async () => {
+  await new Promise((resolve) => server.close(resolve));
 });
 
 describe("scrapeUrl block detection by HTTP status", () => {
   // eBay, Vinted and Argos all answer a datacenter IP with a 403 whose text
   // none of the markers match; left unflagged, the scheduler never reaches
   // for the fallback proxy.
-  it.each([403, 429])("flags a %i response as blocked", async (status) => {
-    const result = await scrapeUrl(`${base}/status/${status}`);
+  it("flags a 403 response as blocked", async () => {
+    const result = await scrapeUrl(`${base}/status/403`);
     expect(result.blocked).toBe(true);
-    expect(result.blockReason).toContain(String(status));
+    expect(result.blockReason).toBe("HTTP 403");
   });
 
   // A 503 is as often a site outage as a block, and escalating an outage
-  // spends proxy credits that cannot fix it.
-  it.each([200, 404, 500, 503])("does not flag a %i response", async (status) => {
+  // spends proxy credits that cannot fix it. A 429 is usually our own burst
+  // being rate limited, and one success through the proxy marks the monitor
+  // proxy-preferred, moving it to the 6h interval.
+  it.each([200, 404, 429, 500, 503])("does not flag a %i response", async (status) => {
     const result = await scrapeUrl(`${base}/status/${status}`);
     expect(result.blocked).toBeUndefined();
   });
