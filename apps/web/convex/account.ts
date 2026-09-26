@@ -323,6 +323,11 @@ const SWEEPS: readonly {
     rows: (ctx, userId) =>
       ctx.db.query("phoneVerifications").withIndex("by_userId", (q) => q.eq("userId", userId)),
   },
+  {
+    table: "apiKeys",
+    rows: (ctx, userId) =>
+      ctx.db.query("apiKeys").withIndex("by_userId", (q) => q.eq("userId", userId)),
+  },
 ];
 
 /**

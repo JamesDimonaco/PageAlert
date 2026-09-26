@@ -1,5 +1,6 @@
-import { v } from "convex/values";
-import { mutation, query, internalAction, internalQuery } from "./_generated/server";
+import { v, type Infer } from "convex/values";
+import { mutation, query, internalAction, internalQuery, type MutationCtx } from "./_generated/server";
+import type { Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { displayHost, effectiveIntervalMs, ERROR_RECOVERY_INTERVAL_MS, intervalToMs, isBlockedError, MAX_RETRIES, validateMonitorUrl } from "./shared";
 import { itemIdentity, RESUME_TOKEN_TTL_MS } from "@prowl/shared";
@@ -93,7 +94,7 @@ const statusValidator = v.union(
   v.literal("error")
 );
 
-const intervalValidator = v.union(
+export const intervalValidator = v.union(
   v.literal("5m"),
   v.literal("15m"),
   v.literal("30m"),
@@ -165,7 +166,108 @@ const channelValidator = v.array(v.union(
   v.literal("sms")
 ));
 
-/** Create a monitor in "scanning" state. The scan runs client-side, then saveScanResult is called. */
+type ChannelList = Infer<typeof channelValidator>;
+
+/**
+ * Create a monitor in "scanning" state for this user. The caller runs the
+ * first scan and then calls saveScanResultForUser or saveScanErrorForUser:
+ * the web app from the browser, the MCP route from the server.
+ */
+export async function createMonitorForUser(
+  ctx: MutationCtx,
+  { userId, userEmail }: { userId: string; userEmail: string | undefined },
+  args: {
+    name: string;
+    url: string;
+    prompt: string;
+    checkInterval: CheckInterval;
+    notificationChannels?: ChannelList;
+  }
+): Promise<Id<"monitors">> {
+  if (await isBanned(ctx, userId)) throw new Error("This account has been suspended.");
+  // A token outlives the account it was minted for; see requireLiveAccount.
+  await requireLiveAccount(ctx, userId);
+
+  // Dynamic tier-based enforcement
+  const tier = await getUserTier(ctx, userId);
+  const limits = TIER_LIMITS[tier];
+  const checkInterval = clampInterval(args.checkInterval, tier);
+
+  validateName(args.name);
+  validateMonitorUrl(args.url);
+  validatePrompt(args.prompt);
+
+  // Rolling-window creation rate limit — counts survive deletion so
+  // delete-and-remake can't bypass the paid AI extraction limit
+  const windowStart = Date.now() - CREATION_WINDOW_MS;
+  const recentCreations = await ctx.db
+    .query("monitorCreations")
+    .withIndex("by_userId_createdAt", (q) => q.eq("userId", userId).gt("createdAt", windowStart))
+    .collect();
+  if (recentCreations.length >= CREATION_LIMITS[tier]) {
+    const oldestCreatedAt = Math.min(...recentCreations.map((c) => c.createdAt));
+    const wait = formatWait(oldestCreatedAt + CREATION_WINDOW_MS - Date.now());
+    throw new Error(`Creation limit reached: your ${tier} plan allows ${CREATION_LIMITS[tier]} new monitors per 5 hours. You can create another in ${wait}.`);
+  }
+
+  const existingMonitors = await ctx.db
+    .query("monitors")
+    .withIndex("by_userId", (q) => q.eq("userId", userId))
+    .collect();
+  if (existingMonitors.length >= limits.maxMonitors) {
+    throw new Error(`Your ${tier} plan allows ${limits.maxMonitors} monitors. Upgrade for more.`);
+  }
+
+  // Server-side enforcement: free tier can only have one monitor on the
+  // restricted channels. Push is not one of them — it costs us nothing per
+  // message and a subscription is bound to a device the user already owns,
+  // so there is nothing here to ration or to abuse.
+  let channels = args.notificationChannels;
+  if (tier === "free" && channels) {
+    if (channels.some(isRestrictedChannel)) {
+      const existingWithChannels = existingMonitors.find((m) =>
+        (m as any).notificationChannels?.some(isRestrictedChannel)
+      );
+      if (existingWithChannels) {
+        channels = channels.filter((c) => !isRestrictedChannel(c));
+      }
+    }
+  }
+
+  const now = Date.now();
+  const id = await ctx.db.insert("monitors", {
+    name: args.name.trim(),
+    url: args.url.trim(),
+    prompt: args.prompt.trim(),
+    checkInterval: checkInterval,
+    notificationChannels: channels,
+    userId,
+    userEmail,
+    status: "scanning",
+    matchCount: 0,
+    checkCount: 0,
+    retryCount: 0,
+    nextCheckAt: now + intervalToMs(checkInterval),
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  await ctx.db.insert("monitorCreations", { userId, createdAt: now });
+
+  // Increment public monitor counter (lightweight alternative to counting all docs)
+  const counter = await ctx.db.query("counters").withIndex("by_name", (q) => q.eq("name", "monitors")).unique();
+  if (counter) {
+    await ctx.db.patch(counter._id, { value: counter.value + 1 });
+  } else {
+    // First time — seed counter from existing non-anonymous monitors + this new one
+    const existing = await ctx.db.query("monitors").collect();
+    const currentCount = existing.filter((m) => !m.isAnonymous).length;
+    await ctx.db.insert("counters", { name: "monitors", value: currentCount });
+  }
+
+  return id;
+}
+
 export const create = mutation({
   args: {
     name: v.string(),
@@ -177,95 +279,100 @@ export const create = mutation({
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Not authenticated");
-    const userId = identity.subject;
-    const userEmail = identity.email ?? undefined;
-
-    if (await isBanned(ctx, userId)) throw new Error("This account has been suspended.");
-    // A token outlives the account it was minted for; see requireLiveAccount.
-    await requireLiveAccount(ctx, userId);
-
-    // Dynamic tier-based enforcement
-    const tier = await getUserTier(ctx, userId);
-    const limits = TIER_LIMITS[tier];
-    const checkInterval = clampInterval(args.checkInterval, tier);
-
-    validateName(args.name);
-    validateMonitorUrl(args.url);
-    validatePrompt(args.prompt);
-
-    // Rolling-window creation rate limit — counts survive deletion so
-    // delete-and-remake can't bypass the paid AI extraction limit
-    const windowStart = Date.now() - CREATION_WINDOW_MS;
-    const recentCreations = await ctx.db
-      .query("monitorCreations")
-      .withIndex("by_userId_createdAt", (q) => q.eq("userId", userId).gt("createdAt", windowStart))
-      .collect();
-    if (recentCreations.length >= CREATION_LIMITS[tier]) {
-      const oldestCreatedAt = Math.min(...recentCreations.map((c) => c.createdAt));
-      const wait = formatWait(oldestCreatedAt + CREATION_WINDOW_MS - Date.now());
-      throw new Error(`Creation limit reached: your ${tier} plan allows ${CREATION_LIMITS[tier]} new monitors per 5 hours. You can create another in ${wait}.`);
-    }
-
-    const existingMonitors = await ctx.db
-      .query("monitors")
-      .withIndex("by_userId", (q) => q.eq("userId", userId))
-      .collect();
-    if (existingMonitors.length >= limits.maxMonitors) {
-      throw new Error(`Your ${tier} plan allows ${limits.maxMonitors} monitors. Upgrade for more.`);
-    }
-
-    // Server-side enforcement: free tier can only have one monitor on the
-    // restricted channels. Push is not one of them — it costs us nothing per
-    // message and a subscription is bound to a device the user already owns,
-    // so there is nothing here to ration or to abuse.
-    let channels = args.notificationChannels;
-    if (tier === "free" && channels) {
-      if (channels.some(isRestrictedChannel)) {
-        const existingWithChannels = existingMonitors.find((m) =>
-          (m as any).notificationChannels?.some(isRestrictedChannel)
-        );
-        if (existingWithChannels) {
-          channels = channels.filter((c) => !isRestrictedChannel(c));
-        }
-      }
-    }
-
-    const now = Date.now();
-    const id = await ctx.db.insert("monitors", {
-      name: args.name.trim(),
-      url: args.url.trim(),
-      prompt: args.prompt.trim(),
-      checkInterval: checkInterval,
-      notificationChannels: channels,
-      userId,
-      userEmail,
-      status: "scanning",
-      matchCount: 0,
-      checkCount: 0,
-      retryCount: 0,
-      nextCheckAt: now + intervalToMs(checkInterval),
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    await ctx.db.insert("monitorCreations", { userId, createdAt: now });
-
-    // Increment public monitor counter (lightweight alternative to counting all docs)
-    const counter = await ctx.db.query("counters").withIndex("by_name", (q) => q.eq("name", "monitors")).unique();
-    if (counter) {
-      await ctx.db.patch(counter._id, { value: counter.value + 1 });
-    } else {
-      // First time — seed counter from existing non-anonymous monitors + this new one
-      const existing = await ctx.db.query("monitors").collect();
-      const currentCount = existing.filter((m) => !m.isAnonymous).length;
-      await ctx.db.insert("counters", { name: "monitors", value: currentCount });
-    }
-
-    return id;
+    return createMonitorForUser(ctx, { userId: identity.subject, userEmail: identity.email ?? undefined }, args);
   },
 });
 
-/** Save scan results to a monitor. Transitions from "scanning" to "active". */
+/**
+ * Save scan results to a monitor. Transitions from "scanning" to "active".
+ *
+ * `matches` is the matched items when the caller has them. The web flow only
+ * sends a count, so its history row lists every item on the page instead.
+ */
+export async function saveScanResultForUser(
+  ctx: MutationCtx,
+  userId: string,
+  {
+    id,
+    schema,
+    matchCount,
+    contentFingerprint,
+    matches,
+  }: {
+    id: Id<"monitors">;
+    // The extractor's schema, stored as-is; its shape is the scraper's to define.
+    schema: unknown;
+    matchCount: number;
+    contentFingerprint?: string;
+    matches?: unknown[];
+  }
+): Promise<void> {
+  const monitor = await ctx.db.get(id);
+  if (!monitor || monitor.userId !== userId) throw new Error("Monitor not found");
+  if (monitor.status !== "scanning") return;
+
+  const now = Date.now();
+  await ctx.db.patch(id, {
+    schema,
+    contentFingerprint,
+    status: "active",
+    matchCount,
+    checkCount: (monitor.checkCount ?? 0) + 1,
+    retryCount: 0,
+    proxyBlockCount: 0,
+    lastCheckedAt: now,
+    lastMatchAt: matchCount > 0 ? now : undefined,
+    lastAiExtractAt: now,
+    nextCheckAt: now + effectiveIntervalMs(monitor),
+    // A scan reports its own matches to the user, and only carries a count,
+    // not the matched items. Drop the baseline so the next scheduled extract
+    // re-seeds it silently rather than re-announcing what the scan just
+    // showed. The cost is the other half of that trade: anything appearing
+    // between the scan and that extract goes unannounced.
+    matchedKeys: undefined,
+    updatedAt: now,
+  });
+
+  // Save initial scan to history so it appears in the History tab
+  const schemaItems = (schema as { items?: unknown } | null)?.items;
+  const items: unknown[] = Array.isArray(schemaItems) ? schemaItems : [];
+  await ctx.db.insert("scrapeResults", {
+    monitorId: id,
+    matches: (matches ?? items).slice(0, 50),
+    totalItems: items.length,
+    hasNewMatches: matchCount > 0,
+    scrapedAt: now,
+  });
+
+  // Activation: the first page we ever managed to read for this user.
+  //
+  // The marker is claimed in this transaction and the alert scheduled from
+  // inside it, so the two cannot disagree — and being stored on the user
+  // rather than inferred from their monitors means deleting the monitor
+  // cannot produce a second "activated", which reading checkCount across
+  // their rows would have done.
+  const activity = await ctx.db
+    .query("userActivity")
+    .withIndex("by_userId", (q) => q.eq("userId", userId))
+    .unique();
+  if (!activity?.activatedAt) {
+    if (activity) await ctx.db.patch(activity._id, { activatedAt: now });
+    else await ctx.db.insert("userActivity", { userId, lastSeenAt: now, activatedAt: now });
+    await ctx.scheduler.runAfter(0, internal.admin.notify, {
+      text: `🎉 Activated: ${monitor.userEmail ?? userId} got their first scan — "${monitor.name}" on ${displayHost(monitor.url)}, ${matchCount} match${matchCount === 1 ? "" : "es"}`,
+    });
+  }
+
+  // Send notifications for initial scan matches
+  if (matchCount > 0) {
+    await ctx.scheduler.runAfter(0, internal.monitors.sendInitialScanNotifications, {
+      monitorId: id,
+      matchCount,
+      totalItems: items.length,
+    });
+  }
+}
+
 export const saveScanResult = mutation({
   args: {
     id: v.id("monitors"),
@@ -273,118 +380,58 @@ export const saveScanResult = mutation({
     matchCount: v.number(),
     contentFingerprint: v.optional(v.string()),
   },
-  handler: async (ctx, { id, schema, matchCount, contentFingerprint }) => {
-    const userId = await getAuthUserId(ctx);
-    const monitor = await ctx.db.get(id);
-    if (!monitor || monitor.userId !== userId) throw new Error("Monitor not found");
-    if (monitor.status !== "scanning") return;
-
-    const now = Date.now();
-    await ctx.db.patch(id, {
-      schema,
-      contentFingerprint,
-      status: "active",
-      matchCount,
-      checkCount: (monitor.checkCount ?? 0) + 1,
-      retryCount: 0,
-      proxyBlockCount: 0,
-      lastCheckedAt: now,
-      lastMatchAt: matchCount > 0 ? now : undefined,
-      lastAiExtractAt: now,
-      nextCheckAt: now + effectiveIntervalMs(monitor),
-      // A scan reports its own matches to the user, and only carries a count,
-      // not the matched items. Drop the baseline so the next scheduled extract
-      // re-seeds it silently rather than re-announcing what the scan just
-      // showed. The cost is the other half of that trade: anything appearing
-      // between the scan and that extract goes unannounced.
-      matchedKeys: undefined,
-      updatedAt: now,
-    });
-
-    // Save initial scan to history so it appears in the History tab
-    const items = Array.isArray(schema?.items) ? schema.items : [];
-    await ctx.db.insert("scrapeResults", {
-      monitorId: id,
-      matches: items.slice(0, 50),
-      totalItems: items.length,
-      hasNewMatches: matchCount > 0,
-      scrapedAt: now,
-    });
-
-    // Activation: the first page we ever managed to read for this user.
-    //
-    // The marker is claimed in this transaction and the alert scheduled from
-    // inside it, so the two cannot disagree — and being stored on the user
-    // rather than inferred from their monitors means deleting the monitor
-    // cannot produce a second "activated", which reading checkCount across
-    // their rows would have done.
-    const activity = await ctx.db
-      .query("userActivity")
-      .withIndex("by_userId", (q) => q.eq("userId", userId))
-      .unique();
-    if (!activity?.activatedAt) {
-      if (activity) await ctx.db.patch(activity._id, { activatedAt: now });
-      else await ctx.db.insert("userActivity", { userId, lastSeenAt: now, activatedAt: now });
-      await ctx.scheduler.runAfter(0, internal.admin.notify, {
-        text: `🎉 Activated: ${monitor.userEmail ?? userId} got their first scan — "${monitor.name}" on ${displayHost(monitor.url)}, ${matchCount} match${matchCount === 1 ? "" : "es"}`,
-      });
-    }
-
-    // Send notifications for initial scan matches
-    if (matchCount > 0) {
-      await ctx.scheduler.runAfter(0, internal.monitors.sendInitialScanNotifications, {
-        monitorId: id,
-        matchCount,
-        totalItems: items.length,
-      });
-    }
-  },
+  handler: async (ctx, args) => saveScanResultForUser(ctx, await getAuthUserId(ctx), args),
 });
 
 /** Mark a scan as failed. */
+export async function saveScanErrorForUser(
+  ctx: MutationCtx,
+  userId: string,
+  { id, error }: { id: Id<"monitors">; error: string }
+): Promise<void> {
+  const monitor = await ctx.db.get(id);
+  if (!monitor || monitor.userId !== userId) throw new Error("Monitor not found");
+
+  if (monitor.status !== "scanning" && monitor.status !== "active") return;
+
+  const isBlocked = isBlockedError(error);
+  const now = Date.now();
+
+  if (isBlocked && monitor.status === "scanning") {
+    // Blocked on initial scan — schedule retries with proxy instead of instant death.
+    // Start at retryCount 1 so the scheduler uses proxy on the first retry
+    // (retryCount 0 = no proxy = would fail the same way)
+    await ctx.db.patch(id, {
+      status: "active",
+      lastError: error,
+      retryCount: 1,
+      // A manual retry always gets a fresh proxy-block budget, whether this
+      // scan is the monitor's first ever or a rescan of a parked one.
+      proxyBlockCount: 0,
+      nextCheckAt: now + 30_000, // first retry in 30s
+      updatedAt: now,
+    });
+  } else {
+    await ctx.db.patch(id, {
+      status: "error",
+      lastError: error,
+      // Enter the scheduler's slow recovery lane the same way a failed
+      // scheduled check does. A lower count would replay the fast backoff
+      // ladder (and the paid-tier AI attempt) on a URL already known dead.
+      retryCount: MAX_RETRIES,
+      proxyBlockCount: 0,
+      nextCheckAt: now + ERROR_RECOVERY_INTERVAL_MS,
+      updatedAt: now,
+    });
+  }
+}
+
 export const saveScanError = mutation({
   args: {
     id: v.id("monitors"),
     error: v.string(),
   },
-  handler: async (ctx, { id, error }) => {
-    const userId = await getAuthUserId(ctx);
-    const monitor = await ctx.db.get(id);
-    if (!monitor || monitor.userId !== userId) throw new Error("Monitor not found");
-
-    if (monitor.status !== "scanning" && monitor.status !== "active") return;
-
-    const isBlocked = isBlockedError(error);
-    const now = Date.now();
-
-    if (isBlocked && monitor.status === "scanning") {
-      // Blocked on initial scan — schedule retries with proxy instead of instant death.
-      // Start at retryCount 1 so the scheduler uses proxy on the first retry
-      // (retryCount 0 = no proxy = would fail the same way)
-      await ctx.db.patch(id, {
-        status: "active",
-        lastError: error,
-        retryCount: 1,
-        // A manual retry always gets a fresh proxy-block budget, whether this
-        // scan is the monitor's first ever or a rescan of a parked one.
-        proxyBlockCount: 0,
-        nextCheckAt: now + 30_000, // first retry in 30s
-        updatedAt: now,
-      });
-    } else {
-      await ctx.db.patch(id, {
-        status: "error",
-        lastError: error,
-        // Enter the scheduler's slow recovery lane the same way a failed
-        // scheduled check does. A lower count would replay the fast backoff
-        // ladder (and the paid-tier AI attempt) on a URL already known dead.
-        retryCount: MAX_RETRIES,
-        proxyBlockCount: 0,
-        nextCheckAt: now + ERROR_RECOVERY_INTERVAL_MS,
-        updatedAt: now,
-      });
-    }
-  },
+  handler: async (ctx, args) => saveScanErrorForUser(ctx, await getAuthUserId(ctx), args),
 });
 
 export const update = mutation({
