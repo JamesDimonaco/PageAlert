@@ -30,7 +30,7 @@ export default function PrivacyPage() {
 
         <div className="prose prose-invert prose-sm max-w-none space-y-8 text-muted-foreground [&_h2]:text-foreground [&_h2]:text-lg [&_h2]:font-semibold [&_h2]:mt-10 [&_h2]:mb-4 [&_strong]:text-foreground">
           <h2>Who we are</h2>
-          <p>PageAlert is run by <strong>J M Dimonaco LTD</strong>, a company registered in England and Wales (company number [COMPANY NUMBER], registered office [REGISTERED OFFICE ADDRESS]). We are the data controller for everything described here. Questions about your data go to <a href="mailto:dimonaco.james@gmail.com" className="text-primary hover:underline">dimonaco.james@gmail.com</a>.</p>
+          <p>PageAlert is run by <strong>J M Dimonaco LTD</strong>, a company registered in England and Wales (company number 14260548, registered office 34 Llanberis Close, Tonteg, Cardiff, CF38 1HR). We are the data controller for everything described here. Questions about your data go to <a href="mailto:dimonaco.james@gmail.com" className="text-primary hover:underline">dimonaco.james@gmail.com</a>.</p>
 
           <h2>What we collect</h2>
           <p><strong>Your account.</strong> Your <strong>email address</strong> and <strong>name</strong> — from Google or GitHub if you sign in that way, or as you typed them if you signed up with a password. A password is stored hashed; we cannot read it. We use these to sign you in and to email you.</p>
