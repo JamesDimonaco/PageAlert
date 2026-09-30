@@ -15,6 +15,7 @@ import { NEVER_SUCCEEDED_RETRY_DAYS } from "@/convex/shared";
 import { CreateMonitorSheet } from "@/components/prowl/create-monitor-sheet";
 import type { Channel } from "@/components/prowl/channel-selector";
 import { toast } from "sonner";
+import { isUnreadableScan } from "@prowl/shared";
 import { trackMonitorCreated, trackScanStarted, trackScanCompleted, trackScanFailed } from "@/lib/posthog";
 
 interface CloneDefaults {
@@ -214,9 +215,9 @@ export function CreateMonitorProvider({ children }: { children: ReactNode }) {
         const insights = json.schema?.insights;
         const confidence = insights?.confidence ?? 100;
 
-        // If the AI reports 0% confidence or found no items, the page is likely
+        // Near-zero confidence and no items means the page is likely
         // inaccessible (blocked, access denied, CAPTCHA, etc.)
-        if (confidence <= 10 && totalItems === 0) {
+        if (isUnreadableScan({ confidence, totalItems })) {
           const reason = insights?.notices?.[0] ?? "Page appears inaccessible - no data could be extracted";
 
           trackScanFailed({ url: data.url, error: reason, durationMs });
@@ -246,6 +247,7 @@ export function CreateMonitorProvider({ children }: { children: ReactNode }) {
           schema: json.schema,
           matchCount,
           contentFingerprint: json.contentHash,
+          matches: json.matches ?? [],
         });
 
         await createLog({

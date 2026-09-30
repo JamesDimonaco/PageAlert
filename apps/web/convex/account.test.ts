@@ -207,6 +207,14 @@ const FIXTURES: { [T in TableNames]: (refs: Refs) => Row<T> } = {
   userActivity: ({ userId }) => ({ userId, lastSeenAt: NOW }),
   counters: ({ userId }) => ({ name: `counter-${userId}`, value: 1 }),
   monitorCreations: ({ userId }) => ({ userId, createdAt: NOW }),
+  apiKeys: ({ userId }) => ({
+    userId,
+    userEmail: `${userId}@example.test`,
+    name: "Claude Code",
+    keyHash: `hash-${userId}`,
+    hint: "pa_live_0000",
+    createdAt: NOW,
+  }),
   emailSends: ({ userId }) => ({
     to: `${userId}@example.test`,
     kind: "match",
