@@ -9,7 +9,7 @@ import {
   type ActionCtx,
   type MutationCtx,
 } from "./_generated/server";
-import { internal } from "./_generated/api";
+import { components, internal } from "./_generated/api";
 import { effectiveTier, spendSmsBudget } from "./tiers";
 import { requireLiveAccount } from "./account";
 import {
@@ -132,6 +132,21 @@ const ALLOWED_DIAL_CODES = [
 
 export class PhoneError extends Error {}
 
+/** Twilio answered with an error, as opposed to not answering at all. */
+class TwilioRejected extends Error {
+  constructor(readonly code: string) {
+    super("Failed to send SMS");
+  }
+}
+
+/**
+ * Twilio will refuse this number every time: the person texted STOP, or it is
+ * not a valid mobile. The user's slots are refunded on a failed send but the
+ * global budget is not, so leaving texts on would spend a unit of budget on
+ * every alert to a number that can never receive one.
+ */
+const DEAD_NUMBER_CODES = new Set(["21610", "21211", "21614"]);
+
 /**
  * Turn what someone typed into E.164, or explain why it cannot be.
  *
@@ -194,9 +209,37 @@ const FAILURE_ALERT_INTERVAL_MS = 60 * 60 * 1000;
  */
 const RECIPIENT_CODES = new Set(["21211", "21610", "21614", "30003", "30004", "30005", "30006"]);
 
+/** Per-UTC-day tallies for the daily pulse. */
+async function countToday(ctx: MutationCtx, outcome: "sent" | "failed") {
+  const name = `sms:${outcome}:${new Date().toISOString().slice(0, 10)}`;
+  const row = await ctx.db
+    .query("counters")
+    .withIndex("by_name", (q) => q.eq("name", name))
+    .unique();
+  if (row) await ctx.db.patch(row._id, { value: row.value + 1 });
+  else await ctx.db.insert("counters", { name, value: 1 });
+}
+
+export const turnOff = internalMutation({
+  args: { userId: v.string() },
+  handler: async (ctx, { userId }) => {
+    const row = await ctx.db
+      .query("notificationSettings")
+      .withIndex("by_userId_channel", (q) => q.eq("userId", userId).eq("channel", "sms"))
+      .unique();
+    if (row?.enabled) await ctx.db.patch(row._id, { enabled: false });
+  },
+});
+
+export const countSent = internalMutation({
+  args: {},
+  handler: (ctx) => countToday(ctx, "sent"),
+});
+
 export const alertFailure = internalMutation({
   args: { code: v.string(), text: v.string() },
   handler: async (ctx, { code, text }) => {
+    await countToday(ctx, "failed");
     if (RECIPIENT_CODES.has(code)) return;
     const send = await ctx.runMutation(internal.admin.claimAlertSlot, {
       key: `admin:sms-failure:${code}`,
@@ -252,9 +295,11 @@ async function postToTwilio(ctx: ActionCtx, to: string, body: string): Promise<v
       code,
       text: `PageAlert: SMS send to ${maskPhone(to)} rejected by Twilio (HTTP ${res.status}, code ${code}).`,
     });
-    throw new Error("Failed to send SMS");
+    throw new TwilioRejected(code);
   }
   console.log(`[sms] sent to ${maskPhone(to)} (${body.length} chars)`);
+  // The text is out; a failed tally must not throw, or sendAlert would refund it.
+  await ctx.runMutation(internal.sms.countSent, {}).catch((e) => console.error("[sms] count failed:", e));
 }
 
 // ---- Delivery status ----
@@ -367,6 +412,9 @@ async function sendAlert(
     // nothing, and the scheduler swallows the throw, so without this a free
     // user silently loses a third of their day per blip.
     await ctx.runMutation(internal.tiers.refundSmsSend, { userId });
+    if (e instanceof TwilioRejected && DEAD_NUMBER_CODES.has(e.code)) {
+      await ctx.runMutation(internal.sms.turnOff, { userId });
+    }
     throw e;
   }
   return true;
@@ -660,6 +708,14 @@ export const confirmVerification = mutation({
     else await ctx.db.insert("notificationSettings", { userId, channel: "sms", enabled: true, target: pending.phone });
 
     await ctx.db.delete(pending._id);
+
+    const user = await ctx.runQuery(components.betterAuth.adapter.findOne, {
+      model: "user",
+      where: [{ field: "_id", operator: "eq", value: userId }],
+    });
+    await ctx.scheduler.runAfter(0, internal.admin.notify, {
+      text: `📱 SMS turned on: ${user?.email ?? userId} (${maskPhone(pending.phone)}, ${await tierOf(ctx, userId)})`,
+    });
     return { phone: maskPhone(pending.phone) };
   },
 });

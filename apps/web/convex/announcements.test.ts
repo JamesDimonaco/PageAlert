@@ -174,6 +174,17 @@ describe("a send that may have landed", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  // Otherwise a dry run after a crash reads "wouldSend: 0", which looks like done.
+  it("shows up in a dry run as pending, so a stranded batch is not mistaken for finished", async () => {
+    const t = harness();
+    await seedUser(t, "a@example.com");
+    fetchMock.mockRejectedValueOnce(new Error("The operation was aborted"));
+    await t.action(internal.announcements.send, { key: KEY, dryRun: false });
+
+    const dry = await t.action(internal.announcements.send, { key: KEY });
+    expect(dry).toMatchObject({ dryRun: true, wouldSend: 0, pending: 1 });
+  });
+
   it("is not sent again after a 5xx", async () => {
     const t = harness();
     await seedUser(t, "a@example.com");
