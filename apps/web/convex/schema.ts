@@ -359,6 +359,9 @@ export default defineSchema({
     // so the anonymous-scan funnel (which arrives with checkCount already set)
     // still counts. Claimed in monitors.saveScanResult.
     activatedAt: v.optional(v.number()),
+    // Ids of the one-off "what's new" dialogs this user has dismissed. See
+    // announcements.ts.
+    announcementsSeen: v.optional(v.array(v.string())),
   }).index("by_userId", ["userId"]),
 
   // Lightweight counter for public monitor count (avoids reading all monitors)

@@ -37,7 +37,7 @@ const APP_URL = process.env.SITE_URL ?? "https://pagealert.io";
 const TIMEOUT = 10_000;
 
 /** Off until the Twilio console guards are in place — see .env.example. */
-function smsEnabled(): boolean {
+export function smsEnabled(): boolean {
   return process.env.SMS_ENABLED === "true";
 }
 

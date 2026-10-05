@@ -299,6 +299,10 @@ export function trackNotificationChannelToggled(props: { channel: string; enable
   });
 }
 
+export function trackWhatsNew(props: { announcement: string; action: "shown" | "dismissed" | "opened_settings" }) {
+  trackEvent("whats_new_interacted", props);
+}
+
 // ---- Auth events ----
 
 export function trackSignUp(props: { method: string }) {

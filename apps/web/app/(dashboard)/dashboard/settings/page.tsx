@@ -147,6 +147,14 @@ export default function SettingsPage() {
   const updateMonitor = useMutation(api.monitors.update);
   const notifSettings = useQuery(api.notificationSettings.list);
 
+  // The SMS card mounts after its flag query resolves, which is later than the
+  // browser's own #sms scroll, so the "Set up texts" deep-link lands here.
+  useEffect(() => {
+    if (smsEnabled && activeTab === "notifications" && window.location.hash === "#sms") {
+      document.getElementById("sms")?.scrollIntoView();
+    }
+  }, [smsEnabled, activeTab]);
+
   // Sync settings from DB to local state on first load only
   const settingsSyncedRef = useRef(false);
   useEffect(() => {
@@ -396,7 +404,7 @@ export default function SettingsPage() {
           </Card>
 
           {smsEnabled && (
-          <Card className="border-border/30 bg-card/50 shadow-sm shadow-black/5">
+          <Card id="sms" className="border-border/30 bg-card/50 shadow-sm shadow-black/5">
             <CardHeader className="pb-4">
               <CardTitle className="flex items-center gap-2 text-lg font-semibold">
                 <Smartphone className="h-5 w-5 text-muted-foreground" />

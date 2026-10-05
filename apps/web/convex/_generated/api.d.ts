@@ -12,6 +12,7 @@ import type * as account from "../account.js";
 import type * as admin from "../admin.js";
 import type * as adminEmails from "../adminEmails.js";
 import type * as adminMonitors from "../adminMonitors.js";
+import type * as announcements from "../announcements.js";
 import type * as anonymous from "../anonymous.js";
 import type * as apiKeys from "../apiKeys.js";
 import type * as crons from "../crons.js";
@@ -50,6 +51,7 @@ declare const fullApi: ApiFromModules<{
   admin: typeof admin;
   adminEmails: typeof adminEmails;
   adminMonitors: typeof adminMonitors;
+  announcements: typeof announcements;
   anonymous: typeof anonymous;
   apiKeys: typeof apiKeys;
   crons: typeof crons;
