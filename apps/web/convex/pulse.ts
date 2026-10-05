@@ -111,6 +111,7 @@ export const snapshot = internalQuery({
       (await ctx.db.query("counters").withIndex("by_name", (q) => q.eq("name", name)).unique())?.value ?? 0;
     // Per UTC day, so "yesterday" is the whole of the day before the 08:00 run,
     // not a rolling 24h like the figures above.
+    // The month is yesterday's too, so the 1st reports the month that just ended.
     const yesterday = new Date(now - DAY_MS).toISOString().slice(0, 10);
     const smsOn = await ctx.db
       .query("notificationSettings")
@@ -120,7 +121,7 @@ export const snapshot = internalQuery({
       sent: await counter(`sms:sent:${yesterday}`),
       failed: await counter(`sms:failed:${yesterday}`),
       // spendSmsBudget's counter, so verification codes and cap notices count too.
-      monthUsed: await counter(`sms:sends:${new Date(now).toISOString().slice(0, 7)}`),
+      monthUsed: await counter(`sms:sends:${yesterday.slice(0, 7)}`),
       budget: smsMonthlyBudget(),
       users: smsOn.length,
     };
@@ -188,7 +189,9 @@ export const dailyPulse = internalAction({
       `  alerts   ${s.alerted} monitor${s.alerted === 1 ? "" : "s"} found something new`,
       `  emails   ${s.emails.sent} sent${s.emails.bad > 0 ? ` · ${s.emails.bad} not delivered` : ""}`,
       ``,
-      `Texts yesterday ${s.sms.sent} sent${s.sms.failed > 0 ? ` · ${s.sms.failed} failed` : ""}`,
+      // Failures include texts Twilio took and later failed, so they overlap
+      // the first figure rather than adding to it.
+      `Texts yesterday ${s.sms.sent} handed to Twilio${s.sms.failed > 0 ? ` · ${s.sms.failed} failed` : ""}`,
       `  month    ${s.sms.monthUsed} of ${s.sms.budget} budget · ${s.sms.users} user${s.sms.users === 1 ? "" : "s"} with texts on`,
     );
 

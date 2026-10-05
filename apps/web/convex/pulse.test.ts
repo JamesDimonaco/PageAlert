@@ -51,3 +51,16 @@ describe("daily pulse: SMS", () => {
     expect(s.sms).toEqual({ sent: 0, failed: 0, monthUsed: 0, budget: 2000, users: 0 });
   });
 });
+
+describe("daily pulse: SMS month on the 1st", () => {
+  it("reports the month that just ended, not the first eight hours of the new one", async () => {
+    vi.setSystemTime(Date.UTC(2026, 10, 1, 8, 0));
+    const t = setup();
+    await t.run(async (ctx) => {
+      await ctx.db.insert("counters", { name: "sms:sends:2026-10", value: 1900 });
+      await ctx.db.insert("counters", { name: "sms:sends:2026-11", value: 3 });
+    });
+    const s = await t.query(internal.pulse.snapshot, {});
+    expect(s.sms.monthUsed).toBe(1900);
+  });
+});
