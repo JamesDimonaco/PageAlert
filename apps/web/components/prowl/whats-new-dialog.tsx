@@ -17,12 +17,12 @@ import { trackWhatsNew } from "@/lib/posthog";
 
 export function WhatsNewDialog() {
   const router = useRouter();
-  const show = useQuery(api.announcements.whatsNew);
-  const dismiss = useMutation(api.announcements.dismissWhatsNew);
+  const freeTexts = useQuery(api.whatsNew.show);
+  const dismiss = useMutation(api.whatsNew.dismiss);
   const [closed, setClosed] = useState(false);
   const shownRef = useRef(false);
 
-  const open = show === true && !closed;
+  const open = !!freeTexts && !closed;
 
   useEffect(() => {
     if (open && !shownRef.current) {
@@ -43,8 +43,8 @@ export function WhatsNewDialog() {
         <DialogHeader>
           <DialogTitle>PageAlert can now text you</DialogTitle>
           <DialogDescription>
-            Get a text when a monitor finds a match or a price changes. Free accounts get 10 texts a
-            month, up to 3 a day.
+            Get a text when a monitor finds a match or a price drops. Free accounts get{" "}
+            {freeTexts?.month} texts a month, up to {freeTexts?.day} a day.
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>

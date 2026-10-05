@@ -2,6 +2,7 @@ import { mutation, query } from "./_generated/server";
 import { components } from "./_generated/api";
 import { isLiveAccount } from "./account";
 import { smsEnabled } from "./sms";
+import { SMS_LIMITS } from "./tiers";
 
 /**
  * Accounts created at or after this moment signed up with texts already on
@@ -12,36 +13,40 @@ export const SMS_ANNOUNCED_AT = Date.UTC(2026, 9, 5);
 
 const SMS_ANNOUNCEMENT_ID = "sms-alerts";
 
-/** Whether to show the "texts are here" dialog to the signed-in user. */
-export const whatsNew = query({
+/**
+ * The free-tier text limits when the signed-in user should see the "texts are
+ * here" dialog, else null. The dialog quotes them, so they come from SMS_LIMITS
+ * rather than being typed into the copy.
+ */
+export const show = query({
   args: {},
-  handler: async (ctx): Promise<boolean> => {
+  handler: async (ctx): Promise<{ month: number; day: number } | null> => {
     const identity = await ctx.auth.getUserIdentity();
-    if (!identity) return false;
+    if (!identity) return null;
     // The settings card is hidden while the flag is off, so the button would lead nowhere.
-    if (!smsEnabled()) return false;
+    if (!smsEnabled()) return null;
 
     const activity = await ctx.db
       .query("userActivity")
       .withIndex("by_userId", (q) => q.eq("userId", identity.subject))
       .unique();
-    if (activity?.announcementsSeen?.includes(SMS_ANNOUNCEMENT_ID)) return false;
+    if (activity?.announcementsSeen?.includes(SMS_ANNOUNCEMENT_ID)) return null;
 
     const sms = await ctx.db
       .query("notificationSettings")
       .withIndex("by_userId_channel", (q) => q.eq("userId", identity.subject).eq("channel", "sms"))
       .first();
-    if (sms?.enabled) return false;
+    if (sms?.enabled) return null;
 
     const user = await ctx.runQuery(components.betterAuth.adapter.findOne, {
       model: "user",
       where: [{ field: "_id", operator: "eq", value: identity.subject }],
     });
-    return user !== null && user.createdAt < SMS_ANNOUNCED_AT;
+    return user !== null && user.createdAt < SMS_ANNOUNCED_AT ? SMS_LIMITS.free : null;
   },
 });
 
-export const dismissWhatsNew = mutation({
+export const dismiss = mutation({
   args: {},
   handler: async (ctx) => {
     const identity = await ctx.auth.getUserIdentity();

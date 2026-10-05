@@ -360,7 +360,7 @@ export default defineSchema({
     // still counts. Claimed in monitors.saveScanResult.
     activatedAt: v.optional(v.number()),
     // Ids of the one-off "what's new" dialogs this user has dismissed. See
-    // announcements.ts.
+    // whatsNew.ts.
     announcementsSeen: v.optional(v.array(v.string())),
   }).index("by_userId", ["userId"]),
 
