@@ -132,6 +132,21 @@ const ALLOWED_DIAL_CODES = [
 
 export class PhoneError extends Error {}
 
+/** Twilio answered with an error, as opposed to not answering at all. */
+class TwilioRejected extends Error {
+  constructor(readonly code: string) {
+    super("Failed to send SMS");
+  }
+}
+
+/**
+ * Twilio will refuse this number every time: the person texted STOP, or it is
+ * not a valid mobile. The user's slots are refunded on a failed send but the
+ * global budget is not, so leaving texts on would spend a unit of budget on
+ * every alert to a number that can never receive one.
+ */
+const DEAD_NUMBER_CODES = new Set(["21610", "21211", "21614"]);
+
 /**
  * Turn what someone typed into E.164, or explain why it cannot be.
  *
@@ -205,6 +220,17 @@ async function countToday(ctx: MutationCtx, outcome: "sent" | "failed") {
   else await ctx.db.insert("counters", { name, value: 1 });
 }
 
+export const turnOff = internalMutation({
+  args: { userId: v.string() },
+  handler: async (ctx, { userId }) => {
+    const row = await ctx.db
+      .query("notificationSettings")
+      .withIndex("by_userId_channel", (q) => q.eq("userId", userId).eq("channel", "sms"))
+      .unique();
+    if (row?.enabled) await ctx.db.patch(row._id, { enabled: false });
+  },
+});
+
 export const countSent = internalMutation({
   args: {},
   handler: (ctx) => countToday(ctx, "sent"),
@@ -269,7 +295,7 @@ async function postToTwilio(ctx: ActionCtx, to: string, body: string): Promise<v
       code,
       text: `PageAlert: SMS send to ${maskPhone(to)} rejected by Twilio (HTTP ${res.status}, code ${code}).`,
     });
-    throw new Error("Failed to send SMS");
+    throw new TwilioRejected(code);
   }
   console.log(`[sms] sent to ${maskPhone(to)} (${body.length} chars)`);
   // The text is out; a failed tally must not throw, or sendAlert would refund it.
@@ -386,6 +412,9 @@ async function sendAlert(
     // nothing, and the scheduler swallows the throw, so without this a free
     // user silently loses a third of their day per blip.
     await ctx.runMutation(internal.tiers.refundSmsSend, { userId });
+    if (e instanceof TwilioRejected && DEAD_NUMBER_CODES.has(e.code)) {
+      await ctx.runMutation(internal.sms.turnOff, { userId });
+    }
     throw e;
   }
   return true;

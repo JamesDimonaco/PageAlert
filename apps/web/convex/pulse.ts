@@ -115,7 +115,8 @@ export const snapshot = internalQuery({
     const yesterday = new Date(now - DAY_MS).toISOString().slice(0, 10);
     const smsOn = await ctx.db
       .query("notificationSettings")
-      .filter((q) => q.and(q.eq(q.field("channel"), "sms"), q.eq(q.field("enabled"), true)))
+      .withIndex("by_channel_target", (q) => q.eq("channel", "sms"))
+      .filter((q) => q.eq(q.field("enabled"), true))
       .collect();
     const sms = {
       sent: await counter(`sms:sent:${yesterday}`),

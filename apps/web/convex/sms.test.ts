@@ -413,3 +413,41 @@ describe("admin visibility", () => {
     expect(await adminAlerts(t)).toHaveLength(0);
   });
 });
+
+describe("a number Twilio will never deliver to", () => {
+  async function smsRow(t: AnyTest) {
+    return t.run((ctx) =>
+      ctx.db.query("notificationSettings").withIndex("by_userId_channel", (q) => q.eq("userId", "u").eq("channel", "sms")).unique(),
+    );
+  }
+  async function alert(t: AnyTest) {
+    return t.action(internal.sms.sendMatchAlert, { userId: "u", phone: PHONE, monitorName: "Huts", monitorId: "m1", matchCount: 1 }).catch(() => {});
+  }
+  function twilio(status: number, code: number) {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ code }), { status })));
+    vi.stubEnv("SMS_ENABLED", "true");
+    vi.stubEnv("TWILIO_ACCOUNT_SID", "AC123");
+    vi.stubEnv("TWILIO_MESSAGING_SERVICE_SID", "MG123");
+  }
+  async function seed(t: AnyTest) {
+    await t.run((ctx) => ctx.db.insert("notificationSettings", { userId: "u", channel: "sms", enabled: true, target: PHONE }));
+  }
+
+  // The user's slots are refunded on a failed send but the global budget is
+  // not, so without this a STOP'd number spends the budget on every alert.
+  it.each([21610, 21211, 21614])("turns the user's texts off after a %s", async (code) => {
+    const t = setup();
+    await seed(t);
+    twilio(400, code);
+    await alert(t);
+    expect((await smsRow(t))?.enabled).toBe(false);
+  });
+
+  it("leaves texts on after an error that is not about the number", async () => {
+    const t = setup();
+    await seed(t);
+    twilio(500, 20500);
+    await alert(t);
+    expect((await smsRow(t))?.enabled).toBe(true);
+  });
+});

@@ -84,9 +84,19 @@ const ANNOUNCEMENTS: Record<string, Announcement> = {
 const recipientValidator = v.object({ userId: v.string(), email: v.string() });
 type Recipient = { userId: string; email: string };
 
-/** Everyone in `users` who has not opted out and has no live row for this key. Failed rows are eligible again. */
-async function eligible(ctx: QueryCtx, key: string, users: Recipient[]): Promise<Recipient[]> {
+/**
+ * Everyone in `users` who has not opted out and has no live row for this key.
+ * Failed rows are eligible again. `pending` counts rows a run claimed and never
+ * settled, which a rerun skips; a dry run reports them so they are not
+ * mistaken for sent.
+ */
+async function eligible(
+  ctx: QueryCtx,
+  key: string,
+  users: Recipient[]
+): Promise<{ out: Recipient[]; pending: number }> {
   const out: Recipient[] = [];
+  let pending = 0;
   for (const user of users) {
     const optedOut = await ctx.db
       .query("productUpdateOptOuts")
@@ -97,15 +107,19 @@ async function eligible(ctx: QueryCtx, key: string, users: Recipient[]): Promise
       .query("announcementSends")
       .withIndex("by_key_userId", (q) => q.eq("key", key).eq("userId", user.userId))
       .first();
+    if (prior?.status === "pending") pending++;
     if (prior && prior.status !== "failed") continue;
     out.push(user);
   }
-  return out;
+  return { out, pending };
 }
 
 export const countEligible = internalQuery({
   args: { key: v.string(), users: v.array(recipientValidator) },
-  handler: async (ctx, { key, users }) => (await eligible(ctx, key, users)).length,
+  handler: async (ctx, { key, users }) => {
+    const { out, pending } = await eligible(ctx, key, users);
+    return { wouldSend: out.length, pending };
+  },
 });
 
 /**
@@ -116,7 +130,7 @@ export const countEligible = internalQuery({
 export const claim = internalMutation({
   args: { key: v.string(), users: v.array(recipientValidator) },
   handler: async (ctx, { key, users }) => {
-    const toSend = await eligible(ctx, key, users);
+    const { out: toSend } = await eligible(ctx, key, users);
     const now = Date.now();
     for (const user of toSend) {
       const prior = await ctx.db
@@ -276,6 +290,7 @@ export const send = internalAction({
     const started = Date.now();
     let cursor = args.cursor ?? null;
     let wouldSend = 0;
+    let pending = 0;
     const totals: Totals = { sent: 0, failed: 0, unsure: 0 };
 
     for (;;) {
@@ -290,7 +305,9 @@ export const send = internalAction({
         .map((u) => ({ userId: String(u._id), email: String(u.email) }));
 
       if (dryRun) {
-        wouldSend += await ctx.runQuery(internal.announcements.countEligible, { key: args.key, users });
+        const counts = await ctx.runQuery(internal.announcements.countEligible, { key: args.key, users });
+        wouldSend += counts.wouldSend;
+        pending += counts.pending;
       } else {
         const batch = await ctx.runMutation(internal.announcements.claim, { key: args.key, users });
         if (batch.length > 0) {
@@ -312,7 +329,7 @@ export const send = internalAction({
       }
     }
 
-    console.log(`[announcements] ${args.key} done`, dryRun ? { wouldSend } : totals);
-    return dryRun ? { dryRun, wouldSend } : { dryRun, ...totals, continued: false };
+    console.log(`[announcements] ${args.key} done`, dryRun ? { wouldSend, pending } : totals);
+    return dryRun ? { dryRun, wouldSend, pending } : { dryRun, ...totals, continued: false };
   },
 });
