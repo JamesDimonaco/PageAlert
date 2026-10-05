@@ -32,7 +32,7 @@ type Announcement = {
 const smsAlerts: Announcement = {
   subject: "PageAlert can now text you",
   render: (unsubscribeLink) => {
-    const settingsHref = `${APP_URL}/dashboard/settings`;
+    const settingsHref = `${APP_URL}/dashboard/settings?tab=notifications#sms`;
     const freeTexts = SMS_LIMITS.free.month;
     const paragraphs = [
       "PageAlert can now send you a text message the moment a monitor finds a match or a price drops.",
