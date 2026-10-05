@@ -154,18 +154,26 @@ export function formatPriceSms({ monitorName, variant, changes, link }: PriceSms
   );
 }
 
+const MONTHS = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+
 /**
  * The last SMS of the period. Sent once, when the allowance runs out, so the
  * silence that follows is explained rather than read as the product failing.
  *
- * Carries no link, deliberately. A message with no variable part has nothing
- * to truncate, so its length rested entirely on how long the host happened to
- * be — fine at pagealert.io, two segments on a preview host or after a rename.
- * Someone already using the product knows where to find it, and this is the
- * one message that must not quietly cost double.
+ * The pricing link is a literal, not APP_URL. Built from the host, its length
+ * would rest on whatever the host happened to be: one segment at pagealert.io,
+ * two on a preview host or after a rename. This is the one message that must
+ * not quietly cost double. Months are UTC because the allowance resets on the
+ * UTC month (see reserveSmsSend).
  */
-export function formatQuotaExhaustedSms(limit: number): string {
-  return `PageAlert: that was the last of your ${limit} texts this month. Alerts keep coming by email until it resets.`;
+export function formatQuotaExhaustedSms(args: { limit: number; now: Date; canUpgrade: boolean }): string {
+  const month = args.now.getUTCMonth();
+  const next = MONTHS[(month + 1) % 12]!.slice(0, 3);
+  const upgrade = args.canUpgrade ? " More texts: pagealert.io/pricing" : "";
+  return `PageAlert: you've used your ${args.limit} texts for ${MONTHS[month]}. Texts resume 1 ${next}. Email, push, Telegram and Discord alerts carry on.${upgrade}`;
 }
 
 /** The verification code, and the only place the opt-out route is spelled out. */

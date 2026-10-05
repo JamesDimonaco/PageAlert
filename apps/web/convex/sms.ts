@@ -332,7 +332,11 @@ async function sendAlert(
 
   if (!reservation.ok) {
     if (reservation.notifyExhausted) {
-      await postToTwilio(ctx, to, formatQuotaExhaustedSms(reservation.monthLimit));
+      await postToTwilio(ctx, to, formatQuotaExhaustedSms({
+          limit: reservation.monthLimit,
+          now: new Date(),
+          canUpgrade: reservation.canUpgrade,
+        }));
       return true;
     }
     console.log(`[sms] refused for ${userId}: ${reservation.reason}`);

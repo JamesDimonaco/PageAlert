@@ -1106,6 +1106,8 @@ export interface SmsReservation {
    */
   notifyExhausted: boolean;
   monthLimit: number;
+  /** False on the top plan, where the notice has nothing to point at. */
+  canUpgrade: boolean;
 }
 
 /**
@@ -1230,16 +1232,16 @@ export const reserveSmsSend = internalMutation({
       const owed =
         !!record && record.smsCapNotifiedMonth !== month && (await spendSmsBudget(ctx));
       if (owed && record) await ctx.db.patch(record._id, { smsCapNotifiedMonth: month });
-      return { ok: false, reason: "month", notifyExhausted: owed, monthLimit: limits.month };
+      return { ok: false, reason: "month", notifyExhausted: owed, monthLimit: limits.month, canUpgrade: tier !== "max" };
     }
 
     if (dayUsed >= limits.day) {
-      return { ok: false, reason: "day", notifyExhausted: false, monthLimit: limits.month };
+      return { ok: false, reason: "day", notifyExhausted: false, monthLimit: limits.month, canUpgrade: tier !== "max" };
     }
 
     // Last, so that a send refused on either per-user cap costs no budget.
     if (!(await spendSmsBudget(ctx))) {
-      return { ok: false, reason: "budget", notifyExhausted: false, monthLimit: limits.month };
+      return { ok: false, reason: "budget", notifyExhausted: false, monthLimit: limits.month, canUpgrade: tier !== "max" };
     }
 
     if (record) {
@@ -1261,7 +1263,7 @@ export const reserveSmsSend = internalMutation({
       });
     }
 
-    return { ok: true, notifyExhausted: false, monthLimit: limits.month };
+    return { ok: true, notifyExhausted: false, monthLimit: limits.month, canUpgrade: tier !== "max" };
   },
 });
 

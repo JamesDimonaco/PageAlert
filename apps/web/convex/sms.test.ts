@@ -278,3 +278,30 @@ describe("Twilio status callback", () => {
     expect(await adminAlerts(t)).toHaveLength(1);
   });
 });
+
+describe("reserveSmsSend: the cap notice's upgrade link", () => {
+  async function exhausted(tier: "free" | "max", used: number) {
+    const t = convexTest(schema, modules);
+    const month = new Date().toISOString().slice(0, 7);
+    await t.run((ctx) =>
+      ctx.db.insert("userTiers", {
+        userId: "u1",
+        tier,
+        smsMonth: month,
+        smsMonthCount: used,
+        updatedAt: Date.now(),
+      }),
+    );
+    return t.mutation(internal.tiers.reserveSmsSend, { userId: "u1" });
+  }
+
+  it("offers an upgrade to a free account that has run out", async () => {
+    const r = await exhausted("free", 10);
+    expect(r).toMatchObject({ ok: false, reason: "month", notifyExhausted: true, canUpgrade: true });
+  });
+
+  it("offers nothing to the top plan, which has nowhere to go", async () => {
+    const r = await exhausted("max", 200);
+    expect(r).toMatchObject({ ok: false, reason: "month", notifyExhausted: true, canUpgrade: false });
+  });
+});
