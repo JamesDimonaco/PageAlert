@@ -78,6 +78,13 @@ export default function SettingsPage() {
     ? (tabFromQuery as SettingsTab)
     : "notifications";
   const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab);
+  // A link to ?tab= while Settings is already open (the what's-new dialog sits
+  // on every dashboard page) changes the URL without remounting, so follow it.
+  const [lastTabFromQuery, setLastTabFromQuery] = useState(tabFromQuery);
+  if (tabFromQuery !== lastTabFromQuery) {
+    setLastTabFromQuery(tabFromQuery);
+    setActiveTab(initialTab);
+  }
 
   function handleTabChange(value: string) {
     setActiveTab(value as SettingsTab);

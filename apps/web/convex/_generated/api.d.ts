@@ -12,7 +12,6 @@ import type * as account from "../account.js";
 import type * as admin from "../admin.js";
 import type * as adminEmails from "../adminEmails.js";
 import type * as adminMonitors from "../adminMonitors.js";
-import type * as whatsNew from "../whatsNew.js";
 import type * as anonymous from "../anonymous.js";
 import type * as apiKeys from "../apiKeys.js";
 import type * as crons from "../crons.js";
@@ -39,6 +38,7 @@ import type * as telegram from "../telegram.js";
 import type * as telegramWebhook from "../telegramWebhook.js";
 import type * as tiers from "../tiers.js";
 import type * as userNotifications from "../userNotifications.js";
+import type * as whatsNew from "../whatsNew.js";
 
 import type {
   ApiFromModules,
@@ -51,7 +51,6 @@ declare const fullApi: ApiFromModules<{
   admin: typeof admin;
   adminEmails: typeof adminEmails;
   adminMonitors: typeof adminMonitors;
-  whatsNew: typeof whatsNew;
   anonymous: typeof anonymous;
   apiKeys: typeof apiKeys;
   crons: typeof crons;
@@ -78,6 +77,7 @@ declare const fullApi: ApiFromModules<{
   telegramWebhook: typeof telegramWebhook;
   tiers: typeof tiers;
   userNotifications: typeof userNotifications;
+  whatsNew: typeof whatsNew;
 }>;
 
 /**

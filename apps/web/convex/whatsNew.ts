@@ -9,7 +9,7 @@ import { SMS_LIMITS } from "./tiers";
  * offer, and get onboarding instead of the dialog. Move it to the ship date if
  * the launch slips.
  */
-export const SMS_ANNOUNCED_AT = Date.UTC(2026, 9, 5);
+export const SMS_ANNOUNCED_AT = Date.UTC(2026, 9, 6);
 
 const SMS_ANNOUNCEMENT_ID = "sms-alerts";
 

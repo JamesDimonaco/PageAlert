@@ -109,5 +109,5 @@ describe("whatsNew.show: who sees the SMS announcement", () => {
 });
 
 it("pins the launch cutoff", () => {
-  expect(new Date(SMS_ANNOUNCED_AT).toISOString()).toBe("2026-10-05T00:00:00.000Z");
+  expect(new Date(SMS_ANNOUNCED_AT).toISOString()).toBe("2026-10-06T00:00:00.000Z");
 });
