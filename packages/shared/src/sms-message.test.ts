@@ -233,15 +233,43 @@ describe("the segment boundary is exact, not approximate", () => {
 });
 
 describe("the fixed-copy messages", () => {
-  it("fits the quota notice in one segment at every tier's allowance", () => {
+  it("fits the quota notice in one segment at every allowance, in the longest month, with the upgrade link", () => {
+    const september = new Date(Date.UTC(2026, 8, 30, 23, 59));
     for (const limit of [10, 25, 60, 200]) {
-      assertOneSegment(formatQuotaExhaustedSms(limit));
+      assertOneSegment(formatQuotaExhaustedSms({ limit, now: september, canUpgrade: true }));
     }
   });
 
-  it("names the allowance that ran out", () => {
-    expect(formatQuotaExhaustedSms(10)).toContain("10");
-    expect(formatQuotaExhaustedSms(200)).toContain("200");
+  it("names the allowance, the month, and the day texts come back", () => {
+    const body = formatQuotaExhaustedSms({ limit: 10, now: new Date(Date.UTC(2026, 9, 5)), canUpgrade: true });
+    expect(body).toContain("10 texts for October");
+    expect(body).toContain("resume 1 Nov");
+  });
+
+  it("resets into January after December", () => {
+    const body = formatQuotaExhaustedSms({ limit: 10, now: new Date(Date.UTC(2026, 11, 31, 23, 0)), canUpgrade: true });
+    expect(body).toContain("for December");
+    expect(body).toContain("resume 1 Jan");
+  });
+
+  // The allowance resets on the UTC month, so the date quoted must be UTC too.
+  it("reads the month in UTC, not the server's local time", () => {
+    const lateOct31Utc = new Date(Date.UTC(2026, 9, 31, 23, 30));
+    expect(formatQuotaExhaustedSms({ limit: 10, now: lateOct31Utc, canUpgrade: true })).toContain("for October");
+  });
+
+  it("offers the upgrade only to a plan that has one", () => {
+    const now = new Date(Date.UTC(2026, 9, 5));
+    expect(formatQuotaExhaustedSms({ limit: 10, now, canUpgrade: true })).toContain("pagealert.io/pricing");
+    expect(formatQuotaExhaustedSms({ limit: 200, now, canUpgrade: false })).not.toContain("pricing");
+  });
+
+  // Generic, because naming Telegram to someone who never set it up promises
+  // alerts that are not coming.
+  it("says the user's other channels keep alerting, without naming ones they may not have", () => {
+    const body = formatQuotaExhaustedSms({ limit: 10, now: new Date(), canUpgrade: true });
+    expect(body).toContain("Alerts on your other channels carry on");
+    expect(body).not.toContain("Telegram");
   });
 
   it("fits the verification code in one segment", () => {

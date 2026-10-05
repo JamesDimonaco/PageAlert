@@ -149,7 +149,7 @@ export default function SmsPolicyPage() {
             <li><strong>One match</strong> — PageAlert: 1 new match on &ldquo;Visa appointment slots&rdquo; https://pagealert.io/m/k17d8h2n4p9q3r5s7t1v6w8x0y2z4a6b</li>
             <li><strong>Price change</strong> — PageAlert: Sony WH-1000XM5 now $279.99 (was $379.00) https://pagealert.io/m/k17d8h2n4p9q3r5s7t1v6w8x0y2z4a6b</li>
             <li><strong>Verification code</strong> — PageAlert: your code is 481920. It expires in 10 minutes. Turn texts off any time in your dashboard settings.</li>
-            <li><strong>Allowance used up</strong>, sent at most once a month — PageAlert: that was the last of your 10 texts this month. Alerts keep coming by email until it resets.</li>
+            <li><strong>Allowance used up</strong>, sent at most once a month — PageAlert: you&apos;ve used your 10 texts for October. Texts resume 1 Nov. Alerts on your other channels carry on. More texts: pagealert.io/pricing</li>
           </ul>
           <p>Every message begins with the brand name, so the sender is never ambiguous, and each is composed to fit a single 160-character GSM-7 segment.</p>
 
@@ -177,7 +177,7 @@ export default function SmsPolicyPage() {
               </tbody>
             </table>
           </div>
-          <p>The daily cap exists so a page that starts changing erratically cannot produce a burst of messages. On reaching the monthly cap we send one message saying so and then stop; alerts continue by email until it resets. A separate ceiling applies across all customers combined — if it is reached, SMS stops entirely and every alert falls back to email.</p>
+          <p>The daily cap exists so a page that starts changing erratically cannot produce a burst of messages. On reaching the monthly cap we send one message saying so and then stop; alerts continue by email and any other channel you have on until it resets. A separate ceiling applies across all customers combined — if it is reached, SMS stops entirely and every alert falls back to email.</p>
 
           <h2>9. What we never do</h2>
           <ul className="list-disc pl-6 space-y-2">

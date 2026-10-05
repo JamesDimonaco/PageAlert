@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import {
+  httpAction,
   internalAction,
   internalMutation,
   action,
@@ -175,18 +176,71 @@ export function maskPhone(phone: string): string {
 
 // ---- Sending ----
 
-async function postToTwilio(to: string, body: string): Promise<void> {
-  const { accountSid, authToken, messagingServiceSid } = twilioConfig();
+/**
+ * One admin alert per Twilio error code per hour. A code names one underlying
+ * problem (empty sender pool, out of credit, geo block), so a different code
+ * is news and the same code repeating is not. An hour keeps a bad day from
+ * flooding the chat while still telling James within the hour if it recurs.
+ * Sync API errors and async delivery failures share the key: 21704 is the same
+ * problem however it reaches us.
+ */
+const FAILURE_ALERT_INTERVAL_MS = 60 * 60 * 1000;
 
-  const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`, {
-    method: "POST",
-    headers: {
-      Authorization: `Basic ${btoa(`${accountSid}:${authToken}`)}`,
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-    body: new URLSearchParams({ To: to, MessagingServiceSid: messagingServiceSid, Body: body }),
-    signal: AbortSignal.timeout(TIMEOUT),
-  });
+/**
+ * Codes that describe one recipient, not the account: a mistyped or landline
+ * number, a phone switched off, someone who texted STOP. Nothing James can fix,
+ * and alerting on them would spend the hourly slot a real problem sharing the
+ * code needs.
+ */
+const RECIPIENT_CODES = new Set(["21211", "21610", "21614", "30003", "30004", "30005", "30006"]);
+
+export const alertFailure = internalMutation({
+  args: { code: v.string(), text: v.string() },
+  handler: async (ctx, { code, text }) => {
+    if (RECIPIENT_CODES.has(code)) return;
+    const send = await ctx.runMutation(internal.admin.claimAlertSlot, {
+      key: `admin:sms-failure:${code}`,
+      minIntervalMs: FAILURE_ALERT_INTERVAL_MS,
+    });
+    if (send) await ctx.scheduler.runAfter(0, internal.admin.notify, { text });
+  },
+});
+
+const STATUS_PATH = "/twilio/status";
+
+/** Built the same way on send and on verify, so the signed URL cannot drift. */
+function statusCallbackUrl(): string | undefined {
+  const site = process.env.CONVEX_SITE_URL;
+  return site ? `${site}${STATUS_PATH}` : undefined;
+}
+
+async function postToTwilio(ctx: ActionCtx, to: string, body: string): Promise<void> {
+  const { accountSid, authToken, messagingServiceSid } = twilioConfig();
+  const params = new URLSearchParams({ To: to, MessagingServiceSid: messagingServiceSid, Body: body });
+  // Twilio answers 201 for a message it has only queued. Sender-pool and carrier
+  // failures (21704, 30003) arrive later, and only through this callback.
+  const callback = statusCallbackUrl();
+  if (callback) params.set("StatusCallback", callback);
+
+  let res: Response;
+  try {
+    res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`, {
+      method: "POST",
+      headers: {
+        Authorization: `Basic ${btoa(`${accountSid}:${authToken}`)}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: params,
+      signal: AbortSignal.timeout(TIMEOUT),
+    });
+  } catch (e) {
+    // A Twilio outage looks like this rather than like an error response.
+    await ctx.runMutation(internal.sms.alertFailure, {
+      code: "network",
+      text: `PageAlert: could not reach Twilio to send an SMS (${e instanceof Error ? e.name : "unknown error"}).`,
+    });
+    throw e;
+  }
 
   if (!res.ok) {
     // Twilio's error body quotes the To number back on an invalid-number
@@ -194,10 +248,73 @@ async function postToTwilio(to: string, body: string): Promise<void> {
     const text = await res.text().catch(() => "");
     const code = text.match(/"code"\s*:\s*(\d+)/)?.[1] ?? "unknown";
     console.error(`[sms] send failed to ${maskPhone(to)}: HTTP ${res.status}, Twilio code ${code}`);
+    await ctx.runMutation(internal.sms.alertFailure, {
+      code,
+      text: `PageAlert: SMS send to ${maskPhone(to)} rejected by Twilio (HTTP ${res.status}, code ${code}).`,
+    });
     throw new Error("Failed to send SMS");
   }
   console.log(`[sms] sent to ${maskPhone(to)} (${body.length} chars)`);
 }
+
+// ---- Delivery status ----
+
+/**
+ * Twilio's request signature: base64 HMAC-SHA1, keyed by the auth token, over
+ * the full URL followed by each POST param as name+value in name order.
+ */
+export async function twilioSignature(
+  authToken: string,
+  url: string,
+  params: URLSearchParams,
+): Promise<string> {
+  const signed =
+    url +
+    [...params.entries()]
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .map(([name, value]) => name + value)
+      .join("");
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(authToken),
+    { name: "HMAC", hash: "SHA-1" },
+    false,
+    ["sign"],
+  );
+  const mac = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(signed));
+  return btoa(String.fromCharCode(...new Uint8Array(mac)));
+}
+
+/** Does not bail at the first differing byte, so timing says nothing about the signature. */
+function constantTimeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
+/** Twilio's status callback: the only place an accepted-then-failed message shows up. */
+export const statusCallback = httpAction(async (ctx, request) => {
+  const authToken = process.env.TWILIO_AUTH_TOKEN;
+  const url = statusCallbackUrl();
+  if (!authToken || !url) return new Response("Not configured", { status: 503 });
+
+  const params = new URLSearchParams(await request.text());
+  const expected = await twilioSignature(authToken, url, params);
+  if (!constantTimeEqual(expected, request.headers.get("X-Twilio-Signature") ?? "")) {
+    return new Response("Forbidden", { status: 403 });
+  }
+
+  const status = params.get("MessageStatus");
+  if (status === "failed" || status === "undelivered") {
+    const code = params.get("ErrorCode") ?? "unknown";
+    await ctx.runMutation(internal.sms.alertFailure, {
+      code,
+      text: `PageAlert: SMS ${status} to ${maskPhone(params.get("To") ?? "")} (Twilio code ${code}, ${params.get("MessageSid") ?? "no sid"}).`,
+    });
+  }
+  return new Response("OK", { status: 200 });
+});
 
 /**
  * Reserve an allowance slot, then send. Returns whether anything went out.
@@ -233,8 +350,9 @@ async function sendAlert(
   const reservation = await ctx.runMutation(internal.tiers.reserveSmsSend, { userId });
 
   if (!reservation.ok) {
-    if (reservation.notifyExhausted) {
-      await postToTwilio(to, formatQuotaExhaustedSms(reservation.monthLimit));
+    if (reservation.notice) {
+      const { limit, at, canUpgrade } = reservation.notice;
+      await postToTwilio(ctx, to, formatQuotaExhaustedSms({ limit, now: new Date(at), canUpgrade }));
       return true;
     }
     console.log(`[sms] refused for ${userId}: ${reservation.reason}`);
@@ -242,7 +360,7 @@ async function sendAlert(
   }
 
   try {
-    await postToTwilio(to, body);
+    await postToTwilio(ctx, to, body);
   } catch (e) {
     // The reservation above already spent a monthly slot, a daily slot and a
     // unit of global budget. A Twilio 500, a 429 or a timeout delivered
@@ -428,7 +546,7 @@ export const startVerification = action({
     });
 
     try {
-      await postToTwilio(phone, formatVerificationSms(code));
+      await postToTwilio(ctx, phone, formatVerificationSms(code));
     } catch (e) {
       await ctx.runMutation(internal.sms.releaseVerification, { userId: identity.subject });
       throw e;
