@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { internal } from "./_generated/api";
+import { api, components, internal } from "./_generated/api";
 import schema from "./schema";
 import betterAuthSchema from "./betterAuth/schema";
 import { twilioSignature } from "./sms";
@@ -112,13 +112,13 @@ const SITE = "https://example-123.convex.site";
 const AUTH_TOKEN = "twilio-auth-token";
 const PHONE = "+447911123456";
 
-type AnyTest = ReturnType<typeof convexTest>;
-
-function setup(): AnyTest {
+function setup() {
   const t = convexTest(schema, modules);
   t.registerComponent("betterAuth", betterAuthSchema, betterAuthModules);
   return t;
 }
+
+type AnyTest = ReturnType<typeof setup>;
 
 /** The texts the admin was sent, whatever became of the Telegram call. */
 async function adminAlerts(t: AnyTest): Promise<string[]> {
@@ -341,5 +341,75 @@ describe("reserveSmsSend: the cap notice's upgrade link", () => {
   it("stamps the notice with the moment the allowance was found spent", async () => {
     const r = await exhausted("free", 10);
     expect(r.notice?.at).toBe(Date.now());
+  });
+});
+
+describe("admin visibility", () => {
+  async function counter(t: AnyTest, name: string): Promise<number> {
+    return t.run(async (ctx) => {
+      const row = await ctx.db.query("counters").withIndex("by_name", (q) => q.eq("name", name)).unique();
+      return row?.value ?? 0;
+    });
+  }
+  const today = () => new Date().toISOString().slice(0, 10);
+
+  function twilioAnswers(status: number, body: object) {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(body), { status })));
+    vi.stubEnv("SMS_ENABLED", "true");
+    vi.stubEnv("TWILIO_ACCOUNT_SID", "AC123");
+    vi.stubEnv("TWILIO_MESSAGING_SERVICE_SID", "MG123");
+  }
+
+  it("counts a text Twilio accepted against today", async () => {
+    const t = setup();
+    twilioAnswers(201, { sid: "SM1" });
+    await t.action(internal.sms.sendMatchAlert, { userId: "u", phone: PHONE, monitorName: "Huts", monitorId: "m1", matchCount: 1 });
+    expect(await counter(t, `sms:sent:${today()}`)).toBe(1);
+    expect(await counter(t, `sms:failed:${today()}`)).toBe(0);
+  });
+
+  // Counted even when the code is one recipient's problem and raises no alert:
+  // the digest is the place a steady trickle of those should show up.
+  it("counts every failure against today, including ones too minor to alert on", async () => {
+    const t = setup();
+    twilioAnswers(400, { code: 21211 });
+    await expect(
+      t.action(internal.sms.sendMatchAlert, { userId: "u", phone: PHONE, monitorName: "Huts", monitorId: "m1", matchCount: 1 }),
+    ).rejects.toThrow();
+    expect(await counter(t, `sms:failed:${today()}`)).toBe(1);
+    expect(await counter(t, `sms:sent:${today()}`)).toBe(0);
+  });
+
+  it("tells the admin when someone confirms a phone, with their email and a masked number", async () => {
+    const t = setup();
+    const user = (await t.mutation(components.betterAuth.adapter.create, {
+      input: {
+        model: "user",
+        data: { name: "A Person", email: "person@example.test", emailVerified: true, createdAt: Date.now(), updatedAt: Date.now() },
+      },
+    })) as { _id: string };
+    const code = await t.mutation(internal.sms.claimVerification, { userId: user._id, phone: PHONE });
+    await t.withIdentity({ subject: user._id }).mutation(api.sms.confirmVerification, { code });
+
+    const alerts = await adminAlerts(t);
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]).toContain("SMS turned on");
+    expect(alerts[0]).toContain("person@example.test");
+    expect(alerts[0]).toContain("3456");
+    expect(alerts[0]).not.toContain("7911123456");
+  });
+
+  it("says nothing on a wrong code", async () => {
+    const t = setup();
+    const user = (await t.mutation(components.betterAuth.adapter.create, {
+      input: {
+        model: "user",
+        data: { name: "A Person", email: "person@example.test", emailVerified: true, createdAt: Date.now(), updatedAt: Date.now() },
+      },
+    })) as { _id: string };
+    const code = await t.mutation(internal.sms.claimVerification, { userId: user._id, phone: PHONE });
+    const wrong = code === "000000" ? "111111" : "000000";
+    await expect(t.withIdentity({ subject: user._id }).mutation(api.sms.confirmVerification, { code: wrong })).rejects.toThrow();
+    expect(await adminAlerts(t)).toHaveLength(0);
   });
 });

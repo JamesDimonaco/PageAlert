@@ -9,7 +9,7 @@ import {
   type ActionCtx,
   type MutationCtx,
 } from "./_generated/server";
-import { internal } from "./_generated/api";
+import { components, internal } from "./_generated/api";
 import { effectiveTier, spendSmsBudget } from "./tiers";
 import { requireLiveAccount } from "./account";
 import {
@@ -194,9 +194,26 @@ const FAILURE_ALERT_INTERVAL_MS = 60 * 60 * 1000;
  */
 const RECIPIENT_CODES = new Set(["21211", "21610", "21614", "30003", "30004", "30005", "30006"]);
 
+/** Per-UTC-day tallies for the daily pulse. */
+async function countToday(ctx: MutationCtx, outcome: "sent" | "failed") {
+  const name = `sms:${outcome}:${new Date().toISOString().slice(0, 10)}`;
+  const row = await ctx.db
+    .query("counters")
+    .withIndex("by_name", (q) => q.eq("name", name))
+    .unique();
+  if (row) await ctx.db.patch(row._id, { value: row.value + 1 });
+  else await ctx.db.insert("counters", { name, value: 1 });
+}
+
+export const countSent = internalMutation({
+  args: {},
+  handler: (ctx) => countToday(ctx, "sent"),
+});
+
 export const alertFailure = internalMutation({
   args: { code: v.string(), text: v.string() },
   handler: async (ctx, { code, text }) => {
+    await countToday(ctx, "failed");
     if (RECIPIENT_CODES.has(code)) return;
     const send = await ctx.runMutation(internal.admin.claimAlertSlot, {
       key: `admin:sms-failure:${code}`,
@@ -255,6 +272,8 @@ async function postToTwilio(ctx: ActionCtx, to: string, body: string): Promise<v
     throw new Error("Failed to send SMS");
   }
   console.log(`[sms] sent to ${maskPhone(to)} (${body.length} chars)`);
+  // The text is out; a failed tally must not throw, or sendAlert would refund it.
+  await ctx.runMutation(internal.sms.countSent, {}).catch((e) => console.error("[sms] count failed:", e));
 }
 
 // ---- Delivery status ----
@@ -660,6 +679,14 @@ export const confirmVerification = mutation({
     else await ctx.db.insert("notificationSettings", { userId, channel: "sms", enabled: true, target: pending.phone });
 
     await ctx.db.delete(pending._id);
+
+    const user = await ctx.runQuery(components.betterAuth.adapter.findOne, {
+      model: "user",
+      where: [{ field: "_id", operator: "eq", value: userId }],
+    });
+    await ctx.scheduler.runAfter(0, internal.admin.notify, {
+      text: `📱 SMS turned on: ${user?.email ?? userId} (${maskPhone(pending.phone)}, ${await tierOf(ctx, userId)})`,
+    });
     return { phone: maskPhone(pending.phone) };
   },
 });

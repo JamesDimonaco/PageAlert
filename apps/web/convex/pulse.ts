@@ -17,7 +17,7 @@ import { internal } from "./_generated/api";
 import { DAY_MS } from "@prowl/shared";
 import { effectiveIntervalMs } from "./shared";
 import { fetchAllUsers, isPayingRecord, TIER_PRICE_CENTS } from "./admin";
-import { effectiveTier } from "./tiers";
+import { effectiveTier, smsMonthlyBudget } from "./tiers";
 
 /**
  * Rows sampled for the 24-hour figures. The digest says "sampled" when a cap
@@ -107,7 +107,26 @@ export const snapshot = internalQuery({
     // is the recipient's server refusing, a failure is ours or Resend's.
 
 
+    const counter = async (name: string) =>
+      (await ctx.db.query("counters").withIndex("by_name", (q) => q.eq("name", name)).unique())?.value ?? 0;
+    // Per UTC day, so "yesterday" is the whole of the day before the 08:00 run,
+    // not a rolling 24h like the figures above.
+    const yesterday = new Date(now - DAY_MS).toISOString().slice(0, 10);
+    const smsOn = await ctx.db
+      .query("notificationSettings")
+      .filter((q) => q.and(q.eq(q.field("channel"), "sms"), q.eq(q.field("enabled"), true)))
+      .collect();
+    const sms = {
+      sent: await counter(`sms:sent:${yesterday}`),
+      failed: await counter(`sms:failed:${yesterday}`),
+      // spendSmsBudget's counter, so verification codes and cap notices count too.
+      monthUsed: await counter(`sms:sends:${new Date(now).toISOString().slice(0, 7)}`),
+      budget: smsMonthlyBudget(),
+      users: smsOn.length,
+    };
+
     return {
+      sms,
       users: users.length,
       signups: users.filter((u) => u.createdAt >= since).length,
       paying,
@@ -168,6 +187,9 @@ export const dailyPulse = internalAction({
       `  scans    ${s.scans.ok} ok · ${s.scans.error + s.scans.timeout} failed (${s.scans.blocked} blocked)`,
       `  alerts   ${s.alerted} monitor${s.alerted === 1 ? "" : "s"} found something new`,
       `  emails   ${s.emails.sent} sent${s.emails.bad > 0 ? ` · ${s.emails.bad} not delivered` : ""}`,
+      ``,
+      `Texts yesterday ${s.sms.sent} sent${s.sms.failed > 0 ? ` · ${s.sms.failed} failed` : ""}`,
+      `  month    ${s.sms.monthUsed} of ${s.sms.budget} budget · ${s.sms.users} user${s.sms.users === 1 ? "" : "s"} with texts on`,
     );
 
     await ctx.runAction(internal.admin.notify, { text: lines.join("\n") });

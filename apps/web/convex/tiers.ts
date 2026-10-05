@@ -1042,7 +1042,7 @@ const SMS_BUDGET_DEFAULT = 2000;
  * always false, so the backstop would quietly stop existing in exactly the
  * "the code is wrong" case it was written for.
  */
-function smsMonthlyBudget(): number {
+export function smsMonthlyBudget(): number {
   // Trim first: a dashboard value of "" or "  " is not null, and Number("") is
   // 0 — finite, non-negative, and therefore a budget of zero that refuses
   // every text including verification codes. Only an unset var, a blank one or
