@@ -3,6 +3,7 @@ import { authComponent, createAuth } from "./betterAuth/auth";
 import { handler as telegramWebhook } from "./telegramWebhook";
 import { handler as resendWebhook } from "./emailEvents";
 import { statusCallback as twilioStatus } from "./sms";
+import { handler as unsubscribe } from "./unsubscribe";
 
 const http = httpRouter();
 
@@ -28,5 +29,10 @@ http.route({
   method: "POST",
   handler: twilioStatus,
 });
+
+// Unsubscribe from product announcements. GET confirms, POST acts (RFC 8058
+// one-click sends the POST straight from the mail client).
+http.route({ path: "/unsubscribe", method: "GET", handler: unsubscribe });
+http.route({ path: "/unsubscribe", method: "POST", handler: unsubscribe });
 
 export default http;
