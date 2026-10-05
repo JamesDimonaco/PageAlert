@@ -4,6 +4,7 @@ import { internalAction, internalMutation, internalQuery, type ActionCtx, type Q
 import { components, internal } from "./_generated/api";
 import { APP_URL, HELLO_FROM_EMAIL, RESEND_TIMEOUT, esc } from "./emails";
 import { SMS_LIMITS } from "./tiers";
+import { isBanned } from "./account";
 import { unsubscribeUrl } from "./unsubscribe";
 
 /**
@@ -91,7 +92,7 @@ async function eligible(ctx: QueryCtx, key: string, users: Recipient[]): Promise
       .query("productUpdateOptOuts")
       .withIndex("by_userId", (q) => q.eq("userId", user.userId))
       .first();
-    if (optedOut) continue;
+    if (optedOut || (await isBanned(ctx, user.userId))) continue;
     const prior = await ctx.db
       .query("announcementSends")
       .withIndex("by_key_userId", (q) => q.eq("key", key).eq("userId", user.userId))
@@ -130,20 +131,83 @@ export const claim = internalMutation({
 });
 
 export const settle = internalMutation({
-  args: { key: v.string(), userIds: v.array(v.string()), error: v.optional(v.string()) },
-  handler: async (ctx, { key, userIds, error }) => {
+  args: {
+    key: v.string(),
+    userIds: v.array(v.string()),
+    status: v.union(v.literal("sent"), v.literal("failed"), v.literal("pending")),
+    error: v.optional(v.string()),
+  },
+  handler: async (ctx, { key, userIds, status, error }) => {
     const now = Date.now();
     for (const userId of userIds) {
       const row = await ctx.db
         .query("announcementSends")
         .withIndex("by_key_userId", (q) => q.eq("key", key).eq("userId", userId))
         .first();
-      if (row) await ctx.db.patch(row._id, { status: error ? "failed" : "sent", error, updatedAt: now });
+      if (row) await ctx.db.patch(row._id, { status, error, updatedAt: now });
     }
   },
 });
 
-type Totals = { sent: number; failed: number };
+type Totals = { sent: number; failed: number; unsure: number };
+
+type Outcome =
+  | { kind: "accepted"; ids: { id?: string }[] }
+  // Resend answered 4xx: it did not take the batch, so sending it again is safe.
+  | { kind: "rejected"; error: string }
+  // Timeout, network error or 5xx: Resend may have accepted the batch before
+  // the answer was lost. Resending could double-send, so the rows stay pending
+  // and a rerun skips them. A missed email is recoverable by hand; a second
+  // copy is not.
+  | { kind: "unsure"; error: string };
+
+async function buildEmail(announcement: Announcement, recipient: Recipient, replyTo: string) {
+  const link = await unsubscribeUrl(recipient.userId);
+  const { html, text } = announcement.render(link);
+  return {
+    from: HELLO_FROM_EMAIL,
+    to: [recipient.email],
+    reply_to: replyTo,
+    subject: announcement.subject,
+    html,
+    text,
+    headers: { "List-Unsubscribe": `<${link}>`, "List-Unsubscribe-Post": "List-Unsubscribe=One-Click" },
+  };
+}
+
+/** Same announcement and same people give the same key, so Resend collapses a repeat of the call within 24 hours. */
+async function idempotencyKey(key: string, userIds: string[]): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(userIds.join(",")));
+  const hex = Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
+  return `announcement/${key}/${hex}`;
+}
+
+async function postBatch(
+  payload: Awaited<ReturnType<typeof buildEmail>>[],
+  apiKey: string,
+  idempotency?: string
+): Promise<Outcome> {
+  try {
+    const res = await fetch("https://api.resend.com/emails/batch", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+        ...(idempotency ? { "Idempotency-Key": idempotency } : {}),
+      },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(RESEND_TIMEOUT),
+    });
+    if (res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { data?: { id?: string }[] };
+      return { kind: "accepted", ids: body.data ?? [] };
+    }
+    const error = `Resend ${res.status}: ${(await res.text().catch(() => "")).slice(0, 200)}`;
+    return { kind: res.status >= 400 && res.status < 500 ? "rejected" : "unsure", error };
+  } catch (e) {
+    return { kind: "unsure", error: e instanceof Error ? e.message : String(e) };
+  }
+}
 
 async function sendBatch(
   ctx: ActionCtx,
@@ -153,55 +217,43 @@ async function sendBatch(
   apiKey: string,
   replyTo: string
 ): Promise<Totals> {
-  const payload = await Promise.all(
-    batch.map(async (r) => {
-      const link = await unsubscribeUrl(r.userId);
-      const { html, text } = announcement.render(link);
-      return {
-        from: HELLO_FROM_EMAIL,
-        to: [r.email],
-        reply_to: replyTo,
-        subject: announcement.subject,
-        html,
-        text,
-        headers: { "List-Unsubscribe": `<${link}>`, "List-Unsubscribe-Post": "List-Unsubscribe=One-Click" },
-      };
-    })
-  );
+  const payload = await Promise.all(batch.map((r) => buildEmail(announcement, r, replyTo)));
+  const userIds = batch.map((r) => r.userId);
+  const outcome = await postBatch(payload, apiKey, await idempotencyKey(key, userIds));
 
-  let error: string | undefined;
-  let ids: { id?: string }[] = [];
-  try {
-    const res = await fetch("https://api.resend.com/emails/batch", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(RESEND_TIMEOUT),
-    });
-    if (res.ok) {
-      ids = ((await res.json().catch(() => ({}))) as { data?: { id?: string }[] }).data ?? [];
-    } else {
-      error = `Resend ${res.status}: ${(await res.text().catch(() => "")).slice(0, 200)}`;
-    }
-  } catch (e) {
-    error = e instanceof Error ? e.message : String(e);
-  }
-
-  await ctx.runMutation(internal.announcements.settle, { key, userIds: batch.map((r) => r.userId), error });
+  const error = outcome.kind === "accepted" ? undefined : outcome.error;
+  const status = outcome.kind === "accepted" ? "sent" : outcome.kind === "rejected" ? "failed" : "pending";
+  await ctx.runMutation(internal.announcements.settle, { key, userIds, status, error });
   await ctx.runMutation(internal.emailEvents.recordSends, {
     kind: `announcement:${key}`,
-    sends: batch.map((r, i) => ({ to: r.email, resendId: ids[i]?.id })),
+    sends: batch.map((r, i) => ({ to: r.email, resendId: outcome.kind === "accepted" ? outcome.ids[i]?.id : undefined })),
     ok: !error,
     error,
   });
-  if (error) console.error(`[announcements] ${key} batch failed:`, error);
-  return error ? { sent: 0, failed: batch.length } : { sent: batch.length, failed: 0 };
+  if (error) console.error(`[announcements] ${key} batch ${status}:`, error);
+
+  const n = batch.length;
+  return { sent: status === "sent" ? n : 0, failed: status === "failed" ? n : 0, unsure: status === "pending" ? n : 0 };
+}
+
+async function sendTest(announcement: Announcement, email: string, ctx: ActionCtx, apiKey: string, replyTo: string) {
+  const user: { _id: string } | null = await ctx.runQuery(components.betterAuth.adapter.findOne, {
+    model: "user",
+    where: [{ field: "email", operator: "eq", value: email.toLowerCase() }],
+  });
+  if (!user) throw new Error(`No user with email ${email}`);
+  const payload = [await buildEmail(announcement, { userId: String(user._id), email: email.toLowerCase() }, replyTo)];
+  const outcome = await postBatch(payload, apiKey);
+  if (outcome.kind !== "accepted") throw new Error(outcome.error);
+  return { testSent: true, to: email.toLowerCase() };
 }
 
 export const send = internalAction({
   args: {
     key: v.string(),
     dryRun: v.optional(v.boolean()),
+    // Sends the real email to this one address, whatever dryRun says, and records nothing.
+    testTo: v.optional(v.string()),
     cursor: v.optional(v.union(v.string(), v.null())),
   },
   handler: async (ctx, args) => {
@@ -212,20 +264,29 @@ export const send = internalAction({
     const apiKey = process.env.RESEND_API_KEY;
     // hello@ is send-only, so replies need somewhere real to land
     const replyTo = process.env.ADMIN_EMAIL;
-    if (!dryRun && (!apiKey || !replyTo)) throw new Error("RESEND_API_KEY and ADMIN_EMAIL must be set");
+    const sending = !dryRun || args.testTo !== undefined;
+    if (sending && (!apiKey || !replyTo)) throw new Error("RESEND_API_KEY and ADMIN_EMAIL must be set");
+    // Signed up front, dry runs included: a missing secret found after rows are
+    // claimed would strand those users as pending, and a dry run that skipped
+    // this would report a healthy count for a run that cannot work.
+    await unsubscribeUrl("preflight");
+
+    if (args.testTo !== undefined) return sendTest(announcement, args.testTo, ctx, apiKey!, replyTo!);
 
     const started = Date.now();
     let cursor = args.cursor ?? null;
     let wouldSend = 0;
-    const totals: Totals = { sent: 0, failed: 0 };
+    const totals: Totals = { sent: 0, failed: 0, unsure: 0 };
 
     for (;;) {
       const page: PaginationResult<Record<string, unknown>> = await ctx.runQuery(
         components.betterAuth.adapter.findMany,
         { model: "user", paginationOpts: { numItems: ANNOUNCEMENT_BATCH_SIZE, cursor } }
       );
+      // Better Auth takes emailVerified from the provider for Google and GitHub
+      // sign-ups, so requiring it also keeps typo'd password sign-ups out.
       const users: Recipient[] = page.page
-        .filter((u) => typeof u.email === "string" && u.email.length > 0)
+        .filter((u) => u.emailVerified === true && typeof u.email === "string" && u.email.length > 0)
         .map((u) => ({ userId: String(u._id), email: String(u.email) }));
 
       if (dryRun) {
@@ -236,6 +297,7 @@ export const send = internalAction({
           const result = await sendBatch(ctx, args.key, announcement, batch, apiKey!, replyTo!);
           totals.sent += result.sent;
           totals.failed += result.failed;
+          totals.unsure += result.unsure;
           await new Promise((resolve) => setTimeout(resolve, BATCH_SPACING_MS));
         }
       }

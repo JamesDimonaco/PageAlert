@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { httpAction, internalMutation } from "./_generated/server";
+import { httpAction, internalMutation, internalQuery } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { esc } from "./emails";
 
@@ -47,6 +47,21 @@ export const optOut = internalMutation({
       .withIndex("by_userId", (q) => q.eq("userId", userId))
       .first();
     if (!existing) await ctx.db.insert("productUpdateOptOuts", { userId, optedOutAt: Date.now() });
+  },
+});
+
+export const optedOutAmong = internalQuery({
+  args: { userIds: v.array(v.string()) },
+  handler: async (ctx, { userIds }) => {
+    const out: string[] = [];
+    for (const userId of userIds) {
+      const row = await ctx.db
+        .query("productUpdateOptOuts")
+        .withIndex("by_userId", (q) => q.eq("userId", userId))
+        .first();
+      if (row) out.push(userId);
+    }
+    return out;
   },
 });
 

@@ -3,7 +3,8 @@ import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import schema from "./schema";
 import betterAuthSchema from "./betterAuth/schema";
-import { components, internal } from "./_generated/api";
+import { api, components, internal } from "./_generated/api";
+import { authComponent } from "./betterAuth/auth";
 import { ANNOUNCEMENT_BATCH_SIZE } from "./announcements";
 import { verifyUnsubscribeToken } from "./unsubscribe";
 
@@ -29,6 +30,7 @@ beforeEach(() => {
   vi.stubGlobal("fetch", fetchMock);
 });
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
 });
@@ -40,11 +42,11 @@ function harness() {
 }
 type T = ReturnType<typeof harness>;
 
-async function seedUser(t: T, email: string | null): Promise<string> {
+async function seedUser(t: T, email: string | null, emailVerified = true): Promise<string> {
   const user = (await t.mutation(components.betterAuth.adapter.create, {
     input: {
       model: "user",
-      data: { name: "A Person", email: email ?? "", emailVerified: true, createdAt: NOW, updatedAt: NOW },
+      data: { name: "A Person", email: email ?? "", emailVerified, createdAt: NOW, updatedAt: NOW },
     },
   })) as { _id: string };
   return user._id;
@@ -121,7 +123,7 @@ describe("announcements.send", () => {
   it("retries only the users whose send failed", async () => {
     const t = harness();
     await seedUser(t, "a@example.com");
-    fetchMock.mockResolvedValueOnce(new Response("boom", { status: 500 }));
+    fetchMock.mockResolvedValueOnce(new Response("invalid", { status: 422 }));
 
     const first = await t.action(internal.announcements.send, { key: KEY, dryRun: false });
     expect(first).toMatchObject({ sent: 0, failed: 1 });
@@ -155,5 +157,148 @@ describe("announcements.send", () => {
 
   it("pins the batch size to Resend's batch maximum", () => {
     expect(ANNOUNCEMENT_BATCH_SIZE).toBe(100);
+  });
+});
+
+describe("a send that may have landed", () => {
+  it("is not sent again after a network error, because Resend may have accepted it", async () => {
+    const t = harness();
+    await seedUser(t, "a@example.com");
+    fetchMock.mockRejectedValueOnce(new Error("The operation was aborted"));
+
+    const first = await t.action(internal.announcements.send, { key: KEY, dryRun: false });
+    expect(first).toMatchObject({ sent: 0, failed: 0, unsure: 1 });
+
+    const second = await t.action(internal.announcements.send, { key: KEY, dryRun: false });
+    expect(second).toMatchObject({ sent: 0, unsure: 0 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("is not sent again after a 5xx", async () => {
+    const t = harness();
+    await seedUser(t, "a@example.com");
+    fetchMock.mockResolvedValueOnce(new Response("down", { status: 503 }));
+
+    await t.action(internal.announcements.send, { key: KEY, dryRun: false });
+    await t.action(internal.announcements.send, { key: KEY, dryRun: false });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends an idempotency key that is the same for the same batch and within Resend's 256 character limit", async () => {
+    const t = harness();
+    await seedUser(t, "a@example.com");
+    fetchMock.mockResolvedValueOnce(new Response("invalid", { status: 422 }));
+
+    await t.action(internal.announcements.send, { key: KEY, dryRun: false });
+    await t.action(internal.announcements.send, { key: KEY, dryRun: false });
+
+    const keys = fetchMock.mock.calls.map(([, init]) => (init as { headers: Record<string, string> }).headers["Idempotency-Key"]);
+    expect(keys).toHaveLength(2);
+    expect(keys[0]).toBeTruthy();
+    expect(keys[0]).toBe(keys[1]);
+    expect(keys[0].length).toBeLessThanOrEqual(256);
+  });
+
+  it("gives a different batch a different idempotency key", async () => {
+    const t = harness();
+    await seedUser(t, "a@example.com");
+    await t.action(internal.announcements.send, { key: KEY, dryRun: false });
+    await seedUser(t, "b@example.com");
+    await t.action(internal.announcements.send, { key: KEY, dryRun: false });
+
+    const keys = fetchMock.mock.calls.map(([, init]) => (init as { headers: Record<string, string> }).headers["Idempotency-Key"]);
+    expect(new Set(keys).size).toBe(2);
+  });
+});
+
+describe("when the unsubscribe secret is missing", () => {
+  it("fails a dry run, so it cannot report a healthy count", async () => {
+    const t = harness();
+    await seedUser(t, "a@example.com");
+    vi.stubEnv("UNSUBSCRIBE_SECRET", "");
+
+    await expect(t.action(internal.announcements.send, { key: KEY })).rejects.toThrow(/UNSUBSCRIBE_SECRET/);
+  });
+
+  it("fails a real run before claiming anyone, so nobody is stranded as pending", async () => {
+    const t = harness();
+    await seedUser(t, "a@example.com");
+    vi.stubEnv("UNSUBSCRIBE_SECRET", "");
+
+    await expect(t.action(internal.announcements.send, { key: KEY, dryRun: false })).rejects.toThrow(/UNSUBSCRIBE_SECRET/);
+    expect(await t.run((ctx) => ctx.db.query("announcementSends").collect())).toHaveLength(0);
+  });
+});
+
+describe("who is eligible", () => {
+  it("skips banned users", async () => {
+    const t = harness();
+    await seedUser(t, "keep@example.com");
+    const banned = await seedUser(t, "banned@example.com");
+    await t.run((ctx) =>
+      ctx.db.insert("bannedUsers", { userId: banned, email: "banned@example.com", bannedBy: "admin", bannedAt: NOW })
+    );
+
+    await t.action(internal.announcements.send, { key: KEY, dryRun: false });
+    expect(sentPayloads().map((p) => p.to[0])).toEqual(["keep@example.com"]);
+  });
+
+  it("skips addresses nobody has verified, in the dry run and the real one", async () => {
+    const t = harness();
+    await seedUser(t, "keep@example.com");
+    await seedUser(t, "unverified@example.com", false);
+
+    expect(await t.action(internal.announcements.send, { key: KEY })).toMatchObject({ wouldSend: 1 });
+    await t.action(internal.announcements.send, { key: KEY, dryRun: false });
+    expect(sentPayloads().map((p) => p.to[0])).toEqual(["keep@example.com"]);
+  });
+});
+
+describe("testTo", () => {
+  it("sends the real email to that address only and leaves announcementSends alone", async () => {
+    const t = harness();
+    const me = await seedUser(t, "me@example.com");
+    await seedUser(t, "other@example.com");
+
+    const result = await t.action(internal.announcements.send, { key: KEY, testTo: "Me@Example.com" });
+
+    expect(result).toMatchObject({ testSent: true });
+    const payloads = sentPayloads();
+    expect(payloads).toHaveLength(1);
+    expect(payloads[0].to).toEqual(["me@example.com"]);
+    expect(new URL(payloads[0].headers["List-Unsubscribe"].slice(1, -1)).searchParams.get("u")).toBe(me);
+    expect(await t.run((ctx) => ctx.db.query("announcementSends").collect())).toHaveLength(0);
+  });
+
+  it("can be repeated, because it records nothing", async () => {
+    const t = harness();
+    await seedUser(t, "me@example.com");
+    await t.action(internal.announcements.send, { key: KEY, testTo: "me@example.com" });
+    await t.action(internal.announcements.send, { key: KEY, testTo: "me@example.com" });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("refuses an address with no account, since the unsubscribe link needs a user", async () => {
+    const t = harness();
+    await seedUser(t, "me@example.com");
+    await expect(t.action(internal.announcements.send, { key: KEY, testTo: "nobody@example.com" })).rejects.toThrow(/No user/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("admin.sendBulkEmail", () => {
+  it("skips users who opted out of product updates", async () => {
+    const t = harness();
+    vi.stubEnv("SUPER_ADMIN_EMAILS", "admin@example.com");
+    vi.spyOn(authComponent, "safeGetAuthUser").mockResolvedValue({ email: "admin@example.com" } as never);
+    const keep = await seedUser(t, "keep@example.com");
+    const gone = await seedUser(t, "gone@example.com");
+    await t.run((ctx) => ctx.db.insert("productUpdateOptOuts", { userId: gone, optedOutAt: NOW }));
+
+    const result = await t.action(api.admin.sendBulkEmail, { userIds: [keep, gone], subject: "Hi", body: "Hello" });
+
+    expect(result).toMatchObject({ sent: 1 });
+    expect(sentPayloads().map((p) => p.to[0])).toEqual(["keep@example.com"]);
   });
 });
