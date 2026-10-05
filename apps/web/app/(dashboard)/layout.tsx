@@ -1,6 +1,7 @@
 "use client";
 
 import { Navbar } from "@/components/prowl/navbar";
+import { WhatsNewDialog } from "@/components/prowl/whats-new-dialog";
 import { useAuth } from "@/hooks/use-auth";
 import { CreateMonitorProvider } from "@/hooks/use-create-monitor";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
@@ -120,6 +121,7 @@ export default function DashboardLayout({
     <CreateMonitorProvider>
       <div className="flex min-h-screen flex-col">
         <Navbar />
+        <WhatsNewDialog />
         <main className="flex-1">
           <div className="mx-auto max-w-7xl px-4 sm:px-6 py-6 sm:py-10">{children}</div>
         </main>

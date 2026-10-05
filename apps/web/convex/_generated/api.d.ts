@@ -38,6 +38,7 @@ import type * as telegram from "../telegram.js";
 import type * as telegramWebhook from "../telegramWebhook.js";
 import type * as tiers from "../tiers.js";
 import type * as userNotifications from "../userNotifications.js";
+import type * as whatsNew from "../whatsNew.js";
 
 import type {
   ApiFromModules,
@@ -76,6 +77,7 @@ declare const fullApi: ApiFromModules<{
   telegramWebhook: typeof telegramWebhook;
   tiers: typeof tiers;
   userNotifications: typeof userNotifications;
+  whatsNew: typeof whatsNew;
 }>;
 
 /**
