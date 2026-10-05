@@ -223,6 +223,26 @@ export default defineSchema({
     .index("by_userId_channel", ["userId", "channel"])
     .index("by_channel_target", ["channel", "target"]),
 
+  // Presence of a row means "no more product announcements". A table rather
+  // than a flag because notificationSettings is one row per channel and
+  // userTiers may not exist for a user who never touched billing.
+  productUpdateOptOuts: defineTable({
+    userId: v.string(),
+    optedOutAt: v.number(),
+  }).index("by_userId", ["userId"]),
+
+  // One row per user per announcement key. The row is written before the send,
+  // so a rerun cannot double-send; only "failed" rows are tried again.
+  announcementSends: defineTable({
+    key: v.string(),
+    userId: v.string(),
+    status: v.union(v.literal("pending"), v.literal("sent"), v.literal("failed")),
+    error: v.optional(v.string()),
+    updatedAt: v.number(),
+  })
+    .index("by_key_userId", ["key", "userId"])
+    .index("by_userId", ["userId"]),
+
   userTiers: defineTable({
     userId: v.string(),
     tier: v.union(v.literal("free"), v.literal("sprint"), v.literal("pro"), v.literal("max")),
