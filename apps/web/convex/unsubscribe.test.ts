@@ -44,8 +44,10 @@ describe("unsubscribe token", () => {
   });
 });
 
+const harness = () => convexTest(schema, modules);
+
 describe("/unsubscribe route", () => {
-  async function optedOut(t: ReturnType<typeof convexTest>, userId: string) {
+  async function optedOut(t: ReturnType<typeof harness>, userId: string) {
     return t.run(async (ctx) =>
       ctx.db.query("productUpdateOptOuts").withIndex("by_userId", (q) => q.eq("userId", userId)).collect()
     );
