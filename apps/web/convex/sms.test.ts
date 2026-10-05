@@ -1,10 +1,13 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { internal } from "./_generated/api";
 import schema from "./schema";
+import betterAuthSchema from "./betterAuth/schema";
+import { twilioSignature } from "./sms";
 
 const modules = import.meta.glob("./**/*.*s");
+const betterAuthModules = import.meta.glob("./betterAuth/**/*.*s");
 
 const NOW = 1_700_000_000_000;
 
@@ -100,5 +103,178 @@ describe("expireVerifications", () => {
     await t.run(async (ctx) => {
       expect(await ctx.db.get(released), "a released verification kept the number").toBeNull();
     });
+  });
+});
+
+// ---- Failure alerts ----
+
+const SITE = "https://example-123.convex.site";
+const AUTH_TOKEN = "twilio-auth-token";
+const PHONE = "+447911123456";
+
+type AnyTest = ReturnType<typeof convexTest>;
+
+function setup(): AnyTest {
+  const t = convexTest(schema, modules);
+  t.registerComponent("betterAuth", betterAuthSchema, betterAuthModules);
+  return t;
+}
+
+/** The texts the admin was sent, whatever became of the Telegram call. */
+async function adminAlerts(t: AnyTest): Promise<string[]> {
+  return t.run(async (ctx) => {
+    const jobs = await ctx.db.system.query("_scheduled_functions").collect();
+    return jobs
+      .filter((job) => job.name === "admin:notify")
+      .map((job) => (job.args as [{ text: string }])[0].text);
+  });
+}
+
+beforeEach(() => {
+  vi.useFakeTimers();
+  vi.stubEnv("CONVEX_SITE_URL", SITE);
+  vi.stubEnv("TWILIO_AUTH_TOKEN", AUTH_TOKEN);
+});
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
+});
+
+describe("twilioSignature", () => {
+  it("matches the worked example in Twilio's security docs", async () => {
+    // Pins the algorithm: URL, then each param as name+value in name order,
+    // HMAC-SHA1, base64. Reordering or re-delimiting breaks every real callback.
+    const sig = await twilioSignature(
+      "12345",
+      "https://example.com/myapp.php?foo=1&bar=2",
+      new URLSearchParams({
+        Digits: "1234",
+        To: "+18005551212",
+        From: "+14158675310",
+        Caller: "+14158675310",
+        CallSid: "CA1234567890ABCDE",
+      }),
+    );
+    expect(sig).toBe("L/OH5YylLD5NRKLltdqwSvS0BnU=");
+  });
+});
+
+describe("failed sends", () => {
+  async function sendWithTwilioError(t: AnyTest, status: number, code: number) {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ code, message: `bad number ${PHONE}` }), { status })),
+    );
+    vi.stubEnv("SMS_ENABLED", "true");
+    vi.stubEnv("TWILIO_ACCOUNT_SID", "AC123");
+    vi.stubEnv("TWILIO_MESSAGING_SERVICE_SID", "MG123");
+    await expect(
+      t.action(internal.sms.sendMatchAlert, {
+        userId: "user-sms",
+        phone: PHONE,
+        monitorName: "Huts",
+        monitorId: "m1",
+        matchCount: 1,
+      }),
+    ).rejects.toThrow();
+  }
+
+  it("tells the admin the Twilio code and status, without the full number", async () => {
+    const t = setup();
+    await sendWithTwilioError(t, 401, 20003);
+
+    const alerts = await adminAlerts(t);
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]).toContain("20003");
+    expect(alerts[0]).toContain("401");
+    expect(alerts[0]).toContain("3456");
+    expect(alerts[0]).not.toContain("7911123456");
+  });
+
+  it("alerts once per error code per hour, and again for a different code", async () => {
+    const t = setup();
+    await sendWithTwilioError(t, 401, 20003);
+    await sendWithTwilioError(t, 401, 20003);
+    expect(await adminAlerts(t)).toHaveLength(1);
+
+    await sendWithTwilioError(t, 400, 21211);
+    expect(await adminAlerts(t)).toHaveLength(2);
+
+    vi.advanceTimersByTime(60 * 60 * 1000 + 1);
+    await sendWithTwilioError(t, 401, 20003);
+    expect(await adminAlerts(t)).toHaveLength(3);
+  });
+
+  it("asks Twilio to report the final delivery status to our callback", async () => {
+    const t = setup();
+    await sendWithTwilioError(t, 500, 20500);
+    const body = vi.mocked(fetch).mock.calls[0]![1]!.body as URLSearchParams;
+    expect(body.get("StatusCallback")).toBe(`${SITE}/twilio/status`);
+  });
+});
+
+describe("Twilio status callback", () => {
+  async function post(t: AnyTest, params: Record<string, string>, signature?: string) {
+    const body = new URLSearchParams(params);
+    const sig = signature ?? (await twilioSignature(AUTH_TOKEN, `${SITE}/twilio/status`, body));
+    return t.fetch("/twilio/status", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded", "X-Twilio-Signature": sig },
+      body: body.toString(),
+    });
+  }
+
+  const FAILED = { MessageSid: "SM123", MessageStatus: "undelivered", ErrorCode: "21704", To: PHONE };
+
+  it("rejects a bad signature with 403 and alerts nobody", async () => {
+    const t = setup();
+    const res = await post(t, FAILED, "AAAAAAAAAAAAAAAAAAAAAAAAAAA=");
+    expect(res.status).toBe(403);
+    expect(await adminAlerts(t)).toHaveLength(0);
+  });
+
+  it("rejects a request signed for different params", async () => {
+    const t = setup();
+    const sig = await twilioSignature(AUTH_TOKEN, `${SITE}/twilio/status`, new URLSearchParams(FAILED));
+    const res = await post(t, { ...FAILED, ErrorCode: "30003" }, sig);
+    expect(res.status).toBe(403);
+  });
+
+  it("rejects a request with no signature header", async () => {
+    const t = setup();
+    const res = await t.fetch("/twilio/status", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams(FAILED).toString(),
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it.each(["failed", "undelivered"])("alerts the admin on %s with code, masked number and sid", async (status) => {
+    const t = setup();
+    const res = await post(t, { ...FAILED, MessageStatus: status });
+    expect(res.status).toBe(200);
+
+    const alerts = await adminAlerts(t);
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]).toContain("21704");
+    expect(alerts[0]).toContain("SM123");
+    expect(alerts[0]).toContain("3456");
+    expect(alerts[0]).not.toContain("7911123456");
+  });
+
+  it.each(["queued", "sent", "delivered"])("ignores %s", async (status) => {
+    const t = setup();
+    const res = await post(t, { ...FAILED, MessageStatus: status });
+    expect(res.status).toBe(200);
+    expect(await adminAlerts(t)).toHaveLength(0);
+  });
+
+  it("rate-limits repeated callbacks for the same error code", async () => {
+    const t = setup();
+    await post(t, FAILED);
+    await post(t, { ...FAILED, MessageSid: "SM456" });
+    expect(await adminAlerts(t)).toHaveLength(1);
   });
 });
