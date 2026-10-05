@@ -173,7 +173,7 @@ export function formatQuotaExhaustedSms(args: { limit: number; now: Date; canUpg
   const month = args.now.getUTCMonth();
   const next = MONTHS[(month + 1) % 12]!.slice(0, 3);
   const upgrade = args.canUpgrade ? " More texts: pagealert.io/pricing" : "";
-  return `PageAlert: you've used your ${args.limit} texts for ${MONTHS[month]}. Texts resume 1 ${next}. Email, push, Telegram and Discord alerts carry on.${upgrade}`;
+  return `PageAlert: you've used your ${args.limit} texts for ${MONTHS[month]}. Texts resume 1 ${next}. Alerts on your other channels carry on.${upgrade}`;
 }
 
 /** The verification code, and the only place the opt-out route is spelled out. */

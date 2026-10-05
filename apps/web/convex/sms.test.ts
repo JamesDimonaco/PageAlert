@@ -198,12 +198,37 @@ describe("failed sends", () => {
     await sendWithTwilioError(t, 401, 20003);
     expect(await adminAlerts(t)).toHaveLength(1);
 
-    await sendWithTwilioError(t, 400, 21211);
+    await sendWithTwilioError(t, 400, 21606);
     expect(await adminAlerts(t)).toHaveLength(2);
 
-    vi.advanceTimersByTime(60 * 60 * 1000 + 1);
+    vi.advanceTimersByTime(60 * 60 * 1000 - 1);
+    await sendWithTwilioError(t, 401, 20003);
+    expect(await adminAlerts(t)).toHaveLength(2);
+
+    vi.advanceTimersByTime(2);
     await sendWithTwilioError(t, 401, 20003);
     expect(await adminAlerts(t)).toHaveLength(3);
+  });
+
+  it("stays quiet about a code that is one recipient's problem, like a mistyped number", async () => {
+    const t = setup();
+    await sendWithTwilioError(t, 400, 21211);
+    expect(await adminAlerts(t)).toHaveLength(0);
+  });
+
+  it("alerts when Twilio cannot be reached at all", async () => {
+    const t = setup();
+    vi.stubGlobal("fetch", vi.fn(async () => { throw new DOMException("timed out", "TimeoutError"); }));
+    vi.stubEnv("SMS_ENABLED", "true");
+    vi.stubEnv("TWILIO_ACCOUNT_SID", "AC123");
+    vi.stubEnv("TWILIO_MESSAGING_SERVICE_SID", "MG123");
+    await expect(
+      t.action(internal.sms.sendMatchAlert, { userId: "u", phone: PHONE, monitorName: "Huts", monitorId: "m1", matchCount: 1 }),
+    ).rejects.toThrow();
+
+    const alerts = await adminAlerts(t);
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]).toContain("could not reach Twilio");
   });
 
   it("asks Twilio to report the final delivery status to our callback", async () => {
@@ -277,6 +302,12 @@ describe("Twilio status callback", () => {
     await post(t, { ...FAILED, MessageSid: "SM456" });
     expect(await adminAlerts(t)).toHaveLength(1);
   });
+
+  it.each(["30003", "30005", "30006"])("stays quiet about %s, a phone that is off or not a mobile", async (code) => {
+    const t = setup();
+    await post(t, { ...FAILED, ErrorCode: code });
+    expect(await adminAlerts(t)).toHaveLength(0);
+  });
 });
 
 describe("reserveSmsSend: the cap notice's upgrade link", () => {
@@ -297,11 +328,18 @@ describe("reserveSmsSend: the cap notice's upgrade link", () => {
 
   it("offers an upgrade to a free account that has run out", async () => {
     const r = await exhausted("free", 10);
-    expect(r).toMatchObject({ ok: false, reason: "month", notifyExhausted: true, canUpgrade: true });
+    expect(r).toMatchObject({ ok: false, reason: "month", notice: { limit: 10, canUpgrade: true } });
   });
 
   it("offers nothing to the top plan, which has nowhere to go", async () => {
     const r = await exhausted("max", 200);
-    expect(r).toMatchObject({ ok: false, reason: "month", notifyExhausted: true, canUpgrade: false });
+    expect(r).toMatchObject({ ok: false, reason: "month", notice: { limit: 200, canUpgrade: false } });
+  });
+
+  // The notice names a month. Taking the clock again in the action, after the
+  // reservation, could name the next one when the send straddles midnight UTC.
+  it("stamps the notice with the moment the allowance was found spent", async () => {
+    const r = await exhausted("free", 10);
+    expect(r.notice?.at).toBe(Date.now());
   });
 });

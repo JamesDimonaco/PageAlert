@@ -1100,14 +1100,13 @@ export interface SmsReservation {
   ok: boolean;
   reason?: SmsRefusal;
   /**
-   * True on the one refusal that should still cost a text: the monthly
+   * Set on the one refusal that should still cost a text: the monthly
    * allowance has just run out and the user has not been told. The caller
-   * sends that notice and nothing else until the month turns over.
+   * sends that notice and nothing else until the month turns over. `at` is
+   * when the allowance was found spent, so the month the notice names is the
+   * one that ran out; canUpgrade is false on the top plan.
    */
-  notifyExhausted: boolean;
-  monthLimit: number;
-  /** False on the top plan, where the notice has nothing to point at. */
-  canUpgrade: boolean;
+  notice?: { limit: number; at: number; canUpgrade: boolean };
 }
 
 /**
@@ -1232,16 +1231,20 @@ export const reserveSmsSend = internalMutation({
       const owed =
         !!record && record.smsCapNotifiedMonth !== month && (await spendSmsBudget(ctx));
       if (owed && record) await ctx.db.patch(record._id, { smsCapNotifiedMonth: month });
-      return { ok: false, reason: "month", notifyExhausted: owed, monthLimit: limits.month, canUpgrade: tier !== "max" };
+      return {
+        ok: false,
+        reason: "month",
+        notice: owed ? { limit: limits.month, at: now.getTime(), canUpgrade: tier !== "max" } : undefined,
+      };
     }
 
     if (dayUsed >= limits.day) {
-      return { ok: false, reason: "day", notifyExhausted: false, monthLimit: limits.month, canUpgrade: tier !== "max" };
+      return { ok: false, reason: "day" };
     }
 
     // Last, so that a send refused on either per-user cap costs no budget.
     if (!(await spendSmsBudget(ctx))) {
-      return { ok: false, reason: "budget", notifyExhausted: false, monthLimit: limits.month, canUpgrade: tier !== "max" };
+      return { ok: false, reason: "budget" };
     }
 
     if (record) {
@@ -1263,7 +1266,7 @@ export const reserveSmsSend = internalMutation({
       });
     }
 
-    return { ok: true, notifyExhausted: false, monthLimit: limits.month, canUpgrade: tier !== "max" };
+    return { ok: true };
   },
 });
 

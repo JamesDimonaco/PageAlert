@@ -186,9 +186,18 @@ export function maskPhone(phone: string): string {
  */
 const FAILURE_ALERT_INTERVAL_MS = 60 * 60 * 1000;
 
+/**
+ * Codes that describe one recipient, not the account: a mistyped or landline
+ * number, a phone switched off, someone who texted STOP. Nothing James can fix,
+ * and alerting on them would spend the hourly slot a real problem sharing the
+ * code needs.
+ */
+const RECIPIENT_CODES = new Set(["21211", "21610", "21614", "30003", "30004", "30005", "30006"]);
+
 export const alertFailure = internalMutation({
   args: { code: v.string(), text: v.string() },
   handler: async (ctx, { code, text }) => {
+    if (RECIPIENT_CODES.has(code)) return;
     const send = await ctx.runMutation(internal.admin.claimAlertSlot, {
       key: `admin:sms-failure:${code}`,
       minIntervalMs: FAILURE_ALERT_INTERVAL_MS,
@@ -213,15 +222,25 @@ async function postToTwilio(ctx: ActionCtx, to: string, body: string): Promise<v
   const callback = statusCallbackUrl();
   if (callback) params.set("StatusCallback", callback);
 
-  const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`, {
-    method: "POST",
-    headers: {
-      Authorization: `Basic ${btoa(`${accountSid}:${authToken}`)}`,
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-    body: params,
-    signal: AbortSignal.timeout(TIMEOUT),
-  });
+  let res: Response;
+  try {
+    res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`, {
+      method: "POST",
+      headers: {
+        Authorization: `Basic ${btoa(`${accountSid}:${authToken}`)}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: params,
+      signal: AbortSignal.timeout(TIMEOUT),
+    });
+  } catch (e) {
+    // A Twilio outage looks like this rather than like an error response.
+    await ctx.runMutation(internal.sms.alertFailure, {
+      code: "network",
+      text: `PageAlert: could not reach Twilio to send an SMS (${e instanceof Error ? e.name : "unknown error"}).`,
+    });
+    throw e;
+  }
 
   if (!res.ok) {
     // Twilio's error body quotes the To number back on an invalid-number
@@ -331,12 +350,9 @@ async function sendAlert(
   const reservation = await ctx.runMutation(internal.tiers.reserveSmsSend, { userId });
 
   if (!reservation.ok) {
-    if (reservation.notifyExhausted) {
-      await postToTwilio(ctx, to, formatQuotaExhaustedSms({
-          limit: reservation.monthLimit,
-          now: new Date(),
-          canUpgrade: reservation.canUpgrade,
-        }));
+    if (reservation.notice) {
+      const { limit, at, canUpgrade } = reservation.notice;
+      await postToTwilio(ctx, to, formatQuotaExhaustedSms({ limit, now: new Date(at), canUpgrade }));
       return true;
     }
     console.log(`[sms] refused for ${userId}: ${reservation.reason}`);

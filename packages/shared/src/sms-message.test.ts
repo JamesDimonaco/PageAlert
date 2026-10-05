@@ -264,8 +264,12 @@ describe("the fixed-copy messages", () => {
     expect(formatQuotaExhaustedSms({ limit: 200, now, canUpgrade: false })).not.toContain("pricing");
   });
 
-  it("says the other channels keep alerting", () => {
-    expect(formatQuotaExhaustedSms({ limit: 10, now: new Date(), canUpgrade: true })).toContain("carry on");
+  // Generic, because naming Telegram to someone who never set it up promises
+  // alerts that are not coming.
+  it("says the user's other channels keep alerting, without naming ones they may not have", () => {
+    const body = formatQuotaExhaustedSms({ limit: 10, now: new Date(), canUpgrade: true });
+    expect(body).toContain("Alerts on your other channels carry on");
+    expect(body).not.toContain("Telegram");
   });
 
   it("fits the verification code in one segment", () => {

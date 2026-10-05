@@ -149,7 +149,7 @@ export default function SmsPolicyPage() {
             <li><strong>One match</strong> — PageAlert: 1 new match on &ldquo;Visa appointment slots&rdquo; https://pagealert.io/m/k17d8h2n4p9q3r5s7t1v6w8x0y2z4a6b</li>
             <li><strong>Price change</strong> — PageAlert: Sony WH-1000XM5 now $279.99 (was $379.00) https://pagealert.io/m/k17d8h2n4p9q3r5s7t1v6w8x0y2z4a6b</li>
             <li><strong>Verification code</strong> — PageAlert: your code is 481920. It expires in 10 minutes. Turn texts off any time in your dashboard settings.</li>
-            <li><strong>Allowance used up</strong>, sent at most once a month — PageAlert: you&apos;ve used your 10 texts for October. Texts resume 1 Nov. Email, push, Telegram and Discord alerts carry on. More texts: pagealert.io/pricing</li>
+            <li><strong>Allowance used up</strong>, sent at most once a month — PageAlert: you&apos;ve used your 10 texts for October. Texts resume 1 Nov. Alerts on your other channels carry on. More texts: pagealert.io/pricing</li>
           </ul>
           <p>Every message begins with the brand name, so the sender is never ambiguous, and each is composed to fit a single 160-character GSM-7 segment.</p>
 
