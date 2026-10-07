@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
@@ -17,48 +18,57 @@ import { trackWhatsNew } from "@/lib/posthog";
 
 export function WhatsNewDialog() {
   const router = useRouter();
-  const freeTexts = useQuery(api.whatsNew.show);
+  const entry = useQuery(api.whatsNew.show);
   const dismiss = useMutation(api.whatsNew.dismiss);
-  const [closed, setClosed] = useState(false);
-  const shownRef = useRef(false);
+  const [closedId, setClosedId] = useState<string | null>(null);
+  const shownRef = useRef<string | null>(null);
 
-  const open = !!freeTexts && !closed;
+  const open = !!entry && entry.id !== closedId;
 
   useEffect(() => {
-    if (open && !shownRef.current) {
-      shownRef.current = true;
-      trackWhatsNew({ announcement: "sms-alerts", action: "shown" });
+    if (open && shownRef.current !== entry.id) {
+      shownRef.current = entry.id;
+      trackWhatsNew({ announcement: entry.id, action: "shown" });
     }
-  }, [open]);
+  }, [open, entry]);
 
-  function close(action: "dismissed" | "opened_settings") {
-    setClosed(true);
-    trackWhatsNew({ announcement: "sms-alerts", action });
-    void dismiss({}).catch(() => {});
+  if (!entry) return null;
+
+  function close(action: "dismissed" | "clicked_cta" | "opened_changelog") {
+    if (!entry) return;
+    setClosedId(entry.id);
+    trackWhatsNew({ announcement: entry.id, action });
+    void dismiss({ id: entry.id }).catch(() => {});
   }
 
   return (
     <Dialog open={open} onOpenChange={(next) => !next && close("dismissed")}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>PageAlert can now text you</DialogTitle>
-          <DialogDescription>
-            Get a text when a monitor finds a match or a price drops. Free accounts get{" "}
-            {freeTexts?.month} texts a month, up to {freeTexts?.day} a day.
-          </DialogDescription>
+          <DialogTitle>{entry.title}</DialogTitle>
+          <DialogDescription>{entry.body}</DialogDescription>
         </DialogHeader>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => close("dismissed")}>
-            Not now
-          </Button>
-          <Button
-            onClick={() => {
-              close("opened_settings");
-              router.push("/dashboard/settings?tab=notifications#sms");
-            }}
+        <DialogFooter className="sm:items-center">
+          <Link
+            href="/changelog"
+            onClick={() => close("opened_changelog")}
+            className="mr-auto text-sm text-muted-foreground hover:text-foreground"
           >
-            Set up texts
+            All updates
+          </Link>
+          <Button variant="outline" onClick={() => close("dismissed")}>
+            {entry.cta ? "Not now" : "Got it"}
           </Button>
+          {entry.cta && (
+            <Button
+              onClick={() => {
+                close("clicked_cta");
+                router.push(entry.cta!.href);
+              }}
+            >
+              {entry.cta.label}
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

@@ -299,7 +299,7 @@ export function trackNotificationChannelToggled(props: { channel: string; enable
   });
 }
 
-export function trackWhatsNew(props: { announcement: string; action: "shown" | "dismissed" | "opened_settings" }) {
+export function trackWhatsNew(props: { announcement: string; action: "shown" | "dismissed" | "clicked_cta" | "opened_changelog" }) {
   trackEvent("whats_new_interacted", props);
 }
 

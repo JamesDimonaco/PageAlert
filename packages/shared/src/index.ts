@@ -12,3 +12,4 @@ export * from "./device";
 export * from "./sms-message";
 export * from "./api-key";
 export * from "./agent-output";
+export * from "./changelog";

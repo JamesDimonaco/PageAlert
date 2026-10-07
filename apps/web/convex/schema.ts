@@ -379,7 +379,7 @@ export default defineSchema({
     // so the anonymous-scan funnel (which arrives with checkCount already set)
     // still counts. Claimed in monitors.saveScanResult.
     activatedAt: v.optional(v.number()),
-    // Ids of the one-off "what's new" dialogs this user has dismissed. See
+    // Ids of the changelog entries this user has dismissed as a popup. See
     // whatsNew.ts.
     announcementsSeen: v.optional(v.array(v.string())),
   }).index("by_userId", ["userId"]),
