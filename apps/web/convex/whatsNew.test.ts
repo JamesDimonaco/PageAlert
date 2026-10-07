@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CHANGELOG, latestChangelogEntry } from "@prowl/shared";
 import { api, components } from "./_generated/api";
 import schema from "./schema";
@@ -9,6 +9,9 @@ import { SMS_LIMITS } from "./tiers";
 
 const modules = import.meta.glob("./**/*.*s");
 const betterAuthModules = import.meta.glob("./betterAuth/**/*.*s");
+
+beforeEach(() => vi.stubEnv("SMS_ENABLED", "true"));
+afterEach(() => vi.unstubAllEnvs());
 
 function harness() {
   const t = convexTest(schema, modules);
@@ -96,6 +99,34 @@ describe("whatsNew.show: who gets the newest changelog entry as a popup", () => 
     });
     await asUser.mutation(api.account.touchLastSeen, {});
     expect(await asUser.query(api.whatsNew.show, {})).toBeNull();
+  });
+});
+
+// Remove once a newer entry is at the top: the texts entry is the only one these rules hold for.
+describe("whatsNew.show: while the texts entry is the newest", () => {
+  it.runIf(latest.id === "sms-alerts")("hides from someone who already has texts switched on", async () => {
+    const t = harness();
+    const userId = await existingUser(t);
+    await t.run((ctx) =>
+      ctx.db.insert("notificationSettings", { userId, channel: "sms", enabled: true, target: "+447911100000" })
+    );
+    expect(await t.withIdentity({ subject: userId }).query(api.whatsNew.show, {})).toBeNull();
+  });
+
+  it.runIf(latest.id === "sms-alerts")("still shows to someone with a disabled sms row", async () => {
+    const t = harness();
+    const userId = await existingUser(t);
+    await t.run((ctx) =>
+      ctx.db.insert("notificationSettings", { userId, channel: "sms", enabled: false, target: "+447911100000" })
+    );
+    expect(await t.withIdentity({ subject: userId }).query(api.whatsNew.show, {})).toEqual(latest);
+  });
+
+  it.runIf(latest.id === "sms-alerts")("hides while the SMS kill switch is off, since the settings card is hidden too", async () => {
+    vi.stubEnv("SMS_ENABLED", "false");
+    const t = harness();
+    const userId = await existingUser(t);
+    expect(await t.withIdentity({ subject: userId }).query(api.whatsNew.show, {})).toBeNull();
   });
 });
 
