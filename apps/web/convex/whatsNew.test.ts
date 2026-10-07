@@ -1,10 +1,10 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { CHANGELOG, latestChangelogEntry } from "@prowl/shared";
 import { api, components } from "./_generated/api";
 import schema from "./schema";
 import betterAuthSchema from "./betterAuth/schema";
-import { SMS_ANNOUNCED_AT } from "./whatsNew";
 import { SMS_LIMITS } from "./tiers";
 
 const modules = import.meta.glob("./**/*.*s");
@@ -19,6 +19,9 @@ function harness() {
   return t;
 }
 
+const latest = latestChangelogEntry();
+const latestAt = Date.parse(`${latest.date}T00:00:00Z`);
+
 async function signUp(t: ReturnType<typeof harness>, createdAt: number): Promise<string> {
   const user = (await t.mutation(components.betterAuth.adapter.create, {
     input: {
@@ -29,44 +32,28 @@ async function signUp(t: ReturnType<typeof harness>, createdAt: number): Promise
   return user._id;
 }
 
-const existingUser = (t: ReturnType<typeof harness>) => signUp(t, SMS_ANNOUNCED_AT - 1);
+const existingUser = (t: ReturnType<typeof harness>) => signUp(t, latestAt - 1);
 
-describe("whatsNew.show: who sees the SMS announcement", () => {
-  it("shows to an account that predates the launch and has not seen it", async () => {
+describe("whatsNew.show: who gets the newest changelog entry as a popup", () => {
+  it("shows to an account that predates it and has not dismissed it", async () => {
     const t = harness();
     const userId = await existingUser(t);
-    expect(await t.withIdentity({ subject: userId }).query(api.whatsNew.show, {})).toEqual(SMS_LIMITS.free);
+    expect(await t.withIdentity({ subject: userId }).query(api.whatsNew.show, {})).toEqual(latest);
   });
 
-  it("hides from an account created at or after the launch, who get onboarding instead", async () => {
+  it("hides from an account created on or after its day", async () => {
     const t = harness();
-    const userId = await signUp(t, SMS_ANNOUNCED_AT);
+    const userId = await signUp(t, latestAt);
     expect(await t.withIdentity({ subject: userId }).query(api.whatsNew.show, {})).toBeNull();
   });
 
-  it("hides from someone who already has texts switched on", async () => {
+  it("shows again when the only dismissal on record is for an older entry", async () => {
     const t = harness();
     const userId = await existingUser(t);
     await t.run((ctx) =>
-      ctx.db.insert("notificationSettings", { userId, channel: "sms", enabled: true, target: "+447911100000" })
+      ctx.db.insert("userActivity", { userId, lastSeenAt: 0, announcementsSeen: [CHANGELOG[1].id] })
     );
-    expect(await t.withIdentity({ subject: userId }).query(api.whatsNew.show, {})).toBeNull();
-  });
-
-  it("still shows to someone with a disabled sms row", async () => {
-    const t = harness();
-    const userId = await existingUser(t);
-    await t.run((ctx) =>
-      ctx.db.insert("notificationSettings", { userId, channel: "sms", enabled: false, target: "+447911100000" })
-    );
-    expect(await t.withIdentity({ subject: userId }).query(api.whatsNew.show, {})).toEqual(SMS_LIMITS.free);
-  });
-
-  it("hides while the SMS kill switch is off, since the settings card is hidden too", async () => {
-    vi.stubEnv("SMS_ENABLED", "false");
-    const t = harness();
-    const userId = await existingUser(t);
-    expect(await t.withIdentity({ subject: userId }).query(api.whatsNew.show, {})).toBeNull();
+    expect(await t.withIdentity({ subject: userId }).query(api.whatsNew.show, {})).toEqual(latest);
   });
 
   it("hides from a signed-out caller", async () => {
@@ -78,7 +65,7 @@ describe("whatsNew.show: who sees the SMS announcement", () => {
     const t = harness();
     const userId = await existingUser(t);
     const asUser = t.withIdentity({ subject: userId });
-    await asUser.mutation(api.whatsNew.dismiss, {});
+    await asUser.mutation(api.whatsNew.dismiss, { id: latest.id });
     expect(await asUser.query(api.whatsNew.show, {})).toBeNull();
   });
 
@@ -87,18 +74,25 @@ describe("whatsNew.show: who sees the SMS announcement", () => {
     const userId = await existingUser(t);
     const asUser = t.withIdentity({ subject: userId });
     await asUser.mutation(api.account.touchLastSeen, {});
-    expect(await asUser.query(api.whatsNew.show, {})).toEqual(SMS_LIMITS.free);
-    await asUser.mutation(api.whatsNew.dismiss, {});
+    await asUser.mutation(api.whatsNew.dismiss, { id: latest.id });
     const rows = await t.run((ctx) => ctx.db.query("userActivity").collect());
     expect(rows).toHaveLength(1);
     expect(await asUser.query(api.whatsNew.show, {})).toBeNull();
+  });
+
+  it("ignores an id that is not in the changelog", async () => {
+    const t = harness();
+    const userId = await existingUser(t);
+    await t.withIdentity({ subject: userId }).mutation(api.whatsNew.dismiss, { id: "made-up" });
+    const rows = await t.run((ctx) => ctx.db.query("userActivity").collect());
+    expect(rows).toHaveLength(0);
   });
 
   it("keeps the seen mark when touchLastSeen stamps an existing row", async () => {
     const t = harness();
     const userId = await existingUser(t);
     const asUser = t.withIdentity({ subject: userId });
-    await asUser.mutation(api.whatsNew.dismiss, {});
+    await asUser.mutation(api.whatsNew.dismiss, { id: latest.id });
     await t.run(async (ctx) => {
       const row = await ctx.db.query("userActivity").first();
       await ctx.db.patch(row!._id, { lastSeenAt: 0 });
@@ -108,6 +102,42 @@ describe("whatsNew.show: who sees the SMS announcement", () => {
   });
 });
 
-it("pins the launch cutoff", () => {
-  expect(new Date(SMS_ANNOUNCED_AT).toISOString()).toBe("2026-10-06T00:00:00.000Z");
+// Remove once a newer entry is at the top: the texts entry is the only one these rules hold for.
+describe("whatsNew.show: while the texts entry is the newest", () => {
+  it.runIf(latest.id === "sms-alerts")("hides from someone who already has texts switched on", async () => {
+    const t = harness();
+    const userId = await existingUser(t);
+    await t.run((ctx) =>
+      ctx.db.insert("notificationSettings", { userId, channel: "sms", enabled: true, target: "+447911100000" })
+    );
+    expect(await t.withIdentity({ subject: userId }).query(api.whatsNew.show, {})).toBeNull();
+  });
+
+  it.runIf(latest.id === "sms-alerts")("still shows to someone with a disabled sms row", async () => {
+    const t = harness();
+    const userId = await existingUser(t);
+    await t.run((ctx) =>
+      ctx.db.insert("notificationSettings", { userId, channel: "sms", enabled: false, target: "+447911100000" })
+    );
+    expect(await t.withIdentity({ subject: userId }).query(api.whatsNew.show, {})).toEqual(latest);
+  });
+
+  it.runIf(latest.id === "sms-alerts")("hides while the SMS kill switch is off, since the settings card is hidden too", async () => {
+    vi.stubEnv("SMS_ENABLED", "false");
+    const t = harness();
+    const userId = await existingUser(t);
+    expect(await t.withIdentity({ subject: userId }).query(api.whatsNew.show, {})).toBeNull();
+  });
+});
+
+describe("changelog figures that come from server limits", () => {
+  it("quotes the free SMS limits", () => {
+    const sms = CHANGELOG.find((e) => e.id === "sms-alerts")!;
+    expect(sms.body).toContain(`${SMS_LIMITS.free.month} texts a month, up to ${SMS_LIMITS.free.day} a day`);
+  });
+
+  // Keeps the id that the original texts popup stored, so nobody who dismissed it sees it twice.
+  it("keeps the texts entry on its original id and day", () => {
+    expect(CHANGELOG.find((e) => e.id === "sms-alerts")?.date).toBe("2026-10-06");
+  });
 });

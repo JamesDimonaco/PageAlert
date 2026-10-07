@@ -126,6 +126,7 @@ export default function PricingPage() {
               PageAlert
             </div>
             <nav className="flex flex-wrap items-center gap-6 text-xs text-muted-foreground">
+              <Link href="/changelog" className="hover:text-foreground transition-colors">Changelog</Link>
               <Link href="/privacy" className="hover:text-foreground transition-colors">Privacy Policy</Link>
               <Link href="/terms" className="hover:text-foreground transition-colors">Terms of Service</Link>
             </nav>

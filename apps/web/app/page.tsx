@@ -210,6 +210,7 @@ export default function LandingPage() {
             </div>
             <nav className="flex flex-wrap items-center gap-6 text-xs text-muted-foreground">
               <Link href="/pricing" className="hover:text-foreground transition-colors">Pricing</Link>
+              <Link href="/changelog" className="hover:text-foreground transition-colors">Changelog</Link>
               <Link href="/privacy" className="hover:text-foreground transition-colors">Privacy Policy</Link>
               <Link href="/terms" className="hover:text-foreground transition-colors">Terms of Service</Link>
               <a href="https://github.com/JamesDimonaco/prowl" target="_blank" rel="noopener noreferrer" className="hover:text-foreground transition-colors">GitHub</a>
