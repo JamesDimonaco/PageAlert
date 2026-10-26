@@ -27,3 +27,8 @@ overrides:
   "esbuild@>=0.27.3 <0.28.1": ">=0.28.1"
   # GHSA (pnpm audit 2026-09-05) — @opentelemetry/core; pulled via exporter-logs-otlp-http@0.214.
   "@opentelemetry/core@<2.8.0": ">=2.8.0"
+  # GHSA-mrhx-c7xc-m3w5 — Zod can exhaust memory validating oversized constrained
+  # collections (via @posthog/ai in apps/scraper, and apps/web's own zod dep).
+  # Scoped to the 4.x line only — a bare "zod@<4.6.6" also matches apps/scraper's
+  # direct zod@3.25.76 and silently majors it to 4.x (no major bumps, ever).
+  "zod@>=4.0.0 <4.6.6": ">=4.6.6"
