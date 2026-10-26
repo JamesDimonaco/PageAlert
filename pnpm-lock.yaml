@@ -14,7 +14,7 @@ overrides:
   langsmith: '>=0.5.18'
   esbuild@>=0.27.3 <0.28.1: '>=0.28.1'
   '@opentelemetry/core@<2.8.0': '>=2.8.0'
-  zod@>=4.0.0 <4.6.6: '>=4.6.6'
+  zod@>=4.0.0 <4.6.6: '>=4.6.6 <5.0.0'
 
 importers:
 
@@ -243,7 +243,7 @@ packages:
     resolution: {integrity: sha512-PzQhR715td/m1UaaN5hHXjYB8Gl2lF9UVhrrGrZeysiF6Rb74Wc9GCB8hzLdzmQtBd1qe89F9OptgB9Za1Ib5w==}
     hasBin: true
     peerDependencies:
-      zod: '>=4.6.6'
+      zod: '>=4.6.6 <5.0.0'
     peerDependenciesMeta:
       zod:
         optional: true
@@ -938,7 +938,7 @@ packages:
     resolution: {integrity: sha512-Io1B6d011Gj1KknV4rXYz4le5+5EubcWEU/speUjuw9XMMIaP3n78yXLhjd2A3PXaXaUwEAluOiAyLqhBEJgsw==}
     peerDependencies:
       hono: '>=3.9.0'
-      zod: '>=4.6.6'
+      zod: '>=4.6.6 <5.0.0'
 
   '@humanfs/core@0.19.2':
     resolution: {integrity: sha512-UhXNm+CFMWcbChXywFwkmhqjs3PRCmcSa/hfBgLIb7oQ5HNb1wS0icWsGtSAUNgefHeI+eBrA8I1fxmbHsGdvA==}
@@ -1152,7 +1152,7 @@ packages:
     engines: {node: '>=18'}
     peerDependencies:
       '@langchain/core': ^1.1.48
-      zod: '>=4.6.6'
+      zod: '>=4.6.6 <5.0.0'
 
   '@langchain/protocol@0.0.20':
     resolution: {integrity: sha512-sxlkDG2/HGyjDFLTJ8B/o3oglRjOv8iLCFgrV0550/Vym3V6RZ0SUjAQFe8jrLQw8ZXjERy3swJp5OODBSrUYA==}
@@ -1166,7 +1166,7 @@ packages:
     engines: {node: '>=18'}
     peerDependencies:
       '@cfworker/json-schema': ^4.1.1
-      zod: '>=4.6.6'
+      zod: '>=4.6.6 <5.0.0'
     peerDependenciesMeta:
       '@cfworker/json-schema':
         optional: true
@@ -1520,7 +1520,7 @@ packages:
     peerDependencies:
       '@polar-sh/sdk': ^0.46.4
       better-auth: ^1.4.12
-      zod: '>=4.6.6'
+      zod: '>=4.6.6 <5.0.0'
 
   '@polar-sh/checkout@0.2.1':
     resolution: {integrity: sha512-AEKKw3o4ykApECA4bU6a2YC0+aQKTFUasca4ZgCDIjG8AHlu3SjW3Taxh2nfeYAczhah0m0axVF9AV8VfdYzfw==}
@@ -2486,7 +2486,7 @@ packages:
   better-call@1.4.0:
     resolution: {integrity: sha512-bBKOT4vv1kZLDgxVePdilk/Jwkn+dtRRsmi3DzHcDP+WnswyVl6dR59l2HEeP/0cB+bDoopASAesWDPIdd/zZA==}
     peerDependencies:
-      zod: '>=4.6.6'
+      zod: '>=4.6.6 <5.0.0'
     peerDependenciesMeta:
       zod:
         optional: true
@@ -2675,7 +2675,7 @@ packages:
       hono: ^4.0.5
       react: ^17.0.2 || ^18.0.0 || ^19.0.0
       typescript: ^5.5 || ^6.0.0 || ^7.0.0
-      zod: '>=4.6.6'
+      zod: '>=4.6.6 <5.0.0'
     peerDependenciesMeta:
       '@standard-schema/spec':
         optional: true
@@ -4229,7 +4229,7 @@ packages:
       '@smithy/hash-node': '>=4.3.0 <5'
       '@smithy/signature-v4': '>=5.4.0 <6'
       ws: ^8.18.0
-      zod: '>=4.6.6'
+      zod: '>=4.6.6 <5.0.0'
     peerDependenciesMeta:
       '@aws-sdk/credential-provider-node':
         optional: true
@@ -5297,13 +5297,13 @@ packages:
   zod-to-json-schema@3.25.2:
     resolution: {integrity: sha512-O/PgfnpT1xKSDeQYSCfRI5Gy3hPf91mKVDuYLUHZJMiDFptvP41MSnWofm8dnCm0256ZNfZIM7DSzuSMAFnjHA==}
     peerDependencies:
-      zod: '>=4.6.6'
+      zod: '>=4.6.6 <5.0.0'
 
   zod-validation-error@4.0.2:
     resolution: {integrity: sha512-Q6/nZLe6jxuU80qb/4uJ4t5v2VEZ44lzQjPDhYJNztRQ4wyWc6VF3D3Kb/fAuPetZQnhS3hnajCf9CsWesghLQ==}
     engines: {node: '>=18.0.0'}
     peerDependencies:
-      zod: '>=4.6.6'
+      zod: '>=4.6.6 <5.0.0'
 
   zod@3.25.76:
     resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}

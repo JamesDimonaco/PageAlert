@@ -31,4 +31,4 @@ overrides:
   # collections (via @posthog/ai in apps/scraper, and apps/web's own zod dep).
   # Scoped to the 4.x line only — a bare "zod@<4.6.6" also matches apps/scraper's
   # direct zod@3.25.76 and silently majors it to 4.x (no major bumps, ever).
-  "zod@>=4.0.0 <4.6.6": ">=4.6.6"
+  "zod@>=4.0.0 <4.6.6": ">=4.6.6 <5.0.0"
