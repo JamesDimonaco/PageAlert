@@ -486,22 +486,22 @@ export const claimFirstScanProxy = mutation({
   },
 });
 
-/** Live monitors scanned per site before answering. A site rarely has more. */
-const HOST_SAMPLE = 20;
-
 /**
- * Whether another live monitor on this site needs the proxy. Read from the
- * fleet rather than kept as a list: the scheduler re-probes a direct fetch
- * every PROXY_REPROBE_EVERY checks and clears proxyPreferred when it works,
- * so a site that drops its protection leaves by itself.
+ * Whether another monitor on this site needs the proxy and is still being
+ * checked. Read from the fleet rather than kept as a list: the scheduler
+ * re-probes a direct fetch every PROXY_REPROBE_EVERY checks and clears
+ * proxyPreferred when it works, so a site that drops its protection leaves by
+ * itself. A parked monitor is never re-probed, so its flag proves nothing.
  */
 async function hostNeedsProxy(ctx: MutationCtx, monitor: Doc<"monitors">): Promise<boolean> {
-  const others = await ctx.db
+  const flagged = await ctx.db
     .query("monitors")
-    .withIndex("by_host", (q) => q.eq("host", displayHost(monitor.url)))
-    .take(HOST_SAMPLE);
-  return others.some(
-    (m) => m._id !== monitor._id && m.proxyPreferred === true && (m.status === "active" || m.status === "error")
+    .withIndex("by_host_proxyPreferred", (q) =>
+      q.eq("host", monitor.host ?? displayHost(monitor.url)).eq("proxyPreferred", true)
+    )
+    .take(10);
+  return flagged.some(
+    (m) => m._id !== monitor._id && m.nextCheckAt !== undefined && (m.status === "active" || m.status === "error")
   );
 }
 
@@ -592,7 +592,12 @@ export const update = mutation({
         updates[key] = typeof value === "string" ? value.trim() : value;
       }
     }
-    if (fields.url !== undefined) updates.host = displayHost(fields.url.trim());
+    if (fields.url !== undefined) {
+      updates.host = displayHost(fields.url.trim());
+      // What the old site needed says nothing about the new one, and left set
+      // it would mark the new site as needing the proxy for everyone.
+      if (updates.host !== existing.host) updates.proxyPreferred = undefined;
+    }
 
     // Anything that takes a monitor out of "paused" clears the auto-pause and
     // its email link, so the monitor reads as a plain active monitor again and

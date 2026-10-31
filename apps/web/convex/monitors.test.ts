@@ -80,8 +80,11 @@ test("a first scan goes straight to the proxy only on a site a live monitor alre
     "https://www.example.com/other"
   );
 
+  // Paused, or parked (never re-probed, so its flag never clears): no evidence.
   await t.run((ctx) => ctx.db.patch(first, { status: "paused" }));
   const third = await owner.mutation(api.monitors.create, { ...MONITOR, url: "https://example.com/third" });
+  expect(await owner.mutation(api.monitors.claimFirstScanProxy, { id: third, knownHost: true })).toBeNull();
+  await t.run((ctx) => ctx.db.patch(first, { status: "error", nextCheckAt: undefined }));
   expect(await owner.mutation(api.monitors.claimFirstScanProxy, { id: third, knownHost: true })).toBeNull();
 });
 

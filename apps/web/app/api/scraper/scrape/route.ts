@@ -60,8 +60,9 @@ export async function POST(request: Request) {
 
     // A site another live monitor already needs the proxy for: the direct
     // attempt would only make the user wait for a block.
-    if (body.monitorId) {
-      const proxied = await scrapeThroughProxy(scraperUrl, scraperKey, body.monitorId, true);
+    const token = body.monitorId ? await getToken() : undefined;
+    if (body.monitorId && token) {
+      const proxied = await scrapeThroughProxy(scraperUrl, scraperKey, token, body.monitorId, true);
       if (proxied) {
         logger.info("scrape: known proxy host", { url: domain, duration_ms: Date.now() - startTime });
         after(() => logger.flush());
@@ -90,8 +91,8 @@ export async function POST(request: Request) {
       return NextResponse.json(data, { status: res.status });
     }
 
-    if ((data as { blocked?: boolean }).blocked && body.monitorId) {
-      const proxied = await scrapeThroughProxy(scraperUrl, scraperKey, body.monitorId, false);
+    if ((data as { blocked?: boolean }).blocked && body.monitorId && token) {
+      const proxied = await scrapeThroughProxy(scraperUrl, scraperKey, token, body.monitorId, false);
       logger.info("scrape: blocked, proxy retry", { url: domain, ok: proxied !== null, duration_ms: Date.now() - startTime });
       after(() => logger.flush());
       return NextResponse.json(proxied ?? data);
@@ -127,18 +128,18 @@ function callScraper(scraperUrl: string, scraperKey: string, payload: { url: str
 /**
  * The proxied page, or null to carry on without it: before the direct scan
  * that means trying direct, after a block it means returning the block, which
- * starts the background retries. Null covers every failure on purpose, since
- * either way a failed proxy costs the user nothing more than today.
+ * starts the background retries. A monitor gets one claim, so a known-host
+ * attempt that fails leaves nothing for the after-block retry: one paid
+ * attempt per first scan, whichever moment spent it.
  */
 async function scrapeThroughProxy(
   scraperUrl: string,
   scraperKey: string,
+  token: string,
   monitorId: Id<"monitors">,
   knownHost: boolean
 ): Promise<Record<string, unknown> | null> {
   try {
-    const token = await getToken();
-    if (!token) return null;
     const url = await fetchMutation(api.monitors.claimFirstScanProxy, { id: monitorId, knownHost }, { token });
     if (!url) return null;
     const res = await callScraper(scraperUrl, scraperKey, { url, useProxy: true });

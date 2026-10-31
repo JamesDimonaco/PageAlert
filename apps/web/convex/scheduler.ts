@@ -207,6 +207,9 @@ export const recordCheckResult = internalMutation({
     }
 
     const now = Date.now();
+    // Backfills rows older than the field on their next check, pass or fail,
+    // so the known-host lookup in monitors.claimFirstScanProxy can see them.
+    const hostStamp = monitor.host === undefined ? { host: displayHost(monitor.url) } : {};
 
     if (args.error) {
       const retryCount = (monitor.retryCount ?? 0) + 1;
@@ -240,6 +243,7 @@ export const recordCheckResult = internalMutation({
           nextCheckAt: undefined,
           updatedAt: now,
           ...aiStamp,
+          ...hostStamp,
         });
         return { parked: true, parkReason, newMatchKeys: [] as string[], resultId: null };
       }
@@ -255,6 +259,7 @@ export const recordCheckResult = internalMutation({
           nextCheckAt: now + ERROR_RECOVERY_INTERVAL_MS,
           updatedAt: now,
           ...aiStamp,
+          ...hostStamp,
         });
       } else {
         const backoffMs = Math.pow(4, retryCount) * 30_000;
@@ -265,6 +270,7 @@ export const recordCheckResult = internalMutation({
           nextCheckAt: now + backoffMs,
           updatedAt: now,
           ...aiStamp,
+          ...hostStamp,
         });
       }
       return { parked: false, parkReason: null, newMatchKeys: [] as string[], resultId: null };
@@ -299,9 +305,7 @@ export const recordCheckResult = internalMutation({
     if (nextProxyPreferred !== monitor.proxyPreferred) {
       updates.proxyPreferred = nextProxyPreferred;
     }
-    // Backfills rows older than the field, so the known-host lookup in
-    // monitors.claimFirstScanProxy sees every live monitor within a day.
-    if (monitor.host === undefined) updates.host = displayHost(monitor.url);
+    Object.assign(updates, hostStamp);
 
     // Restart the drift clock whenever the AI read the page, whatever brought
     // it here and whatever came back. Stamping only on a usable schema would

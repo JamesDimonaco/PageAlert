@@ -55,7 +55,7 @@ export default defineSchema({
     firstScanProxyAt: v.optional(v.number()),
     // displayHost(url), so a new monitor can ask whether a live one on the
     // same site already needs the proxy. Absent on rows older than the field
-    // until their next successful check stamps it.
+    // until their next check stamps it.
     host: v.optional(v.string()),
     nextCheckAt: v.optional(v.number()),
     // Set by the inactivity reaper (inactivity.ts), cleared by any resume —
@@ -103,7 +103,7 @@ export default defineSchema({
     .index("by_isAnonymous", ["isAnonymous"])
     .index("by_isAnonymous_expiresAt", ["isAnonymous", "expiresAt"])
     .index("by_resumeToken", ["resumeToken"])
-    .index("by_host", ["host"]),
+    .index("by_host_proxyPreferred", ["host", "proxyPreferred"]),
 
   scrapeResults: defineTable({
     monitorId: v.id("monitors"),

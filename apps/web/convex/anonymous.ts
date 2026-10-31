@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query, internalMutation, internalAction } from "./_generated/server";
 import { internal } from "./_generated/api";
-import { validateMonitorUrl } from "./shared";
+import { displayHost, validateMonitorUrl } from "./shared";
 import { isBanned, isLiveAccount } from "./account";
 
 const DAILY_CAP = 20;
@@ -50,6 +50,7 @@ export const createAnonymous = mutation({
       userId: anonId,
       name: args.name.trim().slice(0, 200),
       url: args.url.trim(),
+      host: displayHost(args.url.trim()),
       prompt: args.prompt.trim().slice(0, 2000),
       checkInterval: "24h",
       status: "scanning",
