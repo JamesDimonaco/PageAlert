@@ -147,8 +147,7 @@ async function scrapeThroughProxy(
     const data = (await res.json()) as Record<string, unknown>;
     // Only a scraper predating useProxy answers blocked here: it ran a second
     // direct scrape instead, and that page must not be saved as a success.
-    // usedProxy tells saveScanResult this site needs the proxy from now on.
-    return data.blocked ? null : { ...data, usedProxy: true };
+    return data.blocked ? null : data;
   } catch {
     return null;
   }

@@ -249,7 +249,6 @@ export function CreateMonitorProvider({ children }: { children: ReactNode }) {
           matchCount,
           contentFingerprint: json.contentHash,
           matches: json.matches ?? [],
-          usedProxy: scrapeJson.usedProxy === true,
         });
 
         await createLog({

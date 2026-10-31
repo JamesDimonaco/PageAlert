@@ -305,7 +305,6 @@ export async function saveScanResultForUser(
     matchCount,
     contentFingerprint,
     matches,
-    usedProxy,
   }: {
     id: Id<"monitors">;
     // The extractor's schema, stored as-is; its shape is the scraper's to define.
@@ -313,7 +312,6 @@ export async function saveScanResultForUser(
     matchCount: number;
     contentFingerprint?: string;
     matches?: unknown[];
-    usedProxy?: boolean;
   }
 ): Promise<void> {
   const monitor = await ctx.db.get(id);
@@ -329,10 +327,10 @@ export async function saveScanResultForUser(
     checkCount: (monitor.checkCount ?? 0) + 1,
     retryCount: 0,
     proxyBlockCount: 0,
-    // A first scan that got in through the proxy: the scheduler would learn
-    // the same from its own first proxy success. Both are required because a
-    // claimed proxy attempt can fail and the direct one then succeed.
-    ...(usedProxy && monitor.firstScanProxyAt ? { proxyPreferred: true } : {}),
+    // proxyPreferred is left to the scheduler even when this page came
+    // through the proxy. Nothing server-side records which attempt got in,
+    // and it is fleet-wide evidence other users' first scans spend credit on,
+    // so it must not rest on what the browser says.
     lastCheckedAt: now,
     lastMatchAt: matchCount > 0 ? now : undefined,
     lastAiExtractAt: now,
@@ -393,10 +391,6 @@ export const saveScanResult = mutation({
     contentFingerprint: v.optional(v.string()),
     // Optional only so a browser still running the previous bundle can save.
     matches: v.optional(v.array(v.any())),
-    // The page came through the first-scan proxy claim. The worst a false
-    // claim does is route this monitor's checks through the proxy until the
-    // scheduler's next direct re-probe clears it.
-    usedProxy: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => saveScanResultForUser(ctx, await getAuthUserId(ctx), args),
 });
