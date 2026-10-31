@@ -58,6 +58,18 @@ export async function POST(request: Request) {
   try {
     logger.info("scrape: started", { url: domain });
 
+    // A site another live monitor already needs the proxy for: the direct
+    // attempt would only make the user wait for a block.
+    const token = body.monitorId ? await getToken() : undefined;
+    if (body.monitorId && token) {
+      const proxied = await scrapeThroughProxy(scraperUrl, scraperKey, token, body.monitorId, true);
+      if (proxied) {
+        logger.info("scrape: known proxy host", { url: domain, duration_ms: Date.now() - startTime });
+        after(() => logger.flush());
+        return NextResponse.json(proxied);
+      }
+    }
+
     const res = await callScraper(scraperUrl, scraperKey, { url: body.url });
 
     const text = await res.text();
@@ -79,8 +91,8 @@ export async function POST(request: Request) {
       return NextResponse.json(data, { status: res.status });
     }
 
-    if ((data as { blocked?: boolean }).blocked && body.monitorId) {
-      const proxied = await retryThroughProxy(scraperUrl, scraperKey, body.monitorId);
+    if ((data as { blocked?: boolean }).blocked && body.monitorId && token) {
+      const proxied = await scrapeThroughProxy(scraperUrl, scraperKey, token, body.monitorId, false);
       logger.info("scrape: blocked, proxy retry", { url: domain, ok: proxied !== null, duration_ms: Date.now() - startTime });
       after(() => logger.flush());
       return NextResponse.json(proxied ?? data);
@@ -114,19 +126,21 @@ function callScraper(scraperUrl: string, scraperKey: string, payload: { url: str
 }
 
 /**
- * The proxied page, or null to fall back to the direct result. Null covers
- * every failure on purpose: the blocked response already starts the
- * background retries, so a proxy that also fails costs the user nothing more.
+ * The proxied page, or null to carry on without it: before the direct scan
+ * that means trying direct, after a block it means returning the block, which
+ * starts the background retries. A monitor gets one claim, so a known-host
+ * attempt that fails leaves nothing for the after-block retry: one paid
+ * attempt per first scan, whichever moment spent it.
  */
-async function retryThroughProxy(
+async function scrapeThroughProxy(
   scraperUrl: string,
   scraperKey: string,
-  monitorId: Id<"monitors">
+  token: string,
+  monitorId: Id<"monitors">,
+  knownHost: boolean
 ): Promise<Record<string, unknown> | null> {
   try {
-    const token = await getToken();
-    if (!token) return null;
-    const url = await fetchMutation(api.monitors.claimFirstScanProxy, { id: monitorId }, { token });
+    const url = await fetchMutation(api.monitors.claimFirstScanProxy, { id: monitorId, knownHost }, { token });
     if (!url) return null;
     const res = await callScraper(scraperUrl, scraperKey, { url, useProxy: true });
     if (!res.ok) return null;

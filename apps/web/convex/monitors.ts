@@ -1,6 +1,6 @@
 import { v, type Infer } from "convex/values";
 import { mutation, query, internalAction, internalQuery, type MutationCtx } from "./_generated/server";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { displayHost, effectiveIntervalMs, ERROR_RECOVERY_INTERVAL_MS, intervalToMs, isBlockedError, MAX_RETRIES, validateMonitorUrl } from "./shared";
 import { itemIdentity, RESUME_TOKEN_TTL_MS } from "@prowl/shared";
@@ -244,6 +244,7 @@ export async function createMonitorForUser(
   const id = await ctx.db.insert("monitors", {
     name: args.name.trim(),
     url: args.url.trim(),
+    host: displayHost(args.url.trim()),
     prompt: args.prompt.trim(),
     checkInterval: checkInterval,
     notificationChannels: channels,
@@ -326,9 +327,10 @@ export async function saveScanResultForUser(
     checkCount: (monitor.checkCount ?? 0) + 1,
     retryCount: 0,
     proxyBlockCount: 0,
-    // A first scan that only got in through the proxy: the scheduler would
-    // learn the same from its own first proxy success.
-    ...(monitor.firstScanProxyAt ? { proxyPreferred: true } : {}),
+    // proxyPreferred is left to the scheduler even when this page came
+    // through the proxy. Nothing server-side records which attempt got in,
+    // and it is fleet-wide evidence other users' first scans spend credit on,
+    // so it must not rest on what the browser says.
     lastCheckedAt: now,
     lastMatchAt: matchCount > 0 ? now : undefined,
     lastAiExtractAt: now,
@@ -445,32 +447,57 @@ export const saveScanError = mutation({
 });
 
 /**
- * One proxy attempt for a first scan the site just blocked, so the person
- * watching gets a result instead of "we'll keep trying". Seven of the first
- * eleven signups in October were blocked here and later read fine through the
- * proxy, by which time they had gone.
+ * One proxy attempt for a first scan, so the person watching gets a result
+ * instead of "we'll keep trying". Seven of the first eleven signups in October
+ * were blocked here and later read fine through the proxy, by which time they
+ * had gone.
+ *
+ * Two moments ask: before the direct scan, with `knownHost`, when another
+ * live monitor on the same site already needs the proxy (so the direct
+ * attempt is a known waste of the user's wait); and after a direct scan came
+ * back blocked. Either way it is one claim per monitor ever.
  *
  * Returns the URL to fetch, or null. The URL comes from the monitor rather
- * than the caller, and the stamp makes it once per monitor ever, so the most
- * a session can spend is one call per monitor the creation limit lets it make.
+ * than the caller, and the stamp makes it once per monitor, so the most a
+ * session can spend is one call per monitor the creation limit lets it make.
  * Not an escalation: those are capped hourly as a sign of fleet-wide failure,
  * and a burst of signups on protected sites is not one.
  */
 export const claimFirstScanProxy = mutation({
-  args: { id: v.id("monitors") },
-  handler: async (ctx, { id }) => {
+  args: { id: v.id("monitors"), knownHost: v.optional(v.boolean()) },
+  handler: async (ctx, { id, knownHost }) => {
     const userId = await getAuthUserId(ctx);
     if (await isBanned(ctx, userId)) throw new Error("This account has been suspended.");
     await requireLiveAccount(ctx, userId);
     const monitor = await ctx.db.get(id);
     if (!monitor || monitor.userId !== userId) throw new Error("Monitor not found");
     if (monitor.status !== "scanning" || monitor.checkCount || monitor.firstScanProxyAt) return null;
+    if (knownHost && !(await hostNeedsProxy(ctx, monitor))) return null;
     if (await scraperDown(ctx)) return null;
     if (!(await reserveFallback(ctx, false))) return null;
     await ctx.db.patch(id, { firstScanProxyAt: Date.now() });
     return monitor.url;
   },
 });
+
+/**
+ * Whether another monitor on this site needs the proxy and is still being
+ * checked. Read from the fleet rather than kept as a list: the scheduler
+ * re-probes a direct fetch every PROXY_REPROBE_EVERY checks and clears
+ * proxyPreferred when it works, so a site that drops its protection leaves by
+ * itself. A parked monitor is never re-probed, so its flag proves nothing.
+ */
+async function hostNeedsProxy(ctx: MutationCtx, monitor: Doc<"monitors">): Promise<boolean> {
+  const flagged = await ctx.db
+    .query("monitors")
+    .withIndex("by_host_proxyPreferred", (q) =>
+      q.eq("host", monitor.host ?? displayHost(monitor.url)).eq("proxyPreferred", true)
+    )
+    .take(10);
+  return flagged.some(
+    (m) => m._id !== monitor._id && m.nextCheckAt !== undefined && (m.status === "active" || m.status === "error")
+  );
+}
 
 export const update = mutation({
   args: {
@@ -558,6 +585,12 @@ export const update = mutation({
       if (value !== undefined) {
         updates[key] = typeof value === "string" ? value.trim() : value;
       }
+    }
+    if (fields.url !== undefined) {
+      updates.host = displayHost(fields.url.trim());
+      // What the old site needed says nothing about the new one, and left set
+      // it would mark the new site as needing the proxy for everyone.
+      if (updates.host !== existing.host) updates.proxyPreferred = undefined;
     }
 
     // Anything that takes a monitor out of "paused" clears the auto-pause and
