@@ -307,7 +307,9 @@ export const recordCheckResult = internalMutation({
     // the person told "we'll keep trying" has heard nothing since.
     if (!monitor.checkCount) {
       await claimActivation(ctx, monitor, args.matchCount, "got their first read after a failed first scan");
-      if (monitor.userEmail && !monitor.muted) {
+      // Same rule as the alerts: no list means every channel.
+      const channels = monitor.notificationChannels;
+      if (monitor.userEmail && !monitor.muted && (!channels || channels.includes("email"))) {
         await ctx.scheduler.runAfter(0, internal.emails.sendFirstReadAlert, {
           to: monitor.userEmail,
           userId: monitor.userId,
