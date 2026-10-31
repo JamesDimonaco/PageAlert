@@ -10,6 +10,7 @@ import {
   ERROR_RECOVERY_INTERVAL_MS,
   effectiveIntervalMs,
   MAX_RETRIES,
+  ERROR_ALERT_COOLDOWN_MS,
   MAX_PROXY_BLOCKS,
   MAX_NEVER_SUCCEEDED_RETRIES,
   PARK_REASON_PROXY_BLOCKED,
@@ -867,9 +868,13 @@ export const runScheduledChecks = internalAction({
           }).catch(() => {});
 
           // Notify once, on the transition into error. Recovery-lane retries
-          // keep failing with retryCount past MAX_RETRIES and must stay quiet.
+          // keep failing with retryCount past MAX_RETRIES and must stay quiet,
+          // and a monitor that flaps back into error stays quiet for a week.
           const nextRetryCount = (monitor.retryCount ?? 0) + 1;
-          const willError = nextRetryCount >= MAX_RETRIES && monitor.status !== "error";
+          const errorAlertCooledDown =
+            Date.now() - (monitor.lastErrorAlertAt ?? 0) >= ERROR_ALERT_COOLDOWN_MS;
+          const willError =
+            nextRetryCount >= MAX_RETRIES && monitor.status !== "error" && errorAlertCooledDown;
 
           const outcome = await ctx.runMutation(internal.scheduler.recordCheckResult, {
             monitorId: monitor._id,
@@ -902,6 +907,12 @@ export const runScheduledChecks = internalAction({
                 channel: "telegram",
               });
               const telegramConnected = !!(telegramSetting?.enabled && telegramSetting.target);
+
+              if (!parked) {
+                await ctx.runMutation(internal.scheduler.markErrorAlertSent, {
+                  monitorId: freshErrMonitor._id,
+                });
+              }
 
               // In-app notification (unless all channels explicitly disabled)
               if (parked || hasAnyChannel) await ctx.runMutation(internal.userNotifications.create, {
@@ -1450,6 +1461,13 @@ export const getLatestScrapeResult = internalQuery({
       .withIndex("by_monitorId_scrapedAt", (q) => q.eq("monitorId", args.monitorId))
       .order("desc")
       .first();
+  },
+});
+
+export const markErrorAlertSent = internalMutation({
+  args: { monitorId: v.id("monitors") },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.monitorId, { lastErrorAlertAt: Date.now() });
   },
 });
 
