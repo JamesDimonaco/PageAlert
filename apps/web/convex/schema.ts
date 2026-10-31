@@ -36,6 +36,9 @@ export default defineSchema({
     matchCount: v.number(),
     checkCount: v.optional(v.number()),
     retryCount: v.optional(v.number()),
+    // When the last error alert went out, so a flapping monitor sends one per
+    // ERROR_ALERT_COOLDOWN_MS rather than one per flap. Not set by the park notice.
+    lastErrorAlertAt: v.optional(v.number()),
     // Confirmed Scrapfly (proxy) blocks in a row — see MAX_PROXY_BLOCKS in shared.ts
     proxyBlockCount: v.optional(v.number()),
     // Identities of the items matching last time, so a match alert can fire on

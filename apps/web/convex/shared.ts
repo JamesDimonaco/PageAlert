@@ -6,6 +6,13 @@ export { MATCH_SCORE_THRESHOLD, alertsOnScore, matchConfidence, MATCH_CONFIDENCE
 export const MAX_RETRIES = 3;
 
 /**
+ * Minimum gap between error alerts for one monitor. A flapping monitor
+ * (works, fails, works) re-enters "error" each time, and each entry would
+ * otherwise send a fresh alert. The "checks stopped" notice ignores this.
+ */
+export const ERROR_ALERT_COOLDOWN_MS = 7 * DAY_MS;
+
+/**
  * Confirmed Scrapfly blocks (proxy, asp=true) before a monitor stops being
  * rescheduled entirely. Scrapfly is the specialist for anti-bot pages — if it
  * gets blocked this many times, the site has genuinely beaten it and further

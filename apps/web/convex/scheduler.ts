@@ -11,6 +11,7 @@ import {
   ERROR_RECOVERY_INTERVAL_MS,
   effectiveIntervalMs,
   MAX_RETRIES,
+  ERROR_ALERT_COOLDOWN_MS,
   MAX_PROXY_BLOCKS,
   MAX_NEVER_SUCCEEDED_RETRIES,
   PARK_REASON_PROXY_BLOCKED,
@@ -900,6 +901,11 @@ export const runScheduledChecks = internalAction({
           // keep failing with retryCount past MAX_RETRIES and must stay quiet.
           const nextRetryCount = (monitor.retryCount ?? 0) + 1;
           const willError = nextRetryCount >= MAX_RETRIES && monitor.status !== "error";
+          // A monitor that flaps back into error within a week still gets its
+          // in-app notice, which costs nothing and keeps a record of the
+          // outage, but nothing that lands in an inbox or on a phone.
+          const errorAlertCoolingDown =
+            Date.now() - (monitor.lastErrorAlertAt ?? 0) < ERROR_ALERT_COOLDOWN_MS;
 
           const outcome = await ctx.runMutation(internal.scheduler.recordCheckResult, {
             monitorId: monitor._id,
@@ -921,7 +927,9 @@ export const runScheduledChecks = internalAction({
             const freshErrMonitor = await ctx.runQuery(internal.monitors.getInternal, { id: monitor._id });
             if (freshErrMonitor && !freshErrMonitor.muted) {
               const monitorChannels = (freshErrMonitor as any).notificationChannels as string[] | undefined;
-              const shouldSend = (channel: string) => !monitorChannels || monitorChannels.includes(channel);
+              const quiet = !parked && errorAlertCoolingDown;
+              const shouldSend = (channel: string) =>
+                !quiet && (!monitorChannels || monitorChannels.includes(channel));
               const hasAnyChannel = !monitorChannels || monitorChannels.length > 0;
 
               // Looked up before the sends so the email knows whether to nudge
@@ -932,6 +940,12 @@ export const runScheduledChecks = internalAction({
                 channel: "telegram",
               });
               const telegramConnected = !!(telegramSetting?.enabled && telegramSetting.target);
+
+              if (!parked && !quiet) {
+                await ctx.runMutation(internal.scheduler.markErrorAlertSent, {
+                  monitorId: freshErrMonitor._id,
+                }).catch(() => {});
+              }
 
               // In-app notification (unless all channels explicitly disabled)
               if (parked || hasAnyChannel) await ctx.runMutation(internal.userNotifications.create, {
@@ -1480,6 +1494,13 @@ export const getLatestScrapeResult = internalQuery({
       .withIndex("by_monitorId_scrapedAt", (q) => q.eq("monitorId", args.monitorId))
       .order("desc")
       .first();
+  },
+});
+
+export const markErrorAlertSent = internalMutation({
+  args: { monitorId: v.id("monitors") },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.monitorId, { lastErrorAlertAt: Date.now() });
   },
 });
 
