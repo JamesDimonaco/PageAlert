@@ -51,8 +51,38 @@ test("only a first scan that got in through the proxy makes the site proxy-prefe
   await owner.mutation(api.monitors.claimFirstScanProxy, { id });
   expect((await t.run((ctx) => ctx.db.get(id)))?.proxyPreferred).toBeUndefined();
 
-  await owner.mutation(api.monitors.saveScanResult, { id, schema: { items: [] }, matchCount: 0 });
+  await owner.mutation(api.monitors.saveScanResult, { id, schema: { items: [] }, matchCount: 0, usedProxy: true });
   expect((await t.run((ctx) => ctx.db.get(id)))?.proxyPreferred).toBe(true);
+});
+
+// The claimed proxy attempt can fail and the direct one then work. Marking the
+// site proxy-preferred then would put every later check through the proxy.
+test("a direct first scan after a claim does not make the site proxy-preferred", async () => {
+  const t = setup();
+  const owner = await seedUser(t, "a@example.com");
+  const id = await owner.mutation(api.monitors.create, MONITOR);
+  await owner.mutation(api.monitors.claimFirstScanProxy, { id });
+  await owner.mutation(api.monitors.saveScanResult, { id, schema: { items: [] }, matchCount: 0 });
+  expect((await t.run((ctx) => ctx.db.get(id)))?.proxyPreferred).toBeUndefined();
+});
+
+// Skipping the direct scan spends credit before anything has failed, so it has
+// to rest on evidence: a live monitor on the same site that needs the proxy.
+test("a first scan goes straight to the proxy only on a site a live monitor already needs it for", async () => {
+  const t = setup();
+  const owner = await seedUser(t, "a@example.com");
+  const first = await owner.mutation(api.monitors.create, MONITOR);
+  const second = await owner.mutation(api.monitors.create, { ...MONITOR, url: "https://www.example.com/other" });
+  expect(await owner.mutation(api.monitors.claimFirstScanProxy, { id: second, knownHost: true })).toBeNull();
+
+  await t.run((ctx) => ctx.db.patch(first, { status: "active", proxyPreferred: true }));
+  expect(await owner.mutation(api.monitors.claimFirstScanProxy, { id: second, knownHost: true })).toBe(
+    "https://www.example.com/other"
+  );
+
+  await t.run((ctx) => ctx.db.patch(first, { status: "paused" }));
+  const third = await owner.mutation(api.monitors.create, { ...MONITOR, url: "https://example.com/third" });
+  expect(await owner.mutation(api.monitors.claimFirstScanProxy, { id: third, knownHost: true })).toBeNull();
 });
 
 test("no proxy claim once the first scan has finished", async () => {

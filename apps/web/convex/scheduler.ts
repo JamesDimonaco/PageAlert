@@ -299,6 +299,9 @@ export const recordCheckResult = internalMutation({
     if (nextProxyPreferred !== monitor.proxyPreferred) {
       updates.proxyPreferred = nextProxyPreferred;
     }
+    // Backfills rows older than the field, so the known-host lookup in
+    // monitors.claimFirstScanProxy sees every live monitor within a day.
+    if (monitor.host === undefined) updates.host = displayHost(monitor.url);
 
     // Restart the drift clock whenever the AI read the page, whatever brought
     // it here and whatever came back. Stamping only on a usable schema would

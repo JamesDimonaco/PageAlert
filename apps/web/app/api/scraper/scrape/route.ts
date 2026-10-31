@@ -58,6 +58,17 @@ export async function POST(request: Request) {
   try {
     logger.info("scrape: started", { url: domain });
 
+    // A site another live monitor already needs the proxy for: the direct
+    // attempt would only make the user wait for a block.
+    if (body.monitorId) {
+      const proxied = await scrapeThroughProxy(scraperUrl, scraperKey, body.monitorId, true);
+      if (proxied) {
+        logger.info("scrape: known proxy host", { url: domain, duration_ms: Date.now() - startTime });
+        after(() => logger.flush());
+        return NextResponse.json(proxied);
+      }
+    }
+
     const res = await callScraper(scraperUrl, scraperKey, { url: body.url });
 
     const text = await res.text();
@@ -80,7 +91,7 @@ export async function POST(request: Request) {
     }
 
     if ((data as { blocked?: boolean }).blocked && body.monitorId) {
-      const proxied = await retryThroughProxy(scraperUrl, scraperKey, body.monitorId);
+      const proxied = await scrapeThroughProxy(scraperUrl, scraperKey, body.monitorId, false);
       logger.info("scrape: blocked, proxy retry", { url: domain, ok: proxied !== null, duration_ms: Date.now() - startTime });
       after(() => logger.flush());
       return NextResponse.json(proxied ?? data);
@@ -114,26 +125,29 @@ function callScraper(scraperUrl: string, scraperKey: string, payload: { url: str
 }
 
 /**
- * The proxied page, or null to fall back to the direct result. Null covers
- * every failure on purpose: the blocked response already starts the
- * background retries, so a proxy that also fails costs the user nothing more.
+ * The proxied page, or null to carry on without it: before the direct scan
+ * that means trying direct, after a block it means returning the block, which
+ * starts the background retries. Null covers every failure on purpose, since
+ * either way a failed proxy costs the user nothing more than today.
  */
-async function retryThroughProxy(
+async function scrapeThroughProxy(
   scraperUrl: string,
   scraperKey: string,
-  monitorId: Id<"monitors">
+  monitorId: Id<"monitors">,
+  knownHost: boolean
 ): Promise<Record<string, unknown> | null> {
   try {
     const token = await getToken();
     if (!token) return null;
-    const url = await fetchMutation(api.monitors.claimFirstScanProxy, { id: monitorId }, { token });
+    const url = await fetchMutation(api.monitors.claimFirstScanProxy, { id: monitorId, knownHost }, { token });
     if (!url) return null;
     const res = await callScraper(scraperUrl, scraperKey, { url, useProxy: true });
     if (!res.ok) return null;
     const data = (await res.json()) as Record<string, unknown>;
     // Only a scraper predating useProxy answers blocked here: it ran a second
     // direct scrape instead, and that page must not be saved as a success.
-    return data.blocked ? null : data;
+    // usedProxy tells saveScanResult this site needs the proxy from now on.
+    return data.blocked ? null : { ...data, usedProxy: true };
   } catch {
     return null;
   }

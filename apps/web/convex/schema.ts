@@ -50,9 +50,13 @@ export default defineSchema({
     // This site only ever answers through the proxy, so skip the direct attempt
     // that would fail anyway. Re-probed periodically — see PROXY_REPROBE_EVERY.
     proxyPreferred: v.optional(v.boolean()),
-    // When the first scan, blocked, claimed its one proxy retry. See
+    // When the first scan claimed its one proxy attempt. See
     // monitors.claimFirstScanProxy.
     firstScanProxyAt: v.optional(v.number()),
+    // displayHost(url), so a new monitor can ask whether a live one on the
+    // same site already needs the proxy. Absent on rows older than the field
+    // until their next successful check stamps it.
+    host: v.optional(v.string()),
     nextCheckAt: v.optional(v.number()),
     // Set by the inactivity reaper (inactivity.ts), cleared by any resume —
     // the dashboard toggle or the link in the pause email. Present means "we
@@ -98,7 +102,8 @@ export default defineSchema({
     .index("by_anonymousEmail", ["anonymousEmail"])
     .index("by_isAnonymous", ["isAnonymous"])
     .index("by_isAnonymous_expiresAt", ["isAnonymous", "expiresAt"])
-    .index("by_resumeToken", ["resumeToken"]),
+    .index("by_resumeToken", ["resumeToken"])
+    .index("by_host", ["host"]),
 
   scrapeResults: defineTable({
     monitorId: v.id("monitors"),
