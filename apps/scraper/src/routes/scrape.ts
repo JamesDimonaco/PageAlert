@@ -8,15 +8,16 @@ const scrapeSchema = z.object({
   url: z.string().url().max(MAX_URL_LENGTH),
   timeout: z.number().int().min(1000).max(60000).optional(),
   waitFor: z.string().max(200).optional(),
+  useProxy: z.boolean().optional(),
 });
 
 export const scrapeRoutes = new Hono();
 
 scrapeRoutes.post("/", zValidator("json", scrapeSchema), async (c) => {
-  const { url, timeout, waitFor } = c.req.valid("json");
+  const { url, timeout, waitFor, useProxy } = c.req.valid("json");
 
   try {
-    const result = await scrapeUrl(url, { timeout, waitFor });
+    const result = await scrapeUrl(url, { timeout, waitFor, useProxy });
     return c.json(result);
   } catch (error) {
     // Only expose safe error messages; do not leak internal details

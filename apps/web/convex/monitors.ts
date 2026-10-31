@@ -6,6 +6,7 @@ import { displayHost, effectiveIntervalMs, ERROR_RECOVERY_INTERVAL_MS, intervalT
 import { itemIdentity, RESUME_TOKEN_TTL_MS } from "@prowl/shared";
 import { effectiveTier, type Tier } from "./tiers";
 import { isBanned, requireLiveAccount } from "./account";
+import { reserveFallback, scraperDown } from "./admin";
 
 // ---- Resource Limits ----
 const MAX_NAME_LENGTH = 200;
@@ -325,6 +326,9 @@ export async function saveScanResultForUser(
     checkCount: (monitor.checkCount ?? 0) + 1,
     retryCount: 0,
     proxyBlockCount: 0,
+    // A first scan that only got in through the proxy: the scheduler would
+    // learn the same from its own first proxy success.
+    ...(monitor.firstScanProxyAt ? { proxyPreferred: true } : {}),
     lastCheckedAt: now,
     lastMatchAt: matchCount > 0 ? now : undefined,
     lastAiExtractAt: now,
@@ -438,6 +442,34 @@ export const saveScanError = mutation({
     error: v.string(),
   },
   handler: async (ctx, args) => saveScanErrorForUser(ctx, await getAuthUserId(ctx), args),
+});
+
+/**
+ * One proxy attempt for a first scan the site just blocked, so the person
+ * watching gets a result instead of "we'll keep trying". Seven of the first
+ * eleven signups in October were blocked here and later read fine through the
+ * proxy, by which time they had gone.
+ *
+ * Returns the URL to fetch, or null. The URL comes from the monitor rather
+ * than the caller, and the stamp makes it once per monitor ever, so the most
+ * a session can spend is one call per monitor the creation limit lets it make.
+ * Not an escalation: those are capped hourly as a sign of fleet-wide failure,
+ * and a burst of signups on protected sites is not one.
+ */
+export const claimFirstScanProxy = mutation({
+  args: { id: v.id("monitors") },
+  handler: async (ctx, { id }) => {
+    const userId = await getAuthUserId(ctx);
+    if (await isBanned(ctx, userId)) throw new Error("This account has been suspended.");
+    await requireLiveAccount(ctx, userId);
+    const monitor = await ctx.db.get(id);
+    if (!monitor || monitor.userId !== userId) throw new Error("Monitor not found");
+    if (monitor.status !== "scanning" || monitor.checkCount || monitor.firstScanProxyAt) return null;
+    if (await scraperDown(ctx)) return null;
+    if (!(await reserveFallback(ctx, false))) return null;
+    await ctx.db.patch(id, { firstScanProxyAt: Date.now() });
+    return monitor.url;
+  },
 });
 
 export const update = mutation({
