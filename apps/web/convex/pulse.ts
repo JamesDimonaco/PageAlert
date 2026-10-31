@@ -8,9 +8,10 @@
  * event belongs here, where it can be read in ten seconds and skipped on a
  * busy morning.
  *
- * The sampled reads are capped and say so when a cap bites. The two full-table
- * reads (monitors, userTiers) are not, and are the first thing to page when
- * this deployment outgrows them — see the scale notes in admin.overview.
+ * The sampled reads are capped and say so when a cap bites. The full-table
+ * reads (monitors, userTiers, userActivity) are not, and are the first thing
+ * to page when this deployment outgrows them — see the scale notes in
+ * admin.overview.
  */
 import { internalAction, internalQuery } from "./_generated/server";
 import { internal } from "./_generated/api";
@@ -38,10 +39,11 @@ export const snapshot = internalQuery({
     const now = Date.now();
     const since = now - DAY_MS;
 
-    const [{ users, complete }, tiers, monitors] = await Promise.all([
+    const [{ users, complete }, tiers, monitors, activity] = await Promise.all([
       fetchAllUsers(ctx),
       ctx.db.query("userTiers").collect(),
       ctx.db.query("monitors").collect(),
+      ctx.db.query("userActivity").collect(),
     ]);
 
     // Tier rows outlive deleted accounts, so filter to live users or MRR
@@ -131,6 +133,8 @@ export const snapshot = internalQuery({
       sms,
       users: users.length,
       signups: users.filter((u) => u.createdAt >= since).length,
+      activated: activity.filter((a) => a.activatedAt !== undefined && a.activatedAt >= since).length,
+      returned: activity.filter((a) => a.lastReturnAt !== undefined && a.lastReturnAt >= since).length,
       paying,
       mrrCents,
       monitors: monitors.filter((m) => !m.isAnonymous).length,
@@ -187,6 +191,9 @@ export const dailyPulse = internalAction({
       ``,
       `Last 24h${s.logsTruncated || s.sendsTruncated ? " (sampled)" : ""}`,
       `  scans    ${s.scans.ok} ok · ${s.scans.error + s.scans.timeout} failed (${s.scans.blocked} blocked)`,
+      // Activated counts anyone whose first page read landed today, so it can
+      // include someone who signed up days ago and only now got through.
+      `  people   ${s.signups} signed up · ${s.activated} read a first page · ${s.returned} came back after 3+ days`,
       `  alerts   ${s.alerted} monitor${s.alerted === 1 ? "" : "s"} found something new`,
       `  emails   ${s.emails.sent} sent${s.emails.bad > 0 ? ` · ${s.emails.bad} not delivered` : ""}`,
       ``,

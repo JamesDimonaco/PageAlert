@@ -379,6 +379,9 @@ export default defineSchema({
     // so the anonymous-scan funnel (which arrives with checkCount already set)
     // still counts. Claimed in monitors.saveScanResult.
     activatedAt: v.optional(v.number()),
+    // The last visit that came after three or more days away. See
+    // account.touchLastSeen; the daily pulse counts these.
+    lastReturnAt: v.optional(v.number()),
     // Ids of the changelog entries this user has dismissed as a popup. See
     // whatsNew.ts.
     announcementsSeen: v.optional(v.array(v.string())),
@@ -420,7 +423,7 @@ export default defineSchema({
   // `status` starts at sent/failed and is advanced by the Resend webhook.
   emailSends: defineTable({
     to: v.string(),
-    kind: v.string(), // match | error | monitor-stopped | inactivity-paused | price | anonymous-scan | onboarding-day0 | bulk
+    kind: v.string(), // match | error | first-read | monitor-stopped | inactivity-paused | price | anonymous-scan | onboarding-day0 | bulk
     userId: v.optional(v.string()),
     monitorId: v.optional(v.string()),
     resendId: v.optional(v.string()),
@@ -439,7 +442,7 @@ export default defineSchema({
     .index("by_createdAt", ["createdAt"])
     .index("by_status_createdAt", ["status", "createdAt"])
     .index("by_userId", ["userId"])
-    // Only two of the eight email kinds pass a userId to recordSend, so
+    // Only a few of the email kinds pass a userId to recordSend, so
     // by_userId reaches almost none of a user's sends. Account deletion has
     // to find them by address as well. See deleteAllUserData.
     .index("by_to", ["to"]),

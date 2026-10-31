@@ -1,6 +1,7 @@
 import { getDocumentSize, v, type Value } from "convex/values";
 import { internalMutation, mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { components, internal } from "./_generated/api";
+import { DAY_MS } from "@prowl/shared";
 import type { Id, TableNames } from "./_generated/dataModel";
 
 /** Is this user currently banned? Shared by every mutation that gates on ban status. */
@@ -439,6 +440,9 @@ export const auditErasure = internalMutation({
  */
 const TOUCH_THROTTLE_MS = 60 * 60 * 1000;
 
+/** Away this long and coming back is worth a message to James. */
+const RETURN_AFTER_MS = 3 * DAY_MS;
+
 export const touchLastSeen = mutation({
   args: {},
   handler: async (ctx) => {
@@ -455,8 +459,16 @@ export const touchLastSeen = mutation({
       await ctx.db.insert("userActivity", { userId: identity.subject, lastSeenAt: now });
       return;
     }
-    if (now - row.lastSeenAt < TOUCH_THROTTLE_MS) return;
-    await ctx.db.patch(row._id, { lastSeenAt: now });
+    const away = now - row.lastSeenAt;
+    if (away < TOUCH_THROTTLE_MS) return;
+    if (away < RETURN_AFTER_MS) {
+      await ctx.db.patch(row._id, { lastSeenAt: now });
+      return;
+    }
+    await ctx.db.patch(row._id, { lastSeenAt: now, lastReturnAt: now });
+    await ctx.scheduler.runAfter(0, internal.admin.notify, {
+      text: `↩️ Back: ${identity.email ?? identity.subject} after ${Math.floor(away / DAY_MS)} days away`,
+    });
   },
 });
 

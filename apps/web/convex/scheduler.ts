@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { effectiveTier } from "./tiers";
+import { claimActivation } from "./monitors";
 import { internalAction, internalMutation, internalQuery } from "./_generated/server";
 import { internal } from "./_generated/api";
 import {
@@ -298,6 +299,24 @@ export const recordCheckResult = internalMutation({
     };
     if (nextProxyPreferred !== monitor.proxyPreferred) {
       updates.proxyPreferred = nextProxyPreferred;
+    }
+
+    // A successful first scan counts as a check, so a monitor reaching here
+    // with none has only ever failed: the first scan did not get in and a
+    // retry just has. Activation was never claimed for that user, and
+    // the person told "we'll keep trying" has heard nothing since.
+    if (!monitor.checkCount) {
+      await claimActivation(ctx, monitor, args.matchCount, "got their first read after a failed first scan");
+      if (monitor.userEmail && !monitor.muted) {
+        await ctx.scheduler.runAfter(0, internal.emails.sendFirstReadAlert, {
+          to: monitor.userEmail,
+          userId: monitor.userId,
+          monitorName: monitor.name,
+          monitorId: monitor._id,
+          url: monitor.url,
+          matchCount: args.matchCount,
+        });
+      }
     }
 
     // Restart the drift clock whenever the AI read the page, whatever brought

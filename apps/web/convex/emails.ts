@@ -229,6 +229,66 @@ export const sendMatchAlert = internalAction({
   },
 });
 
+/**
+ * The first page read for a monitor whose first scan failed. Without it
+ * the person who was told "we'll keep trying" never learns that we did.
+ */
+export const sendFirstReadAlert = internalAction({
+  args: {
+    to: v.string(),
+    userId: v.string(),
+    monitorName: v.string(),
+    monitorId: v.string(),
+    url: v.string(),
+    matchCount: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const safeName = esc(args.monitorName);
+    const safeHost = esc(safeHostname(args.url));
+    const found =
+      args.matchCount > 0
+        ? `${args.matchCount} ${args.matchCount === 1 ? "entry matches" : "entries match"} what you asked for already.`
+        : "Nothing matches what you asked for yet. We'll email you when something does.";
+
+    const html = `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f4f4f5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif">
+  <div style="max-width:560px;margin:0 auto;padding:40px 20px">
+    <div style="background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.1)">
+      <div style="background:#4f46e5;padding:24px 32px">
+        <h1 style="margin:0;color:#fff;font-size:20px;font-weight:600">We got in</h1>
+        <p style="margin:4px 0 0;color:rgba(255,255,255,0.8);font-size:14px">${safeName}</p>
+      </div>
+      <div style="padding:32px">
+        <p style="margin:0 0 16px;color:#333;font-size:16px">
+          <a href="${safeHref(args.url)}" style="color:#4f46e5;text-decoration:none">${safeHost}</a>
+          would not let us in on our first look, but we have now read the page. Your monitor is running.
+        </p>
+        <p style="margin:0 0 24px;color:#333;font-size:16px">${found}</p>
+        <a href="${APP_URL}/dashboard/monitors/${args.monitorId}" style="display:inline-block;background:#4f46e5;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:500;font-size:14px">See what we found</a>
+      </div>
+      <div style="padding:16px 32px;background:#f9fafb;border-top:1px solid #eee">
+        <p style="margin:0;color:#999;font-size:12px"><a href="${APP_URL}/dashboard/settings" style="color:#999">Manage notifications</a></p>
+      </div>
+    </div>
+  </div>
+</body>
+</html>`;
+
+    await send(ctx, {
+      to: args.to,
+      subject: `We got into ${safeHostname(args.url)} for ${args.monitorName}`,
+      html,
+      text: `We got in — ${args.monitorName}\n\n${safeHostname(args.url)} would not let us in on our first look, but we have now read the page. Your monitor is running.\n\n${found}\n\nSee what we found: ${APP_URL}/dashboard/monitors/${args.monitorId}`,
+      kind: "first-read",
+      userId: args.userId,
+      monitorId: args.monitorId,
+    });
+  },
+});
+
 /** Send an error alert email */
 export const sendErrorAlert = internalAction({
   args: {
