@@ -10,6 +10,8 @@ const MAX_SNIPPET_LENGTH = 600;
 const scoreSchema = z.object({
   prompt: z.string().min(1).max(2000),
   name: z.string().max(200).optional(),
+  // Analytics attribution only, so a bad value is dropped rather than failing the scan.
+  userId: z.string().max(200).optional().catch(undefined),
   candidates: z
     .array(
       z.object({
@@ -33,10 +35,10 @@ export const scoreRoutes = new Hono();
  * and runs only when there is something new to alert on.
  */
 scoreRoutes.post("/", zValidator("json", scoreSchema), async (c) => {
-  const { prompt, name, candidates } = c.req.valid("json");
+  const { prompt, name, userId, candidates } = c.req.valid("json");
 
   try {
-    const scored = await scoreCandidates(candidates, prompt, name);
+    const scored = await scoreCandidates(candidates, prompt, name, userId);
     return c.json({ scored });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

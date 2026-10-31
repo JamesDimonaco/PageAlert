@@ -1288,7 +1288,7 @@ async function scoreQuickCheckCandidates(
     const res = await fetch(`${scraperUrl}/api/score`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-api-key": scraperKey },
-      body: JSON.stringify({ prompt: monitor.prompt, name: monitor.name, candidates }),
+      body: JSON.stringify({ prompt: monitor.prompt, name: monitor.name, userId: monitor.userId, candidates }),
       signal: AbortSignal.timeout(60_000),
     });
     if (!res.ok) {
@@ -1377,6 +1377,7 @@ async function runFullExtract(
     body: JSON.stringify({
       url: monitor.url,
       prompt: monitor.prompt,
+      userId: monitor.userId,
       ...(retryAttempt > 0 ? { retryAttempt } : {}),
       ...(skipBlockCheck ? { skipBlockCheck: true } : {}),
       ...(useProxy ? { useProxy: true } : {}),

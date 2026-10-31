@@ -11,7 +11,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
 import { toast } from "sonner";
-import { trackSignUp, trackSignIn } from "@/lib/posthog";
+import { trackSignUp, trackSignIn, SIGNED_UP_PARAM } from "@/lib/posthog";
 
 /**
  * Only honour `?next=` values that point to a same-origin path. Refuse
@@ -64,9 +64,14 @@ export default function LoginPage() {
   async function handleOAuth(provider: "google" | "github") {
     setLoading(true);
     try {
+      // Better Auth sends only brand-new accounts to newUserCallbackURL, so the
+      // marker never reaches a returning user. PostHogProvider reads it.
+      const newUserUrl = new URL(nextUrl, window.location.origin);
+      newUserUrl.searchParams.set(SIGNED_UP_PARAM, provider);
       await authClient.signIn.social({
         provider,
         callbackURL: nextUrl,
+        newUserCallbackURL: `${newUserUrl.pathname}${newUserUrl.search}${newUserUrl.hash}`,
       });
     } catch {
       toast.error(`Failed to sign in with ${provider}`);

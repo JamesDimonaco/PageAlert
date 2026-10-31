@@ -14,6 +14,16 @@ if (posthog) {
   process.on("SIGINT", async () => { await posthog.shutdown(); process.exit(0); });
 }
 
+const isTracked = () => Boolean(posthog && process.env.ANTHROPIC_API_KEY);
+
+/**
+ * Per-call PostHog fields, so a generation counts against the user who caused
+ * it. Without one the wrapper already skips creating a person. Only the
+ * wrapped client strips these fields, so the plain client must not receive them.
+ */
+const trackingParams = (userId?: string) =>
+  isTracked() && userId ? { posthogDistinctId: userId } : {};
+
 const getClient = (): AnthropicOriginal => {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (posthog && apiKey) {
@@ -97,7 +107,8 @@ export async function extractWithAI(
   pageText: string,
   prompt: string,
   baseUrl?: string,
-  monitorName?: string
+  monitorName?: string,
+  userId?: string
 ): Promise<{ schema: ExtractionSchema; matches: ExtractedItem[] }> {
   const client = getClient();
 
@@ -118,6 +129,7 @@ export async function extractWithAI(
       },
     ],
     system: EXTRACTION_PROMPT,
+    ...trackingParams(userId),
   });
 
   if (message.stop_reason === "max_tokens") {
@@ -353,7 +365,8 @@ Return one entry per input index, in any order. Keep each reason under 20 words.
 export async function scoreCandidates(
   candidates: ScoreCandidate[],
   prompt: string,
-  monitorName?: string
+  monitorName?: string,
+  userId?: string
 ): Promise<ScoredCandidate[]> {
   if (candidates.length === 0) return [];
 
@@ -371,6 +384,7 @@ export async function scoreCandidates(
     // A short judging task; the reasoning tokens would come out of max_tokens.
     thinking: { type: "disabled" },
     system: SCORING_PROMPT,
+    ...trackingParams(userId),
     messages: [
       {
         role: "user",

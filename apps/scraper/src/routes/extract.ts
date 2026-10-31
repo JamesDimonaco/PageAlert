@@ -10,6 +10,9 @@ const extractSchema = z.object({
   url: z.string().url().max(MAX_URL_LENGTH),
   prompt: z.string().min(1).max(2000),
   name: z.string().max(200).optional(),
+  // Attributes the AI call in PostHog to this user instead of a throwaway person
+  // Analytics attribution only, so a bad value is dropped rather than failing the scan.
+  userId: z.string().max(200).optional().catch(undefined),
   timeout: z.number().int().min(1000).max(60000).optional(),
   retryAttempt: z.number().int().min(0).max(10).optional(),
   skipBlockCheck: z.boolean().optional(),
@@ -23,7 +26,7 @@ const extractSchema = z.object({
 export const extractRoutes = new Hono();
 
 extractRoutes.post("/", zValidator("json", extractSchema), async (c) => {
-  const { url, prompt, name, timeout, retryAttempt, skipBlockCheck, useProxy, scrapedText } = c.req.valid("json");
+  const { url, prompt, name, timeout, retryAttempt, skipBlockCheck, useProxy, scrapedText, userId } = c.req.valid("json");
 
   try {
     let text: string;
@@ -51,7 +54,7 @@ extractRoutes.post("/", zValidator("json", extractSchema), async (c) => {
       scrapedAt = scraped.scrapedAt;
     }
 
-    const { schema, matches } = await extractWithAI(text, prompt, url, name);
+    const { schema, matches } = await extractWithAI(text, prompt, url, name, userId);
 
     return c.json({
       url,
