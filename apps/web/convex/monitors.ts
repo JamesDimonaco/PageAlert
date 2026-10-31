@@ -551,6 +551,12 @@ export const update = mutation({
       }
     }
 
+    // A new URL or prompt is in effect a new monitor, whose first error the
+    // owner has not been told about.
+    if (fields.url !== undefined || fields.prompt !== undefined) {
+      updates.lastErrorAlertAt = undefined;
+    }
+
     // Recompute nextCheckAt when interval changes so it takes effect immediately
     if (fields.checkInterval !== undefined) {
       updates.nextCheckAt = now + effectiveIntervalMs({

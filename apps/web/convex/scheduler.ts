@@ -868,13 +868,14 @@ export const runScheduledChecks = internalAction({
           }).catch(() => {});
 
           // Notify once, on the transition into error. Recovery-lane retries
-          // keep failing with retryCount past MAX_RETRIES and must stay quiet,
-          // and a monitor that flaps back into error stays quiet for a week.
+          // keep failing with retryCount past MAX_RETRIES and must stay quiet.
           const nextRetryCount = (monitor.retryCount ?? 0) + 1;
-          const errorAlertCooledDown =
-            Date.now() - (monitor.lastErrorAlertAt ?? 0) >= ERROR_ALERT_COOLDOWN_MS;
-          const willError =
-            nextRetryCount >= MAX_RETRIES && monitor.status !== "error" && errorAlertCooledDown;
+          const willError = nextRetryCount >= MAX_RETRIES && monitor.status !== "error";
+          // A monitor that flaps back into error within a week still gets its
+          // in-app notice, which costs nothing and keeps a record of the
+          // outage, but nothing that lands in an inbox or on a phone.
+          const errorAlertCoolingDown =
+            Date.now() - (monitor.lastErrorAlertAt ?? 0) < ERROR_ALERT_COOLDOWN_MS;
 
           const outcome = await ctx.runMutation(internal.scheduler.recordCheckResult, {
             monitorId: monitor._id,
@@ -896,7 +897,9 @@ export const runScheduledChecks = internalAction({
             const freshErrMonitor = await ctx.runQuery(internal.monitors.getInternal, { id: monitor._id });
             if (freshErrMonitor && !freshErrMonitor.muted) {
               const monitorChannels = (freshErrMonitor as any).notificationChannels as string[] | undefined;
-              const shouldSend = (channel: string) => !monitorChannels || monitorChannels.includes(channel);
+              const quiet = !parked && errorAlertCoolingDown;
+              const shouldSend = (channel: string) =>
+                !quiet && (!monitorChannels || monitorChannels.includes(channel));
               const hasAnyChannel = !monitorChannels || monitorChannels.length > 0;
 
               // Looked up before the sends so the email knows whether to nudge
@@ -908,10 +911,10 @@ export const runScheduledChecks = internalAction({
               });
               const telegramConnected = !!(telegramSetting?.enabled && telegramSetting.target);
 
-              if (!parked) {
+              if (!parked && !quiet) {
                 await ctx.runMutation(internal.scheduler.markErrorAlertSent, {
                   monitorId: freshErrMonitor._id,
-                });
+                }).catch(() => {});
               }
 
               // In-app notification (unless all channels explicitly disabled)
