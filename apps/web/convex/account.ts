@@ -441,7 +441,7 @@ export const auditErasure = internalMutation({
 const TOUCH_THROTTLE_MS = 60 * 60 * 1000;
 
 /** Away this long and coming back is worth a message to James. */
-const RETURN_AFTER_MS = 3 * DAY_MS;
+export const RETURN_AFTER_MS = 3 * DAY_MS;
 
 export const touchLastSeen = mutation({
   args: {},

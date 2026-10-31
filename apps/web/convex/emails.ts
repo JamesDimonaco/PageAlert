@@ -258,13 +258,13 @@ export const sendFirstReadAlert = internalAction({
   <div style="max-width:560px;margin:0 auto;padding:40px 20px">
     <div style="background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.1)">
       <div style="background:#4f46e5;padding:24px 32px">
-        <h1 style="margin:0;color:#fff;font-size:20px;font-weight:600">We got in</h1>
+        <h1 style="margin:0;color:#fff;font-size:20px;font-weight:600">Your monitor is working</h1>
         <p style="margin:4px 0 0;color:rgba(255,255,255,0.8);font-size:14px">${safeName}</p>
       </div>
       <div style="padding:32px">
         <p style="margin:0 0 16px;color:#333;font-size:16px">
           <a href="${safeHref(args.url)}" style="color:#4f46e5;text-decoration:none">${safeHost}</a>
-          would not let us in on our first look, but we have now read the page. Your monitor is running.
+          could not be read on our first look, but we have now read it. Your monitor is running.
         </p>
         <p style="margin:0 0 24px;color:#333;font-size:16px">${found}</p>
         <a href="${APP_URL}/dashboard/monitors/${args.monitorId}" style="display:inline-block;background:#4f46e5;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:500;font-size:14px">See what we found</a>
@@ -279,9 +279,9 @@ export const sendFirstReadAlert = internalAction({
 
     await send(ctx, {
       to: args.to,
-      subject: `We got into ${safeHostname(args.url)} for ${args.monitorName}`,
+      subject: `${args.monitorName} is working: we read ${safeHostname(args.url)}`,
       html,
-      text: `We got in — ${args.monitorName}\n\n${safeHostname(args.url)} would not let us in on our first look, but we have now read the page. Your monitor is running.\n\n${found}\n\nSee what we found: ${APP_URL}/dashboard/monitors/${args.monitorId}`,
+      text: `Your monitor is working — ${args.monitorName}\n\n${safeHostname(args.url)} could not be read on our first look, but we have now read it. Your monitor is running.\n\n${found}\n\nSee what we found: ${APP_URL}/dashboard/monitors/${args.monitorId}`,
       kind: "first-read",
       userId: args.userId,
       monitorId: args.monitorId,

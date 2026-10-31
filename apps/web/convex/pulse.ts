@@ -19,6 +19,7 @@ import { DAY_MS } from "@prowl/shared";
 import { effectiveIntervalMs } from "./shared";
 import { fetchAllUsers, isPayingRecord, TIER_PRICE_CENTS } from "./admin";
 import { effectiveTier, smsMonthlyBudget } from "./tiers";
+import { RETURN_AFTER_MS } from "./account";
 
 /**
  * Rows sampled for the 24-hour figures. The digest says "sampled" when a cap
@@ -193,7 +194,7 @@ export const dailyPulse = internalAction({
       `  scans    ${s.scans.ok} ok · ${s.scans.error + s.scans.timeout} failed (${s.scans.blocked} blocked)`,
       // Activated counts anyone whose first page read landed today, so it can
       // include someone who signed up days ago and only now got through.
-      `  people   ${s.signups} signed up · ${s.activated} read a first page · ${s.returned} came back after 3+ days`,
+      `  people   ${s.signups} signed up · ${s.activated} read a first page · ${s.returned} came back after ${RETURN_AFTER_MS / DAY_MS}+ days`,
       `  alerts   ${s.alerted} monitor${s.alerted === 1 ? "" : "s"} found something new`,
       `  emails   ${s.emails.sent} sent${s.emails.bad > 0 ? ` · ${s.emails.bad} not delivered` : ""}`,
       ``,

@@ -348,7 +348,7 @@ export async function saveScanResultForUser(
     scrapedAt: now,
   });
 
-  await claimActivation(ctx, monitor, matchCount, "got their first scan");
+  await claimActivation(ctx, monitor, matchCount, "got their first scan", true);
 
   // Send notifications for initial scan matches
   if (matchCount > 0) {
@@ -384,9 +384,11 @@ export const saveScanResult = mutation({
  */
 export async function claimActivation(
   ctx: MutationCtx,
-  monitor: Pick<Doc<"monitors">, "userId" | "userEmail" | "name" | "url">,
+  monitor: Pick<Doc<"monitors">, "userId" | "userEmail" | "name" | "url" | "createdAt">,
   matchCount: number,
-  how: string
+  how: string,
+  /** False from the scheduler, where nobody is in the app to have been seen. */
+  userPresent: boolean
 ): Promise<void> {
   const now = Date.now();
   const activity = await ctx.db
@@ -395,7 +397,9 @@ export async function claimActivation(
     .unique();
   if (activity?.activatedAt) return;
   if (activity) await ctx.db.patch(activity._id, { activatedAt: now });
-  else await ctx.db.insert("userActivity", { userId: monitor.userId, lastSeenAt: now, activatedAt: now });
+  // The inactivity reaper trusts lastSeenAt, so a background read must not
+  // invent a visit. Creating the monitor is the last time we know they were here.
+  else await ctx.db.insert("userActivity", { userId: monitor.userId, lastSeenAt: userPresent ? now : monitor.createdAt, activatedAt: now });
   await ctx.scheduler.runAfter(0, internal.admin.notify, {
     text: `🎉 Activated: ${monitor.userEmail ?? monitor.userId} ${how} — "${monitor.name}" on ${displayHost(monitor.url)}, ${matchCount} match${matchCount === 1 ? "" : "es"}`,
   });

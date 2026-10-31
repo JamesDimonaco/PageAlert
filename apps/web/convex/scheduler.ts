@@ -305,8 +305,10 @@ export const recordCheckResult = internalMutation({
     // with none has only ever failed: the first scan did not get in and a
     // retry just has. Activation was never claimed for that user, and
     // the person told "we'll keep trying" has heard nothing since.
-    if (!monitor.checkCount) {
-      await claimActivation(ctx, monitor, args.matchCount, "got their first read after a failed first scan");
+    // Anonymous monitors are outside this: their owner is an anon_ id with no
+    // account to activate and no dashboard to send them to.
+    if (!monitor.checkCount && !monitor.isAnonymous) {
+      await claimActivation(ctx, monitor, args.matchCount, "got their first read after a failed first scan", false);
       // Same rule as the alerts: no list means every channel.
       const channels = monitor.notificationChannels;
       if (monitor.userEmail && !monitor.muted && (!channels || channels.includes("email"))) {

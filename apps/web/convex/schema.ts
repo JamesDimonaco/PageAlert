@@ -377,9 +377,10 @@ export default defineSchema({
     // became a working product. Stored rather than derived from their monitors
     // so deleting the monitor cannot make them "activate" a second time, and
     // so the anonymous-scan funnel (which arrives with checkCount already set)
-    // still counts. Claimed in monitors.saveScanResult.
+    // still counts. Claimed by monitors.claimActivation, from the first scan
+    // or from the scheduler when only a later retry got in.
     activatedAt: v.optional(v.number()),
-    // The last visit that came after three or more days away. See
+    // The last visit that came after RETURN_AFTER_MS away. See
     // account.touchLastSeen; the daily pulse counts these.
     lastReturnAt: v.optional(v.number()),
     // Ids of the changelog entries this user has dismissed as a popup. See
