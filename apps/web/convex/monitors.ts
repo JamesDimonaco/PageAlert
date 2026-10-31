@@ -6,6 +6,7 @@ import { displayHost, effectiveIntervalMs, ERROR_RECOVERY_INTERVAL_MS, intervalT
 import { itemIdentity, RESUME_TOKEN_TTL_MS } from "@prowl/shared";
 import { effectiveTier, type Tier } from "./tiers";
 import { isBanned, requireLiveAccount } from "./account";
+import { reserveFallback } from "./admin";
 
 // ---- Resource Limits ----
 const MAX_NAME_LENGTH = 200;
@@ -438,6 +439,30 @@ export const saveScanError = mutation({
     error: v.string(),
   },
   handler: async (ctx, args) => saveScanErrorForUser(ctx, await getAuthUserId(ctx), args),
+});
+
+/**
+ * One proxy attempt for a first scan the site just blocked, so the person
+ * watching gets a result instead of "we'll keep trying". Seven of the first
+ * eleven signups in October were blocked here and later read fine through the
+ * proxy, by which time they had gone.
+ *
+ * Returns the URL to fetch, or null. The URL comes from the monitor rather
+ * than the caller so a session cannot spend Scrapfly credit on arbitrary
+ * pages, and setting proxyPreferred is both the once-only guard and what the
+ * scheduler should do next anyway: this site has just refused a direct fetch.
+ */
+export const claimFirstScanProxy = mutation({
+  args: { id: v.id("monitors") },
+  handler: async (ctx, { id }) => {
+    const userId = await getAuthUserId(ctx);
+    const monitor = await ctx.db.get(id);
+    if (!monitor || monitor.userId !== userId) throw new Error("Monitor not found");
+    if (monitor.status !== "scanning" || monitor.proxyPreferred) return null;
+    if (!(await reserveFallback(ctx, true))) return null;
+    await ctx.db.patch(id, { proxyPreferred: true, updatedAt: Date.now() });
+    return monitor.url;
+  },
 });
 
 export const update = mutation({

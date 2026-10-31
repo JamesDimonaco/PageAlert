@@ -1,9 +1,13 @@
 import { NextResponse } from "next/server";
 import { after } from "next/server";
-import { isAuthenticated } from "@/lib/auth-server";
+import { fetchMutation } from "convex/nextjs";
+import { api } from "@/convex/_generated/api";
+import type { Id } from "@/convex/_generated/dataModel";
+import { getToken, isAuthenticated } from "@/lib/auth-server";
 import { logger } from "@/lib/server-logger";
 
-export const maxDuration = 60;
+// Room for a direct attempt and, if the site blocks it, one through the proxy.
+export const maxDuration = 120;
 
 /**
  * Proxy to the scraper's /api/scrape endpoint — scrapes the page with
@@ -34,13 +38,13 @@ export async function POST(request: Request) {
     );
   }
 
-  let body: { url: string };
+  let body: { url: string; monitorId?: Id<"monitors"> };
   try {
     const parsed: unknown = await request.json();
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
       return NextResponse.json({ error: "Invalid JSON: expected an object" }, { status: 400 });
     }
-    body = parsed as { url: string };
+    body = parsed as { url: string; monitorId?: Id<"monitors"> };
   } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
@@ -54,15 +58,7 @@ export async function POST(request: Request) {
   try {
     logger.info("scrape: started", { url: domain });
 
-    const res = await fetch(`${scraperUrl}/api/scrape`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": scraperKey,
-      },
-      body: JSON.stringify({ url: body.url }),
-      signal: AbortSignal.timeout(55000),
-    });
+    const res = await callScraper(scraperUrl, scraperKey, { url: body.url });
 
     const text = await res.text();
     let data: unknown;
@@ -83,6 +79,15 @@ export async function POST(request: Request) {
       return NextResponse.json(data, { status: res.status });
     }
 
+    if ((data as { blocked?: boolean }).blocked && body.monitorId) {
+      const proxied = await retryThroughProxy(scraperUrl, scraperKey, body.monitorId);
+      logger.info("scrape: blocked, proxy retry", { url: domain, ok: proxied !== null, duration_ms: Date.now() - startTime });
+      if (proxied) {
+        after(() => logger.flush());
+        return NextResponse.json(proxied);
+      }
+    }
+
     logger.info("scrape: completed", { url: domain, duration_ms: durationMs });
     after(() => logger.flush());
     return NextResponse.json(data);
@@ -95,5 +100,41 @@ export async function POST(request: Request) {
     logger.error("scrape: failed", { url: domain, error: message, duration_ms: durationMs });
     after(() => logger.flush());
     return NextResponse.json({ error: message }, { status: 502 });
+  }
+}
+
+function callScraper(scraperUrl: string, scraperKey: string, payload: { url: string; useProxy?: boolean }) {
+  return fetch(`${scraperUrl}/api/scrape`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": scraperKey,
+    },
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(55000),
+  });
+}
+
+/**
+ * The proxied page, or null to fall back to the direct result. Null covers
+ * every failure on purpose: the blocked response already starts the
+ * background retries, so a proxy that also fails costs the user nothing more.
+ */
+async function retryThroughProxy(
+  scraperUrl: string,
+  scraperKey: string,
+  monitorId: Id<"monitors">
+): Promise<Record<string, unknown> | null> {
+  try {
+    const token = await getToken();
+    if (!token) return null;
+    const url = await fetchMutation(api.monitors.claimFirstScanProxy, { id: monitorId }, { token });
+    if (!url) return null;
+    const res = await callScraper(scraperUrl, scraperKey, { url, useProxy: true });
+    if (!res.ok) return null;
+    const data = (await res.json()) as Record<string, unknown>;
+    return data.blocked ? null : data;
+  } catch {
+    return null;
   }
 }

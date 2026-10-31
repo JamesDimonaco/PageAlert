@@ -107,67 +107,70 @@ export const reserveFallbackCall = internalMutation({
     /** A reach for the proxy after a block, rather than a known-protected site's routine check. */
     escalation: v.boolean(),
   },
-  handler: async (ctx, { escalation }) => {
-    const now = new Date();
-    const month = now.toISOString().slice(0, 7);
-    const hour = now.toISOString().slice(0, 13);
-    const get = (name: string) =>
-      ctx.db.query("counters").withIndex("by_name", (q) => q.eq("name", name)).unique();
+  handler: (ctx, { escalation }) => reserveFallback(ctx, escalation),
+});
 
-    const alertOnce = async (alertKey: string, text: string) => {
-      const alerted = await get(alertKey);
-      if (alerted) return;
-      await ctx.db.insert("counters", { name: alertKey, value: Date.now() });
-      await ctx.scheduler.runAfter(0, internal.admin.notify, { text });
-    };
+/** reserveFallbackCall's body, for mutations that need a reservation in their own transaction. */
+export async function reserveFallback(ctx: MutationCtx, escalation: boolean): Promise<boolean> {
+  const now = new Date();
+  const month = now.toISOString().slice(0, 7);
+  const hour = now.toISOString().slice(0, 13);
+  const get = (name: string) =>
+    ctx.db.query("counters").withIndex("by_name", (q) => q.eq("name", name)).unique();
 
-    const monthRow = await get(`fallback:calls:${month}`);
-    const monthUsed = monthRow?.value ?? 0;
-    if (monthUsed >= FALLBACK_MONTHLY_CALLS) {
+  const alertOnce = async (alertKey: string, text: string) => {
+    const alerted = await get(alertKey);
+    if (alerted) return;
+    await ctx.db.insert("counters", { name: alertKey, value: Date.now() });
+    await ctx.scheduler.runAfter(0, internal.admin.notify, { text });
+  };
+
+  const monthRow = await get(`fallback:calls:${month}`);
+  const monthUsed = monthRow?.value ?? 0;
+  if (monthUsed >= FALLBACK_MONTHLY_CALLS) {
+    await alertOnce(
+      `fallback:cap-alerted:${month}`,
+      `PageAlert: fallback call budget for ${month} is spent (${FALLBACK_MONTHLY_CALLS}). Blocked sites will not be retried through Scrapfly until next month.`
+    );
+    return false;
+  }
+
+  let hourRow = null;
+  if (escalation) {
+    hourRow = await get(`fallback:escalations:${hour}`);
+    const hourUsed = hourRow?.value ?? 0;
+    if (hourUsed >= FALLBACK_HOURLY_ESCALATIONS) {
       await alertOnce(
-        `fallback:cap-alerted:${month}`,
-        `PageAlert: fallback call budget for ${month} is spent (${FALLBACK_MONTHLY_CALLS}). Blocked sites will not be retried through Scrapfly until next month.`
+        `fallback:hour-alerted:${hour}`,
+        `PageAlert: ${FALLBACK_HOURLY_ESCALATIONS} proxy escalations in the hour to ${hour}:00Z — escalation paused until the next hour. Something is failing fleet-wide.`
       );
       return false;
     }
+  }
 
-    let hourRow = null;
-    if (escalation) {
-      hourRow = await get(`fallback:escalations:${hour}`);
-      const hourUsed = hourRow?.value ?? 0;
-      if (hourUsed >= FALLBACK_HOURLY_ESCALATIONS) {
-        await alertOnce(
-          `fallback:hour-alerted:${hour}`,
-          `PageAlert: ${FALLBACK_HOURLY_ESCALATIONS} proxy escalations in the hour to ${hour}:00Z — escalation paused until the next hour. Something is failing fleet-wide.`
-        );
-        return false;
+  if (monthRow) await ctx.db.patch(monthRow._id, { value: monthUsed + 1 });
+  else await ctx.db.insert("counters", { name: `fallback:calls:${month}`, value: 1 });
+
+  if (escalation) {
+    if (hourRow) await ctx.db.patch(hourRow._id, { value: hourRow.value + 1 });
+    else {
+      await ctx.db.insert("counters", { name: `fallback:escalations:${hour}`, value: 1 });
+      // Only this hour's rows are still needed. Sweeping every earlier one by
+      // name range, rather than just the previous hour, is what makes this
+      // reliable: escalation is bursty by design, so most hours are quiet and
+      // a previous-hour-only delete orphans a row every time one is skipped.
+      // The keys end in an ISO hour, so lexical order is chronological order.
+      for (const prefix of ["fallback:escalations:", "fallback:hour-alerted:"]) {
+        const stale = await ctx.db
+          .query("counters")
+          .withIndex("by_name", (q) => q.gte("name", prefix).lt("name", `${prefix}${hour}`))
+          .take(48);
+        for (const row of stale) await ctx.db.delete(row._id);
       }
     }
-
-    if (monthRow) await ctx.db.patch(monthRow._id, { value: monthUsed + 1 });
-    else await ctx.db.insert("counters", { name: `fallback:calls:${month}`, value: 1 });
-
-    if (escalation) {
-      if (hourRow) await ctx.db.patch(hourRow._id, { value: hourRow.value + 1 });
-      else {
-        await ctx.db.insert("counters", { name: `fallback:escalations:${hour}`, value: 1 });
-        // Only this hour's rows are still needed. Sweeping every earlier one by
-        // name range, rather than just the previous hour, is what makes this
-        // reliable: escalation is bursty by design, so most hours are quiet and
-        // a previous-hour-only delete orphans a row every time one is skipped.
-        // The keys end in an ISO hour, so lexical order is chronological order.
-        for (const prefix of ["fallback:escalations:", "fallback:hour-alerted:"]) {
-          const stale = await ctx.db
-            .query("counters")
-            .withIndex("by_name", (q) => q.gte("name", prefix).lt("name", `${prefix}${hour}`))
-            .take(48);
-          for (const row of stale) await ctx.db.delete(row._id);
-        }
-      }
-    }
-    return true;
-  },
-});
+  }
+  return true;
+}
 
 /**
  * True once the scraper has failed two consecutive health polls. One blip must

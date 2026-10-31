@@ -127,7 +127,8 @@ export function CreateMonitorProvider({ children }: { children: ReactNode }) {
         const scrapeRes = await fetch("/api/scraper/scrape", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ url: data.url }),
+          // The id lets the route retry through the proxy if the site blocks us.
+          body: JSON.stringify({ url: data.url, monitorId }),
           signal: controller.signal,
         });
 
