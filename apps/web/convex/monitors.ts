@@ -354,24 +354,7 @@ export async function saveScanResultForUser(
     scrapedAt: now,
   });
 
-  // Activation: the first page we ever managed to read for this user.
-  //
-  // The marker is claimed in this transaction and the alert scheduled from
-  // inside it, so the two cannot disagree — and being stored on the user
-  // rather than inferred from their monitors means deleting the monitor
-  // cannot produce a second "activated", which reading checkCount across
-  // their rows would have done.
-  const activity = await ctx.db
-    .query("userActivity")
-    .withIndex("by_userId", (q) => q.eq("userId", userId))
-    .unique();
-  if (!activity?.activatedAt) {
-    if (activity) await ctx.db.patch(activity._id, { activatedAt: now });
-    else await ctx.db.insert("userActivity", { userId, lastSeenAt: now, activatedAt: now });
-    await ctx.scheduler.runAfter(0, internal.admin.notify, {
-      text: `🎉 Activated: ${monitor.userEmail ?? userId} got their first scan — "${monitor.name}" on ${displayHost(monitor.url)}, ${matchCount} match${matchCount === 1 ? "" : "es"}`,
-    });
-  }
+  await claimActivation(ctx, monitor, matchCount, "got their first scan", true);
 
   // Send notifications for initial scan matches
   if (matchCount > 0) {
@@ -394,6 +377,39 @@ export const saveScanResult = mutation({
   },
   handler: async (ctx, args) => saveScanResultForUser(ctx, await getAuthUserId(ctx), args),
 });
+
+/**
+ * Activation: the first page we ever managed to read for this user, whether
+ * the first scan got it or a later retry did.
+ *
+ * The marker is claimed in the caller's transaction and the alert scheduled
+ * from inside it, so the two cannot disagree — and being stored on the user
+ * rather than inferred from their monitors means deleting the monitor cannot
+ * produce a second "activated", which reading checkCount across their rows
+ * would have done.
+ */
+export async function claimActivation(
+  ctx: MutationCtx,
+  monitor: Pick<Doc<"monitors">, "userId" | "userEmail" | "name" | "url" | "createdAt">,
+  matchCount: number,
+  how: string,
+  /** False from the scheduler, where nobody is in the app to have been seen. */
+  userPresent: boolean
+): Promise<void> {
+  const now = Date.now();
+  const activity = await ctx.db
+    .query("userActivity")
+    .withIndex("by_userId", (q) => q.eq("userId", monitor.userId))
+    .unique();
+  if (activity?.activatedAt) return;
+  if (activity) await ctx.db.patch(activity._id, { activatedAt: now });
+  // The inactivity reaper trusts lastSeenAt, so a background read must not
+  // invent a visit. Creating the monitor is the last time we know they were here.
+  else await ctx.db.insert("userActivity", { userId: monitor.userId, lastSeenAt: userPresent ? now : monitor.createdAt, activatedAt: now });
+  await ctx.scheduler.runAfter(0, internal.admin.notify, {
+    text: `🎉 Activated: ${monitor.userEmail ?? monitor.userId} ${how} — "${monitor.name}" on ${displayHost(monitor.url)}, ${matchCount} match${matchCount === 1 ? "" : "es"}`,
+  });
+}
 
 /** Mark a scan as failed. */
 export async function saveScanErrorForUser(

@@ -8,7 +8,7 @@
  * event belongs here, where it can be read in ten seconds and skipped on a
  * busy morning.
  *
- * The sampled reads are capped and say so when a cap bites. The two full-table
+ * The sampled reads are capped and say so when a cap bites. The full-table
  * reads (monitors, userTiers) are not, and are the first thing to page when
  * this deployment outgrows them — see the scale notes in admin.overview.
  */
@@ -18,6 +18,7 @@ import { DAY_MS } from "@prowl/shared";
 import { effectiveIntervalMs } from "./shared";
 import { fetchAllUsers, isPayingRecord, TIER_PRICE_CENTS } from "./admin";
 import { effectiveTier, smsMonthlyBudget } from "./tiers";
+import { RETURN_AFTER_MS } from "./account";
 
 /**
  * Rows sampled for the 24-hour figures. The digest says "sampled" when a cap
@@ -38,10 +39,12 @@ export const snapshot = internalQuery({
     const now = Date.now();
     const since = now - DAY_MS;
 
-    const [{ users, complete }, tiers, monitors] = await Promise.all([
+    const [{ users, complete }, tiers, monitors, activated, returned] = await Promise.all([
       fetchAllUsers(ctx),
       ctx.db.query("userTiers").collect(),
       ctx.db.query("monitors").collect(),
+      ctx.db.query("userActivity").withIndex("by_activatedAt", (q) => q.gte("activatedAt", since)).collect(),
+      ctx.db.query("userActivity").withIndex("by_lastReturnAt", (q) => q.gte("lastReturnAt", since)).collect(),
     ]);
 
     // Tier rows outlive deleted accounts, so filter to live users or MRR
@@ -131,6 +134,8 @@ export const snapshot = internalQuery({
       sms,
       users: users.length,
       signups: users.filter((u) => u.createdAt >= since).length,
+      activated: activated.length,
+      returned: returned.length,
       paying,
       mrrCents,
       monitors: monitors.filter((m) => !m.isAnonymous).length,
@@ -187,6 +192,9 @@ export const dailyPulse = internalAction({
       ``,
       `Last 24h${s.logsTruncated || s.sendsTruncated ? " (sampled)" : ""}`,
       `  scans    ${s.scans.ok} ok · ${s.scans.error + s.scans.timeout} failed (${s.scans.blocked} blocked)`,
+      // Activated counts anyone whose first page read landed today, so it can
+      // include someone who signed up days ago and only now got through.
+      `  people   ${s.signups} signed up · ${s.activated} read a first page · ${s.returned} came back after ${RETURN_AFTER_MS / DAY_MS}+ days`,
       `  alerts   ${s.alerted} monitor${s.alerted === 1 ? "" : "s"} found something new`,
       `  emails   ${s.emails.sent} sent${s.emails.bad > 0 ? ` · ${s.emails.bad} not delivered` : ""}`,
       ``,
