@@ -386,7 +386,12 @@ export default defineSchema({
     // Ids of the changelog entries this user has dismissed as a popup. See
     // whatsNew.ts.
     announcementsSeen: v.optional(v.array(v.string())),
-  }).index("by_userId", ["userId"]),
+  })
+    .index("by_userId", ["userId"])
+    // The daily pulse counts the last day of each, so it reads a window
+    // rather than every user who has ever visited.
+    .index("by_activatedAt", ["activatedAt"])
+    .index("by_lastReturnAt", ["lastReturnAt"]),
 
   // Lightweight counter for public monitor count (avoids reading all monitors)
   counters: defineTable({
