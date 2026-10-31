@@ -17,16 +17,12 @@ if (posthog) {
 const isTracked = () => Boolean(posthog && process.env.ANTHROPIC_API_KEY);
 
 /**
- * Per-call PostHog fields. Without a user the wrapper would give each event a
- * random distinct id, which PostHog counts as a new person. Only the wrapped
- * client strips these fields, so the plain client must not receive them.
+ * Per-call PostHog fields, so a generation counts against the user who caused
+ * it. Without one the wrapper already skips creating a person. Only the
+ * wrapped client strips these fields, so the plain client must not receive them.
  */
-const trackingParams = (userId?: string) => {
-  if (!isTracked()) return {};
-  return userId
-    ? { posthogDistinctId: userId }
-    : { posthogProperties: { $process_person_profile: false } };
-};
+const trackingParams = (userId?: string) =>
+  isTracked() && userId ? { posthogDistinctId: userId } : {};
 
 const getClient = (): AnthropicOriginal => {
   const apiKey = process.env.ANTHROPIC_API_KEY;

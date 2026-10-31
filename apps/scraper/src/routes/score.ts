@@ -10,7 +10,8 @@ const MAX_SNIPPET_LENGTH = 600;
 const scoreSchema = z.object({
   prompt: z.string().min(1).max(2000),
   name: z.string().max(200).optional(),
-  userId: z.string().max(200).optional(),
+  // Analytics attribution only, so a bad value is dropped rather than failing the scan.
+  userId: z.string().max(200).optional().catch(undefined),
   candidates: z
     .array(
       z.object({

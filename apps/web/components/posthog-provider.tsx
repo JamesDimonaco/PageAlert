@@ -4,6 +4,9 @@ import { useEffect } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import { initPostHog, onPostHogReady, trackPageView, trackSignUp, SIGNED_UP_PARAM } from "@/lib/posthog";
 
+// Strict Mode runs effects twice in dev, and both runs see the marker.
+let signUpTracked = false;
+
 export function PostHogProvider({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -17,9 +20,10 @@ export function PostHogProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  // Track page views on route changes
+  // Track page views on route changes. Not while the sign-up marker is still
+  // in the URL: stripping it changes searchParams and records the clean view.
   useEffect(() => {
-    if (pathname) {
+    if (pathname && !searchParams?.has(SIGNED_UP_PARAM)) {
       const url = searchParams?.toString()
         ? `${pathname}?${searchParams.toString()}`
         : pathname;
@@ -32,6 +36,8 @@ export function PostHogProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const method = searchParams?.get(SIGNED_UP_PARAM);
     if (method !== "google" && method !== "github") return;
+    if (signUpTracked) return;
+    signUpTracked = true;
     const url = new URL(window.location.href);
     url.searchParams.delete(SIGNED_UP_PARAM);
     window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);

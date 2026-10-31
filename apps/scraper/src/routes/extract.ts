@@ -11,7 +11,8 @@ const extractSchema = z.object({
   prompt: z.string().min(1).max(2000),
   name: z.string().max(200).optional(),
   // Attributes the AI call in PostHog to this user instead of a throwaway person
-  userId: z.string().max(200).optional(),
+  // Analytics attribution only, so a bad value is dropped rather than failing the scan.
+  userId: z.string().max(200).optional().catch(undefined),
   timeout: z.number().int().min(1000).max(60000).optional(),
   retryAttempt: z.number().int().min(0).max(10).optional(),
   skipBlockCheck: z.boolean().optional(),
