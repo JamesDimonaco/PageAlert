@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
-import { scrapeUrl, FALLBACK_PROVIDER_ERROR } from "../services/scraper.js";
+import { scrapeUrl } from "../services/scraper.js";
 import { MAX_URL_LENGTH } from "../utils/url-validation.js";
 
 const scrapeSchema = z.object({
@@ -32,10 +32,6 @@ scrapeRoutes.post("/", zValidator("json", scrapeSchema), async (c) => {
       "Could not resolve hostname",
       "Too many concurrent scraping requests",
       "Page content exceeds maximum allowed size",
-      // Thrown by the proxy path, and the caller needs to tell a real block
-      // from the provider failing.
-      "Site is blocking automated access",
-      FALLBACK_PROVIDER_ERROR,
     ];
     const message = error instanceof Error ? error.message : "";
     const isSafe = safeMessages.some((m) => message.startsWith(m));

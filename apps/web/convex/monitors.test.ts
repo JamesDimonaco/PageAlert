@@ -42,6 +42,19 @@ test("a first-scan proxy claim is once only, for the owner, on the monitor's own
   expect(calls?.value).toBe(1);
 });
 
+// A claim is not proof the proxy works. Marking the site proxy-preferred on the
+// claim alone would floor the user's interval at 6h even when the proxy failed.
+test("only a first scan that got in through the proxy makes the site proxy-preferred", async () => {
+  const t = setup();
+  const owner = await seedUser(t, "a@example.com");
+  const id = await owner.mutation(api.monitors.create, MONITOR);
+  await owner.mutation(api.monitors.claimFirstScanProxy, { id });
+  expect((await t.run((ctx) => ctx.db.get(id)))?.proxyPreferred).toBeUndefined();
+
+  await owner.mutation(api.monitors.saveScanResult, { id, schema: { items: [] }, matchCount: 0 });
+  expect((await t.run((ctx) => ctx.db.get(id)))?.proxyPreferred).toBe(true);
+});
+
 test("no proxy claim once the first scan has finished", async () => {
   const t = setup();
   const owner = await seedUser(t, "a@example.com");

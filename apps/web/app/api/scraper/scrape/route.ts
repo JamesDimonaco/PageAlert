@@ -82,10 +82,8 @@ export async function POST(request: Request) {
     if ((data as { blocked?: boolean }).blocked && body.monitorId) {
       const proxied = await retryThroughProxy(scraperUrl, scraperKey, body.monitorId);
       logger.info("scrape: blocked, proxy retry", { url: domain, ok: proxied !== null, duration_ms: Date.now() - startTime });
-      if (proxied) {
-        after(() => logger.flush());
-        return NextResponse.json(proxied);
-      }
+      after(() => logger.flush());
+      return NextResponse.json(proxied ?? data);
     }
 
     logger.info("scrape: completed", { url: domain, duration_ms: durationMs });
@@ -133,6 +131,8 @@ async function retryThroughProxy(
     const res = await callScraper(scraperUrl, scraperKey, { url, useProxy: true });
     if (!res.ok) return null;
     const data = (await res.json()) as Record<string, unknown>;
+    // Only a scraper predating useProxy answers blocked here: it ran a second
+    // direct scrape instead, and that page must not be saved as a success.
     return data.blocked ? null : data;
   } catch {
     return null;

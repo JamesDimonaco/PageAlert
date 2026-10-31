@@ -184,14 +184,16 @@ export async function reserveFallback(ctx: MutationCtx, escalation: boolean): Pr
  */
 export const isScraperDown = internalQuery({
   args: {},
-  handler: async (ctx) => {
-    const row = await ctx.db
-      .query("counters")
-      .withIndex("by_name", (q) => q.eq("name", DOWN_SINCE))
-      .unique();
-    return row !== null && Date.now() - row.value >= SCRAPER_HEALTH_INTERVAL_MS;
-  },
+  handler: (ctx) => scraperDown(ctx),
 });
+
+export async function scraperDown(ctx: QueryCtx): Promise<boolean> {
+  const row = await ctx.db
+    .query("counters")
+    .withIndex("by_name", (q) => q.eq("name", DOWN_SINCE))
+    .unique();
+  return row !== null && Date.now() - row.value >= SCRAPER_HEALTH_INTERVAL_MS;
+}
 
 // ---- Scraper liveness (cron, every 10 minutes) ----
 

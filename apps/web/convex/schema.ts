@@ -50,6 +50,9 @@ export default defineSchema({
     // This site only ever answers through the proxy, so skip the direct attempt
     // that would fail anyway. Re-probed periodically — see PROXY_REPROBE_EVERY.
     proxyPreferred: v.optional(v.boolean()),
+    // When the first scan, blocked, claimed its one proxy retry. See
+    // monitors.claimFirstScanProxy.
+    firstScanProxyAt: v.optional(v.number()),
     nextCheckAt: v.optional(v.number()),
     // Set by the inactivity reaper (inactivity.ts), cleared by any resume —
     // the dashboard toggle or the link in the pause email. Present means "we
