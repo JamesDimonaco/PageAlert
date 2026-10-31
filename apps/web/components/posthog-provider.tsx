@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
-import { initPostHog, trackPageView } from "@/lib/posthog";
+import { initPostHog, onPostHogReady, trackPageView, trackSignUp, SIGNED_UP_PARAM } from "@/lib/posthog";
 
 export function PostHogProvider({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -26,6 +26,18 @@ export function PostHogProvider({ children }: { children: React.ReactNode }) {
       trackPageView(url);
     }
   }, [pathname, searchParams]);
+
+  // OAuth sign-ups land here with a marker from the login page. Strip it so a
+  // reload or shared link can't fire sign_up again.
+  useEffect(() => {
+    const method = searchParams?.get(SIGNED_UP_PARAM);
+    if (method !== "google" && method !== "github") return;
+    const url = new URL(window.location.href);
+    url.searchParams.delete(SIGNED_UP_PARAM);
+    window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+    // trackEvent drops events until posthog-js has loaded, so wait for it.
+    onPostHogReady(() => trackSignUp({ method }));
+  }, [searchParams]);
 
   return <>{children}</>;
 }

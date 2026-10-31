@@ -74,7 +74,7 @@ function afterFailedScan(error: string) {
     : { status: "error", next: "The first scan failed. The user can fix the monitor or retry it from the dashboard." };
 }
 
-function registerTools(server: McpServer, convex: ConvexHttpClient, apiKey: string) {
+function registerTools(server: McpServer, convex: ConvexHttpClient, apiKey: string, userId: string) {
   server.registerTool(
     "preview_page",
     {
@@ -87,7 +87,7 @@ function registerTools(server: McpServer, convex: ConvexHttpClient, apiKey: stri
     async (args) => {
       const rejection = await urlRejection(args.url);
       if (rejection) return fail(rejection);
-      const outcome = await extractPage({ url: args.url, prompt: args.prompt });
+      const outcome = await extractPage({ url: args.url, prompt: args.prompt, userId });
       if (!outcome.ok) return fail(outcome.error);
       return ok(scanSummary(outcome.data));
     }
@@ -121,7 +121,7 @@ function registerTools(server: McpServer, convex: ConvexHttpClient, apiKey: stri
       }
       const dashboardUrl = `${SITE_URL}/dashboard/monitors/${monitorId}`;
 
-      const outcome = await extractPage({ url: args.url, prompt: args.prompt, name: args.name }, FIRST_SCAN_TIMEOUT_MS);
+      const outcome = await extractPage({ url: args.url, prompt: args.prompt, name: args.name, userId }, FIRST_SCAN_TIMEOUT_MS);
       try {
         if (!outcome.ok) {
           await convex.mutation(api.mcp.saveScanError, { apiKey, id: monitorId, error: outcome.error });
@@ -220,7 +220,7 @@ async function handler(request: Request): Promise<Response> {
     );
   }
 
-  const response = await createMcpHandler((server) => registerTools(server, convex, apiKey), {
+  const response = await createMcpHandler((server) => registerTools(server, convex, apiKey, owner.userId), {
     serverInfo: { name: "pagealert", version: "1.0.0" },
     onEvent: (event) => {
       if (event.type === "ERROR") {

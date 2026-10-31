@@ -305,6 +305,9 @@ export function trackWhatsNew(props: { announcement: string; action: "shown" | "
 
 // ---- Auth events ----
 
+/** Query param that carries the OAuth provider to the page a new user lands on. */
+export const SIGNED_UP_PARAM = "signed_up";
+
 export function trackSignUp(props: { method: string }) {
   trackEvent("sign_up", { method: props.method });
 }

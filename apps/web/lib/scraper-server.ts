@@ -97,7 +97,7 @@ export async function urlRejection(url: string): Promise<string | null> {
 
 /** Scrape and extract in one scraper call. Run urlRejection first. */
 export async function extractPage(
-  body: { url: string; prompt: string; name?: string },
+  body: { url: string; prompt: string; name?: string; userId?: string },
   timeoutMs = 110_000
 ): Promise<ExtractOutcome> {
   const scraperUrl = process.env.SCRAPER_URL;

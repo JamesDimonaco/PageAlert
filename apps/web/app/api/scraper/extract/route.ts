@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { after } from "next/server";
-import { isAuthenticated } from "@/lib/auth-server";
+import { getUserId, isAuthenticated } from "@/lib/auth-server";
 import { logger } from "@/lib/server-logger";
 
 export const maxDuration = 120;
@@ -15,6 +15,8 @@ export async function POST(request: Request) {
     after(() => logger.flush());
     return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
   }
+
+  const userId = await getUserId();
 
   const scraperUrl = process.env.SCRAPER_URL;
   const scraperKey = process.env.SCRAPER_API_KEY;
@@ -61,6 +63,7 @@ export async function POST(request: Request) {
         url: body.url,
         prompt: body.prompt,
         name: body.name,
+        ...(userId ? { userId } : {}),
         ...(body.scrapedText ? { scrapedText: body.scrapedText } : {}),
       }),
       signal: AbortSignal.timeout(110000),
