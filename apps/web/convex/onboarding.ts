@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { internalAction, internalMutation, internalQuery } from "./_generated/server";
-import { internal } from "./_generated/api";
+import { components, internal } from "./_generated/api";
+import { DAY_MS, RESUME_TOKEN_TTL_MS } from "@prowl/shared";
 
 /**
  * Onboarding email scheduler.
@@ -79,7 +80,8 @@ export const queueWelcomeSequence = internalMutation({
   },
 });
 
-const STEPS = ["day0", "day1", "day3", "day7"] as const;
+const STEPS = ["day0", "day1", "day3", "day7", "winback"] as const;
+const stepValidator = v.union(...STEPS.map((s) => v.literal(s)));
 
 /**
  * A queued email this far past its scheduled time is stale. Send it and the
@@ -100,7 +102,7 @@ export const MAX_SEND_LATENESS_MS = 3 * 24 * 60 * 60 * 1000;
  * file is fixing, one level down.
  */
 export const claimDue = internalMutation({
-  args: { step: v.union(v.literal("day0"), v.literal("day1"), v.literal("day3"), v.literal("day7")) },
+  args: { step: stepValidator },
   handler: async (ctx, { step }) => {
     const now = Date.now();
     const rows = await ctx.db
@@ -124,7 +126,7 @@ export const claimDue = internalMutation({
  * backlog in one pass.
  */
 export const sweepStale = internalMutation({
-  args: { step: v.union(v.literal("day0"), v.literal("day1"), v.literal("day3"), v.literal("day7")) },
+  args: { step: stepValidator },
   handler: async (ctx, { step }) => {
     const stale = await ctx.db
       .query("onboardingEmails")
@@ -202,6 +204,13 @@ export const processDueEmails = internalAction({
         try {
           if (step === "day0") {
             await ctx.runAction(internal.emails.sendOnboardingDay0, { to: row.email, userId: row.userId });
+          } else if (step === "winback") {
+            const facts = await ctx.runQuery(internal.onboarding.winbackFacts, { userId: row.userId });
+            if (!facts) {
+              await ctx.runMutation(internal.onboarding.markSkipped, { id: row._id, error: "Nothing to win back" });
+              continue;
+            }
+            await ctx.runAction(internal.emails.sendWinback, { to: row.email, userId: row.userId, facts });
           } else {
             await ctx.runAction(internal.emails.sendOnboardingFollowUp, { to: row.email, userId: row.userId, step });
           }
@@ -234,30 +243,76 @@ export const withMonitors = internalQuery({
 });
 
 /**
- * One-off: skipFollowUpBacklog also retired rows that were not due yet.
- * This puts those back. Delete once it has run on prod.
+ * Queue the win-back note for a hand-picked list, `perDay` a day so the
+ * Resend free tier (100 a day) keeps room for alerts and signups. The first
+ * batch is due now. Anyone already queued is left alone. Each run counts its
+ * days from now, so two runs on the same day can go over the cap.
  *
- *   npx convex run --prod onboarding:restoreNotYetDue
+ *   npx convex run --prod onboarding:queueWinback '{"recipients":[...],"perDay":35}'
  */
-export const restoreNotYetDue = internalMutation({
-  args: {},
-  handler: async (ctx) => {
+export const queueWinback = internalMutation({
+  args: { recipients: v.array(v.object({ userId: v.string(), email: v.string() })), perDay: v.number() },
+  handler: async (ctx, { recipients, perDay }) => {
+    if (!Number.isInteger(perDay) || perDay < 1) throw new Error("perDay must be a whole number of at least 1");
     const now = Date.now();
-    let restored = 0;
-    for (const step of ["day1", "day3", "day7"] as const) {
+    let queued = 0;
+    for (const { userId, email } of recipients) {
       const rows = await ctx.db
         .query("onboardingEmails")
-        .withIndex("by_step_status_scheduledFor", (q) =>
-          q.eq("step", step).eq("status", "skipped").gt("scheduledFor", now)
-        )
-        .take(1000);
-      for (const row of rows) {
-        if (row.error !== "Queued before follow-ups launched") continue;
-        await ctx.db.patch(row._id, { status: "pending", error: undefined });
-        restored++;
-      }
+        .withIndex("by_userId", (q) => q.eq("userId", userId))
+        .collect();
+      if (rows.some((r) => r.step === "winback")) continue;
+      await ctx.db.insert("onboardingEmails", {
+        userId,
+        email,
+        step: "winback",
+        scheduledFor: now + Math.floor(queued / perDay) * DAY_MS,
+        status: "pending",
+      });
+      queued++;
     }
-    return { restored };
+    await ctx.scheduler.runAfter(0, internal.onboarding.processDueEmails, {});
+    return { queued, days: Math.ceil(queued / perDay) };
+  },
+});
+
+/**
+ * Which win-back note fits, read at send time so it matches the person's
+ * monitors today. Null means there is nothing to win back: the account is
+ * gone, or a monitor is working.
+ */
+export const winbackFacts = internalQuery({
+  args: { userId: v.string() },
+  handler: async (ctx, { userId }) => {
+    const user = await ctx.runQuery(components.betterAuth.adapter.findOne, {
+      model: "user",
+      where: [{ field: "_id", operator: "eq", value: userId }],
+    });
+    if (!user) return null;
+    const firstName = typeof user.name === "string" ? user.name.trim().split(/\s+/)[0] : "";
+    const monitors = await ctx.db
+      .query("monitors")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .collect();
+    // A stale lastError on a monitor that has matched before is a blip, not a broken monitor.
+    if (monitors.some((m) => m.status === "active" && (!m.lastError || m.lastMatchAt))) return null;
+    const broken = monitors.find((m) => m.status === "error" || (m.lastError && !m.lastMatchAt));
+    if (broken) return { variant: "broken" as const, firstName, monitorName: broken.name, url: broken.url };
+    const paused = monitors.find((m) => m.status === "paused");
+    if (paused) {
+      // Only our own pause leaves a restart token, and it stops working after RESUME_TOKEN_TTL_MS.
+      const live = paused.resumeToken && paused.autoPausedAt && Date.now() - paused.autoPausedAt < RESUME_TOKEN_TTL_MS;
+      return {
+        variant: "paused" as const,
+        firstName,
+        monitorName: paused.name,
+        url: paused.url,
+        autoPaused: paused.autoPausedAt !== undefined,
+        resumeToken: live ? paused.resumeToken : undefined,
+      };
+    }
+    if (monitors.length > 0) return null;
+    return { variant: "none" as const, firstName };
   },
 });
 

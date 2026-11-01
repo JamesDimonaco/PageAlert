@@ -492,6 +492,8 @@ export default defineSchema({
       v.literal("day1"),
       v.literal("day3"),
       v.literal("day7"),
+      // One-off note to people who drifted away. See onboarding.queueWinback.
+      v.literal("winback"),
     ),
     scheduledFor: v.number(), // ms epoch
     status: v.union(

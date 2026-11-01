@@ -2,9 +2,11 @@
 import { convexTest } from "convex-test";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import schema from "./schema";
-import { internal } from "./_generated/api";
+import { components, internal } from "./_generated/api";
+import betterAuthSchema from "./betterAuth/schema";
 
 const modules = import.meta.glob("./**/*.*s");
+const betterAuthModules = import.meta.glob("./betterAuth/**/*.*s");
 
 let fetchMock: ReturnType<typeof vi.fn>;
 
@@ -95,4 +97,51 @@ it("two processor runs at once send each email once", async () => {
     t.action(internal.onboarding.processDueEmails, {}),
   ]);
   expect(fetchMock).toHaveBeenCalledTimes(1);
+});
+
+const monitor = (userId: string, status: "active" | "paused" | "error", extra: { resumeToken?: string; autoPausedAt?: number; lastError?: string } = {}) => ({
+  userId,
+  name: "Jackets",
+  url: "https://shop.example.com/sale",
+  prompt: "Any jacket",
+  status,
+  checkInterval: "1h" as const,
+  matchCount: 0,
+  createdAt: Date.now(),
+  updatedAt: Date.now(),
+  lastCheckedAt: Date.now(),
+  ...extra,
+});
+
+// Resend's free tier is 100 a day, shared with alerts and signups.
+it("sends the win-back at most perDay a day, and skips anyone whose monitor now works", async () => {
+  vi.stubEnv("ADMIN_EMAIL", "admin@example.com");
+  const t = convexTest(schema, modules);
+  t.registerComponent("betterAuth", betterAuthSchema, betterAuthModules);
+  const recipients: { userId: string; email: string }[] = [];
+  for (let i = 0; i < 5; i++) {
+    const user = (await t.mutation(components.betterAuth.adapter.create, {
+      input: { model: "user", data: { name: `Person ${i}`, email: `u${i}@example.com`, emailVerified: true, createdAt: 0, updatedAt: 0 } },
+    })) as { _id: string };
+    recipients.push({ userId: user._id, email: `u${i}@example.com` });
+  }
+  await t.run(async (ctx) => {
+    await ctx.db.insert("monitors", monitor(recipients[0].userId, "paused", { resumeToken: "tok", autoPausedAt: Date.now() }));
+    // A broken monitor beside a working one: they are still using PageAlert.
+    await ctx.db.insert("monitors", monitor(recipients[1].userId, "active"));
+    await ctx.db.insert("monitors", monitor(recipients[1].userId, "error", { lastError: "403" }));
+  });
+
+  const { queued } = await t.mutation(internal.onboarding.queueWinback, { recipients, perDay: 3 });
+  await t.action(internal.onboarding.processDueEmails, {});
+
+  expect(queued).toBe(5);
+  const rows = await t.run((ctx) => ctx.db.query("onboardingEmails").collect());
+  expect(rows.filter((r) => r.status === "pending")).toHaveLength(2);
+  expect(rows.find((r) => r.userId === recipients[1].userId)?.status).toBe("skipped");
+  const sent = fetchMock.mock.calls.map(([, init]) => JSON.parse((init as { body: string }).body));
+  expect(sent.map((s) => s.to[0])).toEqual(["u0@example.com", "u2@example.com"]);
+  expect(sent[0].text).toContain("/resume#tok");
+  expect(sent[0].text).toMatch(/^Hi Person,/);
+  expect(sent[1].subject).toBe("what did you want to watch?");
 });
