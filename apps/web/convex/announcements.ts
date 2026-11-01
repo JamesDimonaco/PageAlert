@@ -5,7 +5,7 @@ import { components, internal } from "./_generated/api";
 import { APP_URL, HELLO_FROM_EMAIL, RESEND_TIMEOUT, esc } from "./emails";
 import { SMS_LIMITS } from "./tiers";
 import { isBanned } from "./account";
-import { unsubscribeUrl } from "./unsubscribe";
+import { isOptedOut, unsubscribeUrl } from "./unsubscribe";
 
 /**
  * One-off product announcements to every user, run by hand:
@@ -98,11 +98,7 @@ async function eligible(
   const out: Recipient[] = [];
   let pending = 0;
   for (const user of users) {
-    const optedOut = await ctx.db
-      .query("productUpdateOptOuts")
-      .withIndex("by_userId", (q) => q.eq("userId", user.userId))
-      .first();
-    if (optedOut || (await isBanned(ctx, user.userId))) continue;
+    if ((await isOptedOut(ctx, user.userId, "updates")) || (await isBanned(ctx, user.userId))) continue;
     const prior = await ctx.db
       .query("announcementSends")
       .withIndex("by_key_userId", (q) => q.eq("key", key).eq("userId", user.userId))
@@ -176,7 +172,7 @@ type Outcome =
   | { kind: "unsure"; error: string };
 
 async function buildEmail(announcement: Announcement, recipient: Recipient, replyTo: string) {
-  const link = await unsubscribeUrl(recipient.userId);
+  const link = await unsubscribeUrl(recipient.userId, "updates");
   const { html, text } = announcement.render(link);
   return {
     from: HELLO_FROM_EMAIL,
@@ -283,7 +279,7 @@ export const send = internalAction({
     // Signed up front, dry runs included: a missing secret found after rows are
     // claimed would strand those users as pending, and a dry run that skipped
     // this would report a healthy count for a run that cannot work.
-    await unsubscribeUrl("preflight");
+    await unsubscribeUrl("preflight", "updates");
 
     if (args.testTo !== undefined) return sendTest(announcement, args.testTo, ctx, apiKey!, replyTo!);
 

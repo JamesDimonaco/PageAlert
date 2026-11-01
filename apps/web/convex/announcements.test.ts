@@ -75,7 +75,7 @@ describe("announcements.send", () => {
     await seedUser(t, "keep@example.com");
     const gone = await seedUser(t, "gone@example.com");
     await seedUser(t, null);
-    await t.run((ctx) => ctx.db.insert("productUpdateOptOuts", { userId: gone, optedOutAt: NOW }));
+    await t.run((ctx) => ctx.db.insert("emailOptOuts", { userId: gone, category: "updates", optedOutAt: NOW }));
 
     const dry = await t.action(internal.announcements.send, { key: KEY, dryRun: true });
     expect(dry).toMatchObject({ wouldSend: 1 });
@@ -305,7 +305,7 @@ describe("admin.sendBulkEmail", () => {
     vi.spyOn(authComponent, "safeGetAuthUser").mockResolvedValue({ email: "admin@example.com" } as never);
     const keep = await seedUser(t, "keep@example.com");
     const gone = await seedUser(t, "gone@example.com");
-    await t.run((ctx) => ctx.db.insert("productUpdateOptOuts", { userId: gone, optedOutAt: NOW }));
+    await t.run((ctx) => ctx.db.insert("emailOptOuts", { userId: gone, category: "updates", optedOutAt: NOW }));
 
     const result = await t.action(api.admin.sendBulkEmail, { userIds: [keep, gone], subject: "Hi", body: "Hello" });
 
