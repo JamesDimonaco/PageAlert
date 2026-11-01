@@ -2,10 +2,11 @@ import { v } from "convex/values";
 import type { PaginationResult } from "convex/server";
 import { internalAction, internalMutation, internalQuery, type ActionCtx, type QueryCtx } from "./_generated/server";
 import { components, internal } from "./_generated/api";
-import { APP_URL, HELLO_FROM_EMAIL, RESEND_TIMEOUT, esc } from "./emails";
+import { APP_URL, HELLO_FROM_EMAIL, RESEND_TIMEOUT } from "./emails";
+import { esc } from "./shared";
 import { SMS_LIMITS } from "./tiers";
 import { isBanned } from "./account";
-import { isOptedOut, unsubscribeUrl } from "./unsubscribe";
+import { isOptedOut, unsubscribeHeaders, unsubscribeUrl } from "./unsubscribe";
 
 /**
  * One-off product announcements to every user, run by hand:
@@ -181,7 +182,7 @@ async function buildEmail(announcement: Announcement, recipient: Recipient, repl
     subject: announcement.subject,
     html,
     text,
-    headers: { "List-Unsubscribe": `<${link}>`, "List-Unsubscribe-Post": "List-Unsubscribe=One-Click" },
+    headers: unsubscribeHeaders(link),
   };
 }
 

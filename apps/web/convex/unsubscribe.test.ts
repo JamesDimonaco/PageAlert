@@ -122,6 +122,15 @@ describe("/unsubscribe route", () => {
     expect(await optedOut(t, "user-a")).toEqual([]);
   });
 
+  // The heading promises one category, so its button must not carry scope=all.
+  it("GET on a link with a stray scope=all still gives a single-category Unsubscribe button", async () => {
+    const t = harness();
+    const html = await (await t.fetch(`${await path("user-a", undefined, "tips")}&scope=all`)).text();
+    const actions = [...html.matchAll(/action="([^"]+)"/g)].map((m) => m[1]);
+    expect(actions[0]).not.toContain("scope=all");
+    expect(actions[1]).toContain("scope=all");
+  });
+
   it("GET with a bad token is refused", async () => {
     const t = convexTest(schema, modules);
     const res = await t.fetch(await path("user-a", "00"));

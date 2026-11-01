@@ -1,8 +1,8 @@
 import { v } from "convex/values";
 import { internalAction, type ActionCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
-import { MATCH_CONFIDENCE_LABEL, MATCH_SCORE_THRESHOLD, matchConfidence } from "./shared";
-import { unsubscribeUrl } from "./unsubscribe";
+import { MATCH_CONFIDENCE_LABEL, MATCH_SCORE_THRESHOLD, esc, matchConfidence } from "./shared";
+import { unsubscribeHeaders, unsubscribeUrl } from "./unsubscribe";
 
 const FROM_EMAIL = "PageAlert <alerts@pagealert.io>";
 // Onboarding/welcome emails come from a separate address so users can
@@ -14,14 +14,6 @@ export const APP_URL = process.env.SITE_URL ?? "https://pagealert.io";
 export const RESEND_TIMEOUT = 10_000;
 
 /** HTML-escape untrusted strings to prevent injection */
-export function esc(str: string): string {
-  return str
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
 
 /** Blank-line-separated plain text → escaped `<p>` paragraphs, single newlines as `<br>`, bare URLs linked. */
 export function textToHtmlParagraphs(text: string, paragraphStyle?: string): string {
@@ -736,7 +728,7 @@ Unsubscribe from tips: ${unsubscribeLink}`;
       from: HELLO_FROM_EMAIL,
       userId: args.userId,
       throwOnError: true,
-      headers: { "List-Unsubscribe": `<${unsubscribeLink}>`, "List-Unsubscribe-Post": "List-Unsubscribe=One-Click" },
+      headers: unsubscribeHeaders(unsubscribeLink),
     });
   },
 });

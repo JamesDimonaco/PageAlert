@@ -144,6 +144,13 @@ export const markSent = internalMutation({
   },
 });
 
+export const markSkipped = internalMutation({
+  args: { id: v.id("onboardingEmails"), error: v.string() },
+  handler: async (ctx, { id, error }) => {
+    await ctx.db.patch(id, { status: "skipped", error });
+  },
+});
+
 export const markFailed = internalMutation({
   args: { id: v.id("onboardingEmails"), error: v.string() },
   handler: async (ctx, { id, error }) => {
@@ -175,7 +182,14 @@ export const processDueEmails = internalAction({
     if (swept > 0) console.log(`[onboarding] retired ${swept} stale day0 row(s)`);
 
     const due = await ctx.runQuery(internal.onboarding.listDue, { step: "day0" });
+    const optedOut = new Set(
+      await ctx.runQuery(internal.unsubscribe.optedOutAmong, { userIds: due.map((r) => r.userId), category: "tips" })
+    );
     for (const row of due) {
+      if (optedOut.has(row.userId)) {
+        await ctx.runMutation(internal.onboarding.markSkipped, { id: row._id, error: "Unsubscribed from tips" });
+        continue;
+      }
       try {
         await ctx.runAction(internal.emails.sendOnboardingDay0, {
           to: row.email,

@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { httpAction, internalMutation, internalQuery, type QueryCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
-import { esc } from "./emails";
+import { esc } from "./shared";
 import { emailCategory, type EmailCategory } from "./schema";
 
 /**
@@ -43,7 +43,13 @@ export async function unsubscribeUrl(userId: string, category: EmailCategory): P
   return `${site}/unsubscribe?u=${encodeURIComponent(userId)}&c=${category}&t=${await signUnsubscribeToken(userId)}`;
 }
 
+/** RFC 8058 one-click headers for an email carrying this unsubscribe link. */
+export function unsubscribeHeaders(link: string): Record<string, string> {
+  return { "List-Unsubscribe": `<${link}>`, "List-Unsubscribe-Post": "List-Unsubscribe=One-Click" };
+}
+
 const ALL_CATEGORIES: EmailCategory[] = ["tips", "updates"];
+const isCategory = (c: string): c is EmailCategory => (ALL_CATEGORIES as string[]).includes(c);
 
 const LABEL: Record<EmailCategory, string> = {
   tips: "tips and getting-started emails",
@@ -130,18 +136,19 @@ export const handler = httpAction(async (ctx, request) => {
   // Links sent before categories existed carry no `c`, and only product
   // updates ever had a link.
   const c = url.searchParams.get("c") ?? "updates";
-  if (!userId || !(c === "tips" || c === "updates") || !(await verifyUnsubscribeToken(userId, token))) {
+  if (!userId || !isCategory(c) || !(await verifyUnsubscribeToken(userId, token))) {
     return page(400, "This link is not valid", "It may have been cut short when it was copied. Open the link from the original email again.");
   }
-  const category: EmailCategory = c;
 
   // GET only asks. Mail scanners follow links, and one that unsubscribed on
   // GET would opt people out who never clicked.
   if (request.method === "GET") {
-    const action = `${url.pathname}${url.search}`;
+    // Rebuilt from the verified parts, so a stray scope=all on the incoming
+    // link cannot ride along on the single-category button.
+    const action = `${url.pathname}?u=${encodeURIComponent(userId)}&c=${c}&t=${token}`;
     return page(
       200,
-      `Unsubscribe from ${LABEL[category]}?`,
+      `Unsubscribe from ${LABEL[c]}?`,
       "Alerts for your monitors are not affected.",
       button(action, "Unsubscribe", true) + button(`${action}&scope=all`, "Turn off all non-essential email", false)
     );
@@ -150,12 +157,12 @@ export const handler = httpAction(async (ctx, request) => {
   // A mail client's one-click POST hits the List-Unsubscribe URL, which has
   // no scope, so it only ever removes the one category.
   const all = url.searchParams.get("scope") === "all";
-  await ctx.runMutation(internal.unsubscribe.optOut, { userId, categories: all ? ALL_CATEGORIES : [category] });
+  await ctx.runMutation(internal.unsubscribe.optOut, { userId, categories: all ? ALL_CATEGORIES : [c] });
   return page(
     200,
     "You are unsubscribed",
     all
       ? "You will only get alerts for your monitors and essential account emails from now on."
-      : `You will not get any more ${LABEL[category]}. Alerts for your monitors keep working as before.`
+      : `You will not get any more ${LABEL[c]}. Alerts for your monitors keep working as before.`
   );
 });

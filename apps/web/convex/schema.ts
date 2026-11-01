@@ -1,7 +1,7 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v, type Infer } from "convex/values";
 
-/** The email a user can turn off. Tips: onboarding and win-back. Updates: product announcements. */
+/** The email a user can turn off. Tips: onboarding emails. Updates: product announcements. */
 export const emailCategory = v.union(v.literal("tips"), v.literal("updates"));
 export type EmailCategory = Infer<typeof emailCategory>;
 
