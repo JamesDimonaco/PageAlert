@@ -1,7 +1,6 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { internal } from "./_generated/api";
 import schema from "./schema";
 import { signUnsubscribeToken, verifyUnsubscribeToken } from "./unsubscribe";
 
@@ -135,17 +134,5 @@ describe("/unsubscribe route", () => {
     const t = convexTest(schema, modules);
     const res = await t.fetch(await path("user-a", "00"));
     expect(res.status).toBe(400);
-  });
-});
-
-describe("migrateLegacyOptOuts", () => {
-  it("moves each product-update opt-out to both categories and clears the old table", async () => {
-    const t = harness();
-    await t.run((ctx) => ctx.db.insert("productUpdateOptOuts", { userId: "user-a", optedOutAt: 1 }));
-    await t.mutation(internal.unsubscribe.migrateLegacyOptOuts, {});
-    await t.mutation(internal.unsubscribe.migrateLegacyOptOuts, {});
-    const rows = await t.run((ctx) => ctx.db.query("emailOptOuts").collect());
-    expect(rows.map((r) => r.category).sort()).toEqual(["tips", "updates"]);
-    expect(await t.run((ctx) => ctx.db.query("productUpdateOptOuts").collect())).toEqual([]);
   });
 });

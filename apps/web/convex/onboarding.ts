@@ -9,12 +9,11 @@ import { internal } from "./_generated/api";
  * day0 (welcome, sent immediately), day1 (gentle nudge), day3 (3 starter
  * ideas), day7 (3 more ideas). An hourly cron processes due rows.
  *
- * In Phase 4 only the day0 send is wired up — day1/3/7 rows are queued so
- * the schema is stable, but the processor skips them. Phase 7 enables them.
+ * day1 goes only to someone with no monitor yet. Anyone unsubscribed from
+ * tips gets none of them.
  *
- * The whole sender is gated behind ONBOARDING_EMAILS_ENABLED=true so we
- * can land the wiring without auto-sending until James has reviewed the
- * day0 template. See PROWL-038 Phase 4.
+ * The whole sender is gated behind ONBOARDING_EMAILS_ENABLED=true.
+ * See PROWL-038.
  */
 
 /**
@@ -86,6 +85,8 @@ export const queueWelcomeSequence = internalMutation({
  * instead. Also stops a long processor outage from blasting a backlog the
  * moment it recovers.
  */
+const STEPS = ["day0", "day1", "day3", "day7"] as const;
+
 export const MAX_SEND_LATENESS_MS = 3 * 24 * 60 * 60 * 1000;
 
 /**
@@ -175,34 +176,81 @@ export const processDueEmails = internalAction({
       return;
     }
 
-    // day0 only. day1/3/7 are queued at signup so the schema stays stable,
-    // but nothing sends them until Phase 7 — asking for one step at a time is
-    // what stops an unsent step crowding out a sent one.
-    const swept = await ctx.runMutation(internal.onboarding.sweepStale, { step: "day0" });
-    if (swept > 0) console.log(`[onboarding] retired ${swept} stale day0 row(s)`);
+    // One step at a time, each with its own window, so a backlog in one step
+    // can never crowd out another.
+    for (const step of STEPS) {
+      const swept = await ctx.runMutation(internal.onboarding.sweepStale, { step });
+      if (swept > 0) console.log(`[onboarding] retired ${swept} stale ${step} row(s)`);
 
-    const due = await ctx.runQuery(internal.onboarding.listDue, { step: "day0" });
-    const optedOut = new Set(
-      await ctx.runQuery(internal.unsubscribe.optedOutAmong, { userIds: due.map((r) => r.userId), category: "tips" })
-    );
-    for (const row of due) {
-      if (optedOut.has(row.userId)) {
-        await ctx.runMutation(internal.onboarding.markSkipped, { id: row._id, error: "Unsubscribed from tips" });
-        continue;
-      }
-      try {
-        await ctx.runAction(internal.emails.sendOnboardingDay0, {
-          to: row.email,
-          userId: row.userId,
-        });
-        await ctx.runMutation(internal.onboarding.markSent, { id: row._id });
-      } catch (e) {
-        await ctx.runMutation(internal.onboarding.markFailed, {
-          id: row._id,
-          error: e instanceof Error ? e.message : String(e),
-        });
+      const due = await ctx.runQuery(internal.onboarding.listDue, { step });
+      if (due.length === 0) continue;
+      const userIds = due.map((r) => r.userId);
+      const optedOut = new Set(await ctx.runQuery(internal.unsubscribe.optedOutAmong, { userIds, category: "tips" }));
+      const started =
+        step === "day1" ? new Set(await ctx.runQuery(internal.onboarding.withMonitors, { userIds })) : new Set<string>();
+
+      for (const row of due) {
+        const skip = optedOut.has(row.userId) ? "Unsubscribed from tips" : started.has(row.userId) ? "Already has a monitor" : null;
+        if (skip) {
+          await ctx.runMutation(internal.onboarding.markSkipped, { id: row._id, error: skip });
+          continue;
+        }
+        try {
+          if (step === "day0") {
+            await ctx.runAction(internal.emails.sendOnboardingDay0, { to: row.email, userId: row.userId });
+          } else {
+            await ctx.runAction(internal.emails.sendOnboardingFollowUp, { to: row.email, userId: row.userId, step });
+          }
+          await ctx.runMutation(internal.onboarding.markSent, { id: row._id });
+        } catch (e) {
+          await ctx.runMutation(internal.onboarding.markFailed, {
+            id: row._id,
+            error: e instanceof Error ? e.message : String(e),
+          });
+        }
       }
     }
+  },
+});
+
+/** Of these users, the ones who have created a monitor. */
+export const withMonitors = internalQuery({
+  args: { userIds: v.array(v.string()) },
+  handler: async (ctx, { userIds }) => {
+    const out: string[] = [];
+    for (const userId of userIds) {
+      const monitor = await ctx.db
+        .query("monitors")
+        .withIndex("by_userId", (q) => q.eq("userId", userId))
+        .first();
+      if (monitor) out.push(userId);
+    }
+    return out;
+  },
+});
+
+/**
+ * One-off, run once when the follow-ups launch: retires every pending
+ * day1/3/7 row queued before then, so people who signed up weeks ago don't
+ * get "need a hand?" out of the blue. Delete once it has run on prod.
+ *
+ *   npx convex run --prod onboarding:skipFollowUpBacklog
+ */
+export const skipFollowUpBacklog = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    let skipped = 0;
+    for (const step of ["day1", "day3", "day7"] as const) {
+      const rows = await ctx.db
+        .query("onboardingEmails")
+        .withIndex("by_step_status_scheduledFor", (q) => q.eq("step", step).eq("status", "pending"))
+        .take(1000);
+      for (const row of rows) {
+        await ctx.db.patch(row._id, { status: "skipped", error: "Queued before follow-ups launched" });
+      }
+      skipped += rows.length;
+    }
+    return { skipped };
   },
 });
 
