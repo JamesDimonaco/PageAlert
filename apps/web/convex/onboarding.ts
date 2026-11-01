@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { internalAction, internalMutation, internalQuery } from "./_generated/server";
 import { components, internal } from "./_generated/api";
-import { DAY_MS } from "@prowl/shared";
+import { DAY_MS, RESUME_TOKEN_TTL_MS } from "@prowl/shared";
 
 /**
  * Onboarding email scheduler.
@@ -207,7 +207,7 @@ export const processDueEmails = internalAction({
           } else if (step === "winback") {
             const facts = await ctx.runQuery(internal.onboarding.winbackFacts, { userId: row.userId });
             if (!facts) {
-              await ctx.runMutation(internal.onboarding.markSkipped, { id: row._id, error: "Has a working monitor" });
+              await ctx.runMutation(internal.onboarding.markSkipped, { id: row._id, error: "Nothing to win back" });
               continue;
             }
             await ctx.runAction(internal.emails.sendWinback, { to: row.email, userId: row.userId, facts });
@@ -245,13 +245,15 @@ export const withMonitors = internalQuery({
 /**
  * Queue the win-back note for a hand-picked list, `perDay` a day so the
  * Resend free tier (100 a day) keeps room for alerts and signups. The first
- * batch is due now. Anyone already queued is left alone, so a re-run is safe.
+ * batch is due now. Anyone already queued is left alone. Each run counts its
+ * days from now, so two runs on the same day can go over the cap.
  *
  *   npx convex run --prod onboarding:queueWinback '{"recipients":[...],"perDay":35}'
  */
 export const queueWinback = internalMutation({
   args: { recipients: v.array(v.object({ userId: v.string(), email: v.string() })), perDay: v.number() },
   handler: async (ctx, { recipients, perDay }) => {
+    if (!Number.isInteger(perDay) || perDay < 1) throw new Error("perDay must be a whole number of at least 1");
     const now = Date.now();
     let queued = 0;
     for (const { userId, email } of recipients) {
@@ -276,8 +278,8 @@ export const queueWinback = internalMutation({
 
 /**
  * Which win-back note fits, read at send time so it matches the person's
- * monitors today. Null means a monitor is working, so there is nothing to
- * win back.
+ * monitors today. Null means there is nothing to win back: the account is
+ * gone, or a monitor is working.
  */
 export const winbackFacts = internalQuery({
   args: { userId: v.string() },
@@ -286,16 +288,28 @@ export const winbackFacts = internalQuery({
       model: "user",
       where: [{ field: "_id", operator: "eq", value: userId }],
     });
-    const firstName = typeof user?.name === "string" ? user.name.trim().split(/\s+/)[0] : "";
+    if (!user) return null;
+    const firstName = typeof user.name === "string" ? user.name.trim().split(/\s+/)[0] : "";
     const monitors = await ctx.db
       .query("monitors")
       .withIndex("by_userId", (q) => q.eq("userId", userId))
       .collect();
-    const broken = monitors.find((m) => m.status === "error" || m.lastError);
+    // A stale lastError on a monitor that has matched before is a blip, not a broken monitor.
+    if (monitors.some((m) => m.status === "active" && (!m.lastError || m.lastMatchAt))) return null;
+    const broken = monitors.find((m) => m.status === "error" || (m.lastError && !m.lastMatchAt));
     if (broken) return { variant: "broken" as const, firstName, monitorName: broken.name, url: broken.url };
     const paused = monitors.find((m) => m.status === "paused");
     if (paused) {
-      return { variant: "paused" as const, firstName, monitorName: paused.name, url: paused.url, resumeToken: paused.resumeToken };
+      // Only our own pause leaves a restart token, and it stops working after RESUME_TOKEN_TTL_MS.
+      const live = paused.resumeToken && paused.autoPausedAt && Date.now() - paused.autoPausedAt < RESUME_TOKEN_TTL_MS;
+      return {
+        variant: "paused" as const,
+        firstName,
+        monitorName: paused.name,
+        url: paused.url,
+        autoPaused: paused.autoPausedAt !== undefined,
+        resumeToken: live ? paused.resumeToken : undefined,
+      };
     }
     if (monitors.length > 0) return null;
     return { variant: "none" as const, firstName };

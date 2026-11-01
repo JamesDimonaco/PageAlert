@@ -64,8 +64,7 @@ function OnboardingQueue() {
     }
   }
 
-  // day0 only — see requeueFailed in adminEmails.ts. Nothing sends the other
-  // steps yet, so requeueing one would move a row that never gets picked up.
+  // day0 only — see requeueFailed in adminEmails.ts.
   async function handleRequeue(step: "day0") {
     const key = `requeue-${step}`;
     if (confirming !== key) {

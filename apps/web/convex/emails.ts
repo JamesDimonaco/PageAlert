@@ -906,6 +906,7 @@ const winbackFacts = v.union(
     firstName: v.string(),
     monitorName: v.string(),
     url: v.string(),
+    autoPaused: v.boolean(),
     resumeToken: v.optional(v.string()),
   }),
   v.object({ variant: v.literal("none"), firstName: v.string() })
@@ -930,15 +931,17 @@ If you reply with what you were trying to watch, I'll take a look myself. Or try
   }
   if (facts.variant === "paused") {
     const site = safeHostname(facts.url);
-    // A monitor they paused themselves has no restart token.
+    const why = facts.autoPaused
+      ? " We pause monitors when nobody's been in for a while, so we're not checking pages no one cares about."
+      : "";
     const restart = facts.resumeToken
       ? `One click restarts it, no login needed: ${resumeUrl(facts.resumeToken)}`
       : `You can restart it from your dashboard: ${dashboard}`;
     return {
-      subject: `paused your ${site} monitor — one click brings it back`,
+      subject: `your ${site} monitor is paused`,
       body: `${hi}
 
-Your monitor ${facts.monitorName} on ${site} is paused. We pause monitors when nobody's been in for a while, so we're not checking pages no one cares about.
+Your monitor ${facts.monitorName} on ${site} is paused.${why}
 
 Nothing's been deleted. ${restart}
 

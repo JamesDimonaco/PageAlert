@@ -99,8 +99,9 @@ export const retireStaleQueued = mutation({
  * alert that already failed.
  */
 export const requeueFailed = mutation({
-  // day0 only: it is the sole step processDueEmails sends, so requeueing any
-  // other step would move a row that nothing will ever pick up.
+  // day0 only: requeueing moves scheduledFor to now. That is harmless for
+  // day0, but a follow-up's time is its day, and a win-back's is its share of
+  // the daily email budget.
   args: { step: v.literal("day0") },
   handler: async (ctx, { step }) => {
     await requireAdmin(ctx);
