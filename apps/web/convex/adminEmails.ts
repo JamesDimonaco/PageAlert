@@ -11,9 +11,9 @@ import { MAX_SEND_LATENESS_MS } from "./onboarding";
  * Every public function here calls requireAdmin from ./admin.
  */
 
-const stepValidator = v.union(v.literal("day0"), v.literal("day1"), v.literal("day3"), v.literal("day7"));
-type Step = "day0" | "day1" | "day3" | "day7";
-const STEPS: Step[] = ["day0", "day1", "day3", "day7"];
+const stepValidator = v.union(v.literal("day0"), v.literal("day1"), v.literal("day3"), v.literal("day7"), v.literal("winback"));
+type Step = "day0" | "day1" | "day3" | "day7" | "winback";
+const STEPS: Step[] = ["day0", "day1", "day3", "day7", "winback"];
 
 /**
  * Per (step, status) read cap for the queue overview.

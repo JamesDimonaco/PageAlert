@@ -14,8 +14,8 @@ import { timeAgo } from "@/lib/time";
 import { QueryError } from "./query-error";
 import { useOneShotQuery } from "./use-one-shot-query";
 
-type Step = "day0" | "day1" | "day3" | "day7";
-const STEP_LABEL: Record<Step, string> = { day0: "Day 0", day1: "Day 1", day3: "Day 3", day7: "Day 7" };
+type Step = "day0" | "day1" | "day3" | "day7" | "winback";
+const STEP_LABEL: Record<Step, string> = { day0: "Day 0", day1: "Day 1", day3: "Day 3", day7: "Day 7", winback: "Win-back" };
 
 type SendStatus = Doc<"emailSends">["status"];
 type SendFilter = "all" | SendStatus;

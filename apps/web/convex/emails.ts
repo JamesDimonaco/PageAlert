@@ -1,4 +1,4 @@
-import { v } from "convex/values";
+import { v, type Infer } from "convex/values";
 import { internalAction, type ActionCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { MATCH_CONFIDENCE_LABEL, MATCH_SCORE_THRESHOLD, esc, matchConfidence } from "./shared";
@@ -889,6 +889,92 @@ export const sendOnboardingFollowUp = internalAction({
       text,
       kind: `onboarding-${step}`,
       from: HELLO_FROM_EMAIL,
+      replyTo,
+      userId,
+      throwOnError: true,
+      headers: unsubscribeHeaders(unsubscribeLink),
+    });
+  },
+});
+
+// ---- Win-back ----
+
+const winbackFacts = v.union(
+  v.object({ variant: v.literal("broken"), firstName: v.string(), monitorName: v.string(), url: v.string() }),
+  v.object({
+    variant: v.literal("paused"),
+    firstName: v.string(),
+    monitorName: v.string(),
+    url: v.string(),
+    resumeToken: v.optional(v.string()),
+  }),
+  v.object({ variant: v.literal("none"), firstName: v.string() })
+);
+
+/** Written as James, so plain text: a personal note, not a newsletter. */
+function winbackCopy(facts: Infer<typeof winbackFacts>): { subject: string; body: string } {
+  const hi = facts.firstName ? `Hi ${facts.firstName},` : "Hi,";
+  const dashboard = `${APP_URL}/dashboard`;
+  if (facts.variant === "broken") {
+    const site = safeHostname(facts.url);
+    return {
+      subject: `${facts.monitorName} on ${site} never worked`,
+      body: `${hi}
+
+Quick one. Your monitor ${facts.monitorName} on ${site} isn't doing its job. Either the site blocked us, or we couldn't make sense of the page. That's on me, and I'm sorry you set it up and got nothing back.
+
+Some sites block anything that looks like a bot, and I can't get round that. Others just need a different page or a bit of tweaking.
+
+If you reply with what you were trying to watch, I'll take a look myself. Or try another page here: ${dashboard}`,
+    };
+  }
+  if (facts.variant === "paused") {
+    const site = safeHostname(facts.url);
+    // A monitor they paused themselves has no restart token.
+    const restart = facts.resumeToken
+      ? `One click restarts it, no login needed: ${resumeUrl(facts.resumeToken)}`
+      : `You can restart it from your dashboard: ${dashboard}`;
+    return {
+      subject: `paused your ${site} monitor — one click brings it back`,
+      body: `${hi}
+
+Your monitor ${facts.monitorName} on ${site} is paused. We pause monitors when nobody's been in for a while, so we're not checking pages no one cares about.
+
+Nothing's been deleted. ${restart}
+
+I'd rather know than guess, so an honest reply would be really helpful. Was it useful? Did it alert you at the right moment, or too late, or too often? What would make it worth keeping on?
+
+Even "it was a bit meh" is a good answer.`,
+    };
+  }
+  return {
+    subject: "what did you want to watch?",
+    body: `${hi}
+
+You signed up to PageAlert a while back but didn't set a monitor going. No bother — I'm just curious what you had in mind.
+
+Most people use it for a restock, a price drop on something specific, or a new job post on a careers page. Paste a link, say what you're waiting for in plain words, and it tells you when it happens.
+
+If you reply with the link and what you're after, I'll set it up for you. Or have a go yourself: ${dashboard}`,
+  };
+}
+
+export const sendWinback = internalAction({
+  args: { to: v.string(), userId: v.string(), facts: winbackFacts },
+  handler: async (ctx, { to, userId, facts }) => {
+    const replyTo = process.env.ADMIN_EMAIL;
+    if (!replyTo) throw new Error("ADMIN_EMAIL not configured");
+    const unsubscribeLink = await unsubscribeUrl(userId, "tips");
+    const { subject, body } = winbackCopy(facts);
+    const text = `${body}\n\nCheers,\nJames\n\n--\nUnsubscribe from tips: ${unsubscribeLink}`;
+    const html = `${textToHtmlParagraphs(`${body}\n\nCheers,\nJames`)}<p style="color:#999;font-size:12px"><a href="${esc(unsubscribeLink)}" style="color:#999">Unsubscribe from tips</a></p>`;
+    await send(ctx, {
+      to,
+      subject,
+      html,
+      text,
+      kind: `winback-${facts.variant}`,
+      from: "James from PageAlert <hello@pagealert.io>",
       replyTo,
       userId,
       throwOnError: true,
