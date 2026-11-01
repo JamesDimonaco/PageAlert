@@ -976,7 +976,7 @@ export const sendBulkEmail = action({
         paginationOpts: { numItems: ids.length, cursor: null },
       });
       // The unsubscribe page promises no more announcements, and this is the other way one goes out.
-      const optedOut = new Set(await ctx.runQuery(internal.unsubscribe.optedOutAmong, { userIds: ids }));
+      const optedOut = new Set(await ctx.runQuery(internal.unsubscribe.optedOutAmong, { userIds: ids, category: "updates" }));
       recipients = page.page
         .filter((u) => typeof u.email === "string" && u.email && !optedOut.has(String(u._id)))
         .map((u) => ({ email: String(u.email), name: String(u.name ?? "") }));

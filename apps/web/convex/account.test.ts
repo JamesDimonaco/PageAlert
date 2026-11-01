@@ -208,6 +208,7 @@ const FIXTURES: { [T in TableNames]: (refs: Refs) => Row<T> } = {
   counters: ({ userId }) => ({ name: `counter-${userId}`, value: 1 }),
   monitorCreations: ({ userId }) => ({ userId, createdAt: NOW }),
   productUpdateOptOuts: ({ userId }) => ({ userId, optedOutAt: NOW }),
+  emailOptOuts: ({ userId }) => ({ userId, category: "tips" as const, optedOutAt: NOW }),
   announcementSends: ({ userId }) => ({ key: "sms-alerts-2026-10", userId, status: "sent", updatedAt: NOW }),
   apiKeys: ({ userId }) => ({
     userId,

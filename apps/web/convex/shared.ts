@@ -251,3 +251,13 @@ export function effectiveIntervalMs(monitor: {
   const base = intervalToMs(monitor.checkInterval);
   return monitor.proxyPreferred === true ? Math.max(base, PROXY_MIN_INTERVAL_MS) : base;
 }
+
+/** Escape text for HTML element content and quoted attributes. */
+export function esc(str: string): string {
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}

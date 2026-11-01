@@ -1,7 +1,8 @@
 import { v } from "convex/values";
 import { internalAction, type ActionCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
-import { MATCH_CONFIDENCE_LABEL, MATCH_SCORE_THRESHOLD, matchConfidence } from "./shared";
+import { MATCH_CONFIDENCE_LABEL, MATCH_SCORE_THRESHOLD, esc, matchConfidence } from "./shared";
+import { unsubscribeHeaders, unsubscribeUrl } from "./unsubscribe";
 
 const FROM_EMAIL = "PageAlert <alerts@pagealert.io>";
 // Onboarding/welcome emails come from a separate address so users can
@@ -13,14 +14,6 @@ export const APP_URL = process.env.SITE_URL ?? "https://pagealert.io";
 export const RESEND_TIMEOUT = 10_000;
 
 /** HTML-escape untrusted strings to prevent injection */
-export function esc(str: string): string {
-  return str
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
 
 /** Blank-line-separated plain text → escaped `<p>` paragraphs, single newlines as `<br>`, bare URLs linked. */
 export function textToHtmlParagraphs(text: string, paragraphStyle?: string): string {
@@ -75,9 +68,10 @@ async function send(
     userId?: string;
     monitorId?: string;
     throwOnError?: boolean;
+    headers?: Record<string, string>;
   }
 ): Promise<void> {
-  const { to, subject, html, text, kind, from = FROM_EMAIL, userId, monitorId, throwOnError } = opts;
+  const { to, subject, html, text, kind, from = FROM_EMAIL, userId, monitorId, throwOnError, headers } = opts;
   const record = (ok: boolean, resendId?: string, error?: string) =>
     ctx
       .runMutation(internal.emailEvents.recordSend, { to, kind, userId, monitorId, resendId, ok, error })
@@ -101,7 +95,7 @@ async function send(
         "Content-Type": "application/json",
         Authorization: `Bearer ${apiKey}`,
       },
-      body: JSON.stringify({ from, to: [to], subject, html, text }),
+      body: JSON.stringify({ from, to: [to], subject, html, text, headers }),
       signal: AbortSignal.timeout(RESEND_TIMEOUT),
     });
   } catch (e) {
@@ -647,6 +641,7 @@ export const sendOnboardingDay0 = internalAction({
     const tryPrompt = "Mac Mini M4 Pro under $1,500";
     const tryHref = `${APP_URL}/dashboard?try=${encodeURIComponent(tryUrl)}&prompt=${encodeURIComponent(tryPrompt)}`;
     const dashboardHref = `${APP_URL}/dashboard`;
+    const unsubscribeLink = await unsubscribeUrl(args.userId, "tips");
 
     const subject = "Welcome to PageAlert — let's set up your first monitor";
 
@@ -694,6 +689,7 @@ export const sendOnboardingDay0 = internalAction({
       <div style="padding:16px 32px;background:#f9fafb;border-top:1px solid #eee">
         <p style="margin:0;color:#999;font-size:12px">
           PageAlert &mdash; AI-powered website monitoring. <a href="${APP_URL}" style="color:#999">pagealert.io</a>
+          &middot; <a href="${esc(unsubscribeLink)}" style="color:#999">Unsubscribe from tips</a>
         </p>
       </div>
     </div>
@@ -717,7 +713,9 @@ Or start from scratch:
 ${dashboardHref}
 
 — PageAlert
-${APP_URL}`;
+${APP_URL}
+
+Unsubscribe from tips: ${unsubscribeLink}`;
 
     // Unlike the notification senders, this one rethrows so processDueEmails
     // can mark the queue row failed with the error message.
@@ -730,6 +728,7 @@ ${APP_URL}`;
       from: HELLO_FROM_EMAIL,
       userId: args.userId,
       throwOnError: true,
+      headers: unsubscribeHeaders(unsubscribeLink),
     });
   },
 });

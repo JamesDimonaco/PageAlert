@@ -1,5 +1,9 @@
 import { defineSchema, defineTable } from "convex/server";
-import { v } from "convex/values";
+import { v, type Infer } from "convex/values";
+
+/** The email a user can turn off. Tips: onboarding emails. Updates: product announcements. */
+export const emailCategory = v.union(v.literal("tips"), v.literal("updates"));
+export type EmailCategory = Infer<typeof emailCategory>;
 
 export default defineSchema({
   monitors: defineTable({
@@ -234,13 +238,22 @@ export default defineSchema({
     .index("by_userId_channel", ["userId", "channel"])
     .index("by_channel_target", ["channel", "target"]),
 
-  // Presence of a row means "no more product announcements". A table rather
-  // than a flag because notificationSettings is one row per channel and
-  // userTiers may not exist for a user who never touched billing.
+  // Replaced by emailOptOuts. Kept only until unsubscribe.migrateLegacyOptOuts
+  // has moved the prod rows across, then dropped.
   productUpdateOptOuts: defineTable({
     userId: v.string(),
     optedOutAt: v.number(),
   }).index("by_userId", ["userId"]),
+
+  // One row per email category a user has turned off. Essential email
+  // (monitor alerts, account, billing) has no category: it is controlled per
+  // monitor and per channel, never switched off wholesale. A table rather than
+  // a flag because userTiers may not exist for a user who never touched billing.
+  emailOptOuts: defineTable({
+    userId: v.string(),
+    category: emailCategory,
+    optedOutAt: v.number(),
+  }).index("by_userId_and_category", ["userId", "category"]),
 
   // One row per user per announcement key. The row is written before the send,
   // so a rerun cannot double-send; only "failed" rows are tried again.
