@@ -325,11 +325,6 @@ const SWEEPS: readonly {
       ctx.db.query("phoneVerifications").withIndex("by_userId", (q) => q.eq("userId", userId)),
   },
   {
-    table: "productUpdateOptOuts",
-    rows: (ctx, userId) =>
-      ctx.db.query("productUpdateOptOuts").withIndex("by_userId", (q) => q.eq("userId", userId)),
-  },
-  {
     table: "emailOptOuts",
     rows: (ctx, userId) =>
       ctx.db.query("emailOptOuts").withIndex("by_userId_and_category", (q) => q.eq("userId", userId)),

@@ -86,29 +86,6 @@ export const optedOutAmong = internalQuery({
   },
 });
 
-/**
- * One-off: moves each product-update opt-out into emailOptOuts as both
- * categories, since anyone who asked for fewer emails gets fewer of every
- * kind. Delete with the old table once it has run on prod.
- *
- *   npx convex run --prod unsubscribe:migrateLegacyOptOuts
- */
-export const migrateLegacyOptOuts = internalMutation({
-  args: {},
-  handler: async (ctx) => {
-    const rows = await ctx.db.query("productUpdateOptOuts").take(500);
-    for (const row of rows) {
-      for (const category of ALL_CATEGORIES) {
-        if (!(await isOptedOut(ctx, row.userId, category))) {
-          await ctx.db.insert("emailOptOuts", { userId: row.userId, category, optedOutAt: row.optedOutAt });
-        }
-      }
-      await ctx.db.delete(row._id);
-    }
-    return { moved: rows.length };
-  },
-});
-
 function page(status: number, heading: string, body: string, form?: string): Response {
   const html = `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>${esc(heading)} | PageAlert</title></head>

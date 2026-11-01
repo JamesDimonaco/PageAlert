@@ -69,9 +69,10 @@ async function send(
     monitorId?: string;
     throwOnError?: boolean;
     headers?: Record<string, string>;
+    replyTo?: string;
   }
 ): Promise<void> {
-  const { to, subject, html, text, kind, from = FROM_EMAIL, userId, monitorId, throwOnError, headers } = opts;
+  const { to, subject, html, text, kind, from = FROM_EMAIL, userId, monitorId, throwOnError, headers, replyTo } = opts;
   const record = (ok: boolean, resendId?: string, error?: string) =>
     ctx
       .runMutation(internal.emailEvents.recordSend, { to, kind, userId, monitorId, resendId, ok, error })
@@ -95,7 +96,7 @@ async function send(
         "Content-Type": "application/json",
         Authorization: `Bearer ${apiKey}`,
       },
-      body: JSON.stringify({ from, to: [to], subject, html, text, headers }),
+      body: JSON.stringify({ from, to: [to], subject, html, text, headers, reply_to: replyTo }),
       signal: AbortSignal.timeout(RESEND_TIMEOUT),
     });
   } catch (e) {
@@ -727,6 +728,169 @@ Unsubscribe from tips: ${unsubscribeLink}`;
       kind: "onboarding-day0",
       from: HELLO_FROM_EMAIL,
       userId: args.userId,
+      throwOnError: true,
+      headers: unsubscribeHeaders(unsubscribeLink),
+    });
+  },
+});
+
+// ---- Onboarding follow-ups (day 1, 3, 7) ----
+
+type Idea = { title: string; body: string; url: string; prompt: string };
+
+type FollowUp = {
+  subject: string;
+  heading: string;
+  paragraphs: string[];
+  ideas: Idea[];
+  closing: string;
+};
+
+const FOLLOW_UPS: Record<"day1" | "day3" | "day7", FollowUp> = {
+  day1: {
+    subject: "Need a hand with your first monitor?",
+    heading: "Your first monitor takes a minute",
+    paragraphs: [
+      "You have a PageAlert account but haven't set up a monitor yet.",
+      "It takes three steps. Paste the link to a page. Say what you're waiting for, in your own words. Pick how we tell you.",
+      "Not sure what to watch? Start with this one and change it to suit you.",
+    ],
+    ideas: [
+      {
+        title: "A sold-out gadget back in stock",
+        body: "Raspberry Pi boards sell out fast. This page tracks stock at shops in many countries, and PageAlert tells you when one appears.",
+        url: "https://rpilocator.com/",
+        prompt: "A Raspberry Pi 5 in stock",
+      },
+    ],
+    closing: "Stuck on a page? Reply to this email with the link and what you want to know. We'll help you set it up.",
+  },
+  day3: {
+    subject: "3 things people watch with PageAlert",
+    heading: "3 ideas for your next monitor",
+    paragraphs: ["These are the kinds of monitors people set up most. Each button opens one ready to go. Change anything before you scan."],
+    ideas: [
+      {
+        title: "A big discount",
+        body: "Watch an outlet or sale page and hear when something you like is marked down far enough.",
+        url: "https://outlet.arcteryx.com/us/en/c/mens",
+        prompt: "Any jacket at least 40% off",
+      },
+      {
+        title: "Something back in stock",
+        body: "Sold out? Watch the page and get told when the one you want can be bought again.",
+        url: "https://www.apple.com/shop/refurbished/mac",
+        prompt: "A MacBook Air with 16GB memory",
+      },
+      {
+        title: "New job posts",
+        body: "Point PageAlert at a careers page and hear about matching roles before they fill up.",
+        url: "https://news.ycombinator.com/jobs",
+        prompt: "New roles that mention remote",
+      },
+    ],
+    closing: "Each check reads the page the way a person would, so there are no settings to tune.",
+  },
+  day7: {
+    subject: "3 more ideas for PageAlert",
+    heading: "3 more ideas",
+    paragraphs: ["A week in, here are three monitors people don't think of at first."],
+    ideas: [
+      {
+        title: "A new software release",
+        body: "Get told when a project ships a new stable version, and skip the betas.",
+        url: "https://github.com/vercel/next.js/releases",
+        prompt: "A new stable release, not a canary",
+      },
+      {
+        title: "News from a company you follow",
+        body: "Watch a newsroom or blog and hear when it posts about the thing you care about.",
+        url: "https://www.anthropic.com/news",
+        prompt: "A new Claude model is announced",
+      },
+      {
+        title: "Big game sales",
+        body: "Hear when a store's sale page lists games at a deep discount. Prices show in your own currency.",
+        url: "https://store.steampowered.com/specials",
+        prompt: "Games at least 75% off",
+      },
+    ],
+    closing: "Got an idea we haven't thought of? Reply and tell us what you'd like to watch.",
+  },
+};
+
+function tryHref(idea: Idea): string {
+  return `${APP_URL}/dashboard?try=${encodeURIComponent(idea.url)}&prompt=${encodeURIComponent(idea.prompt)}`;
+}
+
+function renderFollowUp(email: FollowUp, unsubscribeLink: string): { html: string; text: string } {
+  const ideasHtml = email.ideas
+    .map(
+      (idea) => `
+        <div style="background:#f4f6fb;border-left:3px solid #3b82f6;padding:16px 20px;border-radius:6px;margin:0 0 16px">
+          <p style="margin:0 0 6px;color:#0a0a0b;font-size:15px;font-weight:600">${esc(idea.title)}</p>
+          <p style="margin:0 0 12px;color:#444;font-size:14px">${esc(idea.body)}</p>
+          <a href="${esc(safeHref(tryHref(idea)))}" style="display:inline-block;background:#3b82f6;color:#fff;padding:10px 20px;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px">Try this monitor &rarr;</a>
+        </div>`
+    )
+    .join("");
+  const html = `<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f4f4f5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#0a0a0b">
+  <div style="max-width:560px;margin:0 auto;padding:40px 20px">
+    <div style="background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.1)">
+      <div style="background:#3b82f6;padding:24px 32px">
+        <h1 style="margin:0;color:#fff;font-size:20px;font-weight:600">${esc(email.heading)}</h1>
+      </div>
+      <div style="padding:32px;line-height:1.55">
+        ${email.paragraphs.map((p) => `<p style="margin:0 0 16px;color:#444;font-size:15px">${esc(p)}</p>`).join("\n        ")}
+        ${ideasHtml}
+        <p style="margin:24px 0 0;color:#444;font-size:14px">${esc(email.closing)}</p>
+      </div>
+      <div style="padding:16px 32px;background:#f9fafb;border-top:1px solid #eee">
+        <p style="margin:0;color:#999;font-size:12px">
+          PageAlert &mdash; AI-powered website monitoring. <a href="${APP_URL}" style="color:#999">pagealert.io</a>
+          &middot; <a href="${esc(unsubscribeLink)}" style="color:#999">Unsubscribe from tips</a>
+        </p>
+      </div>
+    </div>
+  </div>
+</body>
+</html>`;
+  const text = [
+    email.heading,
+    ...email.paragraphs,
+    ...email.ideas.map((idea) => `${idea.title}\n${idea.body}\nTry this monitor: ${tryHref(idea)}`),
+    email.closing,
+    `— PageAlert\n${APP_URL}`,
+    `Unsubscribe from tips: ${unsubscribeLink}`,
+  ].join("\n\n");
+  return { html, text };
+}
+
+export const sendOnboardingFollowUp = internalAction({
+  args: {
+    to: v.string(),
+    userId: v.string(),
+    step: v.union(v.literal("day1"), v.literal("day3"), v.literal("day7")),
+  },
+  handler: async (ctx, { to, userId, step }) => {
+    const email = FOLLOW_UPS[step];
+    // hello@ is send-only, and these emails invite a reply.
+    const replyTo = process.env.ADMIN_EMAIL;
+    if (!replyTo) throw new Error("ADMIN_EMAIL not configured");
+    const unsubscribeLink = await unsubscribeUrl(userId, "tips");
+    const { html, text } = renderFollowUp(email, unsubscribeLink);
+    await send(ctx, {
+      to,
+      subject: email.subject,
+      html,
+      text,
+      kind: `onboarding-${step}`,
+      from: HELLO_FROM_EMAIL,
+      replyTo,
+      userId,
       throwOnError: true,
       headers: unsubscribeHeaders(unsubscribeLink),
     });
