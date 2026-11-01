@@ -751,16 +751,16 @@ const FOLLOW_UPS: Record<"day1" | "day3" | "day7", FollowUp> = {
     subject: "Need a hand with your first monitor?",
     heading: "Your first monitor takes a minute",
     paragraphs: [
-      "You signed up for PageAlert yesterday but haven't set up a monitor yet.",
+      "You have a PageAlert account but haven't set up a monitor yet.",
       "It takes three steps. Paste the link to a page. Say what you're waiting for, in your own words. Pick how we tell you.",
       "Not sure what to watch? Start with this one and change it to suit you.",
     ],
     ideas: [
       {
-        title: "A refurbished Mac back in stock",
-        body: "Apple's refurbished Macs sell out fast. PageAlert checks the page and tells you when the one you want appears.",
-        url: "https://www.apple.com/shop/refurbished/mac",
-        prompt: "MacBook Air with 16GB memory",
+        title: "A sold-out gadget back in stock",
+        body: "Raspberry Pi boards sell out fast. This page tracks stock at shops in many countries, and PageAlert tells you when one appears.",
+        url: "https://rpilocator.com/",
+        prompt: "A Raspberry Pi 5 in stock",
       },
     ],
     closing: "Stuck on a page? Reply to this email with the link and what you want to know. We'll help you set it up.",
@@ -778,9 +778,9 @@ const FOLLOW_UPS: Record<"day1" | "day3" | "day7", FollowUp> = {
       },
       {
         title: "Something back in stock",
-        body: "Sold out? Watch the page and get told when it can be bought again. This one tracks Raspberry Pi stock at shops in many countries.",
-        url: "https://rpilocator.com/",
-        prompt: "A Raspberry Pi 5 in stock",
+        body: "Sold out? Watch the page and get told when the one you want can be bought again.",
+        url: "https://www.apple.com/shop/refurbished/mac",
+        prompt: "A MacBook Air with 16GB memory",
       },
       {
         title: "New job posts",
@@ -877,6 +877,9 @@ export const sendOnboardingFollowUp = internalAction({
   },
   handler: async (ctx, { to, userId, step }) => {
     const email = FOLLOW_UPS[step];
+    // hello@ is send-only, and these emails invite a reply.
+    const replyTo = process.env.ADMIN_EMAIL;
+    if (!replyTo) throw new Error("ADMIN_EMAIL not configured");
     const unsubscribeLink = await unsubscribeUrl(userId, "tips");
     const { html, text } = renderFollowUp(email, unsubscribeLink);
     await send(ctx, {
@@ -886,8 +889,7 @@ export const sendOnboardingFollowUp = internalAction({
       text,
       kind: `onboarding-${step}`,
       from: HELLO_FROM_EMAIL,
-      // hello@ is send-only, and these emails invite a reply.
-      replyTo: process.env.ADMIN_EMAIL,
+      replyTo,
       userId,
       throwOnError: true,
       headers: unsubscribeHeaders(unsubscribeLink),

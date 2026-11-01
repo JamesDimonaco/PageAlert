@@ -61,17 +61,8 @@ it("sends day 1 only to people with no monitor, with an unsubscribe link and a r
         status: "pending",
       });
     }
-    await ctx.db.insert("monitors", {
-      userId: "started",
-      name: "m",
-      url: "https://example.com",
-      prompt: "p",
-      checkInterval: "24h",
-      status: "active",
-      matchCount: 0,
-      createdAt: now,
-      updatedAt: now,
-    });
+    // The creation log, not the monitor: someone who made one and deleted it has still started.
+    await ctx.db.insert("monitorCreations", { userId: "started", createdAt: now });
   });
 
   await t.action(internal.onboarding.processDueEmails, {});
@@ -85,4 +76,23 @@ it("sends day 1 only to people with no monitor, with an unsubscribe link and a r
   expect(sent[0].headers["List-Unsubscribe-Post"]).toBe("List-Unsubscribe=One-Click");
   expect(sent[0].html).toContain("c=tips");
   expect(sent[0].text).toContain("Unsubscribe from tips");
+});
+
+// A signup kicks the processor while the hourly cron can be running too.
+it("two processor runs at once send each email once", async () => {
+  const t = convexTest(schema, modules);
+  await t.run((ctx) =>
+    ctx.db.insert("onboardingEmails", {
+      userId: "u",
+      email: "u@example.com",
+      step: "day0",
+      scheduledFor: Date.now() - 1000,
+      status: "pending",
+    })
+  );
+  await Promise.all([
+    t.action(internal.onboarding.processDueEmails, {}),
+    t.action(internal.onboarding.processDueEmails, {}),
+  ]);
+  expect(fetchMock).toHaveBeenCalledTimes(1);
 });

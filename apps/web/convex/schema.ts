@@ -496,6 +496,9 @@ export default defineSchema({
     scheduledFor: v.number(), // ms epoch
     status: v.union(
       v.literal("pending"),
+      // Claimed by a processor run and being sent. A run that dies here
+      // leaves the row stuck rather than risk a second copy.
+      v.literal("sending"),
       v.literal("sent"),
       v.literal("failed"),
       v.literal("skipped"),

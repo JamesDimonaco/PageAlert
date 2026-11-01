@@ -79,29 +79,31 @@ export const queueWelcomeSequence = internalMutation({
   },
 });
 
+const STEPS = ["day0", "day1", "day3", "day7"] as const;
+
 /**
  * A queued email this far past its scheduled time is stale. Send it and the
  * user gets "welcome to PageAlert" months after signing up, so mark it skipped
  * instead. Also stops a long processor outage from blasting a backlog the
  * moment it recovers.
  */
-const STEPS = ["day0", "day1", "day3", "day7"] as const;
-
 export const MAX_SEND_LATENESS_MS = 3 * 24 * 60 * 60 * 1000;
 
 /**
- * Rows that are due and still fresh enough to send.
+ * Claims the rows that are due and still fresh enough to send, by moving them
+ * to "sending". A signup kicks the processor while the hourly cron may also be
+ * running; claiming in a mutation means only one of them gets each row.
  *
  * The lower bound matters as much as the upper one: stale rows are excluded by
  * the query rather than skipped inside the loop, so a backlog can never occupy
  * the window and starve a new signup. That is the same shape as the bug this
  * file is fixing, one level down.
  */
-export const listDue = internalQuery({
+export const claimDue = internalMutation({
   args: { step: v.union(v.literal("day0"), v.literal("day1"), v.literal("day3"), v.literal("day7")) },
   handler: async (ctx, { step }) => {
     const now = Date.now();
-    return await ctx.db
+    const rows = await ctx.db
       .query("onboardingEmails")
       .withIndex("by_step_status_scheduledFor", (q) =>
         q
@@ -111,6 +113,8 @@ export const listDue = internalQuery({
           .lte("scheduledFor", now)
       )
       .take(50);
+    for (const row of rows) await ctx.db.patch(row._id, { status: "sending" });
+    return rows;
   },
 });
 
@@ -182,7 +186,7 @@ export const processDueEmails = internalAction({
       const swept = await ctx.runMutation(internal.onboarding.sweepStale, { step });
       if (swept > 0) console.log(`[onboarding] retired ${swept} stale ${step} row(s)`);
 
-      const due = await ctx.runQuery(internal.onboarding.listDue, { step });
+      const due = await ctx.runMutation(internal.onboarding.claimDue, { step });
       if (due.length === 0) continue;
       const userIds = due.map((r) => r.userId);
       const optedOut = new Set(await ctx.runQuery(internal.unsubscribe.optedOutAmong, { userIds, category: "tips" }));
@@ -213,17 +217,17 @@ export const processDueEmails = internalAction({
   },
 });
 
-/** Of these users, the ones who have created a monitor. */
+/** Of these users, the ones who have ever created a monitor, deleted ones included. */
 export const withMonitors = internalQuery({
   args: { userIds: v.array(v.string()) },
   handler: async (ctx, { userIds }) => {
     const out: string[] = [];
     for (const userId of userIds) {
-      const monitor = await ctx.db
-        .query("monitors")
-        .withIndex("by_userId", (q) => q.eq("userId", userId))
+      const created = await ctx.db
+        .query("monitorCreations")
+        .withIndex("by_userId_createdAt", (q) => q.eq("userId", userId))
         .first();
-      if (monitor) out.push(userId);
+      if (created) out.push(userId);
     }
     return out;
   },
