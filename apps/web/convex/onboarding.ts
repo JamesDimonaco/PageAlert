@@ -234,27 +234,30 @@ export const withMonitors = internalQuery({
 });
 
 /**
- * One-off, run once when the follow-ups launch: retires every pending
- * day1/3/7 row queued before then, so people who signed up weeks ago don't
- * get "need a hand?" out of the blue. Delete once it has run on prod.
+ * One-off: skipFollowUpBacklog also retired rows that were not due yet.
+ * This puts those back. Delete once it has run on prod.
  *
- *   npx convex run --prod onboarding:skipFollowUpBacklog
+ *   npx convex run --prod onboarding:restoreNotYetDue
  */
-export const skipFollowUpBacklog = internalMutation({
+export const restoreNotYetDue = internalMutation({
   args: {},
   handler: async (ctx) => {
-    let skipped = 0;
+    const now = Date.now();
+    let restored = 0;
     for (const step of ["day1", "day3", "day7"] as const) {
       const rows = await ctx.db
         .query("onboardingEmails")
-        .withIndex("by_step_status_scheduledFor", (q) => q.eq("step", step).eq("status", "pending"))
+        .withIndex("by_step_status_scheduledFor", (q) =>
+          q.eq("step", step).eq("status", "skipped").gt("scheduledFor", now)
+        )
         .take(1000);
       for (const row of rows) {
-        await ctx.db.patch(row._id, { status: "skipped", error: "Queued before follow-ups launched" });
+        if (row.error !== "Queued before follow-ups launched") continue;
+        await ctx.db.patch(row._id, { status: "pending", error: undefined });
+        restored++;
       }
-      skipped += rows.length;
     }
-    return { skipped };
+    return { restored };
   },
 });
 
