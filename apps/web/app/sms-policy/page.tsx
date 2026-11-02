@@ -165,7 +165,7 @@ export default function SmsPolicyPage() {
                 </tr>
               </thead>
               <tbody className="text-foreground">
-                {[["Free", "10", "3"], ["Sprint", "25", "10"], ["Pro", "60", "20"], ["Max", "200", "50"]].map(
+                {[["Free", "0", "0"], ["Sprint", "25", "10"], ["Pro", "60", "20"], ["Max", "200", "50"]].map(
                   ([plan, month, day]) => (
                     <tr key={plan} className="border-b border-border/20 last:border-0">
                       <td className="py-2 pr-4">{plan}</td>

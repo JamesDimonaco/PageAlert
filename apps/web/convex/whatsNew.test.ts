@@ -132,6 +132,17 @@ describe("whatsNew.show: while the texts entry is the newest", () => {
 });
 
 describe("the texts changelog entry", () => {
+  // Free has no texts, so "Set up texts" would lead to a paywall.
+  it("does not pop up for a free account", async () => {
+    const t = harness();
+    const userId = await existingUser(t);
+    await t.run(async (ctx) => {
+      const row = await ctx.db.query("userTiers").withIndex("by_userId", (q) => q.eq("userId", userId)).unique();
+      if (row) await ctx.db.patch(row._id, { tier: "free" });
+    });
+    expect(await t.withIdentity({ subject: userId }).query(api.whatsNew.show, {})).toBeNull();
+  });
+
   // Keeps the id that the original texts popup stored, so nobody who dismissed it sees it twice.
   it("keeps the texts entry on its original id and day", () => {
     expect(CHANGELOG.find((e) => e.id === "sms-alerts")?.date).toBe("2026-10-06");

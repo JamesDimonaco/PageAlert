@@ -50,6 +50,12 @@ function isRestrictedChannel(channel: string): boolean {
   return channel === "telegram" || channel === "discord";
 }
 
+/** A free monitor's channels. A list that was only texts falls back to email rather than alerting nobody. */
+function withoutSms<C extends string>(channels: C[]): C[] {
+  const rest = channels.filter((c) => c !== "sms");
+  return rest.length > 0 ? rest : (["email"] as C[]);
+}
+
 function clampInterval(interval: string, tier: Tier): CheckInterval {
   const allowed = TIER_LIMITS[tier].allowedIntervals;
   return (allowed.includes(interval) ? interval : allowed[0]) as CheckInterval;
@@ -225,7 +231,7 @@ export async function createMonitorForUser(
   // sends a list; MCP leaves it out.
   let channels = args.notificationChannels;
   if (tier === "free") {
-    channels = (channels ?? ALL_CHANNELS).filter((c) => c !== "sms");
+    channels = withoutSms(channels ?? ALL_CHANNELS);
     if (channels.some(isRestrictedChannel)) {
       const existingWithChannels = existingMonitors.find((m) =>
         m.notificationChannels?.some(isRestrictedChannel)
@@ -554,7 +560,7 @@ export const update = mutation({
 
     // Free tier: only one monitor can use the restricted channels — see create
     if (fields.notificationChannels !== undefined && tier === "free") {
-      fields.notificationChannels = fields.notificationChannels.filter((c) => c !== "sms");
+      fields.notificationChannels = withoutSms(fields.notificationChannels);
       if (fields.notificationChannels.some(isRestrictedChannel)) {
         const otherMonitors = await ctx.db
           .query("monitors")

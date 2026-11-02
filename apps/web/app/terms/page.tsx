@@ -81,7 +81,7 @@ export default function TermsPage() {
             <li>We can text UK, EU, US and Canadian numbers</li>
             <li>Reply <strong>STOP</strong> to any text to stop them, or turn them off in Settings. Reply <strong>HELP</strong> for help. Stopping texts does not stop your monitors — alerts continue on your other channels</li>
             <li>Carriers can delay or drop texts. Don&apos;t rely on a text alone for anything time-critical; the email alert is always sent as well</li>
-            <li>On the free plan, one mobile number can be used on one account</li>
+            <li>Texts are only available on paid plans</li>
             <li>We only ever text you about your own monitors, or to send a verification code. We never send marketing by text</li>
           </ul>
           <p>How we collect that consent, in full, is set out in our <Link href="/sms-policy" className="text-primary hover:underline">SMS opt-in and messaging policy</Link>.</p>

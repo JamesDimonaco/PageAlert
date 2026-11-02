@@ -143,8 +143,8 @@ export function NotificationSettings() {
             icon: <Smartphone className="h-5 w-5" />,
             name: "Text message",
             blurb: tier === "free" ? "A text when something changes. Paid plans only" : "A text when something changes",
-            ready: connected("sms"),
-            status: smsTarget ? `••• ••• ${smsTarget.slice(-4)}` : undefined,
+            ready: connected("sms") && tier !== "free",
+            status: tier === "free" ? undefined : smsTarget ? `••• ••• ${smsTarget.slice(-4)}` : undefined,
           },
         ]
       : []),
@@ -346,11 +346,21 @@ export function NotificationSettings() {
           )}
           {open === "sms" && (
             <>
-            {notifSettings?.find((s) => s.channel === "sms")?.enabled ? (
+            {tier === "free" ? (
+              <div className="space-y-3">
+                <p className="text-sm text-muted-foreground leading-relaxed">
+                  Text alerts come with every paid plan, from the $4 Sprint pass up.
+                  {connected("sms") && " Your saved number gets texts again as soon as you upgrade."}
+                </p>
+                <Link href="/dashboard/settings?tab=billing" onClick={() => setOpen(null)} className={buttonVariants({ size: "sm" })}>
+                  See plans
+                </Link>
+              </div>
+            ) : connected("sms") ? (
               <>
                 <div className="flex items-center gap-2 flex-wrap">
                   <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-xs">
-                    ••• ••• {notifSettings.find((s) => s.channel === "sms")!.target.slice(-4)}
+                    ••• ••• {smsTarget?.slice(-4)}
                   </Badge>
                   <Button
                     variant="ghost"
@@ -381,15 +391,6 @@ export function NotificationSettings() {
                   </p>
                 )}
               </>
-            ) : tier === "free" ? (
-              <div className="space-y-3">
-                <p className="text-sm text-muted-foreground leading-relaxed">
-                  Text alerts come with every paid plan, from the $4 Sprint pass up.
-                </p>
-                <Link href="/dashboard/settings?tab=billing" onClick={() => setOpen(null)} className={buttonVariants({ size: "sm" })}>
-                  See plans
-                </Link>
-              </div>
             ) : smsStep === "code" ? (
               <>
                 <div className="space-y-2">

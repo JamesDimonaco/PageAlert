@@ -364,8 +364,8 @@ export const statusCallback = httpAction(async (ctx, request) => {
 /**
  * Reserve an allowance slot, then send. Returns whether anything went out.
  *
- * A refusal is not an error: the user has simply had their texts for the
- * period, and the email alert has already gone. The one refusal that still
+ * A refusal is not an error: the user's plan has no texts, or they have had
+ * them for the period, and the email alert has already gone. The one refusal that still
  * sends is the notice saying so, which is why it is handled here rather than
  * by each caller.
  */
@@ -383,8 +383,8 @@ async function sendAlert(
   // Before reserving, not after. Reserving spends the user's allowance and the
   // global budget; if the credentials are half-configured — SMS_ENABLED flipped
   // on in the dashboard before the Messaging Service id is in — postToTwilio
-  // throws, the scheduler swallows it, and a free user's ten texts drain to
-  // zero having delivered nothing.
+  // throws, the scheduler swallows it, and a user's allowance drains to zero
+  // having delivered nothing.
   try {
     twilioConfig();
   } catch {
@@ -409,8 +409,8 @@ async function sendAlert(
   } catch (e) {
     // The reservation above already spent a monthly slot, a daily slot and a
     // unit of global budget. A Twilio 500, a 429 or a timeout delivered
-    // nothing, and the scheduler swallows the throw, so without this a free
-    // user silently loses a third of their day per blip.
+    // nothing, and the scheduler swallows the throw, so without this a Sprint
+    // user silently loses a tenth of their day per blip.
     await ctx.runMutation(internal.tiers.refundSmsSend, { userId });
     if (e instanceof TwilioRejected && DEAD_NUMBER_CODES.has(e.code)) {
       await ctx.runMutation(internal.sms.turnOff, { userId });
@@ -657,7 +657,7 @@ export const confirmVerification = mutation({
     if (!identity) throw new Error("Not authenticated");
     const userId = identity.subject;
     // Same window as startVerification, and worse here: this mutation writes
-    // notificationSettings and channelClaims, so a token outliving its account
+    // notificationSettings, so a token outliving its account
     // would put the raw number back after deletion removed it.
     await requireLiveAccount(ctx, userId);
 
@@ -679,32 +679,6 @@ export const confirmVerification = mutation({
       await ctx.db.patch(pending._id, { attempts: pending.attempts + 1 });
       const left = MAX_CODE_ATTEMPTS - pending.attempts - 1;
       throw new Error(left > 0 ? `That code is wrong — ${left} attempts left` : "That code is wrong");
-    }
-
-    // One phone, one free account. Same rule as Telegram and Discord: without
-    // it a free allowance is a per-signup allowance.
-    if ((await tierOf(ctx, userId)) === "free") {
-      const claim = await ctx.db
-        .query("channelClaims")
-        .withIndex("by_channel_target", (q) => q.eq("channel", "sms").eq("target", pending.phone))
-        .unique();
-      if (claim && claim.userId !== userId) {
-        await ctx.db.delete(pending._id);
-        throw new Error("That number is already in use on another free account");
-      }
-      if (!claim) {
-        const mine = await ctx.db
-          .query("channelClaims")
-          .withIndex("by_userId", (q) => q.eq("userId", userId))
-          .collect();
-        for (const c of mine) if (c.channel === "sms") await ctx.db.delete(c._id);
-        await ctx.db.insert("channelClaims", {
-          channel: "sms",
-          target: pending.phone,
-          userId,
-          claimedAt: Date.now(),
-        });
-      }
     }
 
     const existing = await ctx.db
