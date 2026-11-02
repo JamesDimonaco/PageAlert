@@ -142,9 +142,9 @@ export function NotificationSettings() {
             id: "sms" as const,
             icon: <Smartphone className="h-5 w-5" />,
             name: "Text message",
-            blurb: tier === "free" ? "A text when something changes, on one monitor" : "A text when something changes",
-            ready: connected("sms"),
-            status: smsTarget ? `••• ••• ${smsTarget.slice(-4)}` : undefined,
+            blurb: tier === "free" ? "A text when something changes. Paid plans only" : "A text when something changes",
+            ready: connected("sms") && tier !== "free",
+            status: tier === "free" ? undefined : smsTarget ? `••• ••• ${smsTarget.slice(-4)}` : undefined,
           },
         ]
       : []),
@@ -196,7 +196,7 @@ export function NotificationSettings() {
           <h2 className="text-lg font-semibold">Where alerts go</h2>
           <p className="text-sm text-muted-foreground mt-1 leading-relaxed">
             Set each one up once. Then each monitor picks which of these it uses.
-            {tier === "free" && " On free, one monitor can use Telegram, Discord or texts. Upgrade to Pro for all of them."}
+            {tier === "free" && " On free, one monitor can use Telegram or Discord. Upgrade for all of them, and for texts."}
           </p>
         </div>
         <div className="divide-y divide-border/30 rounded-xl border border-border/30 bg-card/50 shadow-sm shadow-black/5">
@@ -346,11 +346,21 @@ export function NotificationSettings() {
           )}
           {open === "sms" && (
             <>
-            {notifSettings?.find((s) => s.channel === "sms")?.enabled ? (
+            {tier === "free" ? (
+              <div className="space-y-3">
+                <p className="text-sm text-muted-foreground leading-relaxed">
+                  Text alerts come with every paid plan, from the $4 Sprint pass up.
+                  {connected("sms") && " Your saved number gets texts again as soon as you upgrade."}
+                </p>
+                <Link href="/dashboard/settings?tab=billing" onClick={() => setOpen(null)} className={buttonVariants({ size: "sm" })}>
+                  See plans
+                </Link>
+              </div>
+            ) : connected("sms") ? (
               <>
                 <div className="flex items-center gap-2 flex-wrap">
                   <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-xs">
-                    ••• ••• {notifSettings.find((s) => s.channel === "sms")!.target.slice(-4)}
+                    ••• ••• {smsTarget?.slice(-4)}
                   </Badge>
                   <Button
                     variant="ghost"

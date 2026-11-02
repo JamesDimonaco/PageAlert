@@ -36,6 +36,14 @@ function verification(userId: string, expiresAt: number) {
  * account a fresh three.
  */
 describe("claimVerification daily cap", () => {
+  async function paidTest() {
+    const t = convexTest(schema, modules);
+    await t.run(async (ctx) => {
+      for (const userId of ["user-capped", "user-other"]) await ctx.db.insert("userTiers", { userId, tier: "pro", updatedAt: 0 });
+    });
+    return t;
+  }
+
   async function claim(t: ReturnType<typeof convexTest>) {
     return t.mutation(internal.sms.claimVerification, {
       userId: "user-capped",
@@ -44,7 +52,7 @@ describe("claimVerification daily cap", () => {
   }
 
   it("counts codes for the day even when the pending row is gone", async () => {
-    const t = convexTest(schema, modules);
+    const t = await paidTest();
 
     for (let i = 0; i < 3; i++) await claim(t);
     await expect(claim(t)).rejects.toThrow(/3 codes today/);
@@ -62,7 +70,7 @@ describe("claimVerification daily cap", () => {
   });
 
   it("does not let one account's codes count against another's", async () => {
-    const t = convexTest(schema, modules);
+    const t = await paidTest();
 
     for (let i = 0; i < 3; i++) await claim(t);
     await expect(
@@ -112,13 +120,17 @@ const SITE = "https://example-123.convex.site";
 const AUTH_TOKEN = "twilio-auth-token";
 const PHONE = "+447911123456";
 
-function setup() {
+/** Texts are paid-only, so the users these tests text are on Pro. */
+async function setup() {
   const t = convexTest(schema, modules);
   t.registerComponent("betterAuth", betterAuthSchema, betterAuthModules);
+  await t.run(async (ctx) => {
+    for (const userId of ["u", "user-sms"]) await ctx.db.insert("userTiers", { userId, tier: "pro", updatedAt: 0 });
+  });
   return t;
 }
 
-type AnyTest = ReturnType<typeof setup>;
+type AnyTest = Awaited<ReturnType<typeof setup>>;
 
 /** The texts the admin was sent, whatever became of the Telegram call. */
 async function adminAlerts(t: AnyTest): Promise<string[]> {
@@ -181,7 +193,7 @@ describe("failed sends", () => {
   }
 
   it("tells the admin the Twilio code and status, without the full number", async () => {
-    const t = setup();
+    const t = await setup();
     await sendWithTwilioError(t, 401, 20003);
 
     const alerts = await adminAlerts(t);
@@ -193,7 +205,7 @@ describe("failed sends", () => {
   });
 
   it("alerts once per error code per hour, and again for a different code", async () => {
-    const t = setup();
+    const t = await setup();
     await sendWithTwilioError(t, 401, 20003);
     await sendWithTwilioError(t, 401, 20003);
     expect(await adminAlerts(t)).toHaveLength(1);
@@ -211,13 +223,13 @@ describe("failed sends", () => {
   });
 
   it("stays quiet about a code that is one recipient's problem, like a mistyped number", async () => {
-    const t = setup();
+    const t = await setup();
     await sendWithTwilioError(t, 400, 21211);
     expect(await adminAlerts(t)).toHaveLength(0);
   });
 
   it("alerts when Twilio cannot be reached at all", async () => {
-    const t = setup();
+    const t = await setup();
     vi.stubGlobal("fetch", vi.fn(async () => { throw new DOMException("timed out", "TimeoutError"); }));
     vi.stubEnv("SMS_ENABLED", "true");
     vi.stubEnv("TWILIO_ACCOUNT_SID", "AC123");
@@ -232,7 +244,7 @@ describe("failed sends", () => {
   });
 
   it("asks Twilio to report the final delivery status to our callback", async () => {
-    const t = setup();
+    const t = await setup();
     await sendWithTwilioError(t, 500, 20500);
     const body = vi.mocked(fetch).mock.calls[0]![1]!.body as URLSearchParams;
     expect(body.get("StatusCallback")).toBe(`${SITE}/twilio/status`);
@@ -253,21 +265,21 @@ describe("Twilio status callback", () => {
   const FAILED = { MessageSid: "SM123", MessageStatus: "undelivered", ErrorCode: "21704", To: PHONE };
 
   it("rejects a bad signature with 403 and alerts nobody", async () => {
-    const t = setup();
+    const t = await setup();
     const res = await post(t, FAILED, "AAAAAAAAAAAAAAAAAAAAAAAAAAA=");
     expect(res.status).toBe(403);
     expect(await adminAlerts(t)).toHaveLength(0);
   });
 
   it("rejects a request signed for different params", async () => {
-    const t = setup();
+    const t = await setup();
     const sig = await twilioSignature(AUTH_TOKEN, `${SITE}/twilio/status`, new URLSearchParams(FAILED));
     const res = await post(t, { ...FAILED, ErrorCode: "30003" }, sig);
     expect(res.status).toBe(403);
   });
 
   it("rejects a request with no signature header", async () => {
-    const t = setup();
+    const t = await setup();
     const res = await t.fetch("/twilio/status", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -277,7 +289,7 @@ describe("Twilio status callback", () => {
   });
 
   it.each(["failed", "undelivered"])("alerts the admin on %s with code, masked number and sid", async (status) => {
-    const t = setup();
+    const t = await setup();
     const res = await post(t, { ...FAILED, MessageStatus: status });
     expect(res.status).toBe(200);
 
@@ -290,28 +302,28 @@ describe("Twilio status callback", () => {
   });
 
   it.each(["queued", "sent", "delivered"])("ignores %s", async (status) => {
-    const t = setup();
+    const t = await setup();
     const res = await post(t, { ...FAILED, MessageStatus: status });
     expect(res.status).toBe(200);
     expect(await adminAlerts(t)).toHaveLength(0);
   });
 
   it("rate-limits repeated callbacks for the same error code", async () => {
-    const t = setup();
+    const t = await setup();
     await post(t, FAILED);
     await post(t, { ...FAILED, MessageSid: "SM456" });
     expect(await adminAlerts(t)).toHaveLength(1);
   });
 
   it.each(["30003", "30005", "30006"])("stays quiet about %s, a phone that is off or not a mobile", async (code) => {
-    const t = setup();
+    const t = await setup();
     await post(t, { ...FAILED, ErrorCode: code });
     expect(await adminAlerts(t)).toHaveLength(0);
   });
 });
 
 describe("reserveSmsSend: the cap notice's upgrade link", () => {
-  async function exhausted(tier: "free" | "max", used: number) {
+  async function exhausted(tier: "free" | "pro" | "max", used: number) {
     const t = convexTest(schema, modules);
     const month = new Date().toISOString().slice(0, 7);
     await t.run((ctx) =>
@@ -326,9 +338,15 @@ describe("reserveSmsSend: the cap notice's upgrade link", () => {
     return t.mutation(internal.tiers.reserveSmsSend, { userId: "u1" });
   }
 
-  it("offers an upgrade to a free account that has run out", async () => {
-    const r = await exhausted("free", 10);
-    expect(r).toMatchObject({ ok: false, reason: "month", notice: { limit: 10, canUpgrade: true } });
+  it("offers an upgrade to a paid account that has run out", async () => {
+    const r = await exhausted("pro", 60);
+    expect(r).toMatchObject({ ok: false, reason: "month", notice: { limit: 60, canUpgrade: true } });
+  });
+
+  // Free has no texts. A "you've used your 0 texts" notice would itself be a text.
+  it("refuses a free account without a notice", async () => {
+    const r = await exhausted("free", 0);
+    expect(r).toEqual({ ok: false, reason: "plan" });
   });
 
   it("offers nothing to the top plan, which has nowhere to go", async () => {
@@ -339,7 +357,7 @@ describe("reserveSmsSend: the cap notice's upgrade link", () => {
   // The notice names a month. Taking the clock again in the action, after the
   // reservation, could name the next one when the send straddles midnight UTC.
   it("stamps the notice with the moment the allowance was found spent", async () => {
-    const r = await exhausted("free", 10);
+    const r = await exhausted("pro", 60);
     expect(r.notice?.at).toBe(Date.now());
   });
 });
@@ -361,7 +379,7 @@ describe("admin visibility", () => {
   }
 
   it("counts a text Twilio accepted against today", async () => {
-    const t = setup();
+    const t = await setup();
     twilioAnswers(201, { sid: "SM1" });
     await t.action(internal.sms.sendMatchAlert, { userId: "u", phone: PHONE, monitorName: "Huts", monitorId: "m1", matchCount: 1 });
     expect(await counter(t, `sms:sent:${today()}`)).toBe(1);
@@ -371,7 +389,7 @@ describe("admin visibility", () => {
   // Counted even when the code is one recipient's problem and raises no alert:
   // the digest is the place a steady trickle of those should show up.
   it("counts every failure against today, including ones too minor to alert on", async () => {
-    const t = setup();
+    const t = await setup();
     twilioAnswers(400, { code: 21211 });
     await expect(
       t.action(internal.sms.sendMatchAlert, { userId: "u", phone: PHONE, monitorName: "Huts", monitorId: "m1", matchCount: 1 }),
@@ -381,13 +399,14 @@ describe("admin visibility", () => {
   });
 
   it("tells the admin when someone confirms a phone, with their email and a masked number", async () => {
-    const t = setup();
+    const t = await setup();
     const user = (await t.mutation(components.betterAuth.adapter.create, {
       input: {
         model: "user",
         data: { name: "A Person", email: "person@example.test", emailVerified: true, createdAt: Date.now(), updatedAt: Date.now() },
       },
     })) as { _id: string };
+    await t.run((ctx) => ctx.db.insert("userTiers", { userId: user._id, tier: "pro", updatedAt: 0 }));
     const code = await t.mutation(internal.sms.claimVerification, { userId: user._id, phone: PHONE });
     await t.withIdentity({ subject: user._id }).mutation(api.sms.confirmVerification, { code });
 
@@ -400,13 +419,14 @@ describe("admin visibility", () => {
   });
 
   it("says nothing on a wrong code", async () => {
-    const t = setup();
+    const t = await setup();
     const user = (await t.mutation(components.betterAuth.adapter.create, {
       input: {
         model: "user",
         data: { name: "A Person", email: "person@example.test", emailVerified: true, createdAt: Date.now(), updatedAt: Date.now() },
       },
     })) as { _id: string };
+    await t.run((ctx) => ctx.db.insert("userTiers", { userId: user._id, tier: "pro", updatedAt: 0 }));
     const code = await t.mutation(internal.sms.claimVerification, { userId: user._id, phone: PHONE });
     const wrong = code === "000000" ? "111111" : "000000";
     await expect(t.withIdentity({ subject: user._id }).mutation(api.sms.confirmVerification, { code: wrong })).rejects.toThrow();
@@ -436,7 +456,7 @@ describe("a number Twilio will never deliver to", () => {
   // The user's slots are refunded on a failed send but the global budget is
   // not, so without this a STOP'd number spends the budget on every alert.
   it.each([21610, 21211, 21614])("turns the user's texts off after a %s", async (code) => {
-    const t = setup();
+    const t = await setup();
     await seed(t);
     twilio(400, code);
     await alert(t);
@@ -444,7 +464,7 @@ describe("a number Twilio will never deliver to", () => {
   });
 
   it("leaves texts on after an error that is not about the number", async () => {
-    const t = setup();
+    const t = await setup();
     await seed(t);
     twilio(500, 20500);
     await alert(t);

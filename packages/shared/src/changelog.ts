@@ -19,8 +19,7 @@ export const CHANGELOG: readonly ChangelogEntry[] = [
     id: "sms-alerts",
     date: "2026-10-06",
     title: "PageAlert can now text you",
-    // convex/whatsNew.test.ts checks these figures against SMS_LIMITS.
-    body: "Get a text when a monitor finds a match or a price drops. Free accounts get 10 texts a month, up to 3 a day.",
+    body: "Get a text when a monitor finds a match or a price drops. Texts come with every paid plan.",
     cta: { label: "Set up texts", href: "/dashboard/settings?tab=notifications#sms" },
   },
   {

@@ -1011,9 +1011,9 @@ export const reconcile = internalAction({
  * Texts a user may be sent per month and per day.
  *
  * SMS is the only channel that costs money per send, so unlike monitors or
- * scans these numbers are a budget rather than a product limit. At the UK rate
- * (~$0.056) a free user who spends their month costs about $0.56 against no
- * revenue, and a Max user about $11.20 against $29.
+ * scans these numbers are a budget rather than a product limit. Free gets none:
+ * every text there was cost against no revenue. At the UK rate (~$0.056) a Max
+ * user who spends their month costs about $11.20 against $29.
  *
  * The two windows stop different things. The month caps spend. The day stops a
  * page that starts flapping from burning a whole month before lunch — and from
@@ -1023,7 +1023,7 @@ export const reconcile = internalAction({
  * nothing; lowering one takes something away from people already using it.
  */
 export const SMS_LIMITS: Record<Tier, { month: number; day: number }> = {
-  free: { month: 10, day: 3 },
+  free: { month: 0, day: 0 },
   sprint: { month: 25, day: 10 },
   pro: { month: 60, day: 20 },
   max: { month: 200, day: 50 },
@@ -1094,7 +1094,7 @@ export async function spendSmsBudget(ctx: MutationCtx): Promise<boolean> {
 }
 
 /** Why a send was refused. "budget" is ours; the others are the user's. */
-export type SmsRefusal = "day" | "month" | "budget";
+export type SmsRefusal = "plan" | "day" | "month" | "budget";
 
 export interface SmsReservation {
   ok: boolean;
@@ -1219,6 +1219,8 @@ export const reserveSmsSend = internalMutation({
 
     const tier = effectiveTier(record);
     const limits = SMS_LIMITS[tier];
+    // A plan with no texts is not one that ran out, so no "you are out" notice.
+    if (limits.month === 0) return { ok: false, reason: "plan" };
 
     const monthUsed = record?.smsMonth === month ? (record.smsMonthCount ?? 0) : 0;
     const dayUsed = record?.smsDay === day ? (record.smsDayCount ?? 0) : 0;

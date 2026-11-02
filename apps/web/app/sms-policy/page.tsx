@@ -120,7 +120,7 @@ export default function SmsPolicyPage() {
             <li>Five incorrect attempts burn the code.</li>
             <li>An account may request at most 3 codes per day.</li>
             <li>The customer must be signed in. There is no anonymous path to this endpoint.</li>
-            <li>On the free plan a number can be claimed by one account only, so the same number cannot be registered again and again.</li>
+            <li>Text alerts are only available on paid plans, so a free account cannot request a code at all.</li>
             <li>Destination countries are restricted to an explicit allowlist in our own code, and again at Twilio through geo permissions.</li>
           </ul>
 
@@ -149,7 +149,7 @@ export default function SmsPolicyPage() {
             <li><strong>One match</strong> — PageAlert: 1 new match on &ldquo;Visa appointment slots&rdquo; https://pagealert.io/m/k17d8h2n4p9q3r5s7t1v6w8x0y2z4a6b</li>
             <li><strong>Price change</strong> — PageAlert: Sony WH-1000XM5 now $279.99 (was $379.00) https://pagealert.io/m/k17d8h2n4p9q3r5s7t1v6w8x0y2z4a6b</li>
             <li><strong>Verification code</strong> — PageAlert: your code is 481920. It expires in 10 minutes. Turn texts off any time in your dashboard settings.</li>
-            <li><strong>Allowance used up</strong>, sent at most once a month — PageAlert: you&apos;ve used your 10 texts for October. Texts resume 1 Nov. Alerts on your other channels carry on. More texts: pagealert.io/pricing</li>
+            <li><strong>Allowance used up</strong>, sent at most once a month — PageAlert: you&apos;ve used your 25 texts for October. Texts resume 1 Nov. Alerts on your other channels carry on. More texts: pagealert.io/pricing</li>
           </ul>
           <p>Every message begins with the brand name, so the sender is never ambiguous, and each is composed to fit a single 160-character GSM-7 segment.</p>
 
@@ -165,7 +165,7 @@ export default function SmsPolicyPage() {
                 </tr>
               </thead>
               <tbody className="text-foreground">
-                {[["Free", "10", "3"], ["Sprint", "25", "10"], ["Pro", "60", "20"], ["Max", "200", "50"]].map(
+                {[["Free", "0", "0"], ["Sprint", "25", "10"], ["Pro", "60", "20"], ["Max", "200", "50"]].map(
                   ([plan, month, day]) => (
                     <tr key={plan} className="border-b border-border/20 last:border-0">
                       <td className="py-2 pr-4">{plan}</td>

@@ -4,6 +4,7 @@ import { mutation, query } from "./_generated/server";
 import { components } from "./_generated/api";
 import { isLiveAccount } from "./account";
 import { smsEnabled } from "./sms";
+import { effectiveTier, SMS_LIMITS } from "./tiers";
 
 /**
  * The newest changelog entry when the signed-in user should get it as a popup,
@@ -23,9 +24,14 @@ export const show = query({
       .unique();
     if (activity?.announcementsSeen?.includes(entry.id)) return null;
 
-    // "Set up texts" leads nowhere while the card is switched off, and means nothing to someone already set up.
+    // "Set up texts" leads nowhere while the card is switched off or the plan has no texts, and means nothing to someone already set up.
     if (entry.id === "sms-alerts") {
       if (!smsEnabled()) return null;
+      const tier = await ctx.db
+        .query("userTiers")
+        .withIndex("by_userId", (q) => q.eq("userId", identity.subject))
+        .unique();
+      if (SMS_LIMITS[effectiveTier(tier)].month === 0) return null;
       const sms = await ctx.db
         .query("notificationSettings")
         .withIndex("by_userId_channel", (q) => q.eq("userId", identity.subject).eq("channel", "sms"))

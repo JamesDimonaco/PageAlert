@@ -4,7 +4,6 @@ import { internalAction, internalMutation, internalQuery, type ActionCtx, type Q
 import { components, internal } from "./_generated/api";
 import { APP_URL, HELLO_FROM_EMAIL, RESEND_TIMEOUT } from "./emails";
 import { esc } from "./shared";
-import { SMS_LIMITS } from "./tiers";
 import { isBanned } from "./account";
 import { isOptedOut, unsubscribeHeaders, unsubscribeUrl } from "./unsubscribe";
 
@@ -35,11 +34,10 @@ const smsAlerts: Announcement = {
   subject: "PageAlert can now text you",
   render: (unsubscribeLink) => {
     const settingsHref = `${APP_URL}/dashboard/settings?tab=notifications#sms`;
-    const freeTexts = SMS_LIMITS.free.month;
     const paragraphs = [
       "PageAlert can now send you a text message the moment a monitor finds a match or a price drops.",
       "A text reaches you faster than an email, which helps when stock sells out in minutes.",
-      `Free accounts get ${freeTexts} texts a month. Paid plans get more.`,
+      "Texts come with every paid plan.",
     ];
     const html = `<!DOCTYPE html>
 <html>

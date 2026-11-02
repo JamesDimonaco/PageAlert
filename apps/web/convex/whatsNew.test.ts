@@ -5,7 +5,6 @@ import { CHANGELOG, latestChangelogEntry } from "@prowl/shared";
 import { api, components } from "./_generated/api";
 import schema from "./schema";
 import betterAuthSchema from "./betterAuth/schema";
-import { SMS_LIMITS } from "./tiers";
 
 const modules = import.meta.glob("./**/*.*s");
 const betterAuthModules = import.meta.glob("./betterAuth/**/*.*s");
@@ -29,6 +28,8 @@ async function signUp(t: ReturnType<typeof harness>, createdAt: number): Promise
       data: { name: "A Person", email: `${createdAt}@example.test`, emailVerified: true, createdAt, updatedAt: createdAt },
     },
   })) as { _id: string };
+  // The newest entry is about texts, which only paid plans get.
+  await t.run((ctx) => ctx.db.insert("userTiers", { userId: user._id, tier: "pro", updatedAt: createdAt }));
   return user._id;
 }
 
@@ -130,10 +131,16 @@ describe("whatsNew.show: while the texts entry is the newest", () => {
   });
 });
 
-describe("changelog figures that come from server limits", () => {
-  it("quotes the free SMS limits", () => {
-    const sms = CHANGELOG.find((e) => e.id === "sms-alerts")!;
-    expect(sms.body).toContain(`${SMS_LIMITS.free.month} texts a month, up to ${SMS_LIMITS.free.day} a day`);
+describe("the texts changelog entry", () => {
+  // Free has no texts, so "Set up texts" would lead to a paywall.
+  it("does not pop up for a free account", async () => {
+    const t = harness();
+    const userId = await existingUser(t);
+    await t.run(async (ctx) => {
+      const row = await ctx.db.query("userTiers").withIndex("by_userId", (q) => q.eq("userId", userId)).unique();
+      if (row) await ctx.db.patch(row._id, { tier: "free" });
+    });
+    expect(await t.withIdentity({ subject: userId }).query(api.whatsNew.show, {})).toBeNull();
   });
 
   // Keeps the id that the original texts popup stored, so nobody who dismissed it sees it twice.

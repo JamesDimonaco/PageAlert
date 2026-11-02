@@ -43,15 +43,17 @@ type CheckInterval = "5m" | "15m" | "30m" | "1h" | "6h" | "24h";
 /**
  * Channels the free tier is rationed on. Email and push are always available:
  * email is the account's own address, and push goes to a device the user has
- * already granted permission on, at no cost per message to us.
- *
- * SMS is rationed for the opposite reason to Telegram and Discord — not to
- * push people towards a paid plan, but because every send is money. Its
- * monthly and daily allowance lives in tiers.ts; this is what keeps a free
- * account from spreading that allowance across three monitors at once.
+ * already granted permission on, at no cost per message to us. SMS is not
+ * rationed on free but absent: every text costs money. See SMS_LIMITS.
  */
 function isRestrictedChannel(channel: string): boolean {
-  return channel === "telegram" || channel === "discord" || channel === "sms";
+  return channel === "telegram" || channel === "discord";
+}
+
+/** A free monitor's channels. A list that was only texts falls back to email rather than alerting nobody. */
+function withoutSms<C extends string>(channels: C[]): C[] {
+  const rest = channels.filter((c) => c !== "sms");
+  return rest.length > 0 ? rest : (["email"] as C[]);
 }
 
 function clampInterval(interval: string, tier: Tier): CheckInterval {
@@ -229,7 +231,7 @@ export async function createMonitorForUser(
   // sends a list; MCP leaves it out.
   let channels = args.notificationChannels;
   if (tier === "free") {
-    channels ??= ALL_CHANNELS;
+    channels = withoutSms(channels ?? ALL_CHANNELS);
     if (channels.some(isRestrictedChannel)) {
       const existingWithChannels = existingMonitors.find((m) =>
         m.notificationChannels?.some(isRestrictedChannel)
@@ -558,6 +560,7 @@ export const update = mutation({
 
     // Free tier: only one monitor can use the restricted channels — see create
     if (fields.notificationChannels !== undefined && tier === "free") {
+      fields.notificationChannels = withoutSms(fields.notificationChannels);
       if (fields.notificationChannels.some(isRestrictedChannel)) {
         const otherMonitors = await ctx.db
           .query("monitors")

@@ -526,9 +526,7 @@ export const runScheduledChecks = internalAction({
             // "every channel" above, which is right for the ones that cost
             // nothing — but every monitor made before the field existed has no
             // list, so the shared rule would start texting for all of them the
-            // moment a user verified a number. It would also route around the
-            // free-tier ration, which monitors.create/update only apply when
-            // the list is explicit.
+            // moment a user verified a number.
             const shouldSendSms = monitorChannels?.includes("sms") === true;
 
             // Both paths now name the entries the user has not been told

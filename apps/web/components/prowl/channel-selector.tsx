@@ -24,8 +24,9 @@ const CHANNEL_CONFIG: Record<Channel, { label: string; icon: typeof Mail }> = {
 /**
  * Channels the free tier allows on one monitor only. Mirrors
  * isRestrictedChannel in convex/monitors.ts, which is what actually enforces it.
+ * Texts are not here: free has none at all.
  */
-const RESTRICTED: Channel[] = ["telegram", "discord", "sms"];
+const RESTRICTED: Channel[] = ["telegram", "discord"];
 
 /**
  * Channels whose availability is a notificationSettings row. Equal to
@@ -104,7 +105,7 @@ export function ChannelSelector({ value, onChange, monitorId, disabled }: Channe
   function isChannelAvailable(channel: Channel): boolean {
     if (!configuredChannels.has(channel)) return false;
     if (tier !== "free") return true;
-    // Free tier rations Telegram, Discord and text alerts to one monitor.
+    // Free tier rations Telegram and Discord to one monitor.
     // Email and push are unrestricted — see isRestrictedChannel in
     // convex/monitors.ts.
     if (!RESTRICTED.includes(channel)) return true;
@@ -179,8 +180,8 @@ export function ChannelSelector({ value, onChange, monitorId, disabled }: Channe
       <div className="flex flex-wrap gap-2">
         {(["email", "sms", "push", "telegram", "discord"] as Channel[])
           // While text alerts are off there is no settings card to send anyone
-          // to, so offering the chip would be a dead end.
-          .filter((channel) => channel !== "sms" || smsEnabled)
+          // to, so offering the chip would be a dead end. Free has no texts.
+          .filter((channel) => channel !== "sms" || (smsEnabled && tier !== "free"))
           .map((channel) => {
           const config = CHANNEL_CONFIG[channel];
           const Icon = config.icon;
