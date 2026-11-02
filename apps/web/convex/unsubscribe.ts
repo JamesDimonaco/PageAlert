@@ -1,7 +1,8 @@
 import { v } from "convex/values";
-import { httpAction, internalMutation, internalQuery, type QueryCtx } from "./_generated/server";
+import { httpAction, internalMutation, internalQuery, mutation, query, type QueryCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { esc } from "./shared";
+import { requireLiveAccount } from "./account";
 import { emailCategory, type EmailCategory } from "./schema";
 
 /**
@@ -83,6 +84,36 @@ export const optedOutAmong = internalQuery({
       if (await isOptedOut(ctx, userId, category)) out.push(userId);
     }
     return out;
+  },
+});
+
+/** The categories the signed-in user has turned off, for Settings. */
+export const myOptOuts = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return [];
+    const rows = await ctx.db
+      .query("emailOptOuts")
+      .withIndex("by_userId_and_category", (q) => q.eq("userId", identity.subject))
+      .take(ALL_CATEGORIES.length);
+    return rows.map((r) => r.category);
+  },
+});
+
+export const setMyOptOut = mutation({
+  args: { category: emailCategory, optedOut: v.boolean() },
+  handler: async (ctx, { category, optedOut }) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Not authenticated");
+    const userId = identity.subject;
+    await requireLiveAccount(ctx, userId);
+    const row = await ctx.db
+      .query("emailOptOuts")
+      .withIndex("by_userId_and_category", (q) => q.eq("userId", userId).eq("category", category))
+      .first();
+    if (optedOut && !row) await ctx.db.insert("emailOptOuts", { userId, category, optedOutAt: Date.now() });
+    if (!optedOut && row) await ctx.db.delete(row._id);
   },
 });
 
