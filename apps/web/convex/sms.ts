@@ -10,7 +10,7 @@ import {
   type MutationCtx,
 } from "./_generated/server";
 import { components, internal } from "./_generated/api";
-import { effectiveTier, spendSmsBudget } from "./tiers";
+import { effectiveTier, SMS_LIMITS, spendSmsBudget } from "./tiers";
 import { requireLiveAccount } from "./account";
 import {
   formatMatchSms,
@@ -498,6 +498,14 @@ function sixDigits(): string {
 export const claimVerification = internalMutation({
   args: { userId: v.string(), phone: v.string() },
   handler: async (ctx, { userId, phone }) => {
+    const tierRecord = await ctx.db
+      .query("userTiers")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .unique();
+    if (SMS_LIMITS[effectiveTier(tierRecord)].month === 0) {
+      throw new Error("Text alerts come with a paid plan.");
+    }
+
     const today = new Date().toISOString().slice(0, 10);
     const existing = await ctx.db
       .query("phoneVerifications")

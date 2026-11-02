@@ -26,8 +26,7 @@ export const PLANS: Plan[] = [
     features: [
       { text: "3 monitors" },
       { text: "1 hour check interval" },
-      { text: "Email and push, plus Telegram, Discord or texts on one monitor" },
-      { text: "10 text alerts a month" },
+      { text: "Email and push, plus Telegram or Discord on one monitor" },
       { text: `${HISTORY_WINDOW_DAYS.free} days of scrape logs` },
       { text: "AI-powered extraction" },
       { text: "Change detection" },

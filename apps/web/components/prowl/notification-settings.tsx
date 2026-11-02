@@ -142,7 +142,7 @@ export function NotificationSettings() {
             id: "sms" as const,
             icon: <Smartphone className="h-5 w-5" />,
             name: "Text message",
-            blurb: tier === "free" ? "A text when something changes, on one monitor" : "A text when something changes",
+            blurb: tier === "free" ? "A text when something changes. Paid plans only" : "A text when something changes",
             ready: connected("sms"),
             status: smsTarget ? `••• ••• ${smsTarget.slice(-4)}` : undefined,
           },
@@ -196,7 +196,7 @@ export function NotificationSettings() {
           <h2 className="text-lg font-semibold">Where alerts go</h2>
           <p className="text-sm text-muted-foreground mt-1 leading-relaxed">
             Set each one up once. Then each monitor picks which of these it uses.
-            {tier === "free" && " On free, one monitor can use Telegram, Discord or texts. Upgrade to Pro for all of them."}
+            {tier === "free" && " On free, one monitor can use Telegram or Discord. Upgrade for all of them, and for texts."}
           </p>
         </div>
         <div className="divide-y divide-border/30 rounded-xl border border-border/30 bg-card/50 shadow-sm shadow-black/5">
@@ -381,6 +381,15 @@ export function NotificationSettings() {
                   </p>
                 )}
               </>
+            ) : tier === "free" ? (
+              <div className="space-y-3">
+                <p className="text-sm text-muted-foreground leading-relaxed">
+                  Text alerts come with every paid plan, from the $4 Sprint pass up.
+                </p>
+                <Link href="/dashboard/settings?tab=billing" onClick={() => setOpen(null)} className={buttonVariants({ size: "sm" })}>
+                  See plans
+                </Link>
+              </div>
             ) : smsStep === "code" ? (
               <>
                 <div className="space-y-2">
