@@ -15,8 +15,8 @@ overrides:
   # Pin per-major because the older majors have CommonJS-only callers
   # (e.g. minimatch@3 used by eslint) that can't load the v5 ESM build.
   # Forcing v5 globally breaks `eslint` at runtime.
-  "brace-expansion@^1": "^1.1.13"
-  "brace-expansion@^4": "^5.0.5"
+  "brace-expansion@^1": "^1.1.21"
+  "brace-expansion@^4": "^5.0.12"
   # GHSA-3v7f-55p6-f55p — picomatch ReDoS / method injection
   picomatch: ">=2.3.2 <3 || >=4.0.4"
   # GHSA-27v5-c462-wpq7 — path-to-regexp ReDoS (via @posthog/ai > MCP > express)
@@ -27,3 +27,26 @@ overrides:
   "esbuild@>=0.27.3 <0.28.1": ">=0.28.1"
   # GHSA (pnpm audit 2026-09-05) — @opentelemetry/core; pulled via exporter-logs-otlp-http@0.214.
   "@opentelemetry/core@<2.8.0": ">=2.8.0"
+  # pnpm audit 2026-11-02 — MCP TypeScript SDK: HTTP transports didn't limit
+  # request body/batch size, leaked bearer tokens across services, allowed
+  # cross-origin redirect re-send of credentials, and let experimental tasks
+  # leak across sessions; pulled via @posthog/ai (scraper) and mcp-handler (web).
+  # All within the 1.x line, so no major bump.
+  "@modelcontextprotocol/sdk@<1.30.1": ">=1.30.1"
+  "@modelcontextprotocol/sdk@>=1.3.0 <1.32.0": ">=1.32.0"
+  "@modelcontextprotocol/sdk@>=1.6.0 <1.32.0": ">=1.32.0"
+  "@modelcontextprotocol/sdk@>=1.10.0 <1.30.1": ">=1.30.1"
+  "@modelcontextprotocol/sdk@>=1.12.0 <1.31.0": ">=1.31.0"
+  "@modelcontextprotocol/sdk@>=1.24.0 <1.32.0": ">=1.32.0"
+  # pnpm audit 2026-11-02 — Zod can exhaust memory validating oversized
+  # constrained collections. Only reaches apps/web's direct zod (already
+  # >=4.6.6); scoped so it never touches apps/scraper's zod@3.x.
+  "zod@>=4.0.0 <4.6.6": ">=4.6.6"
+  # NOT fixed (left for a future major-bump pass, see PR):
+  # - better-auth / @better-auth/kysely-adapter / @better-auth/drizzle-adapter
+  #   advisories need better-auth >=1.7.0, which @convex-dev/better-auth's
+  #   0.12 adapter doesn't support yet (CLAUDE.md pin).
+  # - @hono/node-server advisory needs >=2.1.3 (major bump).
+  # - minimatch advisory needs >=11.0.1; only majors present are 3.x (eslint,
+  #   CommonJS-only, same constraint as the brace-expansion pin above) and
+  #   10.x — both major bumps.
