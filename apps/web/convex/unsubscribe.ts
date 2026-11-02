@@ -57,12 +57,15 @@ const LABEL: Record<EmailCategory, string> = {
   updates: "product updates",
 };
 
-export async function isOptedOut(ctx: QueryCtx, userId: string, category: EmailCategory): Promise<boolean> {
-  const row = await ctx.db
+function findOptOut(ctx: QueryCtx, userId: string, category: EmailCategory) {
+  return ctx.db
     .query("emailOptOuts")
     .withIndex("by_userId_and_category", (q) => q.eq("userId", userId).eq("category", category))
     .first();
-  return row !== null;
+}
+
+export async function isOptedOut(ctx: QueryCtx, userId: string, category: EmailCategory): Promise<boolean> {
+  return (await findOptOut(ctx, userId, category)) !== null;
 }
 
 export const optOut = internalMutation({
@@ -108,10 +111,7 @@ export const setMyOptOut = mutation({
     if (!identity) throw new Error("Not authenticated");
     const userId = identity.subject;
     await requireLiveAccount(ctx, userId);
-    const row = await ctx.db
-      .query("emailOptOuts")
-      .withIndex("by_userId_and_category", (q) => q.eq("userId", userId).eq("category", category))
-      .first();
+    const row = await findOptOut(ctx, userId, category);
     if (optedOut && !row) await ctx.db.insert("emailOptOuts", { userId, category, optedOutAt: Date.now() });
     if (!optedOut && row) await ctx.db.delete(row._id);
   },

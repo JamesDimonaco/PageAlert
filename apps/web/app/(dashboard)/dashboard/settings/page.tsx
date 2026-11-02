@@ -44,7 +44,7 @@ export default function SettingsPage() {
   const [email, setEmail] = useState(user?.email ?? "");
 
   // Tab state — driven by ?tab= so deep-links (e.g. from the channel-selector
-  // toast) land on the right tab. Falls back to "profile" if missing/invalid.
+  // toast) land on the right tab. Falls back to "notifications" if missing/invalid.
   const searchParams = useSearchParams();
   const router = useRouter();
   const pathname = usePathname();

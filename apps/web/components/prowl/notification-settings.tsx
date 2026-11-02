@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -82,15 +82,28 @@ export function NotificationSettings() {
   const updateMonitor = useMutation(api.monitors.update);
   const notifSettings = useQuery(api.notificationSettings.list);
   const optOuts = useQuery(api.unsubscribe.myOptOuts);
+  const [savingOptOut, setSavingOptOut] = useState(false);
   const setOptOut = useMutation(api.unsubscribe.setMyOptOut);
 
   // "Set up texts" links here with #sms. The flag query resolves after mount,
   // so open the dialog once it does.
   const [hashChecked, setHashChecked] = useState(false);
+  const openFromHash = () => {
+    if (window.location.hash !== "#sms") return;
+    setOpen("sms");
+    // Otherwise every reload reopens it.
+    history.replaceState(null, "", window.location.pathname + window.location.search);
+  };
   if (smsEnabled !== undefined && !hashChecked) {
     setHashChecked(true);
-    if (smsEnabled && window.location.hash === "#sms") setOpen("sms");
+    if (smsEnabled) openFromHash();
   }
+  // A link to #sms followed while this tab is already open.
+  useEffect(() => {
+    if (!smsEnabled) return;
+    window.addEventListener("hashchange", openFromHash);
+    return () => window.removeEventListener("hashchange", openFromHash);
+  });
 
   // Sync settings from DB to local state on first load only
   const [settingsSynced, setSettingsSynced] = useState(false);
@@ -104,7 +117,7 @@ export function NotificationSettings() {
 
   const connected = (channel: "sms" | "telegram" | "discord") =>
     notifSettings?.find((s) => s.channel === channel)?.enabled ?? false;
-  const smsTarget = notifSettings?.find((s) => s.channel === "sms")?.target;
+  const smsTarget = connected("sms") ? notifSettings?.find((s) => s.channel === "sms")?.target : undefined;
 
   const channels: Array<{
     id: NotificationChannel;
@@ -112,7 +125,8 @@ export function NotificationSettings() {
     name: string;
     blurb: string;
     ready: boolean;
-    status: string;
+    /** Shown in place of the blurb when there is something to report. */
+    status?: string;
   }> = [
     {
       id: "email",
@@ -130,7 +144,7 @@ export function NotificationSettings() {
             name: "Text message",
             blurb: tier === "free" ? "A text when something changes, on one monitor" : "A text when something changes",
             ready: connected("sms"),
-            status: connected("sms") && smsTarget ? `••• ••• ${smsTarget.slice(-4)}` : "Not set up",
+            status: smsTarget ? `••• ••• ${smsTarget.slice(-4)}` : undefined,
           },
         ]
       : []),
@@ -140,7 +154,7 @@ export function NotificationSettings() {
       name: "Telegram",
       blurb: tier === "free" ? "Instant messages from our bot, on one monitor" : "Instant messages from our bot",
       ready: connected("telegram"),
-      status: connected("telegram") ? "Connected" : "Not set up",
+      status: connected("telegram") ? "Connected" : undefined,
     },
     {
       id: "push",
@@ -155,7 +169,9 @@ export function NotificationSettings() {
             : "On for this device"
           : push.deviceCount > 0
             ? `On for ${push.deviceCount} other device${push.deviceCount !== 1 ? "s" : ""}`
-            : "Not set up",
+            : push.state === "loading"
+              ? "Checking this device…"
+              : undefined,
     },
     {
       id: "discord",
@@ -163,7 +179,7 @@ export function NotificationSettings() {
       name: "Discord",
       blurb: tier === "free" ? "Posts to a Discord channel, on one monitor" : "Posts to a Discord channel",
       ready: connected("discord"),
-      status: connected("discord") ? "Connected" : "Not set up",
+      status: connected("discord") ? "Connected" : undefined,
     },
   ];
   const openChannel = channels.find((c) => c.id === open);
@@ -194,9 +210,15 @@ export function NotificationSettings() {
                     <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-xs">Ready</Badge>
                   ) : null}
                 </div>
-                <p className="text-xs text-muted-foreground mt-0.5 truncate">{c.ready ? c.status : c.blurb}</p>
+                <p className="text-xs text-muted-foreground mt-0.5 truncate">{c.status ?? c.blurb}</p>
               </div>
-              <Button variant={c.ready ? "ghost" : "outline"} size="sm" className="shrink-0" onClick={() => setOpen(c.id)}>
+              <Button
+                variant={c.ready ? "ghost" : "outline"}
+                size="sm"
+                className="shrink-0"
+                disabled={c.id === "push" && push.state === "loading"}
+                onClick={() => setOpen(c.id)}
+              >
                 {c.ready ? "Manage" : "Connect"}
               </Button>
             </div>
@@ -241,13 +263,16 @@ export function NotificationSettings() {
                   variant="outline"
                   size="sm"
                   className="shrink-0"
-                  disabled={optOuts === undefined}
+                  disabled={optOuts === undefined || savingOptOut}
                   onClick={async () => {
+                    setSavingOptOut(true);
                     try {
                       await setOptOut({ category: t.id, optedOut: !off });
                       toast.success(off ? `${t.name} turned on` : `${t.name} turned off`);
                     } catch {
                       toast.error("Couldn't save that. Try again.");
+                    } finally {
+                      setSavingOptOut(false);
                     }
                   }}
                 >
@@ -534,6 +559,8 @@ export function NotificationSettings() {
               <Input
                 id="telegram"
                 placeholder="Your Telegram chat ID"
+                // Connected has no save, so an edit here would go nowhere. Disconnect to change it.
+                readOnly={connected("telegram")}
                 value={telegramChatId}
                 onChange={(e) => setTelegramChatId(e.target.value)}
               />
