@@ -148,8 +148,10 @@ export const create = mutation({
         if (watch) throw new ConvexError(`We can't watch the link from ${found.site}.`);
         continue;
       }
-      if (seen.has(listing.url)) continue;
-      seen.add(listing.url);
+      // Compared the way addSuggestions compares, so both agree on what a repeat is.
+      const key = canonicalUrl(listing.url);
+      if (seen.has(key)) continue;
+      seen.add(key);
       listings.push({ ...listing, state: watch ? "watching" : "suggested", watch });
     }
     if (!listings.some((l) => l.watch)) throw new ConvexError("Tick at least one listing to watch.");
@@ -384,23 +386,23 @@ export const remove = mutation({
   },
 });
 
-async function groupWithRoom(ctx: QueryCtx, userId: string, id: Id<"monitorGroups">) {
+async function ownedBy(ctx: QueryCtx, userId: string, id: Id<"monitorGroups">) {
   const group = await ctx.db.get(id);
-  if (!group || group.userId !== userId) throw new ConvexError("Product not found.");
-  if (group.listings.length >= MAX_PRODUCT_LISTINGS) {
-    throw new ConvexError(
-      `This product already has ${MAX_PRODUCT_LISTINGS} listings, the most it can hold. Dismissed ones count too.`
-    );
-  }
-  return group;
+  return group && group.userId === userId ? group : null;
 }
 
 /** What "Find more listings" searches for. Refuses a product the user doesn't own or that is full. */
 export const searchTarget = internalQuery({
   args: { userId: v.string(), id: v.id("monitorGroups") },
   handler: async (ctx, { userId, id }) => {
-    const { name, region } = await groupWithRoom(ctx, userId, id);
-    return { name, region };
+    const group = await ownedBy(ctx, userId, id);
+    if (!group) throw new ConvexError("Product not found.");
+    if (group.listings.length >= MAX_PRODUCT_LISTINGS) {
+      throw new ConvexError(
+        `This product already has ${MAX_PRODUCT_LISTINGS} listings, the most it can hold. Dismissed ones count too.`
+      );
+    }
+    return { name: group.name, region: group.region };
   },
 });
 
@@ -409,12 +411,14 @@ export const searchTarget = internalQuery({
  * already in it, in any state, compared as canonical URLs so tracking
  * parameters don't make a repeat look new. Accessories are not stored, the
  * same as ones never revealed when a product is created. Stops at the cap;
- * `full` says some new ones didn't fit.
+ * `full` says some new ones didn't fit. Null when the product is gone. Never
+ * throws for either, because the search has already been counted.
  */
 export const addSuggestions = internalMutation({
   args: { userId: v.string(), id: v.id("monitorGroups"), listings: v.array(foundListingValidator) },
-  handler: async (ctx, { userId, id, listings }) => {
-    const group = await groupWithRoom(ctx, userId, id);
+  handler: async (ctx, { userId, id, listings }): Promise<{ added: string[]; full: boolean } | null> => {
+    const group = await ownedBy(ctx, userId, id);
+    if (!group) return null;
     const seen = new Set(group.listings.map((l) => canonicalUrl(l.url)));
     const added: GroupListing[] = [];
     let full = false;

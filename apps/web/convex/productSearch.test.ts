@@ -268,6 +268,62 @@ describe("productSearch.findMore", () => {
     expect(await listingsOf(t, id)).toHaveLength(24);
   });
 
+  it("gives the search back when the product filled up during it", async () => {
+    const t = harness();
+    const { as, userId } = await signUp(t);
+    const id = await insertProduct(t, userId, [stored("https://argos.co.uk/a", "watching")]);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        const filled = Array.from({ length: 24 }, (_, i) => stored(`https://shop${i}.test/x`, "dismissed"));
+        await t.run((ctx) => ctx.db.patch(id, { listings: filled }));
+        return foundAt("https://ao.com/1")();
+      })
+    );
+
+    expect(await as.action(api.productSearch.findMore, { groupId: id })).toEqual({ added: [], full: true });
+    expect((await as.query(api.productSearch.status, {}))?.used).toBe(0);
+  });
+
+  it("gives the search back when the product was deleted during it", async () => {
+    const t = harness();
+    const { as, userId } = await signUp(t);
+    const id = await insertProduct(t, userId, [stored("https://argos.co.uk/a", "watching")]);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        await t.run((ctx) => ctx.db.delete(id));
+        return foundAt("https://ao.com/1")();
+      })
+    );
+
+    expect(await as.action(api.productSearch.findMore, { groupId: id })).toEqual({ added: [], full: false });
+    expect((await as.query(api.productSearch.status, {}))?.used).toBe(0);
+  });
+
+  it("keeps the user's own default region", async () => {
+    const t = harness();
+    const { as, userId } = await signUp(t);
+    scraperReturns(foundAt("https://ao.com/1"));
+    await as.action(api.productSearch.search, { ...SEARCH, region: "DE" });
+    const id = await insertProduct(t, userId, [stored("https://argos.co.uk/a", "watching")]);
+
+    await as.action(api.productSearch.findMore, { groupId: id });
+    expect((await as.query(api.productSearch.status, {}))?.region).toBe("DE");
+  });
+
+  it("refuses a product whose name can't be searched, without spending a search", async () => {
+    const t = harness();
+    const { as, userId } = await signUp(t);
+    const id = await insertProduct(t, userId, [stored("https://argos.co.uk/a", "watching")]);
+    await t.run((ctx) => ctx.db.patch(id, { name: "X" }));
+    const fetchMock = scraperReturns(foundAt("https://ao.com/1"));
+
+    await expect(as.action(api.productSearch.findMore, { groupId: id })).rejects.toThrow("Type a product name");
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect((await as.query(api.productSearch.status, {}))?.used).toBe(0);
+  });
+
   it("refuses a full product without spending a search", async () => {
     const t = harness();
     const { as, userId } = await signUp(t);

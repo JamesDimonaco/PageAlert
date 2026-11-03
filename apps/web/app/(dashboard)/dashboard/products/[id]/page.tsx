@@ -111,14 +111,17 @@ export default function ProductPage({ params }: { params: Promise<{ id: string }
   async function findMoreListings() {
     setFinding(true);
     try {
-      const { added, full } = await findMore({ groupId });
+      const { added, full: productFull } = await findMore({ groupId });
       trackFindMoreListingsClicked({ newCount: added.length, failed: false });
       setNewUrls((prev) => new Set([...prev, ...added]));
-      const fullNote = full ? "This product is now full, so some weren't added." : undefined;
       if (added.length > 0) {
-        toast.success(`Found ${added.length} new listing${added.length === 1 ? "" : "s"}`, { description: fullNote });
+        toast.success(`Found ${added.length} new listing${added.length === 1 ? "" : "s"}`, {
+          description: productFull ? "This product is now full, so some weren't added." : undefined,
+        });
+      } else if (productFull) {
+        toast.info("This product is full", { description: "Nothing was added, and the search hasn't counted." });
       } else {
-        toast.info("No new listings found", { description: fullNote ?? "Everything the search found is already here." });
+        toast.info("No new listings found", { description: "Everything the search found is already here." });
       }
     } catch (err) {
       trackFindMoreListingsClicked({ newCount: 0, failed: true });

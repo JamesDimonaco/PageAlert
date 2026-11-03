@@ -62,12 +62,12 @@ export const status = query({
  * Count one search against today's allowance, or refuse.
  *
  * Runs before the scraper call, in a mutation, so two searches started at
- * once cannot both read "4 used" and both go through. Also saves the region
- * as the user's default, which costs nothing extra here.
+ * once cannot both read "4 used" and both go through. Also saves
+ * `saveRegion` as the user's default, which costs nothing extra here.
  */
 export const reserve = internalMutation({
-  args: { userId: v.string(), region: v.string() },
-  handler: async (ctx, { userId, region }): Promise<{ day: string }> => {
+  args: { userId: v.string(), saveRegion: v.optional(v.string()) },
+  handler: async (ctx, { userId, saveRegion }): Promise<{ day: string }> => {
     await requireLiveAccount(ctx, userId);
     const activity = await activityRow(ctx, userId);
     if (!activity?.betaFeatures?.includes("find_a_product")) {
@@ -94,7 +94,9 @@ export const reserve = internalMutation({
       await ctx.db.insert("userTiers", { userId, tier: "free", ...counts, updatedAt: Date.now() });
     }
 
-    if (activity.searchRegion !== region) await ctx.db.patch(activity._id, { searchRegion: region });
+    if (saveRegion !== undefined && activity.searchRegion !== saveRegion) {
+      await ctx.db.patch(activity._id, { searchRegion: saveRegion });
+    }
 
     return { day };
   },
@@ -117,9 +119,19 @@ export const refund = internalMutation({
 
 /**
  * Run one paid search, counted against the user's day: reserved first, and
- * given back if it fails or finds nothing.
+ * given back if it fails or finds nothing. Returns the day it was counted
+ * on, for a caller that has its own reason to give it back.
  */
-async function findListings(ctx: ActionCtx, userId: string, query: string, region: string): Promise<ProductListing[]> {
+async function findListings(
+  ctx: ActionCtx,
+  userId: string,
+  args: { query: string; region: string; saveRegion: boolean }
+): Promise<{ listings: ProductListing[]; day: string }> {
+  const query = args.query.trim();
+  const { region } = args;
+  if (query.length < 2 || query.length > 200) throw new ConvexError("Type a product name.");
+  if (!isSearchRegion(region)) throw new ConvexError("Pick a country to search.");
+
   const scraperUrl = process.env.SCRAPER_URL;
   const scraperKey = process.env.SCRAPER_API_KEY;
   if (!scraperUrl || !scraperKey) {
@@ -127,7 +139,10 @@ async function findListings(ctx: ActionCtx, userId: string, query: string, regio
     throw new ConvexError("Search isn't available right now.");
   }
 
-  const { day } = await ctx.runMutation(internal.productSearch.reserve, { userId, region });
+  const { day } = await ctx.runMutation(internal.productSearch.reserve, {
+    userId,
+    ...(args.saveRegion ? { saveRegion: region } : {}),
+  });
 
   let listings: ProductListing[];
   try {
@@ -147,7 +162,7 @@ async function findListings(ctx: ActionCtx, userId: string, query: string, regio
   }
 
   if (listings.length === 0) await ctx.runMutation(internal.productSearch.refund, { userId, day });
-  return listings;
+  return { listings, day };
 }
 
 export const search = action({
@@ -155,20 +170,18 @@ export const search = action({
   handler: async (ctx, args): Promise<ProductListing[]> => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new ConvexError("Sign in to search.");
-
-    const query = args.query.trim();
-    if (query.length < 2 || query.length > 200) throw new ConvexError("Type a product name.");
-    if (!isSearchRegion(args.region)) throw new ConvexError("Pick a country to search.");
-
-    return await findListings(ctx, identity.subject, query, args.region);
+    const { listings } = await findListings(ctx, identity.subject, { ...args, saveRegion: true });
+    return listings;
   },
 });
 
 /**
  * Search again for a product's name and region, and add what's new to it as
  * suggestions. Counts toward the daily limit like any search, even when all
- * it finds is already in the product. Returns the URLs it added, and whether
- * the product filled up before everything new fit.
+ * it finds is already in the product. Given back if nothing could be added
+ * because the product filled up, or was deleted, during the search. Returns
+ * the URLs it added, and whether the product filled up before everything new
+ * fit.
  */
 export const findMore = action({
   args: { groupId: v.id("monitorGroups") },
@@ -179,21 +192,24 @@ export const findMore = action({
 
     // Before the search is counted, so a product the user can't add to costs nothing.
     const { name, region } = await ctx.runQuery(internal.monitorGroups.searchTarget, { userId, id: groupId });
-    const listings = await findListings(ctx, userId, name, region);
+    // The product's region is not saved as the user's default: that is the
+    // region they last searched by hand.
+    const { listings, day } = await findListings(ctx, userId, { query: name, region, saveRegion: false });
     if (listings.length === 0) return { added: [], full: false };
 
-    return await ctx.runMutation(internal.monitorGroups.addSuggestions, {
+    const result = await ctx.runMutation(internal.monitorGroups.addSuggestions, {
       userId,
       id: groupId,
       listings: listings.map((l) => ({
-        site: l.site,
-        url: l.url,
-        title: l.title,
-        label: l.label,
-        ...(l.price !== null ? { price: l.price } : {}),
-        ...(l.currency !== null ? { currency: l.currency } : {}),
-        ...(l.inStock !== null ? { inStock: l.inStock } : {}),
+        ...l,
+        price: l.price ?? undefined,
+        currency: l.currency ?? undefined,
+        inStock: l.inStock ?? undefined,
       })),
     });
+    if (result === null || (result.full && result.added.length === 0)) {
+      await ctx.runMutation(internal.productSearch.refund, { userId, day });
+    }
+    return result ?? { added: [], full: false };
   },
 });
