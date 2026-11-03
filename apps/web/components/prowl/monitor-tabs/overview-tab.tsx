@@ -37,7 +37,7 @@ import { useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { timeAgo, timeUntil } from "@/lib/time";
 import { formatPrice, toSafeUrl } from "@/lib/format";
-import { cn } from "@/lib/utils";
+import { cn, errorText } from "@/lib/utils";
 import { toast } from "sonner";
 import { trackEvent } from "@/lib/posthog";
 
@@ -611,7 +611,7 @@ function MonitorSettingsForm({
       onClose();
       toast.success("Monitor updated");
     } catch (e) {
-      toast.error("Failed to update", { description: e instanceof Error ? e.message : "" });
+      toast.error("Failed to update", { description: errorText(e) });
     } finally {
       setSaving(false);
     }

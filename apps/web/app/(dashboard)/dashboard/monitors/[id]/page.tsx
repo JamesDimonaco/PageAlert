@@ -45,6 +45,7 @@ import type { ExtractedItem, ExtractionSchema } from "@prowl/shared";
 import { toast } from "sonner";
 import { trackEvent, captureException } from "@/lib/posthog";
 import { timeAgo } from "@/lib/time";
+import { errorText } from "@/lib/utils";
 
 // Extended monitor type until Convex types are regenerated with npx convex dev
 type MonitorExt = NonNullable<ReturnType<typeof useMonitor>> & {
@@ -135,7 +136,7 @@ export default function MonitorDetailPage({
       }).catch((e) => captureException(e, { context: "createLog_rescan", monitorId: id }));
       toast.success("Rescan complete", { description: `${totalItems} items, ${matchCount} matches` });
     } catch (e) {
-      const msg = e instanceof Error ? e.message : "Rescan failed";
+      const msg = errorText(e, "Rescan failed");
       const durationMs = Date.now() - startTime;
       await saveScanError({ id, error: msg }).catch((saveErr) => {
         console.error("[rescan] Failed to persist error state:", saveErr, { monitorId: id, error: msg });
@@ -288,7 +289,7 @@ export default function MonitorDetailPage({
                     await togglePause(monitorId);
                     toast.success(monitor.status === "paused" ? "Monitor resumed" : "Monitor paused");
                   } catch (err) {
-                    toast.error("Failed to update monitor", { description: err instanceof Error ? err.message : "" });
+                    toast.error("Failed to update monitor", { description: errorText(err) });
                   }
                 }}
               >
@@ -403,7 +404,7 @@ export default function MonitorDetailPage({
             toast.success("Monitor deleted");
             router.push("/dashboard");
           } catch (err) {
-            toast.error("Failed to delete", { description: err instanceof Error ? err.message : "" });
+            toast.error("Failed to delete", { description: errorText(err) });
           }
         }}
         monitorName={monitor.name}

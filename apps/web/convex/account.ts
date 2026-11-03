@@ -1,4 +1,4 @@
-import { getDocumentSize, v, type Value } from "convex/values";
+import { ConvexError, getDocumentSize, v, type Value } from "convex/values";
 import { internalMutation, mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { components, internal } from "./_generated/api";
 import { DAY_MS } from "@prowl/shared";
@@ -45,7 +45,7 @@ export async function isLiveAccount(ctx: MutationCtx, userId: string): Promise<b
 
 /** Refuses a caller whose account has been deleted. See isLiveAccount. */
 export async function requireLiveAccount(ctx: MutationCtx, userId: string): Promise<void> {
-  if (!(await isLiveAccount(ctx, userId))) throw new Error("This account no longer exists.");
+  if (!(await isLiveAccount(ctx, userId))) throw new ConvexError("This account no longer exists.");
 }
 
 type UserIdRow = { field: "userId"; operator: "eq"; value: string };
@@ -143,9 +143,9 @@ export const ONE_CONVEX_DOCUMENT_BYTES = 1024 * 1024;
 export const SWEEP_BUDGET_BYTES = 4_000_000;
 export const SWEEP_BUDGET_ROWS = 1_000;
 
-type Allowance = { bytes: number; rows: number };
+export type Allowance = { bytes: number; rows: number };
 
-const spent = (left: Allowance): boolean => left.bytes <= 0 || left.rows <= 0;
+export const spent = (left: Allowance): boolean => left.bytes <= 0 || left.rows <= 0;
 
 /**
  * What a row weighs, by Convex's own reckoning — the same calculation behind
@@ -170,7 +170,7 @@ type Rows = AsyncIterable<{ _id: Id<TableNames> }> & { first(): Promise<unknown>
  * weigh, and the byte budget can only be honest if it is measured against
  * what was actually read.
  */
-async function drain(ctx: MutationCtx, rows: Rows, left: Allowance): Promise<void> {
+export async function drain(ctx: MutationCtx, rows: Rows, left: Allowance): Promise<void> {
   for await (const row of rows) {
     await ctx.db.delete(row._id);
     left.bytes -= byteSize(row);

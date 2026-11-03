@@ -1,11 +1,11 @@
 import { ConvexError, v, type Infer, type ObjectType } from "convex/values";
-import { mutation, query, internalAction, internalQuery, type MutationCtx } from "./_generated/server";
+import { mutation, query, internalAction, internalMutation, internalQuery, type MutationCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { displayHost, effectiveIntervalMs, ERROR_RECOVERY_INTERVAL_MS, intervalToMs, isBlockedError, MAX_RETRIES, validateMonitorUrl } from "./shared";
 import { currencyExponent, itemIdentity, RESUME_TOKEN_TTL_MS } from "@prowl/shared";
 import { effectiveTier, type Tier } from "./tiers";
-import { isBanned, requireLiveAccount } from "./account";
+import { drain, isBanned, requireLiveAccount, spent, SWEEP_BUDGET_BYTES, SWEEP_BUDGET_ROWS, type Allowance } from "./account";
 import { reserveFallback, scraperDown } from "./admin";
 import { deliverAlert } from "./alerts";
 import { alertOnValidator, checkIntervalValidator, notificationChannelsValidator, type CheckInterval } from "./schema";
@@ -56,9 +56,51 @@ function withoutSms<C extends string>(channels: C[]): C[] {
   return rest.length > 0 ? rest : (["email"] as C[]);
 }
 
-function clampInterval(interval: string, tier: Tier): CheckInterval {
+export function clampInterval(interval: string, tier: Tier): CheckInterval {
   const allowed = TIER_LIMITS[tier].allowedIntervals;
   return (allowed.includes(interval) ? interval : allowed[0]) as CheckInterval;
+}
+
+/** What a user's plan allows, read once per mutation however many monitors it changes. */
+export type Plan = {
+  tier: Tier;
+  /** The user's monitors, which the free channel rule reads. Empty on paid plans, where it doesn't apply. */
+  monitors: Doc<"monitors">[];
+};
+
+export async function readPlan(ctx: MutationCtx, userId: string): Promise<Plan> {
+  if (await isBanned(ctx, userId)) throw new ConvexError("This account has been suspended.");
+  const tier = await getUserTier(ctx, userId);
+  const monitors =
+    tier === "free"
+      ? await ctx.db.query("monitors").withIndex("by_userId", (q) => q.eq("userId", userId)).collect()
+      : [];
+  return { tier, monitors };
+}
+
+/**
+ * The channels a monitor may use. Free tier can only have one monitor on the
+ * restricted channels. Push is not one of them: it costs us nothing per
+ * message and a subscription is bound to a device the user already owns, so
+ * there is nothing here to ration or to abuse.
+ *
+ * A product counts as one monitor here: its listings are one thing to the
+ * user, and share one channel list.
+ */
+export function allowedChannels(
+  plan: Plan,
+  channels: ChannelList,
+  own: { id?: Id<"monitors">; groupId?: Id<"monitorGroups"> }
+): ChannelList {
+  if (plan.tier !== "free") return channels;
+  const rest = withoutSms(channels);
+  const takenElsewhere = plan.monitors.some(
+    (m) =>
+      m._id !== own.id &&
+      (own.groupId === undefined || m.groupId !== own.groupId) &&
+      m.notificationChannels?.some(isRestrictedChannel)
+  );
+  return takenElsewhere ? rest.filter((c) => !isRestrictedChannel(c)) : rest;
 }
 
 // Formats a millisecond duration as a human-readable wait time, rounding
@@ -81,13 +123,13 @@ async function getAuthUserId(ctx: { auth: { getUserIdentity: () => Promise<{ sub
 
 
 function validateName(name: string): void {
-  if (name.length === 0) throw new Error("Name is required");
-  if (name.length > MAX_NAME_LENGTH) throw new Error(`Name exceeds maximum length of ${MAX_NAME_LENGTH} characters`);
+  if (name.length === 0) throw new ConvexError("Name is required");
+  if (name.length > MAX_NAME_LENGTH) throw new ConvexError(`Name exceeds maximum length of ${MAX_NAME_LENGTH} characters`);
 }
 
 function validatePrompt(prompt: string): void {
-  if (prompt.length === 0) throw new Error("Prompt is required");
-  if (prompt.length > MAX_PROMPT_LENGTH) throw new Error(`Prompt exceeds maximum length of ${MAX_PROMPT_LENGTH} characters`);
+  if (prompt.length === 0) throw new ConvexError("Prompt is required");
+  if (prompt.length > MAX_PROMPT_LENGTH) throw new ConvexError(`Prompt exceeds maximum length of ${MAX_PROMPT_LENGTH} characters`);
 }
 
 export function validateAlertOn(alertOn: Infer<typeof alertOnValidator>): void {
@@ -206,7 +248,7 @@ export async function createMonitorForUser(
     groupId?: Id<"monitorGroups">;
   }
 ): Promise<Id<"monitors">> {
-  if (await isBanned(ctx, userId)) throw new Error("This account has been suspended.");
+  if (await isBanned(ctx, userId)) throw new ConvexError("This account has been suspended.");
   // A token outlives the account it was minted for; see requireLiveAccount.
   await requireLiveAccount(ctx, userId);
 
@@ -229,7 +271,7 @@ export async function createMonitorForUser(
   if (recentCreations.length >= CREATION_LIMITS[tier]) {
     const oldestCreatedAt = Math.min(...recentCreations.map((c) => c.createdAt));
     const wait = formatWait(oldestCreatedAt + CREATION_WINDOW_MS - Date.now());
-    throw new Error(`Creation limit reached: your ${tier} plan allows ${CREATION_LIMITS[tier]} new monitors per 5 hours. You can create another in ${wait}.`);
+    throw new ConvexError(`Creation limit reached: your ${tier} plan allows ${CREATION_LIMITS[tier]} new monitors per 5 hours. You can create another in ${wait}.`);
   }
 
   const existingMonitors = await ctx.db
@@ -237,32 +279,17 @@ export async function createMonitorForUser(
     .withIndex("by_userId", (q) => q.eq("userId", userId))
     .collect();
   if (existingMonitors.length >= limits.maxMonitors) {
-    throw new Error(`Your ${tier} plan allows ${limits.maxMonitors} monitors. Upgrade for more.`);
+    throw new ConvexError(`Your ${tier} plan allows ${limits.maxMonitors} monitors. Upgrade for more.`);
   }
 
-  // Server-side enforcement: free tier can only have one monitor on the
-  // restricted channels. Push is not one of them — it costs us nothing per
-  // message and a subscription is bound to a device the user already owns,
-  // so there is nothing here to ration or to abuse.
-  //
-  // No list means every channel, so it is rationed as one. The web form always
-  // sends a list; MCP leaves it out.
-  //
-  // A product counts as one monitor here: its listings are one thing to the
-  // user, and share one channel list.
-  let channels = args.notificationChannels;
-  if (tier === "free") {
-    channels = withoutSms(channels ?? ALL_CHANNELS);
-    if (channels.some(isRestrictedChannel)) {
-      const existingWithChannels = existingMonitors.find((m) =>
-        m.notificationChannels?.some(isRestrictedChannel) &&
-        (args.groupId === undefined || m.groupId !== args.groupId)
-      );
-      if (existingWithChannels) {
-        channels = channels.filter((c) => !isRestrictedChannel(c));
-      }
-    }
-  }
+  // No list means every channel, so on free it is rationed as one. The web
+  // form always sends a list; MCP leaves it out.
+  const channels =
+    tier === "free"
+      ? allowedChannels({ tier, monitors: existingMonitors }, args.notificationChannels ?? ALL_CHANNELS, {
+          groupId: args.groupId,
+        })
+      : args.notificationChannels;
 
   const now = Date.now();
   const id = await ctx.db.insert("monitors", {
@@ -557,49 +584,32 @@ export const update = mutation({
   handler: async (ctx, { id, ...fields }) => updateMonitorForUser(ctx, await getAuthUserId(ctx), id, fields),
 });
 
-/** Edit one of this user's monitors. A product rewrites its monitors through this too. */
+/**
+ * Edit one of this user's monitors. A product rewrites its monitors through
+ * this too, passing the plan it read once for all of them.
+ */
 export async function updateMonitorForUser(
   ctx: MutationCtx,
   userId: string,
   id: Id<"monitors">,
-  fields: ObjectType<typeof updateFields>
+  fields: ObjectType<typeof updateFields>,
+  plan?: Plan
 ): Promise<Id<"monitors">> {
   const existing = await ctx.db.get(id);
-  if (!existing || existing.userId !== userId) throw new Error("Monitor not found");
-  if (await isBanned(ctx, userId)) throw new Error("This account has been suspended.");
+  if (!existing || existing.userId !== userId) throw new ConvexError("Monitor not found");
+  const needsPlan = fields.checkInterval !== undefined || fields.notificationChannels !== undefined;
+  const rules = plan ?? (needsPlan ? await readPlan(ctx, userId) : null);
+  if (!rules && (await isBanned(ctx, userId))) throw new ConvexError("This account has been suspended.");
 
   if (fields.name !== undefined) validateName(fields.name);
   if (fields.url !== undefined) validateMonitorUrl(fields.url);
   if (fields.prompt !== undefined) validatePrompt(fields.prompt);
 
-  // Dynamic tier-based enforcement
-  const tier = (fields.checkInterval !== undefined || fields.notificationChannels !== undefined)
-    ? await getUserTier(ctx, userId)
-    : null;
-
-  if (fields.checkInterval !== undefined && tier) {
-    fields.checkInterval = clampInterval(fields.checkInterval, tier) as typeof fields.checkInterval;
+  if (fields.checkInterval !== undefined && rules) {
+    fields.checkInterval = clampInterval(fields.checkInterval, rules.tier);
   }
-
-  // Free tier: only one monitor can use the restricted channels — see create
-  if (fields.notificationChannels !== undefined && tier === "free") {
-    fields.notificationChannels = withoutSms(fields.notificationChannels);
-    if (fields.notificationChannels.some(isRestrictedChannel)) {
-      const otherMonitors = await ctx.db
-        .query("monitors")
-        .withIndex("by_userId", (q) => q.eq("userId", userId))
-        .collect();
-      const otherWithChannels = otherMonitors.find((m) =>
-        m._id !== id &&
-        (existing.groupId === undefined || m.groupId !== existing.groupId) &&
-        (m as any).notificationChannels?.some(isRestrictedChannel)
-      );
-      if (otherWithChannels) {
-        fields.notificationChannels = fields.notificationChannels.filter(
-          (c) => !isRestrictedChannel(c)
-        ) as typeof fields.notificationChannels;
-      }
-    }
+  if (fields.notificationChannels !== undefined && rules) {
+    fields.notificationChannels = allowedChannels(rules, fields.notificationChannels, { id, groupId: existing.groupId });
   }
 
   const now = Date.now();
@@ -777,42 +787,53 @@ async function releaseListing(ctx: MutationCtx, monitor: Doc<"monitors">): Promi
 
 export const remove = mutation({
   args: { id: v.id("monitors") },
-  handler: async (ctx, { id }) => removeMonitorForUser(ctx, await getAuthUserId(ctx), id),
+  handler: async (ctx, { id }) => removeMonitorsForUser(ctx, await getAuthUserId(ctx), [id]),
 });
 
-/** Delete one of this user's monitors with its history and notifications. */
-export async function removeMonitorForUser(ctx: MutationCtx, userId: string, id: Id<"monitors">): Promise<void> {
-  const existing = await ctx.db.get(id);
-  if (!existing || existing.userId !== userId) throw new Error("Monitor not found");
-
-  const results = await ctx.db
-    .query("scrapeResults")
-    .withIndex("by_monitorId", (q) => q.eq("monitorId", id))
-    .collect();
-  for (const result of results) {
-    await ctx.db.delete(result._id);
+/**
+ * Delete some of this user's monitors, then their history and notifications.
+ * The history goes in rounds, as account deletion does, because a busy
+ * monitor's history can be more than one transaction may delete.
+ */
+export async function removeMonitorsForUser(ctx: MutationCtx, userId: string, ids: Id<"monitors">[]): Promise<void> {
+  let listed = 0;
+  for (const id of ids) {
+    const existing = await ctx.db.get(id);
+    if (!existing || existing.userId !== userId) throw new ConvexError("Monitor not found");
+    await ctx.db.delete(id);
+    await releaseListing(ctx, existing);
+    if (!existing.isAnonymous) listed++;
   }
-
-  const notifs = await ctx.db
-    .query("notifications")
-    .withIndex("by_monitorId", (q) => q.eq("monitorId", id))
-    .collect();
-  for (const notif of notifs) {
-    await ctx.db.delete(notif._id);
-  }
-
-  await ctx.db.delete(id);
-
-  await releaseListing(ctx, existing);
 
   // Decrement public monitor counter
-  if (!existing.isAnonymous) {
+  if (listed > 0) {
     const counter = await ctx.db.query("counters").withIndex("by_name", (q) => q.eq("name", "monitors")).unique();
-    if (counter && counter.value > 0) {
-      await ctx.db.patch(counter._id, { value: counter.value - 1 });
+    if (counter) await ctx.db.patch(counter._id, { value: Math.max(0, counter.value - listed) });
+  }
+
+  await sweepMonitorHistory(ctx, ids);
+}
+
+async function sweepMonitorHistory(ctx: MutationCtx, ids: Id<"monitors">[]): Promise<void> {
+  const left: Allowance = { bytes: SWEEP_BUDGET_BYTES, rows: SWEEP_BUDGET_ROWS };
+  for (const [i, id] of ids.entries()) {
+    for (const table of ["scrapeResults", "notifications"] as const) {
+      await drain(ctx, ctx.db.query(table).withIndex("by_monitorId", (q) => q.eq("monitorId", id)), left);
+      if (spent(left)) {
+        await ctx.scheduler.runAfter(0, internal.monitors.sweepRemainingMonitorHistory, { ids: ids.slice(i) });
+        return;
+      }
     }
   }
 }
+
+/** Continues deleting the history of monitors that held more than one round's worth. */
+export const sweepRemainingMonitorHistory = internalMutation({
+  args: { ids: v.array(v.id("monitors")) },
+  handler: async (ctx, { ids }) => {
+    await sweepMonitorHistory(ctx, ids);
+  },
+});
 
 export const updateBlacklist = mutation({
   args: {

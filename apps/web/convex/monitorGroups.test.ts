@@ -49,6 +49,7 @@ const PRODUCT = {
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
+  vi.useRealTimers();
 });
 
 describe("monitorGroups.create", () => {
@@ -386,6 +387,62 @@ describe("managing a product", () => {
     expect(await as.query(api.monitorGroups.get, { id: groupId })).toBeNull();
     expect(await as.query(api.monitors.list, {})).toHaveLength(0);
     expect(await t.run((ctx) => ctx.db.query("scrapeResults").collect())).toHaveLength(0);
+  });
+
+  // A product's history can be more than one transaction may delete. Done
+  // in one go, the delete would fail and the user could never remove it.
+  it("deletes history too big for one transaction in later rounds", async () => {
+    vi.useFakeTimers();
+    const t = harness();
+    const { as } = await signUp(t, "a@example.test");
+    const { groupId, monitorIds } = await as.mutation(api.monitorGroups.create, PRODUCT);
+    await t.run(async (ctx) => {
+      for (const monitorId of monitorIds) {
+        for (let i = 0; i < 600; i++) {
+          await ctx.db.insert("scrapeResults", { monitorId, matches: [], totalItems: 0, hasNewMatches: false, scrapedAt: i });
+        }
+      }
+    });
+
+    await as.mutation(api.monitorGroups.remove, { id: groupId });
+    expect(await as.query(api.monitors.list, {})).toHaveLength(0);
+    expect((await t.run((ctx) => ctx.db.query("scrapeResults").collect())).length).toBeGreaterThan(0);
+
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(await t.run((ctx) => ctx.db.query("scrapeResults").collect())).toHaveLength(0);
+  });
+
+  // The form shows what was saved. Without the plan's answer it would show
+  // Telegram as on while no alert goes there.
+  it("returns the channels a free plan allows when another monitor has Telegram", async () => {
+    const t = harness();
+    const { as, userId } = await signUp(t, "a@example.test");
+    const { groupId } = await as.mutation(api.monitorGroups.create, PRODUCT);
+    await t.run((ctx) =>
+      ctx.db.insert("monitors", {
+        userId,
+        name: "Other",
+        url: "https://shop.test/other",
+        prompt: "anything",
+        status: "paused",
+        checkInterval: "24h",
+        notificationChannels: ["telegram"],
+        matchCount: 0,
+        createdAt: 0,
+        updatedAt: 0,
+      })
+    );
+
+    const saved = await as.mutation(api.monitorGroups.updateCriteria, {
+      id: groupId,
+      alertOn: { backInStock: true },
+      notificationChannels: ["email", "telegram"],
+      checkInterval: "5m",
+    });
+
+    expect(saved).toEqual({ notificationChannels: ["email"], checkInterval: "1h" });
+    const group = await as.query(api.monitorGroups.get, { id: groupId });
+    expect(group).toMatchObject({ notificationChannels: ["email"], checkInterval: "1h" });
   });
 
   it("lets nobody but the owner change a product", async () => {

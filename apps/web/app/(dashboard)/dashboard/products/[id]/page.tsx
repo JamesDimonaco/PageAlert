@@ -4,7 +4,6 @@ import { use, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMutation, useQuery } from "convex/react";
-import { ConvexError } from "convex/values";
 import { ArrowLeft, ExternalLink, Loader2, MoreVertical, Pause, Play, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { SEARCH_REGIONS, formatMinorUnits } from "@prowl/shared";
@@ -25,7 +24,8 @@ import { ProductCriteriaForm } from "@/components/prowl/product-criteria-form";
 import { useTier } from "@/hooks/use-tier";
 import { toSafeUrl } from "@/lib/format";
 import { timeAgo } from "@/lib/time";
-import { trackListingReviewed } from "@/lib/posthog";
+import { trackListingReviewed, trackMonitorPaused, trackMonitorResumed } from "@/lib/posthog";
+import { errorText } from "@/lib/utils";
 
 type Product = NonNullable<ReturnType<typeof useProduct>>;
 type Listing = Product["listings"][number];
@@ -34,9 +34,7 @@ function useProduct(id: Id<"monitorGroups">) {
   return useQuery(api.monitorGroups.get, { id });
 }
 
-function errorText(err: unknown): string {
-  return err instanceof ConvexError ? String(err.data) : "Something went wrong. Try again.";
-}
+const FAILED = "Something went wrong. Try again.";
 
 export default function ProductPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -51,8 +49,9 @@ export default function ProductPage({ params }: { params: Promise<{ id: string }
   const removeProduct = useMutation(api.monitorGroups.remove);
   const router = useRouter();
   const [showDismissed, setShowDismissed] = useState(false);
-  const [busyUrl, setBusyUrl] = useState<string | null>(null);
+  const [busyUrls, setBusyUrls] = useState<ReadonlySet<string>>(new Set());
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [unwatching, setUnwatching] = useState<Listing | null>(null);
 
   if (product === undefined) {
     return (
@@ -82,23 +81,29 @@ export default function ProductPage({ params }: { params: Promise<{ id: string }
   const hasSuggestions = product.listings.some((l) => l.state === "suggested");
 
   async function act(url: string, action: () => Promise<unknown>, done: string) {
-    setBusyUrl(url);
+    setBusyUrls((prev) => new Set(prev).add(url));
     try {
       await action();
       toast.success(done);
     } catch (err) {
-      toast.error(errorText(err));
+      toast.error(errorText(err, FAILED));
     } finally {
-      setBusyUrl(null);
+      setBusyUrls((prev) => {
+        const next = new Set(prev);
+        next.delete(url);
+        return next;
+      });
     }
   }
 
   async function pauseAll(paused: boolean) {
     try {
-      await setPaused({ id: groupId, paused });
+      const changed = await setPaused({ id: groupId, paused });
+      // The same event per monitor as the dashboard's pause button.
+      for (let i = 0; i < changed; i++) (paused ? trackMonitorPaused : trackMonitorResumed)();
       toast.success(paused ? "Paused every listing" : "Resumed every listing");
     } catch (err) {
-      toast.error(errorText(err));
+      toast.error(errorText(err, FAILED));
     }
   }
 
@@ -154,7 +159,7 @@ export default function ProductPage({ params }: { params: Promise<{ id: string }
             <ListingRow
               key={listing.url}
               listing={listing}
-              busy={busyUrl === listing.url}
+              busy={busyUrls.has(listing.url)}
               canWatch={!full}
               onWatch={() =>
                 act(
@@ -166,9 +171,7 @@ export default function ProductPage({ params }: { params: Promise<{ id: string }
                   `Watching ${listing.site}`
                 )
               }
-              onUnwatch={() =>
-                act(listing.url, () => unwatchListing({ id: groupId, url: listing.url }), `Stopped watching ${listing.site}`)
-              }
+              onUnwatch={() => setUnwatching(listing)}
               onDismiss={() =>
                 act(
                   listing.url,
@@ -219,9 +222,24 @@ export default function ProductPage({ params }: { params: Promise<{ id: string }
             toast.success("Product deleted");
             router.push("/dashboard");
           } catch (err) {
-            toast.error(errorText(err));
+            toast.error(errorText(err, FAILED));
             throw err;
           }
+        }}
+      />
+
+      <DeleteDialog
+        open={unwatching !== null}
+        onOpenChange={(open) => {
+          if (!open) setUnwatching(null);
+        }}
+        title="Stop watching"
+        detail="This deletes its monitor and check history, and cannot be undone. The listing stays here as a suggestion."
+        monitorName={unwatching?.title ?? ""}
+        onConfirm={async () => {
+          if (!unwatching) return;
+          const { url, site } = unwatching;
+          await act(url, () => unwatchListing({ id: groupId, url }), `Stopped watching ${site}`);
         }}
       />
     </div>

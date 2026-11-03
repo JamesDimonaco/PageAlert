@@ -3,7 +3,15 @@ import { mutation, query, type MutationCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { isSearchRegion } from "@prowl/shared";
 import { hasBetaFeature } from "./betaFeatures";
-import { createMonitorForUser, removeMonitorForUser, updateMonitorForUser, validateAlertOn } from "./monitors";
+import {
+  allowedChannels,
+  clampInterval,
+  createMonitorForUser,
+  readPlan,
+  removeMonitorsForUser,
+  updateMonitorForUser,
+  validateAlertOn,
+} from "./monitors";
 import { validateMonitorUrl } from "./shared";
 import {
   alertOnValidator,
@@ -36,16 +44,6 @@ function requireCriteria(alertOn: AlertOn): void {
   }
 }
 
-/** Runs monitor code whose plain Errors would reach a production client as "Server Error". */
-async function userFacing<T>(fallback: string, run: () => Promise<T>): Promise<T> {
-  try {
-    return await run();
-  } catch (error) {
-    if (error instanceof ConvexError) throw error;
-    throw new ConvexError(error instanceof Error ? error.message : fallback);
-  }
-}
-
 type GroupCriteria = Pick<Doc<"monitorGroups">, "_id" | "alertOn" | "notificationChannels" | "checkInterval">;
 
 /** A monitor for one listing, with the product's criteria, first-scanned on the server. */
@@ -55,16 +53,14 @@ async function watchListingMonitor(
   group: GroupCriteria,
   listing: GroupListing
 ): Promise<Id<"monitors">> {
-  const monitorId = await userFacing("We couldn't watch that listing.", () =>
-    createMonitorForUser(ctx, user, {
-      name: listing.title,
-      url: listing.url,
-      prompt: productPrompt(listing.title, group.alertOn),
-      checkInterval: group.checkInterval,
-      notificationChannels: group.notificationChannels,
-      groupId: group._id,
-    })
-  );
+  const monitorId = await createMonitorForUser(ctx, user, {
+    name: listing.title,
+    url: listing.url,
+    prompt: productPrompt(listing.title, group.alertOn),
+    checkInterval: group.checkInterval,
+    notificationChannels: group.notificationChannels,
+    groupId: group._id,
+  });
   // Active with no schema is what the scheduler reads as "do the first
   // extract", so the first scan runs on the server within a minute and
   // the user can leave. A "scanning" monitor waits on the browser.
@@ -249,7 +245,8 @@ function findListing(group: Doc<"monitorGroups">, url: string, state: GroupListi
 /**
  * Save a product's criteria, channels and interval, and copy them to every
  * monitor in it, prompt included. A monitor edited on its own page is
- * overwritten.
+ * overwritten. Returns the channels and interval the plan allowed, which can
+ * be fewer or slower than asked.
  */
 export const updateCriteria = mutation({
   args: {
@@ -261,28 +258,33 @@ export const updateCriteria = mutation({
   handler: async (ctx, args) => {
     const { userId, group } = await ownedGroup(ctx, args.id);
     requireCriteria(args.alertOn);
-    const monitors = await groupMonitors(ctx, group._id);
-    for (const m of monitors) {
+    const plan = await readPlan(ctx, userId);
+    const checkInterval = clampInterval(args.checkInterval, plan.tier);
+    const notificationChannels = allowedChannels(plan, args.notificationChannels, { groupId: group._id });
+    for (const m of await groupMonitors(ctx, group._id)) {
       const prompt = productPrompt(m.productTitle ?? m.name, args.alertOn);
-      await userFacing("We couldn't save the product.", () =>
-        updateMonitorForUser(ctx, userId, m._id, {
+      await updateMonitorForUser(
+        ctx,
+        userId,
+        m._id,
+        {
           alertOn: args.alertOn,
-          notificationChannels: args.notificationChannels,
+          notificationChannels,
           // Each is sent only when it changes: a new interval reschedules the
           // check and resets its retries, and a new prompt re-arms error emails.
-          ...(m.checkInterval !== args.checkInterval ? { checkInterval: args.checkInterval } : {}),
+          ...(m.checkInterval !== checkInterval ? { checkInterval } : {}),
           ...(m.prompt !== prompt ? { prompt } : {}),
-        })
+        },
+        plan
       );
     }
-    // As in create: store what the plan let the monitors have.
-    const first = monitors[0] ? await ctx.db.get(monitors[0]._id) : null;
     await ctx.db.patch(group._id, {
       alertOn: args.alertOn,
-      checkInterval: first?.checkInterval ?? args.checkInterval,
-      notificationChannels: first?.notificationChannels ?? args.notificationChannels,
+      checkInterval,
+      notificationChannels,
       updatedAt: Date.now(),
     });
+    return { checkInterval, notificationChannels };
   },
 });
 
@@ -308,7 +310,7 @@ export const unwatchListing = mutation({
     const { userId, group } = await ownedGroup(ctx, id);
     const { monitorId } = findListing(group, url, "watching");
     if (!monitorId) throw new ConvexError("That listing has changed. Reload the page.");
-    await userFacing("We couldn't stop watching that listing.", () => removeMonitorForUser(ctx, userId, monitorId));
+    await removeMonitorsForUser(ctx, userId, [monitorId]);
   },
 });
 
@@ -326,17 +328,22 @@ export const setListingDismissed = mutation({
   },
 });
 
-/** Pause or resume every monitor in a product, the same way as one at a time. */
+/**
+ * Pause or resume every monitor in a product, the same way as one at a time.
+ * Returns how many changed.
+ */
 export const setPaused = mutation({
   args: { id: v.id("monitorGroups"), paused: v.boolean() },
   handler: async (ctx, { id, paused }) => {
     const { userId, group } = await ownedGroup(ctx, id);
+    const plan = await readPlan(ctx, userId);
+    let changed = 0;
     for (const m of await groupMonitors(ctx, group._id)) {
       if ((m.status === "paused") === paused) continue;
-      await userFacing("We couldn't update the product.", () =>
-        updateMonitorForUser(ctx, userId, m._id, { status: paused ? "paused" : "active" })
-      );
+      await updateMonitorForUser(ctx, userId, m._id, { status: paused ? "paused" : "active" }, plan);
+      changed++;
     }
+    return changed;
   },
 });
 
@@ -345,9 +352,13 @@ export const remove = mutation({
   args: { id: v.id("monitorGroups") },
   handler: async (ctx, { id }) => {
     const { userId, group } = await ownedGroup(ctx, id);
-    for (const m of await groupMonitors(ctx, group._id)) {
-      await userFacing("We couldn't delete the product.", () => removeMonitorForUser(ctx, userId, m._id));
-    }
+    const monitors = await groupMonitors(ctx, group._id);
+    // First, so deleting each monitor has no listing left to put back.
     await ctx.db.delete(group._id);
+    await removeMonitorsForUser(
+      ctx,
+      userId,
+      monitors.map((m) => m._id)
+    );
   },
 });

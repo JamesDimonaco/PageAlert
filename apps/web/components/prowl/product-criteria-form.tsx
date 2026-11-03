@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useMutation } from "convex/react";
-import { ConvexError } from "convex/values";
+import { errorText } from "@/lib/utils";
 import { Loader2, Save } from "lucide-react";
 import { toast } from "sonner";
 import { currencyExponent, toMinorUnits } from "@prowl/shared";
@@ -21,6 +21,22 @@ interface ProductCriteriaFormProps {
   /** For a new target price when the product has none yet. */
   listingCurrency: string;
   watchingCount: number;
+}
+
+/** Why the plan changed what the user asked for, in plain words. */
+function planNotes(asked: Channel[], got: Channel[], askedInterval: CheckInterval, gotInterval: CheckInterval): string[] {
+  const dropped = asked.filter((c) => !got.includes(c));
+  const notes: string[] = [];
+  const rationed = dropped.filter((c) => c === "telegram" || c === "discord");
+  if (rationed.length > 0) {
+    const names = rationed.map((c) => (c === "telegram" ? "Telegram" : "Discord")).join(" and ");
+    notes.push(
+      `${names} ${rationed.length === 1 ? "is" : "are"} off. The free plan allows Telegram and Discord on one monitor or product, and another one already uses them.`
+    );
+  }
+  if (dropped.includes("sms")) notes.push("Text alerts are off. They aren't on the free plan.");
+  if (gotInterval !== askedInterval) notes.push(`Checks run every ${gotInterval}, the fastest your plan allows.`);
+  return notes;
 }
 
 /** A product's alert criteria, channels and interval. Saving copies them to every watched listing. */
@@ -53,7 +69,7 @@ export function ProductCriteriaForm({ group, listingCurrency, watchingCount }: P
     }
     setSaving(true);
     try {
-      await updateCriteria({
+      const saved = await updateCriteria({
         id: group._id,
         alertOn: {
           ...(backInStock ? { backInStock: true } : {}),
@@ -63,10 +79,15 @@ export function ProductCriteriaForm({ group, listingCurrency, watchingCount }: P
         notificationChannels: shownChannels,
         checkInterval,
       });
-      trackProductCriteriaUpdated({ backInStock, price: priceChoice, checkInterval, watchingCount });
-      toast.success("Product updated");
+      trackProductCriteriaUpdated({ backInStock, price: priceChoice, checkInterval: saved.checkInterval, watchingCount });
+      // Show what the plan let the product have, so the next save sends that.
+      setChannels(saved.notificationChannels);
+      setCheckInterval(saved.checkInterval);
+      const notes = planNotes(shownChannels, saved.notificationChannels, checkInterval, saved.checkInterval);
+      if (notes.length > 0) toast.warning("Product updated", { description: notes.join(" "), duration: 10000 });
+      else toast.success("Product updated");
     } catch (err) {
-      toast.error(err instanceof ConvexError ? String(err.data) : "We couldn't save the product. Try again.");
+      toast.error(errorText(err, "We couldn't save the product. Try again."));
     } finally {
       setSaving(false);
     }
