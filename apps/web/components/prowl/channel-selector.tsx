@@ -10,6 +10,7 @@ import { useQuery, useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { useMonitors } from "@/hooks/use-monitors";
 import { toast } from "sonner";
+import { errorText } from "@/lib/utils";
 
 export type Channel = "email" | "telegram" | "discord" | "push" | "sms";
 
@@ -81,10 +82,12 @@ interface ChannelSelectorProps {
   onChange: (channels: Channel[]) => void;
   /** The monitor ID being edited — null for new monitors */
   monitorId?: string | null;
+  /** The product being edited. Its monitors share one channel list, so they count as one. */
+  groupId?: string;
   disabled?: boolean;
 }
 
-export function ChannelSelector({ value, onChange, monitorId, disabled }: ChannelSelectorProps) {
+export function ChannelSelector({ value, onChange, monitorId, groupId, disabled }: ChannelSelectorProps) {
   const router = useRouter();
   const { close: closeSheet } = useCreateMonitor();
   const { tier } = useTier();
@@ -98,6 +101,7 @@ export function ChannelSelector({ value, onChange, monitorId, disabled }: Channe
   const freeMonitorWithChannels = tier === "free"
     ? monitors.find((m) =>
         m._id !== monitorId &&
+        (groupId === undefined || m.groupId !== groupId) &&
         (m as any).notificationChannels?.some((c: string) => (RESTRICTED as string[]).includes(c))
       )
     : null;
@@ -157,8 +161,8 @@ export function ChannelSelector({ value, onChange, monitorId, disabled }: Channe
                 // Enable on this monitor
                 onChange([...value, channel]);
                 toast.success(`Switched ${CHANNEL_CONFIG[channel].label} to this monitor`);
-              } catch {
-                toast.error("Failed to switch channel");
+              } catch (err) {
+                toast.error("Failed to switch channel", { description: errorText(err, "Try again.") });
               }
             },
           },

@@ -11,6 +11,7 @@ import { StatsCards } from "@/components/prowl/stats-cards";
 import { DeleteDialog } from "@/components/prowl/delete-dialog";
 import { ReviewPrompt } from "@/components/prowl/review-prompt";
 import { OnboardingChecklist } from "@/components/prowl/onboarding-checklist";
+import { UpgradeBanner } from "@/components/prowl/upgrade-banner";
 import { useMonitors } from "@/hooks/use-monitors";
 import { useCreateMonitor } from "@/hooks/use-create-monitor";
 import { useTier } from "@/hooks/use-tier";
@@ -20,6 +21,7 @@ import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { toast } from "sonner";
 import { trackMonitorDeleted, trackMonitorPaused, trackMonitorResumed, trackEvent, setUserProperties, captureException } from "@/lib/posthog";
+import { errorText } from "@/lib/utils";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
 import {
   Select,
@@ -32,7 +34,7 @@ import {
 export default function DashboardPage() {
   const { monitors, togglePause, deleteMonitor, updateMonitor, toggleMute } = useMonitors();
   const { open: openCreate, openWithDefaults } = useCreateMonitor();
-  const { tier, maxMonitors } = useTier();
+  const { tier, resolved: tierResolved, maxMonitors } = useTier();
   const searchParams = useSearchParams();
   const router = useRouter();
   const atLimit = monitors.length >= maxMonitors;
@@ -42,7 +44,13 @@ export default function DashboardPage() {
       toast.error("Monitor limit reached", { description: "Upgrade your plan to add more monitors." });
       return false;
     }
-    openWithDefaults({ name: `${source.name} (copy)`, url: source.url, prompt: source.prompt });
+    openWithDefaults({
+      name: `${source.name} (copy)`,
+      url: source.url,
+      prompt: source.prompt,
+      // A clone of a clone is "X (copy) (copy)"; the search wants just X.
+      searchTerm: source.name.replace(/( \(copy\))+$/, ""),
+    });
     return true;
   }
 
@@ -188,7 +196,7 @@ export default function DashboardPage() {
       });
       // Scan budget already consumed atomically above
     } catch (e) {
-      const msg = e instanceof Error ? e.message : "Rescan failed";
+      const msg = errorText(e, e instanceof Error ? e.message : "Rescan failed");
       const durationMs = Date.now() - startTime;
       await saveScanError({ id: monitorId, error: msg }).catch((saveErr) => captureException(saveErr, { context: "saveScanError", monitorId }));
       await createLog({
@@ -241,6 +249,8 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-10">
+      <UpgradeBanner tier={tier} tierResolved={tierResolved} atLimit={atLimit} />
+
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Dashboard</h1>
@@ -368,8 +378,8 @@ export default function DashboardPage() {
                     trackMonitorPaused();
                     toast.success("Monitor paused");
                   }
-                } catch {
-                  toast.error("Failed to update monitor");
+                } catch (err) {
+                  toast.error("Failed to update monitor", { description: errorText(err, "Try again.") });
                 }
               }}
               onRescan={handleRescan}
@@ -396,13 +406,17 @@ export default function DashboardPage() {
       <DeleteDialog
         open={!!deleteTarget}
         onOpenChange={(open) => !open && setDeleteTarget(null)}
-        onConfirm={() => {
-          if (deleteTarget) {
-            deleteMonitor(deleteTarget._id);
-            trackMonitorDeleted();
-            toast.success("Monitor deleted");
-            setDeleteTarget(null);
+        onConfirm={async () => {
+          if (!deleteTarget) return;
+          try {
+            await deleteMonitor(deleteTarget._id);
+          } catch (err) {
+            toast.error("Failed to delete", { description: errorText(err, "Try again.") });
+            throw err;
           }
+          trackMonitorDeleted();
+          toast.success("Monitor deleted");
+          setDeleteTarget(null);
         }}
         monitorName={deleteTarget?.name ?? ""}
       />

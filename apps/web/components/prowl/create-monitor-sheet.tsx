@@ -30,7 +30,7 @@ import { api } from "@/convex/_generated/api";
 import { useMonitor } from "@/hooks/use-monitors";
 import type { Id } from "@/convex/_generated/dataModel";
 import { toast } from "sonner";
-import { sessionBoundParams } from "@prowl/shared";
+import { guessAlertOn, sessionBoundParams, type GuessedAlertOn } from "@prowl/shared";
 import {
   readMonitorDraft,
   writeMonitorDraft,
@@ -40,7 +40,7 @@ import { trackMonitorDraftRestored, trackMonitorDraftCleared } from "@/lib/posth
 import { MONITOR_MODES, type MonitorModeId } from "@/lib/monitor-modes";
 import { ScanStep } from "./scan-step";
 import { FindProductTab } from "./find-product-tab";
-import type { ScanStage } from "@/hooks/use-create-monitor";
+import type { CloneDefaults, ScanStage } from "@/hooks/use-create-monitor";
 
 type CheckInterval = "5m" | "15m" | "30m" | "1h" | "6h" | "24h";
 type FormTab = "find" | "url";
@@ -60,7 +60,7 @@ interface CreateMonitorSheetProps {
   }) => void;
   onCancelScan: () => void;
   onConfirm: () => void;
-  cloneDefaults?: { name: string; url: string; prompt: string } | null;
+  cloneDefaults?: CloneDefaults | null;
   onCloneDefaultsConsumed?: () => void;
 }
 
@@ -101,6 +101,8 @@ export function CreateMonitorSheet({
   // run its queries and results survive a look at the other tab.
   const [findVisited, setFindVisited] = useState(false);
   if (findAProduct && tab === "find" && !findVisited) setFindVisited(true);
+  // What Clone hands the Find tab. Cleared on close so a later open starts empty.
+  const [cloneSeed, setCloneSeed] = useState<{ query: string; guess: GuessedAlertOn } | null>(null);
 
   // Timer
   const [elapsed, setElapsed] = useState(0);
@@ -171,7 +173,10 @@ export function CreateMonitorSheet({
         setTab("find");
       }
     }
-    if (!open) channelsSeededRef.current = false;
+    if (!open) {
+      channelsSeededRef.current = false;
+      setCloneSeed(null);
+    }
     prevOpenRef.current = open;
   }, [open, activeMonitorId, isScanning]);
 
@@ -207,7 +212,10 @@ export function CreateMonitorSheet({
       setName(cloneDefaults.name);
       setUrl(cloneDefaults.url);
       setPrompt(cloneDefaults.prompt);
-      setTab("url");
+      const { searchTerm } = cloneDefaults;
+      setCloneSeed(searchTerm ? { query: searchTerm, guess: guessAlertOn(cloneDefaults.prompt) } : null);
+      // Without the beta, "find" still shows the URL form.
+      setTab(searchTerm ? "find" : "url");
       onCloneDefaultsConsumed?.();
     }
   }, [cloneDefaults, open, onCloneDefaultsConsumed]);
@@ -328,13 +336,16 @@ export function CreateMonitorSheet({
                 {findVisited && (
                   <div hidden={tab !== "find"}>
                     <FindProductTab
+                      // The seed lands an effect after the sheet opens, so remount to take it.
+                      key={cloneSeed?.query ?? ""}
+                      clone={cloneSeed}
                       onPasteUrl={(typed) => {
                         if (typed) setName(typed);
                         setTab("url");
                       }}
-                      onDone={() => {
+                      onDone={(groupId) => {
                         onOpenChange(false);
-                        router.push("/dashboard");
+                        router.push(`/dashboard/products/${groupId}`);
                       }}
                     />
                   </div>

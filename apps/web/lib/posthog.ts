@@ -193,6 +193,13 @@ export function trackUpgradePromptClicked(props: { plan: string; currentTier: st
   });
 }
 
+export function trackUpgradeBanner(action: "shown" | "clicked", props: { currentTier: string; nextTier: string }) {
+  trackEvent(`upgrade_banner_${action}`, {
+    current_tier: props.currentTier,
+    target_plan: props.nextTier,
+  });
+}
+
 export function trackSubscriptionChanged(props: { from: string; to: string }) {
   trackEvent("subscription_changed", {
     from_tier: props.from,
@@ -279,9 +286,26 @@ export function trackProductGroupCreated(props: { listingCount: number; watching
   trackEvent("product_group_created", props);
 }
 
-/** One per listing shown when a product is created: ticked is approved, unticked is dismissed. */
+/**
+ * One per listing shown when a product is created: ticked is approved, unticked
+ * is dismissed. Also on the product view, when a suggestion is watched or dismissed.
+ */
 export function trackListingReviewed(approved: boolean, props: { site: string; label: string }) {
   trackEvent(approved ? "listing_approved" : "listing_dismissed", props);
+}
+
+export function trackProductCriteriaUpdated(props: {
+  backInStock: boolean;
+  price: "off" | "drop" | "below";
+  checkInterval: string;
+  watchingCount: number;
+}) {
+  trackEvent("product_criteria_updated", props);
+}
+
+/** Clone opened the Find tab with a monitor's name. The flags say what was guessed from its prompt. */
+export function trackCloneAsProductOpened(props: { backInStock: boolean; priceDrop: boolean; priceBelow: boolean }) {
+  trackEvent("clone_as_product_opened", props);
 }
 
 // ---- Match events ----

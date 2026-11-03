@@ -49,6 +49,7 @@ const PRODUCT = {
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
+  vi.useRealTimers();
 });
 
 describe("monitorGroups.create", () => {
@@ -351,5 +352,241 @@ describe("a product's monitors on the scheduler", () => {
     await t.action(internal.scheduler.runScheduledChecks, {});
 
     expect(productTitle).toBe("Sony WH-1000XM5");
+  });
+});
+
+describe("managing a product", () => {
+  // A product edit that missed a monitor would leave that listing alerting on
+  // the old criteria, or on channels the user just turned off.
+  it("rewrites every monitor's criteria, channels, interval and prompt", async () => {
+    const t = harness();
+    const { as } = await signUp(t, "a@example.test");
+    const { groupId } = await as.mutation(api.monitorGroups.create, PRODUCT);
+
+    await as.mutation(api.monitorGroups.updateCriteria, {
+      id: groupId,
+      alertOn: { priceDrop: true },
+      notificationChannels: ["push"],
+      checkInterval: "6h",
+    });
+
+    const monitors = await as.query(api.monitors.list, {});
+    expect(monitors).toHaveLength(2);
+    for (const m of monitors) {
+      expect(m.alertOn).toEqual({ priceDrop: true });
+      expect(m.notificationChannels).toEqual(["push"]);
+      expect(m.checkInterval).toBe("6h");
+      expect(m.prompt).toBe("Track this product's price: Sony WH-1000XM5");
+    }
+    const group = await as.query(api.monitorGroups.get, { id: groupId });
+    expect(group).toMatchObject({ alertOn: { priceDrop: true }, notificationChannels: ["push"], checkInterval: "6h" });
+  });
+
+  // A listing out of step with its monitor shows as watched with nothing
+  // watching it, or watches a page the product says it doesn't.
+  it("starts and stops watching a listing, keeping the listing and its monitor in step", async () => {
+    const t = harness();
+    const { as } = await signUp(t, "a@example.test");
+    const { groupId } = await as.mutation(api.monitorGroups.create, PRODUCT);
+    const url = "https://johnlewis.com/xm5";
+
+    const { monitorId } = await as.mutation(api.monitorGroups.watchListing, { id: groupId, url });
+    const monitor = await as.query(api.monitors.get, { id: monitorId });
+    expect(monitor).toMatchObject({ groupId, alertOn: { backInStock: true }, status: "active" });
+    let group = await as.query(api.monitorGroups.get, { id: groupId });
+    expect(group?.listings[2]).toMatchObject({ state: "watching", monitorId });
+
+    await as.mutation(api.monitorGroups.unwatchListing, { id: groupId, url });
+    expect(await as.query(api.monitors.get, { id: monitorId })).toBeNull();
+    group = await as.query(api.monitorGroups.get, { id: groupId });
+    expect(group?.listings[2]).toMatchObject({ state: "suggested", monitor: null });
+    expect(group?.listings[2]?.monitorId).toBeUndefined();
+  });
+
+  // Watching from the product view must not get round the plan's limit.
+  it("won't start watching past the plan's monitor limit", async () => {
+    const t = harness();
+    const { as } = await signUp(t, "a@example.test");
+    const { groupId } = await as.mutation(api.monitorGroups.create, {
+      ...PRODUCT,
+      listings: [...PRODUCT.listings, listing("amazon.co.uk", true)],
+    });
+    // Out of the creation window, so the monitor limit is what stops it.
+    await t.run(async (ctx) => {
+      for (const c of await ctx.db.query("monitorCreations").collect()) await ctx.db.patch(c._id, { createdAt: 0 });
+    });
+
+    await expect(
+      as.mutation(api.monitorGroups.watchListing, { id: groupId, url: "https://johnlewis.com/xm5" })
+    ).rejects.toThrow("allows 3 monitors");
+    const group = await as.query(api.monitorGroups.get, { id: groupId });
+    expect(group?.listings.find((l) => l.site === "johnlewis.com")?.state).toBe("suggested");
+  });
+
+  it("hides a dismissed suggestion and can bring it back", async () => {
+    const t = harness();
+    const { as } = await signUp(t, "a@example.test");
+    const { groupId } = await as.mutation(api.monitorGroups.create, PRODUCT);
+    const url = "https://johnlewis.com/xm5";
+
+    await as.mutation(api.monitorGroups.setListingDismissed, { id: groupId, url, dismissed: true });
+    expect((await as.query(api.monitorGroups.get, { id: groupId }))?.listings[2]?.state).toBe("dismissed");
+    // A dismissed listing must be restored before it can be watched.
+    await expect(as.mutation(api.monitorGroups.watchListing, { id: groupId, url })).rejects.toThrow("changed");
+
+    await as.mutation(api.monitorGroups.setListingDismissed, { id: groupId, url, dismissed: false });
+    expect((await as.query(api.monitorGroups.get, { id: groupId }))?.listings[2]?.state).toBe("suggested");
+  });
+
+  it("pauses and resumes every monitor in the product", async () => {
+    const t = harness();
+    const { as } = await signUp(t, "a@example.test");
+    const { groupId } = await as.mutation(api.monitorGroups.create, PRODUCT);
+
+    await as.mutation(api.monitorGroups.setPaused, { id: groupId, paused: true });
+    expect((await as.query(api.monitors.list, {})).map((m) => m.status)).toEqual(["paused", "paused"]);
+
+    await as.mutation(api.monitorGroups.setPaused, { id: groupId, paused: false });
+    expect((await as.query(api.monitors.list, {})).map((m) => m.status)).toEqual(["active", "active"]);
+  });
+
+  // Orphaned monitors would keep checking, alerting and using up plan slots
+  // for a product the user deleted.
+  it("deletes the product, its monitors and their history", async () => {
+    const t = harness();
+    const { as } = await signUp(t, "a@example.test");
+    const { groupId, monitorIds } = await as.mutation(api.monitorGroups.create, PRODUCT);
+    await t.run((ctx) =>
+      ctx.db.insert("scrapeResults", {
+        monitorId: monitorIds[0]!,
+        matches: [],
+        totalItems: 0,
+        hasNewMatches: false,
+        scrapedAt: 0,
+      })
+    );
+
+    await as.mutation(api.monitorGroups.remove, { id: groupId });
+
+    expect(await as.query(api.monitorGroups.get, { id: groupId })).toBeNull();
+    expect(await as.query(api.monitors.list, {})).toHaveLength(0);
+    expect(await t.run((ctx) => ctx.db.query("scrapeResults").collect())).toHaveLength(0);
+  });
+
+  // A product's history can be more than one transaction may delete. Done
+  // in one go, the delete would fail and the user could never remove it.
+  it("deletes history too big for one transaction in later rounds", async () => {
+    vi.useFakeTimers();
+    const t = harness();
+    const { as } = await signUp(t, "a@example.test");
+    const { groupId, monitorIds } = await as.mutation(api.monitorGroups.create, PRODUCT);
+    await t.run(async (ctx) => {
+      for (const monitorId of monitorIds) {
+        for (let i = 0; i < 600; i++) {
+          await ctx.db.insert("scrapeResults", { monitorId, matches: [], totalItems: 0, hasNewMatches: false, scrapedAt: i });
+        }
+      }
+    });
+
+    await as.mutation(api.monitorGroups.remove, { id: groupId });
+    expect(await as.query(api.monitors.list, {})).toHaveLength(0);
+    expect((await t.run((ctx) => ctx.db.query("scrapeResults").collect())).length).toBeGreaterThan(0);
+
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(await t.run((ctx) => ctx.db.query("scrapeResults").collect())).toHaveLength(0);
+  });
+
+  // The form shows what was saved. Without the plan's answer it would show
+  // Telegram as on while no alert goes there.
+  it("returns the channels a free plan allows when another monitor has Telegram", async () => {
+    const t = harness();
+    const { as, userId } = await signUp(t, "a@example.test");
+    const { groupId } = await as.mutation(api.monitorGroups.create, PRODUCT);
+    await t.run((ctx) =>
+      ctx.db.insert("monitors", {
+        userId,
+        name: "Other",
+        url: "https://shop.test/other",
+        prompt: "anything",
+        status: "paused",
+        checkInterval: "24h",
+        notificationChannels: ["telegram"],
+        matchCount: 0,
+        createdAt: 0,
+        updatedAt: 0,
+      })
+    );
+
+    const saved = await as.mutation(api.monitorGroups.updateCriteria, {
+      id: groupId,
+      alertOn: { backInStock: true },
+      notificationChannels: ["email", "telegram"],
+      checkInterval: "5m",
+    });
+
+    expect(saved).toEqual({ notificationChannels: ["email"], checkInterval: "1h" });
+    const group = await as.query(api.monitorGroups.get, { id: groupId });
+    expect(group).toMatchObject({ notificationChannels: ["email"], checkInterval: "1h" });
+  });
+
+  // Otherwise the product says Telegram while the new listing never alerts there.
+  it("stores and returns the channels the plan gave a newly watched listing", async () => {
+    const t = harness();
+    const { as, userId } = await signUp(t, "a@example.test");
+    const { groupId } = await as.mutation(api.monitorGroups.create, {
+      ...PRODUCT,
+      notificationChannels: ["telegram"],
+      listings: [listing("argos.co.uk", true), listing("currys.co.uk", false)],
+    });
+    // Another monitor took Telegram since, which free allows on only one.
+    await t.run(async (ctx) => {
+      for (const m of await ctx.db.query("monitors").collect()) await ctx.db.patch(m._id, { notificationChannels: [] });
+      await ctx.db.insert("monitors", {
+        userId,
+        name: "Other",
+        url: "https://shop.test/other",
+        prompt: "anything",
+        status: "paused",
+        checkInterval: "24h",
+        notificationChannels: ["telegram"],
+        matchCount: 0,
+        createdAt: 0,
+        updatedAt: 0,
+      });
+    });
+
+    const got = await as.mutation(api.monitorGroups.watchListing, { id: groupId, url: "https://currys.co.uk/xm5" });
+
+    expect(got.notificationChannels).toEqual([]);
+    expect((await as.query(api.monitorGroups.get, { id: groupId }))?.notificationChannels).toEqual([]);
+  });
+
+  it("lets nobody but the owner change a product", async () => {
+    const t = harness();
+    const { as: owner } = await signUp(t, "a@example.test");
+    const { as: other } = await signUp(t, "b@example.test");
+    const { groupId } = await owner.mutation(api.monitorGroups.create, PRODUCT);
+    const url = "https://johnlewis.com/xm5";
+
+    const attempts = [
+      () =>
+        other.mutation(api.monitorGroups.updateCriteria, {
+          id: groupId,
+          alertOn: { priceDrop: true },
+          notificationChannels: ["email"],
+          checkInterval: "1h",
+        }),
+      () => other.mutation(api.monitorGroups.watchListing, { id: groupId, url }),
+      () => other.mutation(api.monitorGroups.unwatchListing, { id: groupId, url: "https://argos.co.uk/xm5" }),
+      () => other.mutation(api.monitorGroups.setListingDismissed, { id: groupId, url, dismissed: true }),
+      () => other.mutation(api.monitorGroups.setPaused, { id: groupId, paused: true }),
+      () => other.mutation(api.monitorGroups.remove, { id: groupId }),
+    ];
+    for (const attempt of attempts) await expect(attempt()).rejects.toThrow("Product not found");
+
+    const group = await owner.query(api.monitorGroups.get, { id: groupId });
+    expect(group?.alertOn).toEqual({ backInStock: true });
+    expect(group?.listings.map((l) => l.state)).toEqual(["watching", "watching", "suggested"]);
+    expect((await owner.query(api.monitors.list, {})).map((m) => m.status)).toEqual(["active", "active"]);
   });
 });
