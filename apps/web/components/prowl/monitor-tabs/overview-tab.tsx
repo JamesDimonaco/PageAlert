@@ -31,7 +31,7 @@ import {
 import type { Id } from "@/convex/_generated/dataModel";
 import type { Doc } from "@/convex/_generated/dataModel";
 import type { ExtractedItem, ExtractionSchema, PriceChange } from "@prowl/shared";
-import { getItemKey, isSingleProduct, matchConfidence, MATCH_CONFIDENCE_LABEL } from "@prowl/shared";
+import { currencyExponent, getItemKey, isSingleProduct, matchConfidence, MATCH_CONFIDENCE_LABEL, toMinorUnits } from "@prowl/shared";
 import { useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { timeAgo, timeUntil } from "@/lib/time";
@@ -59,7 +59,8 @@ interface OverviewTabProps {
     nextCheckAt?: number;
     notificationChannels?: string[];
     proxyPreferred?: boolean;
-    alertOn?: { backInStock?: boolean };
+    alertOn?: { backInStock?: boolean; priceDrop?: boolean; priceBelow?: number };
+    lastSeen?: { currency?: string };
   };
   matches: ExtractedItem[];
   totalItems: number;
@@ -76,6 +77,17 @@ interface OverviewTabProps {
 }
 
 type CheckInterval = "5m" | "15m" | "30m" | "1h" | "6h" | "24h";
+type PriceChoice = "off" | "drop" | "below";
+
+/**
+ * The currency a target price is typed in: the last read's, else the full
+ * extract's. The extract prompt leaves USD unmarked, hence the fallback.
+ */
+function productCurrency(monitor: OverviewTabProps["monitor"]): string {
+  const itemCurrency = (monitor.schema as { items?: { currency?: unknown }[] } | undefined)?.items?.[0]?.currency;
+  const candidate = monitor.lastSeen?.currency ?? (typeof itemCurrency === "string" ? itemCurrency.toUpperCase() : "USD");
+  return currencyExponent(candidate) === null ? "USD" : candidate;
+}
 
 const RETRY_LIMIT = 3;
 const RETRY_WINDOW_MS = 60 * 60 * 1000; // 1 hour
@@ -551,6 +563,15 @@ function MonitorSettingsForm({
   const channelsUnresolved = explicitChannels === undefined && configuredChannels === undefined;
   const singleProduct = isSingleProduct(monitor.schema);
   const [backInStock, setBackInStock] = useState(monitor.alertOn?.backInStock === true);
+  const currency = productCurrency(monitor);
+  const exponent = currencyExponent(currency) ?? 2;
+  const savedChoice: PriceChoice = monitor.alertOn?.priceDrop
+    ? "drop"
+    : monitor.alertOn?.priceBelow !== undefined ? "below" : "off";
+  const [priceChoice, setPriceChoice] = useState<PriceChoice>(savedChoice);
+  const [target, setTarget] = useState(
+    monitor.alertOn?.priceBelow !== undefined ? String(monitor.alertOn.priceBelow / 10 ** exponent) : ""
+  );
   const [saving, setSaving] = useState(false);
   const updateMutation = useMutation(api.monitors.update);
 
@@ -564,8 +585,21 @@ function MonitorSettingsForm({
       };
       if (editedChannels !== null) payload.notificationChannels = editedChannels;
       if (checkInterval !== monitor.checkInterval) payload.checkInterval = checkInterval;
-      if (backInStock !== (monitor.alertOn?.backInStock === true)) {
-        payload.alertOn = { ...monitor.alertOn, backInStock };
+      const targetMinor = priceChoice === "below" ? toMinorUnits(Number(target), currency) : null;
+      if (priceChoice === "below" && !targetMinor) {
+        toast.error("Enter a target price above zero");
+        return;
+      }
+      if (
+        backInStock !== (monitor.alertOn?.backInStock === true) ||
+        priceChoice !== savedChoice ||
+        (targetMinor !== null && targetMinor !== monitor.alertOn?.priceBelow)
+      ) {
+        payload.alertOn = {
+          backInStock,
+          ...(priceChoice === "drop" ? { priceDrop: true } : {}),
+          ...(targetMinor !== null ? { priceBelow: targetMinor } : {}),
+        };
       }
       await updateMutation(payload as Parameters<typeof updateMutation>[0]);
       onClose();
@@ -618,6 +652,42 @@ function MonitorSettingsForm({
               />
               <span className="text-sm">Tell me when it&apos;s back in stock</span>
             </label>
+          )}
+          {singleProduct && (
+            <fieldset className="space-y-2">
+              <legend className="text-sm font-medium">Price alerts</legend>
+              {([
+                ["off", "Off"],
+                ["drop", "Tell me about any price drop"],
+                ["below", "Only tell me when it's below a price"],
+              ] as const).map(([value, label]) => (
+                <label key={value} className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="price-choice"
+                    checked={priceChoice === value}
+                    onChange={() => setPriceChoice(value)}
+                    className="border-border accent-primary h-4 w-4 shrink-0"
+                  />
+                  <span className="text-sm">{label}</span>
+                </label>
+              ))}
+              {priceChoice === "below" && (
+                <div className="flex items-center gap-2 pl-6">
+                  <Input
+                    type="number"
+                    inputMode="decimal"
+                    min={0}
+                    step={exponent === 0 ? 1 : 1 / 10 ** exponent}
+                    value={target}
+                    onChange={(e) => setTarget(e.target.value)}
+                    className="w-32"
+                    aria-label={`Target price in ${currency}`}
+                  />
+                  <span className="text-sm text-muted-foreground">{currency}</span>
+                </div>
+              )}
+            </fieldset>
           )}
           <div className="flex items-center gap-2 pt-2">
             <Button size="sm" className="gap-1.5" onClick={save} disabled={saving}>

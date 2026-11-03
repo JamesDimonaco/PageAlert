@@ -64,19 +64,20 @@ export const sendMatchAlert = internalAction({
   },
 });
 
-/** A watched product went from out of stock to in stock */
-export const sendBackInStockAlert = internalAction({
+/** A stock or price change on a watched product */
+export const sendProductAlert = internalAction({
   args: {
     chatId: v.string(),
     monitorId: v.string(),
     url: v.string(),
-    productTitle: v.string(),
+    headline: v.string(),
+    message: v.string(),
   },
   handler: async (_ctx, args) => {
     const text = [
-      `✅ *Back in stock*`,
+      `*${escMd(args.headline)}*`,
       ``,
-      `${escMd(truncate(args.productTitle, 120))} is back in stock on ${escMd(displayHost(args.url))}\\.`,
+      escMd(truncate(args.message, 300)),
       ``,
       `🔗 [View on site](${escUrl(args.url)})`,
       `📊 [View in PageAlert](${escUrl(APP_URL + "/dashboard/monitors/" + args.monitorId)})`,

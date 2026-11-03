@@ -5,6 +5,18 @@ import { v, type Infer } from "convex/values";
 export const emailCategory = v.union(v.literal("tips"), v.literal("updates"));
 export type EmailCategory = Infer<typeof emailCategory>;
 
+/**
+ * Stock and price alerts on a single-product monitor (isSingleProduct in
+ * @prowl/shared). Absent means match alerts only. priceDrop and priceBelow
+ * are one choice: any drop, or below a target in minor units of the
+ * product's currency.
+ */
+export const alertOnValidator = v.object({
+  backInStock: v.optional(v.boolean()),
+  priceDrop: v.optional(v.boolean()),
+  priceBelow: v.optional(v.number()),
+});
+
 /** A feature a user can switch on under Settings → Beta features. */
 export const betaFeature = v.literal("find_a_product");
 export type BetaFeature = Infer<typeof betaFeature>;
@@ -92,11 +104,7 @@ export default defineSchema({
     anonymousEmail: v.optional(v.string()),
     expiresAt: v.optional(v.number()),
     muted: v.optional(v.boolean()),
-    // Stock alerts on a single-product monitor (isSingleProduct in
-    // @prowl/shared). Absent means match alerts only, as before.
-    alertOn: v.optional(v.object({
-      backInStock: v.optional(v.boolean()),
-    })),
+    alertOn: v.optional(alertOnValidator),
     // The product as the last read saw it. A value the read could not make
     // out keeps the last known one. Price is in minor units of `currency`.
     lastSeen: v.optional(v.object({

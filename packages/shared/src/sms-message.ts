@@ -127,8 +127,9 @@ export function formatMatchSms({ monitorName, newCount, link }: MatchSmsArgs): s
   );
 }
 
-export function formatBackInStockSms({ productTitle, link }: { productTitle: string; link: string }): string {
-  return oneSegment(`PageAlert: back in stock: "`, toGsm7(productTitle), `" ${toGsm7(link)}`);
+/** A stock or price alert. `what` is the news, such as "back in stock" or "price drop to £12.99". */
+export function formatProductSms({ what, productTitle, link }: { what: string; productTitle: string; link: string }): string {
+  return oneSegment(`PageAlert: ${toGsm7(what)}: "`, toGsm7(productTitle), `" ${toGsm7(link)}`);
 }
 
 const MONTHS = [

@@ -35,20 +35,21 @@ export const sendMatchAlert = internalAction({
   },
 });
 
-/** A watched product went from out of stock to in stock */
-export const sendBackInStockAlert = internalAction({
+/** A stock or price change on a watched product */
+export const sendProductAlert = internalAction({
   args: {
     webhookUrl: v.string(),
     monitorId: v.string(),
     url: v.string(),
-    productTitle: v.string(),
+    headline: v.string(),
+    message: v.string(),
   },
   handler: async (_ctx, args) => {
     await sendWebhook(args.webhookUrl, {
       embeds: [
         {
-          title: "✅ Back in stock",
-          description: `${args.productTitle} is back in stock on ${displayHost(args.url)}.`,
+          title: args.headline,
+          description: args.message,
           color: 0x047857,
           fields: [
             { name: "Website", value: `[Open](${args.url})`, inline: true },

@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   GSM7_SEGMENT_LIMIT,
   fit,
-  formatBackInStockSms,
+  formatProductSms,
   formatMatchSms,
   formatQuotaExhaustedSms,
   formatVerificationSms,
@@ -57,13 +57,14 @@ describe("gsm7Length", () => {
   });
 });
 
-describe("formatBackInStockSms", () => {
+describe("formatProductSms", () => {
   it("fits a long product title into one segment", () => {
-    const body = formatBackInStockSms({
+    const body = formatProductSms({
+      what: "price drop to £12.99",
       productTitle: "Sony WH-1000XM5 Wireless Noise Cancelling Over-Ear Headphones – Midnight Blue, 30 hour battery",
       link: LINK,
     });
-    expect(body.startsWith("PageAlert: back in stock: \"Sony")).toBe(true);
+    expect(body.startsWith("PageAlert: price drop to £12.99: \"Sony")).toBe(true);
     expect(body.endsWith(LINK)).toBe(true);
     assertOneSegment(body);
   });

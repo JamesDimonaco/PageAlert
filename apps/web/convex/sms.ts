@@ -13,7 +13,7 @@ import { components, internal } from "./_generated/api";
 import { effectiveTier, SMS_LIMITS, spendSmsBudget } from "./tiers";
 import { requireLiveAccount } from "./account";
 import {
-  formatBackInStockSms,
+  formatProductSms,
   formatMatchSms,
   formatQuotaExhaustedSms,
   formatVerificationSms,
@@ -442,12 +442,13 @@ export const sendMatchAlert = internalAction({
   },
 });
 
-/** A watched product went from out of stock to in stock */
-export const sendBackInStockAlert = internalAction({
+/** A stock or price change on a watched product */
+export const sendProductAlert = internalAction({
   args: {
     userId: v.string(),
     phone: v.string(),
     monitorId: v.string(),
+    what: v.string(),
     productTitle: v.string(),
   },
   handler: async (ctx, args) => {
@@ -455,7 +456,7 @@ export const sendBackInStockAlert = internalAction({
       ctx,
       args.userId,
       args.phone,
-      formatBackInStockSms({ productTitle: args.productTitle, link: `${APP_URL}/m/${args.monitorId}` }),
+      formatProductSms({ what: args.what, productTitle: args.productTitle, link: `${APP_URL}/m/${args.monitorId}` }),
     );
   },
 });

@@ -1,4 +1,4 @@
-import { v, type Infer } from "convex/values";
+import { ConvexError, v, type Infer } from "convex/values";
 import { mutation, query, internalAction, internalQuery, type MutationCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
@@ -8,6 +8,7 @@ import { effectiveTier, type Tier } from "./tiers";
 import { isBanned, requireLiveAccount } from "./account";
 import { reserveFallback, scraperDown } from "./admin";
 import { deliverAlert } from "./alerts";
+import { alertOnValidator } from "./schema";
 
 // ---- Resource Limits ----
 const MAX_NAME_LENGTH = 200;
@@ -529,7 +530,7 @@ export const update = mutation({
     schema: v.optional(v.any()),
     notificationChannels: v.optional(channelValidator),
     muted: v.optional(v.boolean()),
-    alertOn: v.optional(v.object({ backInStock: v.optional(v.boolean()) })),
+    alertOn: v.optional(alertOnValidator),
   },
   handler: async (ctx, { id, ...fields }) => {
     const userId = await getAuthUserId(ctx);
@@ -587,10 +588,21 @@ export const update = mutation({
     // Stock was not read while the option was off, and a new URL is a new
     // product. Either way the stored reading is stale, and an old "out of
     // stock" left in place would fire on the first read. Clearing it makes
-    // that read a baseline instead.
-    const stockTurnedOn = fields.alertOn?.backInStock === true && existing.alertOn?.backInStock !== true;
+    // that read a baseline instead. A new price choice is treated the same,
+    // so setting a target under today's price does not fire straight away.
+    const next = fields.alertOn;
+    const stockTurnedOn = next?.backInStock === true && existing.alertOn?.backInStock !== true;
+    const priceChoiceSet =
+      (next?.priceDrop === true || next?.priceBelow !== undefined) &&
+      (next.priceDrop !== existing.alertOn?.priceDrop || next.priceBelow !== existing.alertOn?.priceBelow);
+    if (next?.priceDrop && next.priceBelow !== undefined) {
+      throw new ConvexError("Pick any price drop or a target price, not both.");
+    }
+    if (next?.priceBelow !== undefined && (!Number.isInteger(next.priceBelow) || next.priceBelow <= 0)) {
+      throw new ConvexError("The target price must be above zero.");
+    }
     const urlChanged = fields.url !== undefined && fields.url.trim() !== existing.url;
-    if (stockTurnedOn || urlChanged) {
+    if (stockTurnedOn || priceChoiceSet || urlChanged) {
       updates.lastSeen = undefined;
       updates.productFingerprint = undefined;
     }

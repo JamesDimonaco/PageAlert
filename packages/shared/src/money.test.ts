@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { toMinorUnits } from "./money";
+import { formatMinorUnits, toMinorUnits } from "./money";
 
 // Prices are stored as integers. A wrong exponent turns ¥1,500 into ¥150,000
 // or £12.99 into £1,299 on every alert that quotes it.
@@ -22,5 +22,18 @@ describe("toMinorUnits", () => {
     expect(toMinorUnits(10, "RMB")).toBeNull();
     expect(toMinorUnits(-1, "GBP")).toBeNull();
     expect(toMinorUnits(Number.NaN, "GBP")).toBeNull();
+  });
+});
+
+// Price alerts quote old and new prices. A hard-coded $ or a fixed two
+// decimals would show a UK user dollars, or a Japanese price 100× too small.
+describe("formatMinorUnits", () => {
+  it("shows the currency's own symbol and decimals", () => {
+    expect(formatMinorUnits(1299, "GBP")).toBe("£12.99");
+    expect(formatMinorUnits(1500, "JPY")).toBe("¥1,500");
+  });
+
+  it("refuses an unknown currency rather than showing dollars", () => {
+    expect(formatMinorUnits(1299, "UKP")).toBeNull();
   });
 });
