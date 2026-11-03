@@ -4,7 +4,7 @@ import { claimActivation } from "./monitors";
 import { internalAction, internalMutation, internalQuery, type ActionCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
-import { formatMinorUnits, formatSmsPrice, isProductMonitor, isSingleProduct } from "@prowl/shared";
+import { formatMinorUnits, formatSmsPrice, isProductMonitor } from "@prowl/shared";
 import { deliverAlert } from "./alerts";
 import {
   displayHost,
@@ -115,15 +115,14 @@ function wantsProductRead(monitor: Pick<Doc<"monitors">, "alertOn" | "schema" | 
 const MAX_PRODUCT_TITLE = 500;
 
 /**
- * The product's name, for finding it on the page and naming it in alerts: the
- * last full read's when that found one product, else the monitor's name. A
- * listing in a product is named after the search result, and its page may hold
- * several items, the first of which need not be the product.
+ * The product's name, for finding it on the page and naming it in alerts. A
+ * listing in a product uses its search result's title, because its page may
+ * hold several items and the first need not be the product. Otherwise it is
+ * the last full read's.
  */
-function productTitle(monitor: Pick<Doc<"monitors">, "name" | "schema">): string {
-  const title = isSingleProduct(monitor.schema)
-    ? (monitor.schema as { items: { title?: unknown }[] }).items[0]?.title
-    : undefined;
+function productTitle(monitor: Pick<Doc<"monitors">, "name" | "schema" | "productTitle">): string {
+  const title =
+    monitor.productTitle ?? (monitor.schema as { items?: { title?: unknown }[] } | undefined)?.items?.[0]?.title;
   const name = typeof title === "string" && title.trim() ? title.trim() : monitor.name;
   return name.slice(0, MAX_PRODUCT_TITLE);
 }

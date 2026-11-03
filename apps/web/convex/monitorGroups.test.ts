@@ -116,6 +116,28 @@ describe("monitorGroups.create", () => {
     expect(await t.run((ctx) => ctx.db.query("monitorGroups").collect())).toHaveLength(0);
   });
 
+  // Free allows Telegram and Discord on one monitor. A product is one thing to
+  // the user, so all its listings get them, or none do. Per listing, only the
+  // first would alert there.
+  it("gives a free user's listings one channel list, counting the product as one monitor", async () => {
+    const t = harness();
+    const { as } = await signUp(t, "a@example.test");
+    const telegram = { ...PRODUCT, notificationChannels: ["telegram" as const] };
+
+    const first = await as.mutation(api.monitorGroups.create, {
+      ...telegram,
+      listings: [listing("argos.co.uk", true), listing("currys.co.uk", true)],
+    });
+    const monitors = await as.query(api.monitors.list, {});
+    expect(monitors.map((m) => m.notificationChannels)).toEqual([["telegram"], ["telegram"]]);
+    expect((await as.query(api.monitorGroups.get, { id: first.groupId }))?.notificationChannels).toEqual(["telegram"]);
+
+    // A second product is a second monitor on Telegram, which free doesn't allow.
+    const second = await as.mutation(api.monitorGroups.create, { ...telegram, listings: [listing("johnlewis.com", true)] });
+    expect((await as.query(api.monitors.get, { id: second.monitorIds[0]! }))?.notificationChannels).toEqual([]);
+    expect((await as.query(api.monitorGroups.get, { id: second.groupId }))?.notificationChannels).toEqual([]);
+  });
+
   it("does not show one user's product to another", async () => {
     const t = harness();
     const { as: owner } = await signUp(t, "a@example.test");
@@ -182,7 +204,8 @@ describe("a product's monitors on the scheduler", () => {
 
   // A product page often lists related items too. Without the product gate
   // those listings would never be read for stock or price, and never alert.
-  it("reads the product on a listing whose page shows several items, by the listing's title", async () => {
+  // The title finds the product on the page, so a rename must not move it.
+  it("reads the product on a listing whose page shows several items, by the listing's title, even once renamed", async () => {
     let productTitle: unknown;
     stubScraper((body) => (productTitle = body.productTitle));
     const t = harness();
@@ -190,6 +213,7 @@ describe("a product's monitors on the scheduler", () => {
     const { monitorIds } = await as.mutation(api.monitorGroups.create, { ...PRODUCT, listings: [listing("argos.co.uk", true)] });
     const id = monitorIds[0]!;
     await t.action(internal.scheduler.runScheduledChecks, {});
+    await as.mutation(api.monitors.update, { id, name: "My headphones" });
     await t.run((ctx) => ctx.db.patch(id, { nextCheckAt: 0 }));
 
     await t.action(internal.scheduler.runScheduledChecks, {});

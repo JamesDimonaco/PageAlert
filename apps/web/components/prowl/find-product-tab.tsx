@@ -51,14 +51,16 @@ export function FindProductTab({ onPasteUrl, onDone }: FindProductTabProps) {
   const [results, setResults] = useState<ProductListing[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showAccessories, setShowAccessories] = useState(false);
-  const [searchedFor, setSearchedFor] = useState("");
+  const [searched, setSearched] = useState<{ query: string; region: SearchRegion } | null>(null);
   const [searchCount, setSearchCount] = useState(0);
+  // Always a subset of the listings on screen, so it is what gets watched.
   const [ticked, setTicked] = useState<Set<string>>(new Set());
   const [createdId, setCreatedId] = useState<Id<"monitorGroups"> | null>(null);
   const monitors = useQuery(api.monitors.list);
   const { maxMonitors, isLoading: tierLoading } = useTier();
+  const slotsLoading = monitors === undefined || tierLoading;
   // Every monitor counts toward the plan, paused ones included.
-  const freeSlots = monitors === undefined || tierLoading ? 0 : Math.max(0, maxMonitors - monitors.length);
+  const freeSlots = slotsLoading ? 0 : Math.max(0, maxMonitors - monitors.length);
 
   const saved = status?.region && isSearchRegion(status.region) ? status.region : null;
   const region = picked ?? saved ?? guessed;
@@ -95,7 +97,7 @@ export function FindProductTab({ onPasteUrl, onDone }: FindProductTabProps) {
     setResults(null);
     setShowAccessories(false);
     setTicked(new Set());
-    setSearchedFor(query.trim());
+    setSearched({ query: query.trim(), region });
     setSearchCount((c) => c + 1);
     trackProductSearchStarted({ region });
     const started = Date.now();
@@ -113,7 +115,13 @@ export function FindProductTab({ onPasteUrl, onDone }: FindProductTabProps) {
 
   const accessories = results?.filter((l) => l.label === "accessory") ?? [];
   const shown = results?.filter((l) => showAccessories || l.label !== "accessory") ?? [];
-  const tickedCount = shown.filter((l) => ticked.has(l.url)).length;
+
+  function toggleAccessories() {
+    if (showAccessories) {
+      setTicked((prev) => new Set([...prev].filter((url) => !accessories.some((a) => a.url === url))));
+    }
+    setShowAccessories(!showAccessories);
+  }
 
   function toggle(url: string) {
     setTicked((prev) => {
@@ -159,7 +167,13 @@ export function FindProductTab({ onPasteUrl, onDone }: FindProductTabProps) {
             <Select
               value={region ?? undefined}
               onValueChange={(v) => {
-                if (v && isSearchRegion(v)) setPicked(v);
+                if (v && isSearchRegion(v) && v !== region) {
+                  setPicked(v);
+                  // Results from another country's shops would be saved under this one.
+                  setResults(null);
+                  setError(null);
+                  setTicked(new Set());
+                }
                 setChangingRegion(false);
               }}
             >
@@ -215,7 +229,11 @@ export function FindProductTab({ onPasteUrl, onDone }: FindProductTabProps) {
 
       {results && results.length > 0 && (
         <div className="space-y-2">
-          {freeSlots === 0 ? (
+          {slotsLoading ? (
+            <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <Loader2 className="h-3 w-3 animate-spin" /> Checking your free monitors…
+            </p>
+          ) : freeSlots === 0 ? (
             <p className="text-xs text-muted-foreground">
               You&apos;re using all {maxMonitors} of your monitors. Paused ones still count, so delete one to free a
               slot, or{" "}
@@ -232,7 +250,7 @@ export function FindProductTab({ onPasteUrl, onDone }: FindProductTabProps) {
                 key={listing.url}
                 listing={listing}
                 checked={ticked.has(listing.url)}
-                disabled={!ticked.has(listing.url) && tickedCount >= freeSlots}
+                disabled={!ticked.has(listing.url) && ticked.size >= freeSlots}
                 onToggle={() => toggle(listing.url)}
               />
             ))}
@@ -240,17 +258,17 @@ export function FindProductTab({ onPasteUrl, onDone }: FindProductTabProps) {
           {accessories.length > 0 && (
             <button
               type="button"
-              onClick={() => setShowAccessories((s) => !s)}
+              onClick={toggleAccessories}
               className="text-xs text-muted-foreground underline hover:text-foreground"
             >
               {showAccessories ? "Hide accessories" : `Show accessories (${accessories.length})`}
             </button>
           )}
-          {region && (
+          {searched && (
             <WatchProductForm
               key={searchCount}
-              name={searchedFor}
-              region={region}
+              name={searched.query}
+              region={searched.region}
               listings={shown}
               ticked={ticked}
               onCreated={setCreatedId}

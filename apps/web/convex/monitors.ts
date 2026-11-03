@@ -171,7 +171,7 @@ export const get = query({
 
 const channelValidator = notificationChannelsValidator;
 
-export type ChannelList = Infer<typeof channelValidator>;
+type ChannelList = Infer<typeof channelValidator>;
 const ALL_CHANNELS: ChannelList = channelValidator.element.members.map((m) => m.value);
 
 /**
@@ -188,6 +188,8 @@ export async function createMonitorForUser(
     prompt: string;
     checkInterval: CheckInterval;
     notificationChannels?: ChannelList;
+    /** The product this monitor watches a listing of. */
+    groupId?: Id<"monitorGroups">;
   }
 ): Promise<Id<"monitors">> {
   if (await isBanned(ctx, userId)) throw new Error("This account has been suspended.");
@@ -231,12 +233,16 @@ export async function createMonitorForUser(
   //
   // No list means every channel, so it is rationed as one. The web form always
   // sends a list; MCP leaves it out.
+  //
+  // A product counts as one monitor here: its listings are one thing to the
+  // user, and share one channel list.
   let channels = args.notificationChannels;
   if (tier === "free") {
     channels = withoutSms(channels ?? ALL_CHANNELS);
     if (channels.some(isRestrictedChannel)) {
       const existingWithChannels = existingMonitors.find((m) =>
-        m.notificationChannels?.some(isRestrictedChannel)
+        m.notificationChannels?.some(isRestrictedChannel) &&
+        (args.groupId === undefined || m.groupId !== args.groupId)
       );
       if (existingWithChannels) {
         channels = channels.filter((c) => !isRestrictedChannel(c));
@@ -252,6 +258,7 @@ export async function createMonitorForUser(
     prompt: args.prompt.trim(),
     checkInterval: checkInterval,
     notificationChannels: channels,
+    groupId: args.groupId,
     userId,
     userEmail,
     status: "scanning",
@@ -561,6 +568,7 @@ export const update = mutation({
           .collect();
         const otherWithChannels = otherMonitors.find((m) =>
           m._id !== id &&
+          (existing.groupId === undefined || m.groupId !== existing.groupId) &&
           (m as any).notificationChannels?.some(isRestrictedChannel)
         );
         if (otherWithChannels) {

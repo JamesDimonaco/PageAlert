@@ -29,6 +29,7 @@ export const checkIntervalValidator = v.union(
   v.literal("6h"),
   v.literal("24h")
 );
+export type CheckInterval = Infer<typeof checkIntervalValidator>;
 
 export const notificationChannelsValidator = v.array(v.union(
   v.literal("email"),
@@ -140,6 +141,9 @@ export default defineSchema({
     // The product this monitor watches one listing of. Its alertOn, channels
     // and interval are copied from there.
     groupId: v.optional(v.id("monitorGroups")),
+    // The search result's title, for finding the product on its page. Kept
+    // apart from `name`, which the user can edit.
+    productTitle: v.optional(v.string()),
     // Deprecated: run admin:clearPriceAlerts in prod, then delete this field.
     priceAlerts: v.optional(v.object({
       onPriceDrop: v.boolean(),

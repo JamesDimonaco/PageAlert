@@ -134,6 +134,7 @@ export const create = mutation({
             prompt: productPrompt(listing.title, args.alertOn),
             checkInterval: args.checkInterval,
             notificationChannels: args.notificationChannels,
+            groupId,
           }
         );
       } catch (error) {
@@ -145,14 +146,24 @@ export const create = mutation({
       // Active with no schema is what the scheduler reads as "do the first
       // extract", so the first scan runs on the server within a minute and
       // the user can leave. A "scanning" monitor waits on the browser.
-      await ctx.db.patch(monitorId, { groupId, alertOn: args.alertOn, status: "active", nextCheckAt: now });
+      await ctx.db.patch(monitorId, {
+        alertOn: args.alertOn,
+        productTitle: listing.title,
+        status: "active",
+        nextCheckAt: now,
+      });
       monitorIds.push(monitorId);
       stored.push({ ...listing, monitorId });
     }
 
-    // The plan may have slowed the interval down. Store what the monitors got.
+    // The plan may have slowed the interval or dropped channels, the same for
+    // every listing. Store what the monitors got.
     const first = await ctx.db.get(monitorIds[0]!);
-    await ctx.db.patch(groupId, { listings: stored, checkInterval: first?.checkInterval ?? args.checkInterval });
+    await ctx.db.patch(groupId, {
+      listings: stored,
+      checkInterval: first?.checkInterval ?? args.checkInterval,
+      notificationChannels: first?.notificationChannels ?? args.notificationChannels,
+    });
     return { groupId, monitorIds };
   },
 });

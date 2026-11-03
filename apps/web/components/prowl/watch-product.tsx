@@ -14,8 +14,7 @@ import { ChannelSelector, defaultChannels, useConfiguredChannels, type Channel }
 import { IntervalSelector } from "@/components/prowl/interval-selector";
 import { useTier } from "@/hooks/use-tier";
 import { trackListingReviewed, trackProductGroupCreated } from "@/lib/posthog";
-
-type CheckInterval = "5m" | "15m" | "30m" | "1h" | "6h" | "24h";
+import type { CheckInterval } from "@/convex/schema";
 
 interface WatchProductFormProps {
   name: string;
