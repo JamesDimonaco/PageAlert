@@ -104,6 +104,9 @@ function detectChanges(previousItems: Record<string, unknown>[], currentItems: R
 
 const MAX_CONCURRENT_CHECKS = 10;
 
+/** How long after creating a product its owner may still be on the progress screen. */
+const PRODUCT_SCAN_WATCHED_MS = 15 * 60 * 1000;
+
 /** A product monitor whose owner wants a stock or price alert. */
 function wantsProductRead(monitor: Pick<Doc<"monitors">, "alertOn" | "schema" | "groupId">): boolean {
   const on = monitor.alertOn;
@@ -339,16 +342,18 @@ export const recordCheckResult = internalMutation({
     // with none has either only ever failed (the first scan did not get in and
     // a retry just has) or is a listing in a product, which is first-scanned
     // here by design. Activation was never claimed for that user. The person
-    // told "we'll keep trying" has heard nothing since, so they get an email;
-    // the product's owner watched the scan in the app and does not.
+    // told "we'll keep trying" has heard nothing since, so they get an email.
+    // A product's owner who could still be watching the scan in the app does
+    // not; one whose listing only got in after retries does.
     // Anonymous monitors are outside this: their owner is an anon_ id with no
     // account to activate and no dashboard to send them to.
     if (!monitor.checkCount && !monitor.isAnonymous) {
-      const how = monitor.groupId ? "got their first product read" : "got their first read after a failed first scan";
+      const watched = monitor.groupId !== undefined && now - monitor.createdAt < PRODUCT_SCAN_WATCHED_MS;
+      const how = watched ? "got their first product read" : "got their first read after a failed first scan";
       await claimActivation(ctx, monitor, args.matchCount, how, false);
       // Same rule as the alerts: no list means every channel.
       const channels = monitor.notificationChannels;
-      if (!monitor.groupId && monitor.userEmail && !monitor.muted && (!channels || channels.includes("email"))) {
+      if (!watched && monitor.userEmail && !monitor.muted && (!channels || channels.includes("email"))) {
         await ctx.scheduler.runAfter(0, internal.emails.sendFirstReadAlert, {
           to: monitor.userEmail,
           userId: monitor.userId,

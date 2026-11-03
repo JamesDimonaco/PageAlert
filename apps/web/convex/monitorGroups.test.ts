@@ -219,6 +219,21 @@ describe("a product's monitors on the scheduler", () => {
     expect(jobs.some((job) => job.name.includes("sendFirstReadAlert"))).toBe(false);
   });
 
+  // A listing that only got in after retries finished long after the user
+  // left the progress screen. Without the email they never hear it worked.
+  it("sends the first-read email when a listing's first read comes late", async () => {
+    stubScraper();
+    const t = harness();
+    const { as } = await signUp(t, "a@example.test");
+    const { monitorIds } = await as.mutation(api.monitorGroups.create, { ...PRODUCT, listings: [listing("argos.co.uk", true)] });
+    await t.run((ctx) => ctx.db.patch(monitorIds[0]!, { createdAt: Date.now() - 60 * 60 * 1000 }));
+
+    await t.action(internal.scheduler.runScheduledChecks, {});
+
+    const jobs = await t.run((ctx) => ctx.db.system.query("_scheduled_functions").collect());
+    expect(jobs.some((job) => job.name.includes("sendFirstReadAlert"))).toBe(true);
+  });
+
   // A product page often lists related items too. Without the product gate
   // those listings would never be read for stock or price, and never alert.
   // The title finds the product on the page, so a rename must not move it.
