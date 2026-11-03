@@ -242,7 +242,7 @@ export const sendProductAlert = internalAction({
       </div>
       <div style="padding:16px 32px;background:#f9fafb;border-top:1px solid #eee">
         <p style="margin:0;color:#999;font-size:12px">
-          You're receiving this because you asked to hear about this product's ${args.kind === "stock" ? "stock" : "price"}.
+          You're receiving this because you asked to hear about this product's ${args.kind}.
           <a href="${APP_URL}/dashboard/settings" style="color:#999">Manage notifications</a>
         </p>
       </div>

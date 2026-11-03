@@ -8,13 +8,13 @@ export type EmailCategory = Infer<typeof emailCategory>;
 /**
  * Stock and price alerts on a single-product monitor (isSingleProduct in
  * @prowl/shared). Absent means match alerts only. priceDrop and priceBelow
- * are one choice: any drop, or below a target in minor units of the
- * product's currency.
+ * are one choice: any drop, or below a target. The target carries its own
+ * currency, so it is never compared with a price in another one.
  */
 export const alertOnValidator = v.object({
   backInStock: v.optional(v.boolean()),
   priceDrop: v.optional(v.boolean()),
-  priceBelow: v.optional(v.number()),
+  priceBelow: v.optional(v.object({ amount: v.number(), currency: v.string() })),
 });
 
 /** A feature a user can switch on under Settings → Beta features. */
@@ -111,6 +111,9 @@ export default defineSchema({
       inStock: v.optional(v.boolean()),
       price: v.optional(v.number()),
       currency: v.optional(v.string()),
+      // A fall of more than half, waiting for a second read to confirm it
+      // before it replaces `price` — see recordProductRead.
+      pendingPrice: v.optional(v.number()),
     })),
     // Hash of the product's own text at the last read, or of the whole page
     // when its title could not be found — see productExcerpt

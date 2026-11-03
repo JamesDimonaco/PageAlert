@@ -59,7 +59,7 @@ interface OverviewTabProps {
     nextCheckAt?: number;
     notificationChannels?: string[];
     proxyPreferred?: boolean;
-    alertOn?: { backInStock?: boolean; priceDrop?: boolean; priceBelow?: number };
+    alertOn?: { backInStock?: boolean; priceDrop?: boolean; priceBelow?: { amount: number; currency: string } };
     lastSeen?: { currency?: string };
   };
   matches: ExtractedItem[];
@@ -78,10 +78,12 @@ interface OverviewTabProps {
 
 type CheckInterval = "5m" | "15m" | "30m" | "1h" | "6h" | "24h";
 type PriceChoice = "off" | "drop" | "below";
+const CURRENCIES = Intl.supportedValuesOf("currency");
 
 /**
- * The currency a target price is typed in: the last read's, else the full
- * extract's. The extract prompt leaves USD unmarked, hence the fallback.
+ * The best guess at the product's currency, to preselect for a new target:
+ * the last read's, else the full extract's. The extract prompt leaves USD
+ * unmarked, hence the fallback. The user can change it.
  */
 function productCurrency(monitor: OverviewTabProps["monitor"]): string {
   const itemCurrency = (monitor.schema as { items?: { currency?: unknown }[] } | undefined)?.items?.[0]?.currency;
@@ -563,14 +565,15 @@ function MonitorSettingsForm({
   const channelsUnresolved = explicitChannels === undefined && configuredChannels === undefined;
   const singleProduct = isSingleProduct(monitor.schema);
   const [backInStock, setBackInStock] = useState(monitor.alertOn?.backInStock === true);
-  const currency = productCurrency(monitor);
+  const savedTarget = monitor.alertOn?.priceBelow;
+  const [currency, setCurrency] = useState(savedTarget?.currency ?? productCurrency(monitor));
   const exponent = currencyExponent(currency) ?? 2;
   const savedChoice: PriceChoice = monitor.alertOn?.priceDrop
     ? "drop"
-    : monitor.alertOn?.priceBelow !== undefined ? "below" : "off";
+    : savedTarget !== undefined ? "below" : "off";
   const [priceChoice, setPriceChoice] = useState<PriceChoice>(savedChoice);
   const [target, setTarget] = useState(
-    monitor.alertOn?.priceBelow !== undefined ? String(monitor.alertOn.priceBelow / 10 ** exponent) : ""
+    savedTarget !== undefined ? String(savedTarget.amount / 10 ** (currencyExponent(savedTarget.currency) ?? 2)) : ""
   );
   const [saving, setSaving] = useState(false);
   const updateMutation = useMutation(api.monitors.update);
@@ -593,12 +596,12 @@ function MonitorSettingsForm({
       if (
         backInStock !== (monitor.alertOn?.backInStock === true) ||
         priceChoice !== savedChoice ||
-        (targetMinor !== null && targetMinor !== monitor.alertOn?.priceBelow)
+        (targetMinor !== null && (targetMinor !== savedTarget?.amount || currency !== savedTarget.currency))
       ) {
         payload.alertOn = {
           backInStock,
           ...(priceChoice === "drop" ? { priceDrop: true } : {}),
-          ...(targetMinor !== null ? { priceBelow: targetMinor } : {}),
+          ...(targetMinor !== null ? { priceBelow: { amount: targetMinor, currency } } : {}),
         };
       }
       await updateMutation(payload as Parameters<typeof updateMutation>[0]);
@@ -684,7 +687,16 @@ function MonitorSettingsForm({
                     className="w-32"
                     aria-label={`Target price in ${currency}`}
                   />
-                  <span className="text-sm text-muted-foreground">{currency}</span>
+                  <select
+                    value={currency}
+                    onChange={(e) => setCurrency(e.target.value)}
+                    className="h-9 rounded-md border border-input bg-transparent px-2 text-sm"
+                    aria-label="Currency of the target price"
+                  >
+                    {CURRENCIES.map((code) => (
+                      <option key={code} value={code}>{code}</option>
+                    ))}
+                  </select>
                 </div>
               )}
             </fieldset>

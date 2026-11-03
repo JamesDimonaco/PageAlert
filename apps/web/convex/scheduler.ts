@@ -1292,7 +1292,8 @@ const productAlertValidator = v.union(
   v.object({
     kind: v.literal("price"),
     reason: v.union(v.literal("drop"), v.literal("below")),
-    oldPrice: v.number(),
+    // Absent when a target is already met on the first read.
+    oldPrice: v.optional(v.number()),
     newPrice: v.number(),
     currency: v.string(),
     target: v.optional(v.number()),
@@ -1305,11 +1306,12 @@ type ProductAlert = Infer<typeof productAlertValidator>;
  *
  * Stock alerts only on a known out of stock followed by a known in stock.
  * Price alerts compare against the last known price in the same currency:
- * "any drop" on any fall, "below a target" only on crossing from above it
- * to at or below it, so it does not repeat while the price stays low.
+ * "any drop" on any fall, "below a target" when the price is at or below
+ * the target and was not last time, so it does not repeat while it stays
+ * low. A target already met on the first read alerts once.
  *
- * No baseline never alerts, so switching an option on cannot fire straight
- * away. An unreadable value keeps the last known one. Scheduling the send
+ * Otherwise no baseline never alerts, so switching an option on cannot fire
+ * straight away. An unreadable value keeps the last known one. Scheduling the send
  * here ties it to the write: a check that fails after this point cannot
  * lose the alert.
  */
@@ -1336,23 +1338,39 @@ export const recordProductRead = internalMutation({
       alerts.push({ kind: "stock" });
     }
 
-    const oldPrice = previous.currency === args.currency ? previous.price : undefined;
-    if (oldPrice !== undefined && args.price !== null && args.currency !== null) {
-      const price = { kind: "price" as const, oldPrice, newPrice: args.price, currency: args.currency };
-      if (on.priceDrop === true && args.price < oldPrice) {
-        alerts.push({ ...price, reason: "drop" });
-      } else if (on.priceBelow !== undefined && oldPrice > on.priceBelow && args.price <= on.priceBelow) {
-        alerts.push({ ...price, reason: "below", target: on.priceBelow });
+    // Kept as they are unless this read has a usable price.
+    let priceFields: { price?: number; currency?: string; pendingPrice?: number } =
+      previous.price !== undefined && previous.currency !== undefined
+        ? { price: previous.price, currency: previous.currency, ...(previous.pendingPrice !== undefined ? { pendingPrice: previous.pendingPrice } : {}) }
+        : {};
+    if (args.price !== null && args.currency !== null) {
+      const newPrice = args.price;
+      const currency = args.currency;
+      const oldPrice = previous.currency === currency ? previous.price : undefined;
+      // A fall of more than half is more often a misread (a monthly payment,
+      // a deposit, an accessory's price) than a sale. It waits for the same
+      // price on the next read before it counts.
+      const unconfirmed = oldPrice !== undefined && newPrice < oldPrice / 2 && previous.pendingPrice !== newPrice;
+      if (unconfirmed) {
+        priceFields = { price: oldPrice, currency, pendingPrice: newPrice };
+      } else {
+        priceFields = { price: newPrice, currency };
+        const price = { kind: "price" as const, oldPrice, newPrice, currency };
+        const target = on.priceBelow;
+        if (on.priceDrop === true && oldPrice !== undefined && newPrice < oldPrice) {
+          alerts.push({ ...price, reason: "drop" });
+        } else if (target && target.currency !== currency) {
+          console.warn(`[scheduler] ${monitor._id}: target is in ${target.currency} but the price read in ${currency}, not compared`);
+        } else if (target && newPrice <= target.amount && (oldPrice === undefined || oldPrice > target.amount)) {
+          alerts.push({ ...price, reason: "below", target: target.amount });
+        }
       }
     }
 
+    const inStock = args.inStock ?? previous.inStock;
     await ctx.db.patch(args.monitorId, {
       productFingerprint: args.productFingerprint,
-      lastSeen: {
-        ...previous,
-        ...(args.inStock !== null ? { inStock: args.inStock } : {}),
-        ...(args.price !== null && args.currency !== null ? { price: args.price, currency: args.currency } : {}),
-      },
+      lastSeen: { ...(inStock !== undefined ? { inStock } : {}), ...priceFields },
     });
 
     for (const alert of alerts) {
@@ -1366,17 +1384,21 @@ function money(minor: number, currency: string): string {
   return formatMinorUnits(minor, currency) ?? `${minor} ${currency}`;
 }
 
+/** Long enough to recognise; short enough that the price and site always fit in a push or a Telegram line. */
+const MAX_TITLE_IN_MESSAGE = 120;
+
 /** The wording of one alert: a headline, one sentence, and the news for an SMS. */
-function productAlertText(alert: ProductAlert, title: string, host: string) {
+function productAlertText(alert: ProductAlert, fullTitle: string, host: string) {
+  const title = fullTitle.length > MAX_TITLE_IN_MESSAGE ? `${fullTitle.slice(0, MAX_TITLE_IN_MESSAGE - 1)}…` : fullTitle;
   if (alert.kind === "stock") {
     return { headline: "Back in stock", message: `${title} is back in stock on ${host}.`, what: "back in stock" };
   }
   const now = money(alert.newPrice, alert.currency);
-  const was = money(alert.oldPrice, alert.currency);
+  const was = alert.oldPrice !== undefined ? money(alert.oldPrice, alert.currency) : null;
   if (alert.reason === "below" && alert.target !== undefined) {
     return {
       headline: "Below your target price",
-      message: `${title} is now ${now} on ${host}, below your ${money(alert.target, alert.currency)} target. It was ${was}.`,
+      message: `${title} is now ${now} on ${host}, below your ${money(alert.target, alert.currency)} target.${was ? ` It was ${was}.` : ""}`,
       what: `now ${now}, below your target`,
     };
   }

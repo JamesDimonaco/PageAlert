@@ -77,7 +77,7 @@ export const sendProductAlert = internalAction({
     const text = [
       `*${escMd(args.headline)}*`,
       ``,
-      escMd(truncate(args.message, 300)),
+      escMd(args.message),
       ``,
       `🔗 [View on site](${escUrl(args.url)})`,
       `📊 [View in PageAlert](${escUrl(APP_URL + "/dashboard/monitors/" + args.monitorId)})`,

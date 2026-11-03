@@ -125,12 +125,28 @@ describe("any price drop", () => {
     const { read } = await seedProductMonitor({ price: 29900, currency: "GBP" }, drop);
     expect(await read(true, { price: 2999, currency: "JPY" })).toEqual([]);
   });
+
+  // A misread (a monthly payment, an accessory's price) would announce a
+  // sale that is not there. A fall of more than half waits for a second read.
+  test("a single wild drop is silent and does not replace the price", async () => {
+    const { t, id, read } = await seedProductMonitor({ price: 29900, currency: "GBP" }, drop);
+    expect(await read(true, { price: 2500 })).toEqual([]);
+    expect(await read(true, { price: 29900 })).toEqual([]);
+    expect((await t.run((ctx) => ctx.db.get(id)))?.lastSeen).toEqual({ inStock: true, price: 29900, currency: "GBP" });
+  });
+
+  test("a big drop seen twice alerts once", async () => {
+    const { read } = await seedProductMonitor({ price: 29900, currency: "GBP" }, drop);
+    expect(await read(true, { price: 9900 })).toEqual([]);
+    expect(await read(true, { price: 9900 })).toEqual(["drop"]);
+    expect(await read(true, { price: 9900 })).toEqual([]);
+  });
 });
 
 // "Below £250" means "tell me when I can buy it for £250". Once said, saying
 // it again on every check while it stays cheap is noise.
 describe("below a target price", () => {
-  const below = { priceBelow: 25000 };
+  const below = { priceBelow: { amount: 25000, currency: "GBP" } };
 
   test("crossing from above to at or below the target alerts", async () => {
     const { read } = await seedProductMonitor({ price: 29900, currency: "GBP" }, below);
@@ -147,6 +163,21 @@ describe("below a target price", () => {
     const { read } = await seedProductMonitor({ price: 29900, currency: "GBP" }, below);
     expect(await read(true, { price: 27900 })).toEqual([]);
   });
+
+  // A user setting a target the product already meets wants to hear now,
+  // not after the price has gone up and come back down.
+  test("a target already met on the first read alerts once", async () => {
+    const { read } = await seedProductMonitor({}, below);
+    expect(await read(true, { price: 24000 })).toEqual(["below"]);
+    expect(await read(true, { price: 23000 })).toEqual([]);
+  });
+
+  // 24,000 yen is not below £250. Comparing across currencies would alert
+  // on numbers that mean different money.
+  test("a price in another currency is never compared with the target", async () => {
+    const { read } = await seedProductMonitor({}, below);
+    expect(await read(true, { price: 24000, currency: "JPY" })).toEqual([]);
+  });
 });
 
 // Nothing is read while the option is off, so the stored "out of stock" goes
@@ -162,12 +193,40 @@ test("turning the option back on takes a fresh baseline", async () => {
   expect(await alertsScheduled()).toBe(0);
 });
 
-// Setting a target under today's price is the normal case. It must wait for
-// the price to cross, not fire on the next read against an old price.
-test("setting a target takes a fresh price baseline", async () => {
+// A target set under today's price waits for the price to cross it.
+test("a target set under today's price waits for a crossing", async () => {
   const { t, id, read } = await seedProductMonitor({ price: 29900, currency: "GBP" }, {});
-  await t.withIdentity({ subject: "user_1" }).mutation(api.monitors.update, { id, alertOn: { priceBelow: 25000 } });
-  expect(await read(true, { price: 24000 })).toEqual([]);
+  await t.withIdentity({ subject: "user_1" }).mutation(api.monitors.update, {
+    id,
+    alertOn: { priceBelow: { amount: 25000, currency: "GBP" } },
+  });
+  expect(await read(true, { price: 27900 })).toEqual([]);
+  expect(await read(true, { price: 24000 })).toEqual(["below"]);
+});
+
+// Each option resets only its own baseline. Editing the price choice must
+// not lose a known "out of stock", or the restock it was waiting for would
+// arrive as a silent baseline — and the reverse for a known price.
+test("a new price choice keeps the stock history", async () => {
+  const { t, id, read } = await seedProductMonitor({ inStock: false, price: 29900, currency: "GBP" });
+  await t.withIdentity({ subject: "user_1" }).mutation(api.monitors.update, {
+    id,
+    alertOn: { backInStock: true, priceDrop: true },
+  });
+  const monitor = await t.run((ctx) => ctx.db.get(id));
+  expect(monitor?.lastSeen).toEqual({ inStock: false });
+  expect(monitor?.productFingerprint).toBeUndefined();
+  expect(await read(true, { price: 27900 })).toEqual(["stock"]);
+});
+
+test("turning stock alerts on keeps the price history", async () => {
+  const { t, id, read } = await seedProductMonitor({ inStock: true, price: 29900, currency: "GBP" }, { priceDrop: true });
+  await t.withIdentity({ subject: "user_1" }).mutation(api.monitors.update, {
+    id,
+    alertOn: { backInStock: true, priceDrop: true },
+  });
+  expect((await t.run((ctx) => ctx.db.get(id)))?.lastSeen).toEqual({ price: 29900, currency: "GBP" });
+  expect(await read(true, { price: 27900 })).toEqual(["drop"]);
 });
 
 // A read that started before the URL was edited describes the old product.
