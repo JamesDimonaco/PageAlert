@@ -9,6 +9,7 @@ import { StatsCards } from "@/components/prowl/stats-cards";
 import { DeleteDialog } from "@/components/prowl/delete-dialog";
 import { ReviewPrompt } from "@/components/prowl/review-prompt";
 import { OnboardingChecklist } from "@/components/prowl/onboarding-checklist";
+import { UpgradeBanner } from "@/components/prowl/upgrade-banner";
 import { useMonitors } from "@/hooks/use-monitors";
 import { useCreateMonitor } from "@/hooks/use-create-monitor";
 import { useTier } from "@/hooks/use-tier";
@@ -30,7 +31,7 @@ import {
 export default function DashboardPage() {
   const { monitors, togglePause, deleteMonitor, updateMonitor, toggleMute } = useMonitors();
   const { open: openCreate, openWithDefaults } = useCreateMonitor();
-  const { tier, maxMonitors } = useTier();
+  const { tier, resolved: tierResolved, maxMonitors } = useTier();
   const searchParams = useSearchParams();
   const router = useRouter();
   const atLimit = monitors.length >= maxMonitors;
@@ -218,6 +219,8 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-10">
+      <UpgradeBanner tier={tier} tierResolved={tierResolved} atLimit={atLimit} />
+
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Dashboard</h1>

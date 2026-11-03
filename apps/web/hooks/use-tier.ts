@@ -55,6 +55,8 @@ function detectTier(subscriptions: Array<Record<string, unknown>>): Tier {
 interface TierInfo {
   tier: Tier;
   isLoading: boolean;
+  /** True once Convex has answered and the Polar check has finished; unlike isLoading, never goes back to false */
+  resolved: boolean;
   maxMonitors: number;
   minInterval: string;
   description: string;
@@ -114,6 +116,7 @@ export function useTier(): TierInfo {
 
   const [polarTier, setPolarTier] = useState<Tier | null>(null);
   const [polarLoading, setPolarLoading] = useState(false);
+  const [polarChecked, setPolarChecked] = useState(false);
 
   // Use the higher of Convex or Polar tier (handles stale Convex before webhook fires)
   const convexValue = convexTier?.tier ?? null;
@@ -132,6 +135,7 @@ export function useTier(): TierInfo {
       if (result !== undefined) setPolarTier(result);
     } finally {
       setPolarLoading(false);
+      setPolarChecked(true);
     }
   }, []);
 
@@ -185,6 +189,7 @@ export function useTier(): TierInfo {
   return {
     tier,
     isLoading,
+    resolved: convexTier !== undefined && polarChecked,
     isCancelled,
     periodEnd,
     daysRemaining,

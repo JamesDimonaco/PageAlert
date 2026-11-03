@@ -193,6 +193,13 @@ export function trackUpgradePromptClicked(props: { plan: string; currentTier: st
   });
 }
 
+export function trackUpgradeBanner(action: "shown" | "clicked", props: { currentTier: string; nextTier: string }) {
+  trackEvent(`upgrade_banner_${action}`, {
+    current_tier: props.currentTier,
+    target_plan: props.nextTier,
+  });
+}
+
 export function trackSubscriptionChanged(props: { from: string; to: string }) {
   trackEvent("subscription_changed", {
     from_tier: props.from,
