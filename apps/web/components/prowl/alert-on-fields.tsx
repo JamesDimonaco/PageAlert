@@ -2,10 +2,36 @@
 
 import { useId } from "react";
 import { Input } from "@/components/ui/input";
-import { currencyExponent } from "@prowl/shared";
+import { currencyExponent, fromMinorUnits, toMinorUnits } from "@prowl/shared";
+import type { AlertOn } from "@/convex/schema";
 
 export type PriceChoice = "off" | "drop" | "below";
 const CURRENCIES = Intl.supportedValuesOf("currency");
+
+type FieldValues = { backInStock: boolean; priceChoice: PriceChoice; target: string; currency: string };
+
+/** What the fields ask for, or what to fix first. Options left off are omitted, not sent as false. */
+export function alertOnFromFields({ backInStock, priceChoice, target, currency }: FieldValues):
+  | { alertOn: AlertOn; error?: undefined }
+  | { error: string } {
+  const amount = priceChoice === "below" ? toMinorUnits(Number(target), currency) : null;
+  if (priceChoice === "below" && !amount) {
+    return { error: currency ? "Enter a target price above zero." : "Pick the currency of your target price." };
+  }
+  return {
+    alertOn: {
+      ...(backInStock ? { backInStock: true } : {}),
+      ...(priceChoice === "drop" ? { priceDrop: true } : {}),
+      ...(amount ? { priceBelow: { amount, currency } } : {}),
+    },
+  };
+}
+
+/** A saved target as the target field shows it. */
+export function targetText(priceBelow: AlertOn["priceBelow"]): string {
+  const amount = priceBelow ? fromMinorUnits(priceBelow.amount, priceBelow.currency) : null;
+  return amount === null ? "" : String(amount);
+}
 
 interface AlertOnFieldsProps {
   backInStock: boolean;

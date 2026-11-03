@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { api, components, internal } from "./_generated/api";
 import schema from "./schema";
 import betterAuthSchema from "./betterAuth/schema";
+import type { Id } from "./_generated/dataModel";
 
 const modules = import.meta.glob("./**/*.*s");
 const betterAuthModules = import.meta.glob("./betterAuth/**/*.*s");
@@ -98,6 +99,22 @@ describe("monitorGroups.create", () => {
       ["currys.co.uk", "watching", true],
       ["johnlewis.com", "suggested", false],
     ]);
+  });
+
+  // Prices are stored in minor units. A 279.99 or a -1 from a bad client would
+  // show on the product card as £2.80 or as a negative price.
+  it("drops listing prices that are not whole, non-negative minor units", async () => {
+    const t = harness();
+    const { as } = await signUp(t, "a@example.test");
+    const priced = (site: string, price: number) => ({ ...listing(site, true), price });
+
+    const { groupId } = await as.mutation(api.monitorGroups.create, {
+      ...PRODUCT,
+      listings: [priced("argos.co.uk", 27999), priced("currys.co.uk", 279.99), priced("johnlewis.com", -1)],
+    });
+
+    const group = await as.query(api.monitorGroups.get, { id: groupId });
+    expect(group?.listings.map((l) => l.price)).toEqual([27999, undefined, undefined]);
   });
 
   it("refuses a user with the beta off", async () => {
@@ -370,6 +387,142 @@ describe("a product's monitors on the scheduler", () => {
 
     expect(productTitle).toBe("Sony WH-1000XM5");
   });
+
+  // A rescan from the listing's own page goes through the browser's scan
+  // save. It must stay as quiet about matches as the scheduler is.
+  it("sends no match alert when a listing's rescan finds matches", async () => {
+    const t = harness();
+    const { as } = await signUp(t, "a@example.test");
+    const { monitorIds } = await as.mutation(api.monitorGroups.create, { ...PRODUCT, listings: [listing("argos.co.uk", true)] });
+    const id = monitorIds[0]!;
+    await t.run((ctx) => ctx.db.patch(id, { status: "scanning" }));
+
+    await as.mutation(api.monitors.saveScanResult, {
+      id,
+      schema: { items: [{ title: "Sony WH-1000XM5" }, { title: "Carry case" }] },
+      matchCount: 2,
+    });
+
+    const jobs = await t.run((ctx) => ctx.db.system.query("_scheduled_functions").collect());
+    expect(jobs.some((job) => job.name.includes("sendInitialScanNotifications"))).toBe(false);
+    expect((await as.query(api.monitors.get, { id }))?.status).toBe("active");
+  });
+
+  // A site going down fails every listing of a product on it, and a scraper
+  // fault fails all of them. One email per listing is a pile of identical mail.
+  // A park is different: it is the last word on that listing, so each one
+  // has to reach the user.
+  it("sends one error email per product, but a checks-stopped email per listing", async () => {
+    vi.stubEnv("SCRAPER_URL", "https://scraper.test");
+    vi.stubEnv("SCRAPER_API_KEY", "key");
+    vi.stubEnv("RESEND_API_KEY", "key");
+    const subjects: string[] = [];
+    vi.stubGlobal("fetch", async (url: string, init: { body: string }) => {
+      if (url.includes("resend.com")) {
+        subjects.push((JSON.parse(init.body) as { subject: string }).subject);
+        return Response.json({ id: "email" });
+      }
+      return Response.json({ message: "Site is down" }, { status: 500 });
+    });
+    const t = harness();
+    const { as } = await signUp(t, "a@example.test");
+    const { monitorIds } = await as.mutation(api.monitorGroups.create, PRODUCT);
+    const failAll = async (fields: { status: "active" | "error"; checkCount: number; retryCount: number }) => {
+      await t.run(async (ctx) => {
+        for (const id of monitorIds) {
+          await ctx.db.patch(id, { ...fields, schema: { items: [], matchConditions: {} }, nextCheckAt: 0 });
+        }
+      });
+      await t.action(internal.scheduler.runScheduledChecks, {});
+    };
+    const emails = async (kind: string) =>
+      (await t.run((ctx) => ctx.db.query("emailSends").collect())).filter((e) => e.kind === kind).length;
+
+    await failAll({ status: "active", checkCount: 5, retryCount: 2 });
+    expect(await emails("error")).toBe(1);
+    // Named by product and site, not by a count that a batch of parallel checks undercounts.
+    expect(subjects.filter((s) => s.startsWith("Monitor error"))).toEqual([
+      expect.stringMatching(/^Monitor error: Sony WH-1000XM5 on (argos\.co\.uk|currys\.co\.uk)$/),
+    ]);
+    // Each listing still gets its in-app notice, which records which one failed.
+    expect(await t.run((ctx) => ctx.db.query("notifications").collect())).toHaveLength(2);
+
+    await failAll({ status: "error", checkCount: 0, retryCount: 31 });
+    expect(await emails("monitor-stopped")).toBe(2);
+    expect(subjects.filter((s) => s.startsWith("Checks stopped")).sort()).toEqual([
+      "Checks stopped: Sony WH-1000XM5 on argos.co.uk",
+      "Checks stopped: Sony WH-1000XM5 on currys.co.uk",
+    ]);
+  });
+
+  // A listing that can't reach the user sends nothing. If it took the
+  // product's one error alert, the listing that can email would stay silent.
+  it.each([
+    ["no channels", []],
+    ["Discord, not connected", ["discord"]],
+    ["push, with no device", ["push"]],
+  ] as const)("doesn't let a listing with %s use up the product's error alert", async (_, silentChannels) => {
+    vi.stubEnv("SCRAPER_URL", "https://scraper.test");
+    vi.stubEnv("SCRAPER_API_KEY", "key");
+    vi.stubGlobal("fetch", async () => Response.json({ message: "Site is down" }, { status: 500 }));
+    const t = harness();
+    const { as } = await signUp(t, "a@example.test");
+    const { monitorIds } = await as.mutation(api.monitorGroups.create, PRODUCT);
+    const [silent, emailing] = monitorIds as [Id<"monitors">, Id<"monitors">];
+    await t.run((ctx) => ctx.db.patch(silent, { notificationChannels: [...silentChannels] }));
+    const fail = async (id: Id<"monitors">) => {
+      await t.run((ctx) =>
+        ctx.db.patch(id, { status: "active", checkCount: 5, retryCount: 2, schema: { items: [], matchConditions: {} }, nextCheckAt: 0 })
+      );
+      await t.action(internal.scheduler.runScheduledChecks, {});
+    };
+
+    await fail(silent);
+    await fail(emailing);
+
+    const sends = await t.run((ctx) => ctx.db.query("emailSends").collect());
+    expect(sends.filter((e) => e.kind === "error").map((e) => e.monitorId)).toEqual([emailing]);
+  });
+
+  // A product page lists cases and bundles next to the product. Each new one
+  // would send a "new match" alert the user never asked for: a product only
+  // alerts on stock and price.
+  it("sends no match alert when a listing's page gains a matching item, but still records it", async () => {
+    let candidates = [{ title: "Sony WH-1000XM5", url: "https://argos.co.uk/xm5", price: null, snippet: "" }];
+    let hash = 0;
+    vi.stubEnv("SCRAPER_URL", "https://scraper.test");
+    vi.stubEnv("SCRAPER_API_KEY", "key");
+    vi.stubGlobal("fetch", async (url: string) => {
+      if (url.endsWith("/api/quick-check")) {
+        return Response.json({ accessible: true, contentHash: `page-${++hash}`, candidates, totalEntries: candidates.length });
+      }
+      if (url.endsWith("/api/score")) {
+        return Response.json({ scored: candidates.slice(1).map((c) => ({ ...c, matchScore: 90, matchReason: "" })) });
+      }
+      return new Response("not mocked", { status: 500 });
+    });
+    const t = harness();
+    const { as } = await signUp(t, "a@example.test");
+    const { monitorIds } = await as.mutation(api.monitorGroups.create, { ...PRODUCT, listings: [listing("argos.co.uk", true)] });
+    const id = monitorIds[0]!;
+    await t.run((ctx) =>
+      ctx.db.patch(id, { schema: { items: [], matchConditions: {} }, checkCount: 1, lastAiExtractAt: Date.now() })
+    );
+    const check = async () => {
+      await t.run((ctx) => ctx.db.patch(id, { nextCheckAt: 0 }));
+      await t.action(internal.scheduler.runScheduledChecks, {});
+    };
+
+    await check();
+    candidates = [...candidates, { title: "Sony WH-1000XM5 case", url: "https://argos.co.uk/case", price: null, snippet: "" }];
+    await check();
+
+    const result = await t.run((ctx) => ctx.db.query("scrapeResults").order("desc").first());
+    expect(result?.hasNewMatches).toBe(true);
+    expect(await t.run((ctx) => ctx.db.query("notifications").collect())).toHaveLength(0);
+    const jobs = await t.run((ctx) => ctx.db.system.query("_scheduled_functions").collect());
+    expect(jobs.some((job) => job.name.includes("notify"))).toBe(false);
+  });
 });
 
 describe("managing a product", () => {
@@ -546,8 +699,10 @@ describe("managing a product", () => {
     expect(group).toMatchObject({ notificationChannels: ["email"], checkInterval: "1h" });
   });
 
-  // Otherwise the product says Telegram while the new listing never alerts there.
-  it("stores and returns the channels the plan gave a newly watched listing", async () => {
+  // The user is told what the new listing got. Stored on the product, one
+  // listing's clamp would change the settings its form shows and saves for
+  // every listing.
+  it("returns the channels the plan gave a newly watched listing, leaving the product's alone", async () => {
     const t = harness();
     const { as, userId } = await signUp(t, "a@example.test");
     const { groupId } = await as.mutation(api.monitorGroups.create, {
@@ -575,7 +730,7 @@ describe("managing a product", () => {
     const got = await as.mutation(api.monitorGroups.watchListing, { id: groupId, url: "https://currys.co.uk/xm5" });
 
     expect(got.notificationChannels).toEqual([]);
-    expect((await as.query(api.monitorGroups.get, { id: groupId }))?.notificationChannels).toEqual([]);
+    expect((await as.query(api.monitorGroups.get, { id: groupId }))?.notificationChannels).toEqual(["telegram"]);
   });
 
   it("lets nobody but the owner change a product", async () => {

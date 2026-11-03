@@ -12,9 +12,10 @@ import {
   updateMonitorForUser,
   validateAlertOn,
 } from "./monitors";
-import { validateMonitorUrl } from "./shared";
+import { ERROR_ALERT_COOLDOWN_MS, validateMonitorUrl } from "./shared";
 import {
   alertOnValidator,
+  type AlertOn,
   checkIntervalValidator,
   groupListingValidator,
   listingLabelValidator,
@@ -28,7 +29,6 @@ const MAX_PRODUCT_LISTINGS = 24;
 const MAX_NAME_LENGTH = 200;
 const MAX_SITE_LENGTH = 100;
 
-type AlertOn = Infer<typeof alertOnValidator>;
 type GroupListing = Infer<typeof groupListingValidator>;
 
 /** A listing's monitor prompt. A template rather than an AI call: the criteria are already structured. */
@@ -98,13 +98,17 @@ type FoundListing = Infer<typeof foundListingValidator>;
 
 /**
  * A found listing trimmed to fit, or null when its link could never be
- * watched: a suggestion like that is no use later either.
+ * watched: a suggestion like that is no use later either. A price that is not
+ * whole minor units is dropped, because the product card would show it as one.
  */
 function cleanListing(listing: FoundListing, fallbackTitle: string): FoundListing | null {
   const url = listing.url.trim();
   if (!isWatchableUrl(url)) return null;
+  const { price, ...rest } = listing;
+  const validPrice = price !== undefined && Number.isInteger(price) && price >= 0;
   return {
-    ...listing,
+    ...rest,
+    ...(validPrice ? { price } : {}),
     url,
     site: listing.site.slice(0, MAX_SITE_LENGTH),
     title: listing.title.trim().slice(0, MAX_NAME_LENGTH) || fallbackTitle,
@@ -304,7 +308,8 @@ export const updateCriteria = mutation({
 
 /**
  * Watch a suggested listing. The plan's monitor limit and the creation rate
- * limit apply. Returns the channels and interval the plan allowed it.
+ * limit apply. Returns the channels and interval the plan allowed it, which
+ * the product itself does not take on.
  */
 export const watchListing = mutation({
   args: { id: v.id("monitorGroups"), url: v.string() },
@@ -313,16 +318,17 @@ export const watchListing = mutation({
     const listing = findListing(group, url, "suggested");
     const monitorId = await watchListingMonitor(ctx, { userId, userEmail }, group, listing);
     const monitor = await ctx.db.get(monitorId);
-    // As in create: store what the plan let the monitor have.
-    const checkInterval = monitor?.checkInterval ?? group.checkInterval;
-    const notificationChannels = monitor?.notificationChannels ?? group.notificationChannels;
+    // The product keeps its own settings. Taking one new monitor's clamp
+    // would change what the product's form shows and saves for every listing.
     await ctx.db.patch(group._id, {
       listings: group.listings.map((l) => (l.url === url ? { ...l, state: "watching" as const, monitorId } : l)),
-      checkInterval,
-      notificationChannels,
       updatedAt: Date.now(),
     });
-    return { monitorId, checkInterval, notificationChannels };
+    return {
+      monitorId,
+      checkInterval: monitor?.checkInterval ?? group.checkInterval,
+      notificationChannels: monitor?.notificationChannels ?? group.notificationChannels,
+    };
   },
 });
 
@@ -370,6 +376,24 @@ export const setPaused = mutation({
   },
 });
 
+/**
+ * Claim the product's one error alert for the cooldown. Null if another
+ * listing already sent it, or the product is gone. Otherwise its name.
+ * "Checks stopped" alerts are not claimed here: each one is final, so every
+ * parked listing sends its own.
+ */
+export const claimErrorAlert = internalMutation({
+  args: { id: v.id("monitorGroups") },
+  handler: async (ctx, { id }): Promise<string | null> => {
+    const group = await ctx.db.get(id);
+    if (!group) return null;
+    const now = Date.now();
+    if (now - (group.lastErrorAlertAt ?? 0) < ERROR_ALERT_COOLDOWN_MS) return null;
+    await ctx.db.patch(id, { lastErrorAlertAt: now });
+    return group.name;
+  },
+});
+
 /** Delete a product and every monitor in it. */
 export const remove = mutation({
   args: { id: v.id("monitorGroups") },
@@ -384,6 +408,12 @@ export const remove = mutation({
       monitors.map((m) => m._id)
     );
   },
+});
+
+/** A product's name, for naming it in an alert. Null when it is gone. */
+export const nameOf = internalQuery({
+  args: { id: v.id("monitorGroups") },
+  handler: async (ctx, { id }): Promise<string | null> => (await ctx.db.get(id))?.name ?? null,
 });
 
 async function ownedBy(ctx: QueryCtx, userId: string, id: Id<"monitorGroups">) {

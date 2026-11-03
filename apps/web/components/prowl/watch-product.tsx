@@ -4,12 +4,12 @@ import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { errorText } from "@/lib/utils";
 import { AlertTriangle, CheckCircle2, Eye, Loader2 } from "lucide-react";
-import { formatMinorUnits, toMinorUnits, type GuessedAlertOn, type ProductListing, type SearchRegion } from "@prowl/shared";
+import { formatMinorUnits, type GuessedAlertOn, type ProductListing, type SearchRegion } from "@prowl/shared";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { AlertOnFields, type PriceChoice } from "@/components/prowl/alert-on-fields";
+import { AlertOnFields, alertOnFromFields, type PriceChoice } from "@/components/prowl/alert-on-fields";
 import { ChannelSelector, defaultChannels, useConfiguredChannels, type Channel } from "@/components/prowl/channel-selector";
 import { IntervalSelector } from "@/components/prowl/interval-selector";
 import { useTier } from "@/hooks/use-tier";
@@ -69,9 +69,9 @@ export function WatchProductForm({ name, region, listings, ticked, guess, onCrea
       setError("Pick what to be alerted about.");
       return;
     }
-    const targetMinor = priceChoice === "below" ? toMinorUnits(Number(target), currency) : null;
-    if (priceChoice === "below" && !targetMinor) {
-      setError(currency ? "Enter a target price above zero." : "Pick the currency of your target price.");
+    const fields = alertOnFromFields({ backInStock, priceChoice, target, currency });
+    if (fields.error !== undefined) {
+      setError(fields.error);
       return;
     }
     setSaving(true);
@@ -79,11 +79,7 @@ export function WatchProductForm({ name, region, listings, ticked, guess, onCrea
       const { groupId } = await create({
         name,
         region,
-        alertOn: {
-          ...(backInStock ? { backInStock: true } : {}),
-          ...(priceChoice === "drop" ? { priceDrop: true } : {}),
-          ...(targetMinor ? { priceBelow: { amount: targetMinor, currency } } : {}),
-        },
+        alertOn: fields.alertOn,
         notificationChannels: shownChannels,
         checkInterval: shownInterval,
         listings: listings.map((l) => ({

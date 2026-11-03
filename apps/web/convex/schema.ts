@@ -16,6 +16,7 @@ export const alertOnValidator = v.object({
   priceDrop: v.optional(v.boolean()),
   priceBelow: v.optional(v.object({ amount: v.number(), currency: v.string() })),
 });
+export type AlertOn = Infer<typeof alertOnValidator>;
 
 /** A feature a user can switch on under Settings → Beta features. */
 export const betaFeature = v.literal("find_a_product");
@@ -134,6 +135,11 @@ export default defineSchema({
       // A fall of more than half, waiting for a second read to confirm it
       // before it replaces `price`. See recordProductRead.
       pendingPrice: v.optional(v.number()),
+      // Confirming reads of pendingPrice or pendingCurrency that did not settle it.
+      pendingAttempts: v.optional(v.number()),
+      // A price read in another currency than `currency`. A second read in it
+      // makes it the new baseline. See recordProductRead.
+      pendingCurrency: v.optional(v.string()),
     })),
     // Hash of the product's own text at the last read, or of the whole page
     // when its title could not be found — see productExcerpt
@@ -180,6 +186,8 @@ export default defineSchema({
     notificationChannels: v.optional(notificationChannelsValidator),
     checkInterval: checkIntervalValidator,
     listings: v.array(groupListingValidator),
+    // When any listing last sent an error alert. See claimErrorAlert.
+    lastErrorAlertAt: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
   }).index("by_userId", ["userId"]),

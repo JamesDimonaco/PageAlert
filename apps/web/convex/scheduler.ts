@@ -5,7 +5,7 @@ import { internalAction, internalMutation, internalQuery, type ActionCtx } from 
 import { internal } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
 import { formatMinorUnits, formatSmsPrice, isProductMonitor } from "@prowl/shared";
-import { deliverAlert } from "./alerts";
+import { alertChannels, deliverAlert } from "./alerts";
 import {
   displayHost,
   isBlockedError,
@@ -106,6 +106,9 @@ const MAX_CONCURRENT_CHECKS = 10;
 
 /** How long after creating a product its owner may still be on the progress screen. */
 const PRODUCT_SCAN_WATCHED_MS = 15 * 60 * 1000;
+
+/** Reads that may try to confirm a held price before it is dropped. Each one is paid for. */
+const MAX_CONFIRM_ATTEMPTS = 3;
 
 /** A product monitor whose owner wants a stock or price alert. */
 function wantsProductRead(monitor: Pick<Doc<"monitors">, "alertOn" | "schema" | "groupId">): boolean {
@@ -556,7 +559,9 @@ export const runScheduledChecks = internalAction({
             // page that merely still says what it said last time.
             const newCount = checkResult.newMatchKeys?.length ?? 0;
 
-            if (newCount > 0) {
+            // A listing in a product alerts only on its stock and price. Its
+            // page often shows related items, and each would read as a match.
+            if (newCount > 0 && freshMonitor.groupId === undefined) {
               // Only the items the user has not seen. On the quick-check path
               // there is nothing to narrow to, so this is the whole match set.
               const newKeys = new Set(checkResult.newMatchKeys ?? []);
@@ -682,11 +687,9 @@ export const runScheduledChecks = internalAction({
           if (parked || willError) {
             const freshErrMonitor = await ctx.runQuery(internal.monitors.getInternal, { id: monitor._id });
             if (freshErrMonitor && !freshErrMonitor.muted) {
-              const monitorChannels = (freshErrMonitor as any).notificationChannels as string[] | undefined;
-              const quiet = !parked && errorAlertCoolingDown;
-              const shouldSend = (channel: string) =>
-                !quiet && (!monitorChannels || monitorChannels.includes(channel));
-              const hasAnyChannel = !monitorChannels || monitorChannels.length > 0;
+              const coolingDown = !parked && errorAlertCoolingDown;
+              const channels = alertChannels(freshErrMonitor.notificationChannels);
+              const hasAnyChannel = channels.hasAnyChannel;
 
               // Looked up before the sends so the email knows whether to nudge
               // the user towards Telegram. Not gated on shouldSend: a user who
@@ -696,6 +699,40 @@ export const runScheduledChecks = internalAction({
                 channel: "telegram",
               });
               const telegramConnected = !!(telegramSetting?.enabled && telegramSetting.target);
+
+              // A product's listings tend to fail together, when the fault is
+              // ours or the network's. The product sends one error alert for
+              // them, claimed only by a listing that can deliver it. A park is
+              // final, so each listing still sends its own. Both are named
+              // after the product and the listing's site.
+              const canDeliver = async () => {
+                if (channels.shouldSend("email") && freshErrMonitor.userEmail) return true;
+                if (channels.shouldSend("telegram") && telegramConnected) return true;
+                if (channels.shouldSend("push")) {
+                  const subs = await ctx.runQuery(internal.pushSubscriptions.listForUser, { userId: freshErrMonitor.userId });
+                  if (subs.length > 0) return true;
+                }
+                if (!channels.shouldSend("discord")) return false;
+                const discord = await ctx.runQuery(internal.scheduler.getNotificationSetting, {
+                  userId: freshErrMonitor.userId,
+                  channel: "discord",
+                });
+                return !!(discord?.enabled && discord.target);
+              };
+              const groupId = freshErrMonitor.groupId;
+              const productName =
+                groupId === undefined
+                  ? null
+                  : parked
+                    ? await ctx.runQuery(internal.monitorGroups.nameOf, { id: groupId })
+                    : !coolingDown && (await canDeliver())
+                      ? await ctx.runMutation(internal.monitorGroups.claimErrorAlert, { id: groupId })
+                      : null;
+              const quiet = coolingDown || (groupId !== undefined && !parked && productName === null);
+              const alertName = productName
+                ? `${productName} on ${displayHost(freshErrMonitor.url)}`
+                : freshErrMonitor.name;
+              const shouldSend = (channel: string) => !quiet && channels.shouldSend(channel);
 
               if (!parked && !quiet) {
                 await ctx.runMutation(internal.scheduler.markErrorAlertSent, {
@@ -719,7 +756,7 @@ export const runScheduledChecks = internalAction({
                 await ctx.runAction(internal.push.sendToUser, {
                   userId: freshErrMonitor.userId,
                   monitorId: freshErrMonitor._id,
-                  title: `${freshErrMonitor.name} — ${parked ? "Checks stopped" : "Error"}`,
+                  title: `${alertName} — ${parked ? "Checks stopped" : "Error"}`,
                   body: truncateForPush(parked ? (freshErrMonitor.lastError ?? msg) : msg),
                   kind: "error",
                 }).catch(() => {});
@@ -733,7 +770,7 @@ export const runScheduledChecks = internalAction({
                 if (parked) {
                   await ctx.runAction(internal.emails.sendMonitorStoppedAlert, {
                     to: freshErrMonitor.userEmail,
-                    monitorName: freshErrMonitor.name,
+                    monitorName: alertName,
                     monitorId: freshErrMonitor._id,
                     url: freshErrMonitor.url,
                     reason: parkReason ?? PARK_REASON_PROXY_BLOCKED,
@@ -742,7 +779,7 @@ export const runScheduledChecks = internalAction({
                 } else {
                   await ctx.runAction(internal.emails.sendErrorAlert, {
                     to: freshErrMonitor.userEmail,
-                    monitorName: freshErrMonitor.name,
+                    monitorName: alertName,
                     monitorId: freshErrMonitor._id,
                     url: freshErrMonitor.url,
                     error: msg,
@@ -755,7 +792,7 @@ export const runScheduledChecks = internalAction({
                 if (parked) {
                   await ctx.runAction(internal.telegram.sendMonitorStoppedAlert, {
                     chatId: telegramSetting.target,
-                    monitorName: freshErrMonitor.name,
+                    monitorName: alertName,
                     monitorId: freshErrMonitor._id,
                     url: freshErrMonitor.url,
                     reason: parkReason ?? PARK_REASON_PROXY_BLOCKED,
@@ -763,7 +800,7 @@ export const runScheduledChecks = internalAction({
                 } else {
                   await ctx.runAction(internal.telegram.sendErrorAlert, {
                     chatId: telegramSetting.target,
-                    monitorName: freshErrMonitor.name,
+                    monitorName: alertName,
                     monitorId: freshErrMonitor._id,
                     url: freshErrMonitor.url,
                     error: msg,
@@ -781,7 +818,7 @@ export const runScheduledChecks = internalAction({
                   if (parked) {
                     await ctx.runAction(internal.discord.sendMonitorStoppedAlert, {
                       webhookUrl: discordSetting.target,
-                      monitorName: freshErrMonitor.name,
+                      monitorName: alertName,
                       monitorId: freshErrMonitor._id,
                       url: freshErrMonitor.url,
                       reason: parkReason ?? PARK_REASON_PROXY_BLOCKED,
@@ -789,7 +826,7 @@ export const runScheduledChecks = internalAction({
                   } else {
                     await ctx.runAction(internal.discord.sendErrorAlert, {
                       webhookUrl: discordSetting.target,
-                      monitorName: freshErrMonitor.name,
+                      monitorName: alertName,
                       monitorId: freshErrMonitor._id,
                       url: freshErrMonitor.url,
                       error: msg,
@@ -1319,7 +1356,9 @@ type ProductAlert = Infer<typeof productAlertValidator>;
  * Store a product read and decide whether it is news.
  *
  * Stock alerts only on a known out of stock followed by a known in stock.
- * Price alerts compare against the last known price in the same currency:
+ * Price alerts compare against the last known price. A read in another
+ * currency is ignored, unless the next read agrees, which makes it the new
+ * baseline without an alert:
  * "any drop" on any fall, "below a target" when the price is at or below
  * the target and was not last time, so it does not repeat while it stays
  * low. A target already met on the first read alerts once.
@@ -1352,21 +1391,52 @@ export const recordProductRead = internalMutation({
       alerts.push({ kind: "stock" });
     }
 
-    // Kept as they are unless this read has a usable price.
-    let priceFields: { price?: number; currency?: string; pendingPrice?: number } =
-      previous.price !== undefined && previous.currency !== undefined
-        ? { price: previous.price, currency: previous.currency, ...(previous.pendingPrice !== undefined ? { pendingPrice: previous.pendingPrice } : {}) }
+    // A held price or currency whose confirming read did not settle it is
+    // read again, up to MAX_CONFIRM_ATTEMPTS times, then dropped.
+    const attempts = (previous.pendingAttempts ?? 0) + 1;
+    const { pendingPrice, pendingCurrency } = previous;
+    const stillHeld =
+      (pendingPrice !== undefined || pendingCurrency !== undefined) && attempts < MAX_CONFIRM_ATTEMPTS
+        ? {
+            ...(pendingPrice !== undefined ? { pendingPrice } : {}),
+            ...(pendingCurrency !== undefined ? { pendingCurrency } : {}),
+            pendingAttempts: attempts,
+          }
         : {};
-    if (args.price !== null && args.currency !== null) {
+    // Kept as they are unless this read has a usable price.
+    let priceFields: {
+      price?: number;
+      currency?: string;
+      pendingPrice?: number;
+      pendingAttempts?: number;
+      pendingCurrency?: string;
+    } =
+      previous.price !== undefined && previous.currency !== undefined
+        ? { price: previous.price, currency: previous.currency, ...stillHeld }
+        : {};
+    if (args.price !== null && args.currency !== null && previous.currency !== undefined && previous.currency !== args.currency) {
+      if (previous.pendingCurrency === args.currency) {
+        // Two reads in a row agree, so the site has switched currency. The
+        // new price is the baseline, with no alert: the two can't be compared.
+        priceFields = { price: args.price, currency: args.currency };
+      } else {
+        // One such read is usually a misread or a geo-priced page. Taken as
+        // the baseline, it would make the next read in the usual currency
+        // look like a first read, and repeat an alert the user already had.
+        console.warn(`[scheduler] ${monitor._id}: price read in ${args.currency}, not ${previous.currency}; keeping the last price`);
+        if (pendingCurrency === undefined) priceFields = { ...priceFields, pendingCurrency: args.currency };
+      }
+    } else if (args.price !== null && args.currency !== null) {
       const newPrice = args.price;
       const currency = args.currency;
-      const oldPrice = previous.currency === currency ? previous.price : undefined;
+      const oldPrice = previous.price;
       // A fall of more than half is more often a misread (a monthly payment,
       // a deposit, an accessory's price) than a sale. It waits for the same
-      // price on the next read before it counts.
+      // price on the next read before it counts. A different price on that
+      // read drops the hold, and a second wild one is not held again.
       const unconfirmed = oldPrice !== undefined && newPrice < oldPrice / 2 && previous.pendingPrice !== newPrice;
       if (unconfirmed) {
-        priceFields = { price: oldPrice, currency, pendingPrice: newPrice };
+        priceFields = { price: oldPrice, currency, ...(previous.pendingPrice === undefined ? { pendingPrice: newPrice } : {}) };
       } else {
         priceFields = { price: newPrice, currency };
         const price = { kind: "price" as const, oldPrice, newPrice, currency };
@@ -1383,9 +1453,14 @@ export const recordProductRead = internalMutation({
 
     const inStock = args.inStock ?? previous.inStock;
     await ctx.db.patch(args.monitorId, {
-      // A held price needs a second read. Keeping the old fingerprint makes
-      // the next check read again, even if the page has not changed.
-      productFingerprint: priceFields.pendingPrice !== undefined ? monitor.productFingerprint : args.productFingerprint,
+      // A held price or currency needs a confirming read. Keeping the old
+      // fingerprint makes the next check read again, even if the page has not
+      // changed. Every other read advances it, so a failed confirmation is
+      // paid for a bounded number of times, not on every check.
+      productFingerprint:
+        priceFields.pendingPrice !== undefined || priceFields.pendingCurrency !== undefined
+          ? monitor.productFingerprint
+          : args.productFingerprint,
       lastSeen: { ...(inStock !== undefined ? { inStock } : {}), ...priceFields },
     });
 

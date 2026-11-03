@@ -178,6 +178,28 @@ describe("below a target price", () => {
     const { read } = await seedProductMonitor({}, below);
     expect(await read(true, { price: 24000, currency: "JPY" })).toEqual([]);
   });
+
+  // A page that shows another currency on one read must not reset the
+  // baseline, or the next normal read looks like a first read and repeats an
+  // alert the user already had.
+  test("a read in another currency does not reset the price, so the next read does not alert again", async () => {
+    const { t, id, read } = await seedProductMonitor({}, { priceBelow: { amount: 10000, currency: "USD" } });
+    expect(await read(true, { price: 9000, currency: "USD" })).toEqual(["below"]);
+    expect(await read(true, { price: 12000, currency: "CAD" })).toEqual([]);
+    expect((await t.run((ctx) => ctx.db.get(id)))?.lastSeen).toMatchObject({ price: 9000, currency: "USD" });
+    expect(await read(true, { price: 9000, currency: "USD" })).toEqual([]);
+    expect((await t.run((ctx) => ctx.db.get(id)))?.lastSeen).toEqual({ inStock: true, price: 9000, currency: "USD" });
+  });
+});
+
+// A site that really moves to another currency would otherwise keep the old
+// price forever, and price alerts would never fire again.
+test("two reads in a new currency make it the baseline, with no alert for the switch", async () => {
+  const { t, id, read } = await seedProductMonitor({ price: 29900, currency: "GBP" }, { priceDrop: true });
+  expect(await read(true, { price: 35000, currency: "USD" })).toEqual([]);
+  expect(await read(true, { price: 35000, currency: "USD" })).toEqual([]);
+  expect((await t.run((ctx) => ctx.db.get(id)))?.lastSeen).toEqual({ inStock: true, price: 35000, currency: "USD" });
+  expect(await read(true, { price: 34000, currency: "USD" })).toEqual(["drop"]);
 });
 
 // Nothing is read while the option is off, so the stored "out of stock" goes
@@ -275,11 +297,13 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-// The second read that confirms a big drop has to happen even when the page
-// has not changed since. If the held read advanced the fingerprint, the
-// unchanged-page gate would skip every later read and the drop would never
-// be confirmed.
-test("a held big drop is confirmed on the next check of an unchanged page", async () => {
+type Stock = { inStock: boolean | null; price: number | null; currency: string | null };
+
+/**
+ * A product monitor on a page that never changes, whose product reads return
+ * `reads` in turn (the last one repeats). Returns how many reads were paid for.
+ */
+async function onUnchangedPage(reads: Stock[]) {
   vi.stubEnv("SCRAPER_URL", "https://scraper.test");
   vi.stubEnv("SCRAPER_API_KEY", "key");
   let scoreCalls = 0;
@@ -294,18 +318,17 @@ test("a held big drop is confirmed on the next check of an unchanged page", asyn
       });
     }
     if (url.endsWith("/api/score")) {
+      const stock = reads[Math.min(scoreCalls, reads.length - 1)];
       scoreCalls++;
       return Response.json({
-        scored: [{
-          title: "Sony WH-1000XM5", url: null, price: null, snippet: "", matchScore: 90, matchReason: "",
-          stock: { inStock: true, price: 9900, currency: "GBP" },
-        }],
+        scored: [{ title: "Sony WH-1000XM5", url: null, price: null, snippet: "", matchScore: 90, matchReason: "", stock }],
       });
     }
     return new Response("not mocked", { status: 500 });
   });
 
-  const { t, id, alertsScheduled } = await seedProductMonitor({ price: 29900, currency: "GBP" }, { priceDrop: true });
+  const seeded = await seedProductMonitor({ price: 29900, currency: "GBP" }, { priceDrop: true });
+  const { t, id } = seeded;
   await t.run((ctx) =>
     ctx.db.patch(id, { lastAiExtractAt: Date.now(), checkCount: 5, contentFingerprint: "page-1", productFingerprint: "product-1" })
   );
@@ -313,6 +336,15 @@ test("a held big drop is confirmed on the next check of an unchanged page", asyn
     await t.run((ctx) => ctx.db.patch(id, { nextCheckAt: 0 }));
     await t.action(internal.scheduler.runScheduledChecks, {});
   };
+  return { ...seeded, check, scoreCalls: () => scoreCalls };
+}
+
+// The second read that confirms a big drop has to happen even when the page
+// has not changed since. If the held read advanced the fingerprint, the
+// unchanged-page gate would skip every later read and the drop would never
+// be confirmed.
+test("a held big drop is confirmed on the next check of an unchanged page", async () => {
+  const { check, alertsScheduled, scoreCalls } = await onUnchangedPage([{ inStock: true, price: 9900, currency: "GBP" }]);
 
   await check();
   expect(await alertsScheduled()).toBe(0);
@@ -320,5 +352,69 @@ test("a held big drop is confirmed on the next check of an unchanged page", asyn
   expect(await alertsScheduled()).toBe(1);
   await check();
   expect(await alertsScheduled()).toBe(1);
-  expect(scoreCalls).toBe(2);
+  expect(scoreCalls()).toBe(2);
+});
+
+const HELD = { inStock: true, price: 9900, currency: "GBP" };
+const NO_PRICE = { inStock: true, price: null, currency: null };
+
+// A held price that stayed held for good would keep the old fingerprint, and
+// force a paid read on every check, forever.
+test("a held big drop whose confirming read shows another price is dropped at once", async () => {
+  const { t, id, check, alertsScheduled, scoreCalls } = await onUnchangedPage([HELD, { ...HELD, price: 5000 }]);
+
+  for (let i = 0; i < 4; i++) await check();
+
+  expect(scoreCalls()).toBe(2);
+  expect(await alertsScheduled()).toBe(0);
+  const monitor = await t.run((ctx) => ctx.db.get(id));
+  expect(monitor?.lastSeen).toEqual({ inStock: true, price: 29900, currency: "GBP" });
+  expect(monitor?.productFingerprint).toBe("product-2");
+});
+
+test("a held big drop gives up after three confirming reads with no price", async () => {
+  const { t, id, check, alertsScheduled, scoreCalls } = await onUnchangedPage([HELD, NO_PRICE]);
+
+  for (let i = 0; i < 6; i++) await check();
+
+  expect(scoreCalls()).toBe(4);
+  expect(await alertsScheduled()).toBe(0);
+  const monitor = await t.run((ctx) => ctx.db.get(id));
+  expect(monitor?.lastSeen).toEqual({ inStock: true, price: 29900, currency: "GBP" });
+  expect(monitor?.productFingerprint).toBe("product-2");
+});
+
+// One read that misses the price is a glitch, not a reason to lose a real sale.
+test("a held big drop survives a confirming read with no price, and is confirmed by the next", async () => {
+  const { check, alertsScheduled, scoreCalls } = await onUnchangedPage([HELD, NO_PRICE, HELD]);
+
+  for (let i = 0; i < 4; i++) await check();
+
+  expect(scoreCalls()).toBe(3);
+  expect(await alertsScheduled()).toBe(1);
+});
+
+// A page that moves to a new currency and then stops changing would leave
+// the switch unconfirmed, and the old price frozen, until the page next moved.
+test("a read in a new currency is confirmed on the next check of an unchanged page", async () => {
+  const { t, id, check, alertsScheduled, scoreCalls } = await onUnchangedPage([{ inStock: true, price: 35000, currency: "USD" }]);
+
+  for (let i = 0; i < 3; i++) await check();
+
+  expect(scoreCalls()).toBe(2);
+  expect(await alertsScheduled()).toBe(0);
+  const monitor = await t.run((ctx) => ctx.db.get(id));
+  expect(monitor?.lastSeen).toEqual({ inStock: true, price: 35000, currency: "USD" });
+  expect(monitor?.productFingerprint).toBe("product-2");
+});
+
+test("a read in a new currency gives up after three confirming reads with no price", async () => {
+  const { t, id, check, scoreCalls } = await onUnchangedPage([{ inStock: true, price: 35000, currency: "USD" }, NO_PRICE]);
+
+  for (let i = 0; i < 6; i++) await check();
+
+  expect(scoreCalls()).toBe(4);
+  const monitor = await t.run((ctx) => ctx.db.get(id));
+  expect(monitor?.lastSeen).toEqual({ inStock: true, price: 29900, currency: "GBP" });
+  expect(monitor?.productFingerprint).toBe("product-2");
 });

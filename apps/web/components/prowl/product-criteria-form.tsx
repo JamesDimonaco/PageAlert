@@ -5,13 +5,12 @@ import { useMutation } from "convex/react";
 import { errorText } from "@/lib/utils";
 import { Loader2, Save } from "lucide-react";
 import { toast } from "sonner";
-import { currencyExponent, toMinorUnits } from "@prowl/shared";
 import { api } from "@/convex/_generated/api";
 import type { Doc } from "@/convex/_generated/dataModel";
 import type { CheckInterval } from "@/convex/schema";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { AlertOnFields, type PriceChoice } from "@/components/prowl/alert-on-fields";
+import { AlertOnFields, alertOnFromFields, targetText, type PriceChoice } from "@/components/prowl/alert-on-fields";
 import { ChannelSelector, defaultChannels, useConfiguredChannels, type Channel } from "@/components/prowl/channel-selector";
 import { IntervalSelector } from "@/components/prowl/interval-selector";
 import { trackProductCriteriaUpdated } from "@/lib/posthog";
@@ -49,9 +48,7 @@ export function ProductCriteriaForm({ group, listingCurrency, watchingCount }: P
   const [priceChoice, setPriceChoice] = useState<PriceChoice>(
     group.alertOn.priceDrop ? "drop" : savedTarget !== undefined ? "below" : "off"
   );
-  const [target, setTarget] = useState(
-    savedTarget !== undefined ? String(savedTarget.amount / 10 ** (currencyExponent(savedTarget.currency) ?? 2)) : ""
-  );
+  const [target, setTarget] = useState(targetText(savedTarget));
   const [currency, setCurrency] = useState(savedTarget?.currency ?? listingCurrency);
   const configuredChannels = useConfiguredChannels();
   const [channels, setChannels] = useState<Channel[] | null>(null);
@@ -64,20 +61,16 @@ export function ProductCriteriaForm({ group, listingCurrency, watchingCount }: P
       toast.error("Pick what to be alerted about.");
       return;
     }
-    const targetMinor = priceChoice === "below" ? toMinorUnits(Number(target), currency) : null;
-    if (priceChoice === "below" && !targetMinor) {
-      toast.error(currency ? "Enter a target price above zero." : "Pick the currency of your target price.");
+    const fields = alertOnFromFields({ backInStock, priceChoice, target, currency });
+    if (fields.error !== undefined) {
+      toast.error(fields.error);
       return;
     }
     setSaving(true);
     try {
       const saved = await updateCriteria({
         id: group._id,
-        alertOn: {
-          ...(backInStock ? { backInStock: true } : {}),
-          ...(priceChoice === "drop" ? { priceDrop: true } : {}),
-          ...(targetMinor ? { priceBelow: { amount: targetMinor, currency } } : {}),
-        },
+        alertOn: fields.alertOn,
         notificationChannels: shownChannels,
         checkInterval,
       });
