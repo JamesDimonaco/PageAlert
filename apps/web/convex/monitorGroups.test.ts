@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { api, components, internal } from "./_generated/api";
 import schema from "./schema";
 import betterAuthSchema from "./betterAuth/schema";
+import type { Id } from "./_generated/dataModel";
 
 const modules = import.meta.glob("./**/*.*s");
 const betterAuthModules = import.meta.glob("./betterAuth/**/*.*s");
@@ -448,6 +449,31 @@ describe("a product's monitors on the scheduler", () => {
 
     await failAll({ status: "error", checkCount: 0, retryCount: 31 });
     expect(await emails("monitor-stopped")).toBe(2);
+  });
+
+  // A listing whose channels are all off sends nothing. If it took the
+  // product's one error alert, the listing that can email would stay silent.
+  it("lets only a listing that can deliver use up the product's error alert", async () => {
+    vi.stubEnv("SCRAPER_URL", "https://scraper.test");
+    vi.stubEnv("SCRAPER_API_KEY", "key");
+    vi.stubGlobal("fetch", async () => Response.json({ message: "Site is down" }, { status: 500 }));
+    const t = harness();
+    const { as } = await signUp(t, "a@example.test");
+    const { monitorIds } = await as.mutation(api.monitorGroups.create, PRODUCT);
+    const [silent, emailing] = monitorIds as [Id<"monitors">, Id<"monitors">];
+    await t.run((ctx) => ctx.db.patch(silent, { notificationChannels: [] }));
+    const fail = async (id: Id<"monitors">) => {
+      await t.run((ctx) =>
+        ctx.db.patch(id, { status: "active", checkCount: 5, retryCount: 2, schema: { items: [], matchConditions: {} }, nextCheckAt: 0 })
+      );
+      await t.action(internal.scheduler.runScheduledChecks, {});
+    };
+
+    await fail(silent);
+    await fail(emailing);
+
+    const sends = await t.run((ctx) => ctx.db.query("emailSends").collect());
+    expect(sends.filter((e) => e.kind === "error").map((e) => e.monitorId)).toEqual([emailing]);
   });
 
   // A product page lists cases and bundles next to the product. Each new one

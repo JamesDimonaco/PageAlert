@@ -685,19 +685,7 @@ export const runScheduledChecks = internalAction({
             const freshErrMonitor = await ctx.runQuery(internal.monitors.getInternal, { id: monitor._id });
             if (freshErrMonitor && !freshErrMonitor.muted) {
               const coolingDown = !parked && errorAlertCoolingDown;
-              // A product's listings tend to fail together, when the fault is
-              // ours or the network's. The product sends one error alert for
-              // them. A park is final, so each listing still sends its own.
-              const productName =
-                freshErrMonitor.groupId !== undefined && !parked && !coolingDown
-                  ? await ctx.runMutation(internal.monitorGroups.claimErrorAlert, { id: freshErrMonitor.groupId })
-                  : null;
-              const quiet = coolingDown || (freshErrMonitor.groupId !== undefined && !parked && productName === null);
-              const alertName = productName
-                ? `${productName} on ${displayHost(freshErrMonitor.url)}`
-                : freshErrMonitor.name;
               const channels = alertChannels(freshErrMonitor.notificationChannels);
-              const shouldSend = (channel: string) => !quiet && channels.shouldSend(channel);
               const hasAnyChannel = channels.hasAnyChannel;
 
               // Looked up before the sends so the email knows whether to nudge
@@ -708,6 +696,25 @@ export const runScheduledChecks = internalAction({
                 channel: "telegram",
               });
               const telegramConnected = !!(telegramSetting?.enabled && telegramSetting.target);
+
+              // A product's listings tend to fail together, when the fault is
+              // ours or the network's. The product sends one error alert for
+              // them, claimed only by a listing that can deliver it. A park is
+              // final, so each listing still sends its own.
+              const canDeliver =
+                (channels.shouldSend("email") && !!freshErrMonitor.userEmail) ||
+                channels.shouldSend("push") ||
+                (channels.shouldSend("telegram") && telegramConnected) ||
+                channels.shouldSend("discord");
+              const productName =
+                freshErrMonitor.groupId !== undefined && !parked && !coolingDown && canDeliver
+                  ? await ctx.runMutation(internal.monitorGroups.claimErrorAlert, { id: freshErrMonitor.groupId })
+                  : null;
+              const quiet = coolingDown || (freshErrMonitor.groupId !== undefined && !parked && productName === null);
+              const alertName = productName
+                ? `${productName} on ${displayHost(freshErrMonitor.url)}`
+                : freshErrMonitor.name;
+              const shouldSend = (channel: string) => !quiet && channels.shouldSend(channel);
 
               if (!parked && !quiet) {
                 await ctx.runMutation(internal.scheduler.markErrorAlertSent, {
