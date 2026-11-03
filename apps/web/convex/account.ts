@@ -2,6 +2,7 @@ import { getDocumentSize, v, type Value } from "convex/values";
 import { internalMutation, mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { components, internal } from "./_generated/api";
 import { DAY_MS } from "@prowl/shared";
+import { feedbackSlotKey } from "./shared";
 import type { Id, TableNames } from "./_generated/dataModel";
 
 /** Is this user currently banned? Shared by every mutation that gates on ban status. */
@@ -116,6 +117,11 @@ export async function deleteAllUserData(
   email: string | undefined
 ): Promise<void> {
   const target: Target = { userId, email };
+  const feedbackSlot = await ctx.db
+    .query("counters")
+    .withIndex("by_name", (q) => q.eq("name", feedbackSlotKey(userId)))
+    .unique();
+  if (feedbackSlot) await ctx.db.delete(feedbackSlot._id);
   await sweep(ctx, target);
   await ctx.scheduler.runAfter(AUDIT_DELAY_MS, internal.account.auditErasure, target);
 }

@@ -67,16 +67,18 @@ export const notify = internalAction({
 });
 
 /** Rate limit for repeating alerts. True when the caller may send now. */
+export async function claimSlot(ctx: MutationCtx, key: string, minIntervalMs: number): Promise<boolean> {
+  const now = Date.now();
+  const row = await ctx.db.query("counters").withIndex("by_name", (q) => q.eq("name", key)).unique();
+  if (row && now - row.value < minIntervalMs) return false;
+  if (row) await ctx.db.patch(row._id, { value: now });
+  else await ctx.db.insert("counters", { name: key, value: now });
+  return true;
+}
+
 export const claimAlertSlot = internalMutation({
   args: { key: v.string(), minIntervalMs: v.number() },
-  handler: async (ctx, { key, minIntervalMs }) => {
-    const now = Date.now();
-    const row = await ctx.db.query("counters").withIndex("by_name", (q) => q.eq("name", key)).unique();
-    if (row && now - row.value < minIntervalMs) return false;
-    if (row) await ctx.db.patch(row._id, { value: now });
-    else await ctx.db.insert("counters", { name: key, value: now });
-    return true;
-  },
+  handler: (ctx, { key, minIntervalMs }) => claimSlot(ctx, key, minIntervalMs),
 });
 
 // ---- Blocked-site fallback budget ----
