@@ -136,7 +136,7 @@ export default function MonitorDetailPage({
       }).catch((e) => captureException(e, { context: "createLog_rescan", monitorId: id }));
       toast.success("Rescan complete", { description: `${totalItems} items, ${matchCount} matches` });
     } catch (e) {
-      const msg = errorText(e, "Rescan failed");
+      const msg = errorText(e, e instanceof Error ? e.message : "Rescan failed");
       const durationMs = Date.now() - startTime;
       await saveScanError({ id, error: msg }).catch((saveErr) => {
         console.error("[rescan] Failed to persist error state:", saveErr, { monitorId: id, error: msg });
@@ -289,7 +289,7 @@ export default function MonitorDetailPage({
                     await togglePause(monitorId);
                     toast.success(monitor.status === "paused" ? "Monitor resumed" : "Monitor paused");
                   } catch (err) {
-                    toast.error("Failed to update monitor", { description: errorText(err) });
+                    toast.error("Failed to update monitor", { description: errorText(err, "Try again.") });
                   }
                 }}
               >
@@ -404,7 +404,7 @@ export default function MonitorDetailPage({
             toast.success("Monitor deleted");
             router.push("/dashboard");
           } catch (err) {
-            toast.error("Failed to delete", { description: errorText(err) });
+            toast.error("Failed to delete", { description: errorText(err, "Try again.") });
           }
         }}
         monitorName={monitor.name}

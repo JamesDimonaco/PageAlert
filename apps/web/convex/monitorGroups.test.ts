@@ -306,7 +306,7 @@ describe("managing a product", () => {
     const { groupId } = await as.mutation(api.monitorGroups.create, PRODUCT);
     const url = "https://johnlewis.com/xm5";
 
-    const monitorId = await as.mutation(api.monitorGroups.watchListing, { id: groupId, url });
+    const { monitorId } = await as.mutation(api.monitorGroups.watchListing, { id: groupId, url });
     const monitor = await as.query(api.monitors.get, { id: monitorId });
     expect(monitor).toMatchObject({ groupId, alertOn: { backInStock: true }, status: "active" });
     let group = await as.query(api.monitorGroups.get, { id: groupId });
@@ -443,6 +443,38 @@ describe("managing a product", () => {
     expect(saved).toEqual({ notificationChannels: ["email"], checkInterval: "1h" });
     const group = await as.query(api.monitorGroups.get, { id: groupId });
     expect(group).toMatchObject({ notificationChannels: ["email"], checkInterval: "1h" });
+  });
+
+  // Otherwise the product says Telegram while the new listing never alerts there.
+  it("stores and returns the channels the plan gave a newly watched listing", async () => {
+    const t = harness();
+    const { as, userId } = await signUp(t, "a@example.test");
+    const { groupId } = await as.mutation(api.monitorGroups.create, {
+      ...PRODUCT,
+      notificationChannels: ["telegram"],
+      listings: [listing("argos.co.uk", true), listing("currys.co.uk", false)],
+    });
+    // Another monitor took Telegram since, which free allows on only one.
+    await t.run(async (ctx) => {
+      for (const m of await ctx.db.query("monitors").collect()) await ctx.db.patch(m._id, { notificationChannels: [] });
+      await ctx.db.insert("monitors", {
+        userId,
+        name: "Other",
+        url: "https://shop.test/other",
+        prompt: "anything",
+        status: "paused",
+        checkInterval: "24h",
+        notificationChannels: ["telegram"],
+        matchCount: 0,
+        createdAt: 0,
+        updatedAt: 0,
+      });
+    });
+
+    const got = await as.mutation(api.monitorGroups.watchListing, { id: groupId, url: "https://currys.co.uk/xm5" });
+
+    expect(got.notificationChannels).toEqual([]);
+    expect((await as.query(api.monitorGroups.get, { id: groupId }))?.notificationChannels).toEqual([]);
   });
 
   it("lets nobody but the owner change a product", async () => {

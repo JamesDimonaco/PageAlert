@@ -611,7 +611,7 @@ function MonitorSettingsForm({
       onClose();
       toast.success("Monitor updated");
     } catch (e) {
-      toast.error("Failed to update", { description: errorText(e) });
+      toast.error("Failed to update", { description: errorText(e, "Try again.") });
     } finally {
       setSaving(false);
     }

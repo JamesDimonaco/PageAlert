@@ -10,6 +10,7 @@ import { useQuery, useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { useMonitors } from "@/hooks/use-monitors";
 import { toast } from "sonner";
+import { errorText } from "@/lib/utils";
 
 export type Channel = "email" | "telegram" | "discord" | "push" | "sms";
 
@@ -160,8 +161,8 @@ export function ChannelSelector({ value, onChange, monitorId, groupId, disabled 
                 // Enable on this monitor
                 onChange([...value, channel]);
                 toast.success(`Switched ${CHANNEL_CONFIG[channel].label} to this monitor`);
-              } catch {
-                toast.error("Failed to switch channel");
+              } catch (err) {
+                toast.error("Failed to switch channel", { description: errorText(err, "Try again.") });
               }
             },
           },

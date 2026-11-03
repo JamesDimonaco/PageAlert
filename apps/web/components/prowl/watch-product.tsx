@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
-import { ConvexError } from "convex/values";
+import { errorText } from "@/lib/utils";
 import { AlertTriangle, CheckCircle2, Eye, Loader2 } from "lucide-react";
 import { toMinorUnits, type ProductListing, type SearchRegion } from "@prowl/shared";
 import { api } from "@/convex/_generated/api";
@@ -86,7 +86,7 @@ export function WatchProductForm({ name, region, listings, ticked, onCreated }: 
       for (const l of listings) trackListingReviewed(ticked.has(l.url), { site: l.site, label: l.label });
       onCreated(groupId);
     } catch (err) {
-      setError(err instanceof ConvexError ? String(err.data) : "We couldn't watch those listings. Try again.");
+      setError(errorText(err, "We couldn't watch those listings. Try again."));
     } finally {
       setSaving(false);
     }

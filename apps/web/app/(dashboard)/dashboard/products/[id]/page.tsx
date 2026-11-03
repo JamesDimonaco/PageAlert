@@ -20,7 +20,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { StatusBadge } from "@/components/prowl/status-badge";
 import { DeleteDialog } from "@/components/prowl/delete-dialog";
-import { ProductCriteriaForm } from "@/components/prowl/product-criteria-form";
+import { planNotes, ProductCriteriaForm } from "@/components/prowl/product-criteria-form";
 import { useTier } from "@/hooks/use-tier";
 import { toSafeUrl } from "@/lib/format";
 import { timeAgo } from "@/lib/time";
@@ -80,11 +80,13 @@ export default function ProductPage({ params }: { params: Promise<{ id: string }
   const full = monitors !== undefined && !tierLoading && monitors.length >= maxMonitors;
   const hasSuggestions = product.listings.some((l) => l.state === "suggested");
 
-  async function act(url: string, action: () => Promise<unknown>, done: string) {
+  /** Runs one row's action. It may return notes on what the plan changed. */
+  async function act(url: string, action: () => Promise<string[] | void>, done: string) {
     setBusyUrls((prev) => new Set(prev).add(url));
     try {
-      await action();
-      toast.success(done);
+      const notes = await action();
+      if (notes && notes.length > 0) toast.warning(done, { description: notes.join(" "), duration: 10000 });
+      else toast.success(done);
     } catch (err) {
       toast.error(errorText(err, FAILED));
     } finally {
@@ -165,8 +167,14 @@ export default function ProductPage({ params }: { params: Promise<{ id: string }
                 act(
                   listing.url,
                   async () => {
-                    await watchListing({ id: groupId, url: listing.url });
+                    const got = await watchListing({ id: groupId, url: listing.url });
                     trackListingReviewed(true, { site: listing.site, label: listing.label });
+                    return planNotes(
+                      product.notificationChannels ?? got.notificationChannels ?? [],
+                      got.notificationChannels ?? [],
+                      product.checkInterval,
+                      got.checkInterval
+                    );
                   },
                   `Watching ${listing.site}`
                 )
@@ -185,7 +193,9 @@ export default function ProductPage({ params }: { params: Promise<{ id: string }
               onRestore={() =>
                 act(
                   listing.url,
-                  () => setListingDismissed({ id: groupId, url: listing.url, dismissed: false }),
+                  async () => {
+                    await setListingDismissed({ id: groupId, url: listing.url, dismissed: false });
+                  },
                   `Restored ${listing.site}`
                 )
               }
@@ -239,7 +249,13 @@ export default function ProductPage({ params }: { params: Promise<{ id: string }
         onConfirm={async () => {
           if (!unwatching) return;
           const { url, site } = unwatching;
-          await act(url, () => unwatchListing({ id: groupId, url }), `Stopped watching ${site}`);
+          try {
+            await unwatchListing({ id: groupId, url });
+          } catch (err) {
+            toast.error(errorText(err, FAILED));
+            throw err;
+          }
+          toast.success(`Stopped watching ${site}`);
         }}
       />
     </div>

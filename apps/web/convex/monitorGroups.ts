@@ -258,10 +258,12 @@ export const updateCriteria = mutation({
   handler: async (ctx, args) => {
     const { userId, group } = await ownedGroup(ctx, args.id);
     requireCriteria(args.alertOn);
-    const plan = await readPlan(ctx, userId);
+    const plan = await readPlan(ctx, userId, { channels: true });
     const checkInterval = clampInterval(args.checkInterval, plan.tier);
     const notificationChannels = allowedChannels(plan, args.notificationChannels, { groupId: group._id });
-    for (const m of await groupMonitors(ctx, group._id)) {
+    // A free plan has already read every monitor the user has.
+    const monitors = plan.monitors?.filter((m) => m.groupId === group._id) ?? (await groupMonitors(ctx, group._id));
+    for (const m of monitors) {
       const prompt = productPrompt(m.productTitle ?? m.name, args.alertOn);
       await updateMonitorForUser(
         ctx,
@@ -288,18 +290,27 @@ export const updateCriteria = mutation({
   },
 });
 
-/** Watch a suggested listing. The plan's monitor limit and the creation rate limit apply. */
+/**
+ * Watch a suggested listing. The plan's monitor limit and the creation rate
+ * limit apply. Returns the channels and interval the plan allowed it.
+ */
 export const watchListing = mutation({
   args: { id: v.id("monitorGroups"), url: v.string() },
-  handler: async (ctx, { id, url }): Promise<Id<"monitors">> => {
+  handler: async (ctx, { id, url }) => {
     const { userId, userEmail, group } = await ownedGroup(ctx, id);
     const listing = findListing(group, url, "suggested");
     const monitorId = await watchListingMonitor(ctx, { userId, userEmail }, group, listing);
+    const monitor = await ctx.db.get(monitorId);
+    // As in create: store what the plan let the monitor have.
+    const checkInterval = monitor?.checkInterval ?? group.checkInterval;
+    const notificationChannels = monitor?.notificationChannels ?? group.notificationChannels;
     await ctx.db.patch(group._id, {
       listings: group.listings.map((l) => (l.url === url ? { ...l, state: "watching" as const, monitorId } : l)),
+      checkInterval,
+      notificationChannels,
       updatedAt: Date.now(),
     });
-    return monitorId;
+    return { monitorId, checkInterval, notificationChannels };
   },
 });
 
@@ -336,7 +347,7 @@ export const setPaused = mutation({
   args: { id: v.id("monitorGroups"), paused: v.boolean() },
   handler: async (ctx, { id, paused }) => {
     const { userId, group } = await ownedGroup(ctx, id);
-    const plan = await readPlan(ctx, userId);
+    const plan = await readPlan(ctx, userId, { channels: false });
     let changed = 0;
     for (const m of await groupMonitors(ctx, group._id)) {
       if ((m.status === "paused") === paused) continue;

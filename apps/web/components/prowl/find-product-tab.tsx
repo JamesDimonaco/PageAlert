@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useAction, useQuery } from "convex/react";
-import { ConvexError } from "convex/values";
+import { errorText } from "@/lib/utils";
 import { ExternalLink, Loader2, Search } from "lucide-react";
 import {
   SEARCH_REGIONS,
@@ -113,7 +113,7 @@ export function FindProductTab({ onPasteUrl, onDone }: FindProductTabProps) {
       setSearched({ query: typed, region, at: Date.now() });
       trackProductSearchCompleted({ region, resultCount: listings.length, durationMs: Date.now() - started, failed: false });
     } catch (err) {
-      setError(err instanceof ConvexError ? String(err.data) : "The search didn't work. Try again.");
+      setError(errorText(err, "The search didn't work. Try again."));
       trackProductSearchCompleted({ region, resultCount: 0, durationMs: Date.now() - started, failed: true });
     } finally {
       setSearching(false);

@@ -64,17 +64,20 @@ export function clampInterval(interval: string, tier: Tier): CheckInterval {
 /** What a user's plan allows, read once per mutation however many monitors it changes. */
 export type Plan = {
   tier: Tier;
-  /** The user's monitors, which the free channel rule reads. Empty on paid plans, where it doesn't apply. */
-  monitors: Doc<"monitors">[];
+  /**
+   * The user's monitors, which only the free channel rule reads. Null when
+   * that rule doesn't apply: a paid plan, or a caller not changing channels.
+   */
+  monitors: Doc<"monitors">[] | null;
 };
 
-export async function readPlan(ctx: MutationCtx, userId: string): Promise<Plan> {
+export async function readPlan(ctx: MutationCtx, userId: string, { channels }: { channels: boolean }): Promise<Plan> {
   if (await isBanned(ctx, userId)) throw new ConvexError("This account has been suspended.");
   const tier = await getUserTier(ctx, userId);
   const monitors =
-    tier === "free"
+    channels && tier === "free"
       ? await ctx.db.query("monitors").withIndex("by_userId", (q) => q.eq("userId", userId)).collect()
-      : [];
+      : null;
   return { tier, monitors };
 }
 
@@ -93,6 +96,7 @@ export function allowedChannels(
   own: { id?: Id<"monitors">; groupId?: Id<"monitorGroups"> }
 ): ChannelList {
   if (plan.tier !== "free") return channels;
+  if (plan.monitors === null) throw new Error("readPlan was called without channels");
   const rest = withoutSms(channels);
   const takenElsewhere = plan.monitors.some(
     (m) =>
@@ -598,7 +602,7 @@ export async function updateMonitorForUser(
   const existing = await ctx.db.get(id);
   if (!existing || existing.userId !== userId) throw new ConvexError("Monitor not found");
   const needsPlan = fields.checkInterval !== undefined || fields.notificationChannels !== undefined;
-  const rules = plan ?? (needsPlan ? await readPlan(ctx, userId) : null);
+  const rules = plan ?? (needsPlan ? await readPlan(ctx, userId, { channels: fields.notificationChannels !== undefined }) : null);
   if (!rules && (await isBanned(ctx, userId))) throw new ConvexError("This account has been suspended.");
 
   if (fields.name !== undefined) validateName(fields.name);

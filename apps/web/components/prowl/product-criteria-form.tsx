@@ -24,7 +24,7 @@ interface ProductCriteriaFormProps {
 }
 
 /** Why the plan changed what the user asked for, in plain words. */
-function planNotes(asked: Channel[], got: Channel[], askedInterval: CheckInterval, gotInterval: CheckInterval): string[] {
+export function planNotes(asked: Channel[], got: Channel[], askedInterval: CheckInterval, gotInterval: CheckInterval): string[] {
   const dropped = asked.filter((c) => !got.includes(c));
   const notes: string[] = [];
   const rationed = dropped.filter((c) => c === "telegram" || c === "discord");
@@ -35,6 +35,8 @@ function planNotes(asked: Channel[], got: Channel[], askedInterval: CheckInterva
     );
   }
   if (dropped.includes("sms")) notes.push("Text alerts are off. They aren't on the free plan.");
+  // The free plan sends email when it removes every channel asked for.
+  if (got.includes("email") && !asked.includes("email")) notes.push("Alerts go by email instead.");
   if (gotInterval !== askedInterval) notes.push(`Checks run every ${gotInterval}, the fastest your plan allows.`);
   return notes;
 }

@@ -37,6 +37,7 @@ import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { toast } from "sonner";
 import { trackFilterSaved, trackItemDismissed, trackItemRestored } from "@/lib/posthog";
+import { errorText } from "@/lib/utils";
 import { formatPrice, toSafeUrl } from "@/lib/format";
 
 interface ItemsTabProps {
@@ -192,8 +193,8 @@ export function ItemsTab({ monitorId, allItems, schema, blacklist, scores, showF
       setEditedConditions(null);
       trackFilterSaved();
       toast.success("Filters saved");
-    } catch {
-      toast.error("Failed to save");
+    } catch (err) {
+      toast.error("Failed to save", { description: errorText(err, "Try again.") });
     } finally {
       setSaving(false);
     }
