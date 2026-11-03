@@ -5,6 +5,8 @@ import { Button } from "@/components/ui/button";
 import { Plus, Search, Radar, Sparkles } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { MonitorCard } from "@/components/prowl/monitor-card";
+import { ProductCard } from "@/components/prowl/product-card";
+import type { ProductSummary } from "@/convex/monitorGroups";
 import { StatsCards } from "@/components/prowl/stats-cards";
 import { DeleteDialog } from "@/components/prowl/delete-dialog";
 import { ReviewPrompt } from "@/components/prowl/review-prompt";
@@ -206,15 +208,35 @@ export default function DashboardPage() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
 
-  const filtered = monitors.filter((m) => {
-    const matchesSearch =
-      !search ||
-      m.name.toLowerCase().includes(search.toLowerCase()) ||
-      m.url.toLowerCase().includes(search.toLowerCase()) ||
-      m.prompt.toLowerCase().includes(search.toLowerCase());
-    const matchesStatus = statusFilter === "all" || (statusFilter === "muted" ? !!(m as any).muted : m.status === statusFilter);
-    return matchesSearch && matchesStatus;
-  });
+  const matchesSearch = (m: Doc<"monitors">) =>
+    !search ||
+    m.name.toLowerCase().includes(search.toLowerCase()) ||
+    m.url.toLowerCase().includes(search.toLowerCase()) ||
+    m.prompt.toLowerCase().includes(search.toLowerCase());
+  const matchesStatus = (m: Doc<"monitors">) =>
+    statusFilter === "all" || (statusFilter === "muted" ? !!m.muted : m.status === statusFilter);
+
+  // A product's monitors sit under one card, placed where its newest monitor
+  // would be. Until products load they wait, rather than flash up on their own.
+  const products = useQuery(api.monitorGroups.listMine);
+  const productById = new Map((products ?? []).map((p) => [p._id, p]));
+  const placed = new Set<Id<"monitorGroups">>();
+  const filtered: ({ monitor: Doc<"monitors"> } | { product: ProductSummary; monitors: Doc<"monitors">[] })[] = [];
+  for (const m of monitors) {
+    const product = m.groupId && productById.get(m.groupId);
+    if (!product) {
+      if (m.groupId && products === undefined) continue;
+      if (matchesSearch(m) && matchesStatus(m)) filtered.push({ monitor: m });
+      continue;
+    }
+    if (placed.has(product._id)) continue;
+    placed.add(product._id);
+    const children = monitors.filter((c) => c.groupId === product._id);
+    const nameMatches = product.name.toLowerCase().includes(search.toLowerCase());
+    if (children.some((c) => matchesStatus(c) && (nameMatches || matchesSearch(c)))) {
+      filtered.push({ product, monitors: children });
+    }
+  }
 
   return (
     <div className="space-y-10">
@@ -328,10 +350,12 @@ export default function DashboardPage() {
             </div>
           )
         ) : (
-          filtered.map((monitor) => (
+          filtered.map((item) => "product" in item ? (
+            <ProductCard key={item.product._id} product={item.product} monitors={item.monitors} />
+          ) : (
             <MonitorCard
-              key={monitor._id}
-              monitor={monitor}
+              key={item.monitor._id}
+              monitor={item.monitor}
               onTogglePause={async (id) => {
                 const m = monitors.find((x) => x._id === id);
                 try {

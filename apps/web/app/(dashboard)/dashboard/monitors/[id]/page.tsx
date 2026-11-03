@@ -32,6 +32,7 @@ import {
   BellOff,
   Clock,
   ExternalLink,
+  Package,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -65,6 +66,7 @@ export default function MonitorDetailPage({
   const atLimit = monitors.length >= maxMonitors;
   const scanBudget = useQuery(api.tiers.canScan);
   const scores = useQuery(api.monitors.latestScores, { monitorId }) ?? {};
+  const product = useQuery(api.monitorGroups.get, monitor?.groupId ? { id: monitor.groupId } : "skip");
   const consumeScan = useMutation(api.tiers.consumeScan);
   const saveScanResult = useMutation(api.monitors.saveScanResult);
   const saveScanError = useMutation(api.monitors.saveScanError);
@@ -218,6 +220,14 @@ export default function MonitorDetailPage({
               </Badge>
             )}
           </div>
+          {product && (
+            <Link href={`/dashboard/products/${product._id}`} className="mt-1.5 inline-block">
+              <Badge variant="outline" className="gap-1 hover:bg-muted">
+                <Package className="h-3 w-3" />
+                Part of {product.name}
+              </Badge>
+            </Link>
+          )}
           <p className="text-muted-foreground mt-1.5 text-sm leading-relaxed line-clamp-2" title={monitor.prompt}>
             &ldquo;{monitor.prompt}&rdquo;
           </p>
