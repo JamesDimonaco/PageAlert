@@ -138,6 +138,22 @@ describe("monitorGroups.create", () => {
     expect((await as.query(api.monitorGroups.get, { id: second.groupId }))?.notificationChannels).toEqual([]);
   });
 
+  // Each creation buys a paid AI read. The client caps ticks from
+  // creationAllowance; the server must hold the line if it is stale.
+  it("creates nothing past the creation rate limit, and reports the creations the client counts", async () => {
+    const t = harness();
+    const { as, userId } = await signUp(t, "a@example.test");
+    const now = Date.now();
+    await t.run(async (ctx) => {
+      for (let i = 0; i < 2; i++) await ctx.db.insert("monitorCreations", { userId, createdAt: now - i });
+    });
+
+    expect((await as.query(api.monitors.creationAllowance, {}))?.recent).toHaveLength(2);
+    await expect(as.mutation(api.monitorGroups.create, PRODUCT)).rejects.toThrow("Creation limit");
+    expect(await t.run((ctx) => ctx.db.query("monitorGroups").collect())).toHaveLength(0);
+    expect(await as.query(api.monitors.list, {})).toHaveLength(0);
+  });
+
   it("does not show one user's product to another", async () => {
     const t = harness();
     const { as: owner } = await signUp(t, "a@example.test");

@@ -51,16 +51,22 @@ export function FindProductTab({ onPasteUrl, onDone }: FindProductTabProps) {
   const [results, setResults] = useState<ProductListing[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showAccessories, setShowAccessories] = useState(false);
-  const [searched, setSearched] = useState<{ query: string; region: SearchRegion } | null>(null);
+  // `at` is the clock the creation limit is counted against, read when the results arrive.
+  const [searched, setSearched] = useState<{ query: string; region: SearchRegion; at: number } | null>(null);
   const [searchCount, setSearchCount] = useState(0);
   // Always a subset of the listings on screen, so it is what gets watched.
   const [ticked, setTicked] = useState<Set<string>>(new Set());
   const [createdId, setCreatedId] = useState<Id<"monitorGroups"> | null>(null);
   const monitors = useQuery(api.monitors.list);
+  const allowance = useQuery(api.monitors.creationAllowance);
   const { maxMonitors, isLoading: tierLoading } = useTier();
-  const slotsLoading = monitors === undefined || tierLoading;
+  const slotsLoading = monitors === undefined || allowance === undefined || tierLoading;
   // Every monitor counts toward the plan, paused ones included.
   const freeSlots = slotsLoading ? 0 : Math.max(0, maxMonitors - monitors.length);
+  const creationsLeft =
+    allowance && searched
+      ? Math.max(0, allowance.limit - allowance.recent.filter((t) => searched.at - t < allowance.windowMs).length)
+      : 0;
 
   const saved = status?.region && isSearchRegion(status.region) ? status.region : null;
   const region = picked ?? saved ?? guessed;
@@ -97,13 +103,14 @@ export function FindProductTab({ onPasteUrl, onDone }: FindProductTabProps) {
     setResults(null);
     setShowAccessories(false);
     setTicked(new Set());
-    setSearched({ query: query.trim(), region });
     setSearchCount((c) => c + 1);
     trackProductSearchStarted({ region });
     const started = Date.now();
+    const typed = query.trim();
     try {
-      const listings = await search({ query: query.trim(), region });
+      const listings = await search({ query: typed, region });
       setResults(listings);
+      setSearched({ query: typed, region, at: Date.now() });
       trackProductSearchCompleted({ region, resultCount: listings.length, durationMs: Date.now() - started, failed: false });
     } catch (err) {
       setError(err instanceof ConvexError ? String(err.data) : "The search didn't work. Try again.");
@@ -233,6 +240,13 @@ export function FindProductTab({ onPasteUrl, onDone }: FindProductTabProps) {
             <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
               <Loader2 className="h-3 w-3 animate-spin" /> Checking your free monitors…
             </p>
+          ) : creationsLeft < freeSlots && allowance ? (
+            <p className="text-xs text-muted-foreground">
+              Your plan lets you add {allowance.limit} monitors every 5 hours.{" "}
+              {creationsLeft === 0
+                ? "You've added that many, so try again later."
+                : `You can tick ${creationsLeft} now.`}
+            </p>
           ) : freeSlots === 0 ? (
             <p className="text-xs text-muted-foreground">
               You&apos;re using all {maxMonitors} of your monitors. Paused ones still count, so delete one to free a
@@ -250,7 +264,7 @@ export function FindProductTab({ onPasteUrl, onDone }: FindProductTabProps) {
                 key={listing.url}
                 listing={listing}
                 checked={ticked.has(listing.url)}
-                disabled={!ticked.has(listing.url) && ticked.size >= freeSlots}
+                disabled={!ticked.has(listing.url) && ticked.size >= Math.min(freeSlots, creationsLeft)}
                 onToggle={() => toggle(listing.url)}
               />
             ))}

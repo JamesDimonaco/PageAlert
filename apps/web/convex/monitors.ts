@@ -163,6 +163,26 @@ export const get = query({
   },
 });
 
+/**
+ * The creation rate limit as the client needs it: the limit, its window, and
+ * when the user's latest creations were. The client counts those inside the
+ * window with its own clock, because a query can't read one.
+ */
+export const creationAllowance = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return null;
+    const limit = CREATION_LIMITS[await getUserTier(ctx, identity.subject)];
+    const recent = await ctx.db
+      .query("monitorCreations")
+      .withIndex("by_userId_createdAt", (q) => q.eq("userId", identity.subject))
+      .order("desc")
+      .take(limit);
+    return { limit, windowMs: CREATION_WINDOW_MS, recent: recent.map((c) => c.createdAt) };
+  },
+});
+
 // ---- Mutations ----
 
 type ChannelList = Infer<typeof notificationChannelsValidator>;
