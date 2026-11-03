@@ -35,6 +35,22 @@ beforeAll(async () => {
       res.end(html(`<p>${FILLER}</p><script>setTimeout(() => location.replace("/status/200"), 200)</script>`));
       return;
     }
+    // A real shop page: a reCAPTCHA under its sign-up form and a <noscript>
+    // nag in the markup, neither of which makes it a challenge.
+    if (path === "/shop-with-recaptcha") {
+      res.end(html(`<noscript>Please enable JavaScript to use this site.</noscript><p>${FILLER.repeat(2)}</p>`
+        + `<form><p>This site is protected by reCAPTCHA.</p></form><script>window.grecaptchaSiteKey = "x";</script>`));
+      return;
+    }
+    if (path === "/amazon-captcha") {
+      res.end(html(`<form action="/errors/validateCaptcha"><p>Type the characters you see in this image.</p></form>`));
+      return;
+    }
+    // A WAF that hangs up instead of answering
+    if (path === "/drop") {
+      req.socket.destroy();
+      return;
+    }
     // Anything else, like the favicon the full browser asks for, is a 404:
     // a NaN status throws inside the server and takes the test worker down.
     const status = Number(path.split("/")[2]);
@@ -71,6 +87,32 @@ describe("scrapeUrl block detection by HTTP status", () => {
   it("judges the page it ended on, not a challenge it passed through", async () => {
     const result = await scrapeUrl(`${base}/challenge`);
     expect(result.blocked).toBeUndefined();
+  });
+});
+
+describe("scrapeUrl block detection by page content", () => {
+  // Matching "captcha" anywhere in the source failed real shops in seconds
+  // and parked monitors that would have worked.
+  it("does not flag a real page that carries a reCAPTCHA or a noscript nag", async () => {
+    const result = await scrapeUrl(`${base}/shop-with-recaptcha`);
+    expect(result.blocked).toBeUndefined();
+  });
+
+  // Longer timeout: a near-empty page waits out the scraper's 15s render wait
+  it("flags Amazon's captcha page", async () => {
+    const result = await scrapeUrl(`${base}/amazon-captcha`);
+    expect(result.blocked).toBe(true);
+    expect(result.blockReason).toBe("CAPTCHA challenge");
+  }, 60_000);
+});
+
+describe("scrapeUrl connection drops", () => {
+  // Thrown as a generic error, a dropped connection never escalated to the
+  // proxy, so a site behind such a WAF retried direct until it parked.
+  it("reports a dropped connection as a block", async () => {
+    const result = await scrapeUrl(`${base}/drop`);
+    expect(result.blocked).toBe(true);
+    expect(result.blockReason).toMatch(/^Connection dropped/);
   });
 });
 
