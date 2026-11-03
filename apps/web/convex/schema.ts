@@ -302,6 +302,9 @@ export default defineSchema({
     // carrier-facing policy promises three a day. See sms.claimVerification.
     smsCodeDay: v.optional(v.string()), // YYYY-MM-DD UTC
     smsCodeDayCount: v.optional(v.number()),
+    // Find a product searches today, counted like the SMS day. See productSearch.ts.
+    productSearchDay: v.optional(v.string()), // YYYY-MM-DD UTC
+    productSearchCount: v.optional(v.number()),
     reviewDismissed: v.optional(v.boolean()),
     updatedAt: v.number(),
   }).index("by_userId", ["userId"]),
@@ -410,6 +413,8 @@ export default defineSchema({
     announcementsSeen: v.optional(v.array(v.string())),
     // Beta features this user has switched on in Settings. See betaFeatures.ts.
     betaFeatures: v.optional(v.array(betaFeature)),
+    // The country Find a product last searched, offered first next time.
+    searchRegion: v.optional(v.string()),
   })
     .index("by_userId", ["userId"])
     // The daily pulse counts the last day of each, so it reads a window

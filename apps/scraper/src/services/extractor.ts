@@ -21,10 +21,10 @@ const isTracked = () => Boolean(posthog && process.env.ANTHROPIC_API_KEY);
  * it. Without one the wrapper already skips creating a person. Only the
  * wrapped client strips these fields, so the plain client must not receive them.
  */
-const trackingParams = (userId?: string) =>
+export const trackingParams = (userId?: string) =>
   isTracked() && userId ? { posthogDistinctId: userId } : {};
 
-const getClient = (): AnthropicOriginal => {
+export const getClient = (): AnthropicOriginal => {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (posthog && apiKey) {
     // Wrapped client — auto-captures $ai_generation events
@@ -268,7 +268,7 @@ function repairTruncatedJson(json: string): string | null {
 }
 
 /** Try multiple strategies to extract a JSON string from AI response text */
-function extractJson(text: string): string | null {
+export function extractJson(text: string): string | null {
   const trimmed = text.trim();
 
   // Strategy 1: Already valid JSON

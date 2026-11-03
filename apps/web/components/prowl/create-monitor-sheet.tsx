@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ChannelSelector, defaultChannels, useConfiguredChannels, type Channel } from "@/components/prowl/channel-selector";
 import { IntervalSelector } from "@/components/prowl/interval-selector";
 import {
@@ -24,6 +25,8 @@ import {
   MessageCircle,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
+import { useQuery } from "convex/react";
+import { api } from "@/convex/_generated/api";
 import { useMonitor } from "@/hooks/use-monitors";
 import type { Id } from "@/convex/_generated/dataModel";
 import { toast } from "sonner";
@@ -36,9 +39,11 @@ import {
 import { trackMonitorDraftRestored, trackMonitorDraftCleared } from "@/lib/posthog";
 import { MONITOR_MODES, type MonitorModeId } from "@/lib/monitor-modes";
 import { ScanStep } from "./scan-step";
+import { FindProductTab } from "./find-product-tab";
 import type { ScanStage } from "@/hooks/use-create-monitor";
 
 type CheckInterval = "5m" | "15m" | "30m" | "1h" | "6h" | "24h";
+type FormTab = "find" | "url";
 
 interface CreateMonitorSheetProps {
   open: boolean;
@@ -85,6 +90,9 @@ export function CreateMonitorSheet({
   // interacts with the form for the first time after hydration, or when
   // they hit "Start over". See PROWL-038 Phase 3.
   const [hydratedFromDraft, setHydratedFromDraft] = useState(false);
+  const findAProduct = useQuery(api.betaFeatures.list)?.includes("find_a_product") ?? false;
+  const [tab, setTab] = useState<FormTab>("find");
+  const showUrlForm = !findAProduct || tab === "url";
 
   // Timer
   const [elapsed, setElapsed] = useState(0);
@@ -144,11 +152,13 @@ export function CreateMonitorSheet({
         setCheckInterval(draft.checkInterval);
         setChannels(draft.channels);
         setHydratedFromDraft(true);
+        setTab("url");
         trackMonitorDraftRestored();
         channelsSeededRef.current = true;
       } else {
         resetForm();
         setHydratedFromDraft(false);
+        setTab("find");
       }
     }
     if (!open) channelsSeededRef.current = false;
@@ -187,6 +197,7 @@ export function CreateMonitorSheet({
       setName(cloneDefaults.name);
       setUrl(cloneDefaults.url);
       setPrompt(cloneDefaults.prompt);
+      setTab("url");
       onCloneDefaultsConsumed?.();
     }
   }, [cloneDefaults, open, onCloneDefaultsConsumed]);
@@ -286,7 +297,9 @@ export function CreateMonitorSheet({
               {step === "scanning" && (isInRetry ? "Retrying..." : "Scanning...")}
             </SheetTitle>
             <SheetDescription>
-              {step === "form" && "Paste a URL and describe what you're looking for."}
+              {step === "form" && (showUrlForm
+                ? "Paste a URL and describe what you're looking for."
+                : "Type a product name and we'll find shops that sell it.")}
               {step === "scanning" && (isInRetry
                 ? "The first attempt was blocked — automatically retrying."
                 : "AI is scanning the page and extracting data...")}
@@ -294,8 +307,28 @@ export function CreateMonitorSheet({
           </SheetHeader>
 
           <div className="mt-6">
+            {step === "form" && findAProduct && (
+              <>
+                <Tabs value={tab} onValueChange={(v) => setTab(v as FormTab)} className="mb-6">
+                  <TabsList className="w-full">
+                    <TabsTrigger value="find">Find a product</TabsTrigger>
+                    <TabsTrigger value="url">Paste a URL</TabsTrigger>
+                  </TabsList>
+                </Tabs>
+                {/* Hidden rather than unmounted, so results survive a look at the other tab. */}
+                <div hidden={tab !== "find"}>
+                  <FindProductTab
+                    onPasteUrl={(typed) => {
+                      if (typed) setName(typed);
+                      setTab("url");
+                    }}
+                  />
+                </div>
+              </>
+            )}
+
             {/* ---- STEP 1: FORM ---- */}
-            {step === "form" && (
+            {step === "form" && showUrlForm && (
               <form
                 onSubmit={(e) => {
                   e.preventDefault();

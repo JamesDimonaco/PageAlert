@@ -13,3 +13,5 @@ export * from "./sms-message";
 export * from "./api-key";
 export * from "./agent-output";
 export * from "./changelog";
+export * from "./money";
+export * from "./product-search";

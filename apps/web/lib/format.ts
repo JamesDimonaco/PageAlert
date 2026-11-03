@@ -1,4 +1,6 @@
-const formatters = new Map<string, Intl.NumberFormat>();
+import { currencyExponent } from "@prowl/shared";
+
+const formatters =new Map<string, Intl.NumberFormat>();
 
 function getFormatter(currency: string): Intl.NumberFormat {
   const key = currency.toUpperCase();
@@ -23,6 +25,13 @@ export function formatPrice(value: unknown, currency?: unknown): string | null {
   if (!Number.isFinite(num)) return null;
   const cur = typeof currency === "string" && currency.length === 3 ? currency : "USD";
   return getFormatter(cur).format(num);
+}
+
+/** Format an integer minor-unit price (1299, "GBP") as "£12.99". */
+export function formatMinorUnits(minor: number, currency: string): string | null {
+  const exponent = currencyExponent(currency);
+  if (exponent === null) return null;
+  return formatPrice(minor / 10 ** exponent, currency);
 }
 
 /** Validate a URL is safe for use in href attributes. Returns the URL or null. */
