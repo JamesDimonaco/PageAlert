@@ -393,3 +393,28 @@ test("a held big drop survives a confirming read with no price, and is confirmed
   expect(scoreCalls()).toBe(3);
   expect(await alertsScheduled()).toBe(1);
 });
+
+// A page that moves to a new currency and then stops changing would leave
+// the switch unconfirmed, and the old price frozen, until the page next moved.
+test("a read in a new currency is confirmed on the next check of an unchanged page", async () => {
+  const { t, id, check, alertsScheduled, scoreCalls } = await onUnchangedPage([{ inStock: true, price: 35000, currency: "USD" }]);
+
+  for (let i = 0; i < 3; i++) await check();
+
+  expect(scoreCalls()).toBe(2);
+  expect(await alertsScheduled()).toBe(0);
+  const monitor = await t.run((ctx) => ctx.db.get(id));
+  expect(monitor?.lastSeen).toEqual({ inStock: true, price: 35000, currency: "USD" });
+  expect(monitor?.productFingerprint).toBe("product-2");
+});
+
+test("a read in a new currency gives up after three confirming reads with no price", async () => {
+  const { t, id, check, scoreCalls } = await onUnchangedPage([{ inStock: true, price: 35000, currency: "USD" }, NO_PRICE]);
+
+  for (let i = 0; i < 6; i++) await check();
+
+  expect(scoreCalls()).toBe(4);
+  const monitor = await t.run((ctx) => ctx.db.get(id));
+  expect(monitor?.lastSeen).toEqual({ inStock: true, price: 29900, currency: "GBP" });
+  expect(monitor?.productFingerprint).toBe("product-2");
+});

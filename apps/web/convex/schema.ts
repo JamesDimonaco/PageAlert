@@ -135,7 +135,7 @@ export default defineSchema({
       // A fall of more than half, waiting for a second read to confirm it
       // before it replaces `price`. See recordProductRead.
       pendingPrice: v.optional(v.number()),
-      // Confirming reads of pendingPrice that came back with no price.
+      // Confirming reads of pendingPrice or pendingCurrency that did not settle it.
       pendingAttempts: v.optional(v.number()),
       // A price read in another currency than `currency`. A second read in it
       // makes it the new baseline. See recordProductRead.

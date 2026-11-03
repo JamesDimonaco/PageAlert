@@ -1376,12 +1376,17 @@ export const recordProductRead = internalMutation({
       alerts.push({ kind: "stock" });
     }
 
-    // A held price whose confirming read had no price in its currency is read
-    // again, up to MAX_CONFIRM_ATTEMPTS times, then dropped.
+    // A held price or currency whose confirming read did not settle it is
+    // read again, up to MAX_CONFIRM_ATTEMPTS times, then dropped.
     const attempts = (previous.pendingAttempts ?? 0) + 1;
+    const { pendingPrice, pendingCurrency } = previous;
     const stillHeld =
-      previous.pendingPrice !== undefined && attempts < MAX_CONFIRM_ATTEMPTS
-        ? { pendingPrice: previous.pendingPrice, pendingAttempts: attempts }
+      (pendingPrice !== undefined || pendingCurrency !== undefined) && attempts < MAX_CONFIRM_ATTEMPTS
+        ? {
+            ...(pendingPrice !== undefined ? { pendingPrice } : {}),
+            ...(pendingCurrency !== undefined ? { pendingCurrency } : {}),
+            pendingAttempts: attempts,
+          }
         : {};
     // Kept as they are unless this read has a usable price.
     let priceFields: {
@@ -1404,7 +1409,7 @@ export const recordProductRead = internalMutation({
         // the baseline, it would make the next read in the usual currency
         // look like a first read, and repeat an alert the user already had.
         console.warn(`[scheduler] ${monitor._id}: price read in ${args.currency}, not ${previous.currency}; keeping the last price`);
-        priceFields = { ...priceFields, pendingCurrency: args.currency };
+        if (pendingCurrency === undefined) priceFields = { ...priceFields, pendingCurrency: args.currency };
       }
     } else if (args.price !== null && args.currency !== null) {
       const newPrice = args.price;
@@ -1433,11 +1438,14 @@ export const recordProductRead = internalMutation({
 
     const inStock = args.inStock ?? previous.inStock;
     await ctx.db.patch(args.monitorId, {
-      // A held price needs a confirming read. Keeping the old fingerprint
-      // makes the next check read again, even if the page has not changed.
-      // Every other read advances it, so a failed confirmation is paid for
-      // a bounded number of times, not on every check.
-      productFingerprint: priceFields.pendingPrice !== undefined ? monitor.productFingerprint : args.productFingerprint,
+      // A held price or currency needs a confirming read. Keeping the old
+      // fingerprint makes the next check read again, even if the page has not
+      // changed. Every other read advances it, so a failed confirmation is
+      // paid for a bounded number of times, not on every check.
+      productFingerprint:
+        priceFields.pendingPrice !== undefined || priceFields.pendingCurrency !== undefined
+          ? monitor.productFingerprint
+          : args.productFingerprint,
       lastSeen: { ...(inStock !== undefined ? { inStock } : {}), ...priceFields },
     });
 
