@@ -556,7 +556,9 @@ export const runScheduledChecks = internalAction({
             // page that merely still says what it said last time.
             const newCount = checkResult.newMatchKeys?.length ?? 0;
 
-            if (newCount > 0) {
+            // A listing in a product alerts only on its stock and price. Its
+            // page often shows related items, and each would read as a match.
+            if (newCount > 0 && freshMonitor.groupId === undefined) {
               // Only the items the user has not seen. On the quick-check path
               // there is nothing to narrow to, so this is the whole match set.
               const newKeys = new Set(checkResult.newMatchKeys ?? []);

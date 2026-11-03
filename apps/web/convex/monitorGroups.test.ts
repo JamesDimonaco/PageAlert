@@ -370,6 +370,46 @@ describe("a product's monitors on the scheduler", () => {
 
     expect(productTitle).toBe("Sony WH-1000XM5");
   });
+
+  // A product page lists cases and bundles next to the product. Each new one
+  // would send a "new match" alert the user never asked for: a product only
+  // alerts on stock and price.
+  it("sends no match alert when a listing's page gains a matching item, but still records it", async () => {
+    let candidates = [{ title: "Sony WH-1000XM5", url: "https://argos.co.uk/xm5", price: null, snippet: "" }];
+    let hash = 0;
+    vi.stubEnv("SCRAPER_URL", "https://scraper.test");
+    vi.stubEnv("SCRAPER_API_KEY", "key");
+    vi.stubGlobal("fetch", async (url: string) => {
+      if (url.endsWith("/api/quick-check")) {
+        return Response.json({ accessible: true, contentHash: `page-${++hash}`, candidates, totalEntries: candidates.length });
+      }
+      if (url.endsWith("/api/score")) {
+        return Response.json({ scored: candidates.slice(1).map((c) => ({ ...c, matchScore: 90, matchReason: "" })) });
+      }
+      return new Response("not mocked", { status: 500 });
+    });
+    const t = harness();
+    const { as } = await signUp(t, "a@example.test");
+    const { monitorIds } = await as.mutation(api.monitorGroups.create, { ...PRODUCT, listings: [listing("argos.co.uk", true)] });
+    const id = monitorIds[0]!;
+    await t.run((ctx) =>
+      ctx.db.patch(id, { schema: { items: [], matchConditions: {} }, checkCount: 1, lastAiExtractAt: Date.now() })
+    );
+    const check = async () => {
+      await t.run((ctx) => ctx.db.patch(id, { nextCheckAt: 0 }));
+      await t.action(internal.scheduler.runScheduledChecks, {});
+    };
+
+    await check();
+    candidates = [...candidates, { title: "Sony WH-1000XM5 case", url: "https://argos.co.uk/case", price: null, snippet: "" }];
+    await check();
+
+    const result = await t.run((ctx) => ctx.db.query("scrapeResults").order("desc").first());
+    expect(result?.hasNewMatches).toBe(true);
+    expect(await t.run((ctx) => ctx.db.query("notifications").collect())).toHaveLength(0);
+    const jobs = await t.run((ctx) => ctx.db.system.query("_scheduled_functions").collect());
+    expect(jobs.some((job) => job.name.includes("notify"))).toBe(false);
+  });
 });
 
 describe("managing a product", () => {
