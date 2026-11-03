@@ -92,6 +92,20 @@ export default defineSchema({
     anonymousEmail: v.optional(v.string()),
     expiresAt: v.optional(v.number()),
     muted: v.optional(v.boolean()),
+    // Stock alerts on a single-product monitor (isSingleProduct in
+    // @prowl/shared). Absent means match alerts only, as before.
+    alertOn: v.optional(v.object({
+      backInStock: v.optional(v.boolean()),
+    })),
+    // The product as the last read saw it. A value the read could not make
+    // out keeps the last known one. Price is in minor units of `currency`.
+    lastSeen: v.optional(v.object({
+      inStock: v.optional(v.boolean()),
+      price: v.optional(v.number()),
+      currency: v.optional(v.string()),
+    })),
+    // Hash of the product's own text at the last read — see productExcerpt
+    productFingerprint: v.optional(v.string()),
     // Deprecated: run admin:clearPriceAlerts in prod, then delete this field.
     priceAlerts: v.optional(v.object({
       onPriceDrop: v.boolean(),

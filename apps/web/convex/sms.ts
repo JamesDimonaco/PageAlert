@@ -13,6 +13,7 @@ import { components, internal } from "./_generated/api";
 import { effectiveTier, SMS_LIMITS, spendSmsBudget } from "./tiers";
 import { requireLiveAccount } from "./account";
 import {
+  formatBackInStockSms,
   formatMatchSms,
   formatQuotaExhaustedSms,
   formatVerificationSms,
@@ -437,6 +438,24 @@ export const sendMatchAlert = internalAction({
         newCount: args.matchCount,
         link: `${APP_URL}/m/${args.monitorId}`,
       }),
+    );
+  },
+});
+
+/** A watched product went from out of stock to in stock */
+export const sendBackInStockAlert = internalAction({
+  args: {
+    userId: v.string(),
+    phone: v.string(),
+    monitorId: v.string(),
+    productTitle: v.string(),
+  },
+  handler: async (ctx, args) => {
+    await sendAlert(
+      ctx,
+      args.userId,
+      args.phone,
+      formatBackInStockSms({ productTitle: args.productTitle, link: `${APP_URL}/m/${args.monitorId}` }),
     );
   },
 });

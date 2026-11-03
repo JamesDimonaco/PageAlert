@@ -7,6 +7,7 @@ import { itemIdentity, RESUME_TOKEN_TTL_MS } from "@prowl/shared";
 import { effectiveTier, type Tier } from "./tiers";
 import { isBanned, requireLiveAccount } from "./account";
 import { reserveFallback, scraperDown } from "./admin";
+import { captureEvent } from "./analytics";
 
 // ---- Resource Limits ----
 const MAX_NAME_LENGTH = 200;
@@ -528,6 +529,7 @@ export const update = mutation({
     schema: v.optional(v.any()),
     notificationChannels: v.optional(channelValidator),
     muted: v.optional(v.boolean()),
+    alertOn: v.optional(v.object({ backInStock: v.optional(v.boolean()) })),
   },
   handler: async (ctx, { id, ...fields }) => {
     const userId = await getAuthUserId(ctx);
@@ -887,6 +889,10 @@ export const sendInitialScanNotifications = internalAction({
           totalItems: args.totalItems,
         }).catch((e) => console.error("[monitors] Notification failed:", e));
       }
+    }
+
+    if (hasAnyChannel) {
+      await captureEvent(monitor.userId, "alert_sent", { type: "match", monitor_id: args.monitorId });
     }
   },
 });

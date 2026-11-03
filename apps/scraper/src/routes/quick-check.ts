@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
-import { matchPageSegments, segmentPage } from "@prowl/shared";
+import { matchPageSegments, productExcerpt, segmentPage } from "@prowl/shared";
 import { FALLBACK_PROVIDER_ERROR, scrapeUrl } from "../services/scraper.js";
 import { MAX_URL_LENGTH } from "../utils/url-validation.js";
 import { hashContent } from "../utils/content-hash.js";
@@ -31,12 +31,14 @@ const quickCheckSchema = z.object({
   timeout: z.number().int().min(1000).max(60000).optional(),
   retryAttempt: z.number().int().min(0).max(10).optional(),
   useProxy: z.boolean().optional(),
+  // Set for a single-product monitor that wants stock alerts. See productExcerpt.
+  productTitle: z.string().max(500).optional(),
 });
 
 export const quickCheckRoutes = new Hono();
 
 quickCheckRoutes.post("/", zValidator("json", quickCheckSchema), async (c) => {
-  const { url, matchConditions, timeout, retryAttempt, useProxy } = c.req.valid("json");
+  const { url, matchConditions, timeout, retryAttempt, useProxy, productTitle } = c.req.valid("json");
 
   try {
     const scraped = await scrapeUrl(url, { timeout, retryAttempt, useProxy });
@@ -85,12 +87,14 @@ quickCheckRoutes.post("/", zValidator("json", quickCheckSchema), async (c) => {
         // Enough of the entry for the AI to judge it without re-reading the page.
         snippet: segment.text.trim().slice(0, MAX_SNIPPET_LENGTH),
       }));
+    const excerpt = productTitle ? productExcerpt(text, productTitle) : null;
 
     return c.json({
       url,
       accessible: true,
       contentHash: hashContent(text),
       candidates,
+      product: excerpt ? { excerpt, hash: hashContent(excerpt) } : null,
       // Listing entries on the page, not just the matching ones — this is the
       // "out of N items" a user reads in an alert.
       totalEntries: entries.length,
