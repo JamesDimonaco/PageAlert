@@ -1,9 +1,9 @@
 import { ConvexError, v, type Infer } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import { mutation, query, type MutationCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { isSearchRegion } from "@prowl/shared";
 import { hasBetaFeature } from "./betaFeatures";
-import { createMonitorForUser, validateAlertOn } from "./monitors";
+import { createMonitorForUser, removeMonitorForUser, updateMonitorForUser, validateAlertOn } from "./monitors";
 import { validateMonitorUrl } from "./shared";
 import {
   alertOnValidator,
@@ -26,6 +26,55 @@ export function productPrompt(title: string, alertOn: AlertOn): string {
   const price = alertOn.priceDrop === true || alertOn.priceBelow !== undefined;
   const what = alertOn.backInStock === true && price ? "price and stock" : price ? "price" : "stock";
   return `Track this product's ${what}: ${title}`;
+}
+
+/** Checks a product's criteria: one price choice at most, and something to be alerted about. */
+function requireCriteria(alertOn: AlertOn): void {
+  validateAlertOn(alertOn);
+  if (!alertOn.backInStock && !alertOn.priceDrop && alertOn.priceBelow === undefined) {
+    throw new ConvexError("Pick what to be alerted about.");
+  }
+}
+
+/** Runs monitor code whose plain Errors would reach a production client as "Server Error". */
+async function userFacing<T>(fallback: string, run: () => Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (error) {
+    if (error instanceof ConvexError) throw error;
+    throw new ConvexError(error instanceof Error ? error.message : fallback);
+  }
+}
+
+type GroupCriteria = Pick<Doc<"monitorGroups">, "_id" | "alertOn" | "notificationChannels" | "checkInterval">;
+
+/** A monitor for one listing, with the product's criteria, first-scanned on the server. */
+async function watchListingMonitor(
+  ctx: MutationCtx,
+  user: { userId: string; userEmail: string | undefined },
+  group: GroupCriteria,
+  listing: GroupListing
+): Promise<Id<"monitors">> {
+  const monitorId = await userFacing("We couldn't watch that listing.", () =>
+    createMonitorForUser(ctx, user, {
+      name: listing.title,
+      url: listing.url,
+      prompt: productPrompt(listing.title, group.alertOn),
+      checkInterval: group.checkInterval,
+      notificationChannels: group.notificationChannels,
+      groupId: group._id,
+    })
+  );
+  // Active with no schema is what the scheduler reads as "do the first
+  // extract", so the first scan runs on the server within a minute and
+  // the user can leave. A "scanning" monitor waits on the browser.
+  await ctx.db.patch(monitorId, {
+    alertOn: group.alertOn,
+    productTitle: listing.title,
+    status: "active",
+    nextCheckAt: Date.now(),
+  });
+  return monitorId;
 }
 
 function isWatchableUrl(url: string): boolean {
@@ -75,11 +124,7 @@ export const create = mutation({
     if (!name) throw new ConvexError("Give the product a name.");
     if (!isSearchRegion(args.region)) throw new ConvexError("Pick a country to search.");
     if (args.listings.length > MAX_LISTINGS) throw new ConvexError(`A product starts with at most ${MAX_LISTINGS} listings.`);
-    validateAlertOn(args.alertOn);
-    const { backInStock, priceDrop, priceBelow } = args.alertOn;
-    if (!backInStock && !priceDrop && priceBelow === undefined) {
-      throw new ConvexError("Pick what to be alerted about.");
-    }
+    requireCriteria(args.alertOn);
 
     const seen = new Set<string>();
     const listings: (GroupListing & { watch: boolean })[] = [];
@@ -123,35 +168,13 @@ export const create = mutation({
         stored.push(listing);
         continue;
       }
-      let monitorId: Id<"monitors">;
-      try {
-        monitorId = await createMonitorForUser(
-          ctx,
-          { userId, userEmail: identity.email ?? undefined },
-          {
-            name: listing.title,
-            url: listing.url,
-            prompt: productPrompt(listing.title, args.alertOn),
-            checkInterval: args.checkInterval,
-            notificationChannels: args.notificationChannels,
-            groupId,
-          }
-        );
-      } catch (error) {
-        // A plain Error reaches a production client as "Server Error". The
-        // throw also rolls back the product and every monitor made so far.
-        if (error instanceof ConvexError) throw error;
-        throw new ConvexError(error instanceof Error ? error.message : "We couldn't watch those listings.");
-      }
-      // Active with no schema is what the scheduler reads as "do the first
-      // extract", so the first scan runs on the server within a minute and
-      // the user can leave. A "scanning" monitor waits on the browser.
-      await ctx.db.patch(monitorId, {
-        alertOn: args.alertOn,
-        productTitle: listing.title,
-        status: "active",
-        nextCheckAt: now,
-      });
+      // A throw rolls back the product and every monitor made so far.
+      const monitorId = await watchListingMonitor(
+        ctx,
+        { userId, userEmail: identity.email ?? undefined },
+        { _id: groupId, alertOn: args.alertOn, notificationChannels: args.notificationChannels, checkInterval: args.checkInterval },
+        listing
+      );
       monitorIds.push(monitorId);
       stored.push({ ...listing, monitorId });
     }
@@ -168,7 +191,10 @@ export const create = mutation({
   },
 });
 
-type MonitorProgress = Pick<Doc<"monitors">, "status" | "checkCount" | "retryCount" | "lastError" | "lastCheckedAt">;
+type MonitorProgress = Pick<
+  Doc<"monitors">,
+  "status" | "checkCount" | "retryCount" | "lastError" | "lastCheckedAt" | "lastSeen"
+>;
 
 /** A product the signed-in user owns, with the state of each watched listing's monitor. */
 export const get = query({
@@ -188,11 +214,140 @@ export const get = query({
               retryCount: monitor.retryCount,
               lastError: monitor.lastError,
               lastCheckedAt: monitor.lastCheckedAt,
+              lastSeen: monitor.lastSeen,
             }
           : null;
         return { ...listing, monitor: progress };
       })
     );
     return { ...group, listings };
+  },
+});
+
+async function ownedGroup(ctx: MutationCtx, id: Id<"monitorGroups">) {
+  const identity = await ctx.auth.getUserIdentity();
+  if (!identity) throw new ConvexError("Sign in to manage your products.");
+  const group = await ctx.db.get(id);
+  if (!group || group.userId !== identity.subject) throw new ConvexError("Product not found.");
+  return { userId: identity.subject, userEmail: identity.email ?? undefined, group };
+}
+
+/** Bounded by the product's listings, one monitor each at most. */
+function groupMonitors(ctx: MutationCtx, groupId: Id<"monitorGroups">) {
+  return ctx.db
+    .query("monitors")
+    .withIndex("by_groupId", (q) => q.eq("groupId", groupId))
+    .collect();
+}
+
+function findListing(group: Doc<"monitorGroups">, url: string, state: GroupListing["state"]): GroupListing {
+  const listing = group.listings.find((l) => l.url === url);
+  if (!listing || listing.state !== state) throw new ConvexError("That listing has changed. Reload the page.");
+  return listing;
+}
+
+/**
+ * Save a product's criteria, channels and interval, and copy them to every
+ * monitor in it, prompt included. A monitor edited on its own page is
+ * overwritten.
+ */
+export const updateCriteria = mutation({
+  args: {
+    id: v.id("monitorGroups"),
+    alertOn: alertOnValidator,
+    notificationChannels: notificationChannelsValidator,
+    checkInterval: checkIntervalValidator,
+  },
+  handler: async (ctx, args) => {
+    const { userId, group } = await ownedGroup(ctx, args.id);
+    requireCriteria(args.alertOn);
+    const monitors = await groupMonitors(ctx, group._id);
+    for (const m of monitors) {
+      const prompt = productPrompt(m.productTitle ?? m.name, args.alertOn);
+      await userFacing("We couldn't save the product.", () =>
+        updateMonitorForUser(ctx, userId, m._id, {
+          alertOn: args.alertOn,
+          notificationChannels: args.notificationChannels,
+          // Each is sent only when it changes: a new interval reschedules the
+          // check and resets its retries, and a new prompt re-arms error emails.
+          ...(m.checkInterval !== args.checkInterval ? { checkInterval: args.checkInterval } : {}),
+          ...(m.prompt !== prompt ? { prompt } : {}),
+        })
+      );
+    }
+    // As in create: store what the plan let the monitors have.
+    const first = monitors[0] ? await ctx.db.get(monitors[0]._id) : null;
+    await ctx.db.patch(group._id, {
+      alertOn: args.alertOn,
+      checkInterval: first?.checkInterval ?? args.checkInterval,
+      notificationChannels: first?.notificationChannels ?? args.notificationChannels,
+      updatedAt: Date.now(),
+    });
+  },
+});
+
+/** Watch a suggested listing. The plan's monitor limit and the creation rate limit apply. */
+export const watchListing = mutation({
+  args: { id: v.id("monitorGroups"), url: v.string() },
+  handler: async (ctx, { id, url }): Promise<Id<"monitors">> => {
+    const { userId, userEmail, group } = await ownedGroup(ctx, id);
+    const listing = findListing(group, url, "suggested");
+    const monitorId = await watchListingMonitor(ctx, { userId, userEmail }, group, listing);
+    await ctx.db.patch(group._id, {
+      listings: group.listings.map((l) => (l.url === url ? { ...l, state: "watching" as const, monitorId } : l)),
+      updatedAt: Date.now(),
+    });
+    return monitorId;
+  },
+});
+
+/** Stop watching a listing: delete its monitor, which puts the listing back to a suggestion. */
+export const unwatchListing = mutation({
+  args: { id: v.id("monitorGroups"), url: v.string() },
+  handler: async (ctx, { id, url }) => {
+    const { userId, group } = await ownedGroup(ctx, id);
+    const { monitorId } = findListing(group, url, "watching");
+    if (!monitorId) throw new ConvexError("That listing has changed. Reload the page.");
+    await userFacing("We couldn't stop watching that listing.", () => removeMonitorForUser(ctx, userId, monitorId));
+  },
+});
+
+/** Hide a suggested listing, or bring a hidden one back as a suggestion. */
+export const setListingDismissed = mutation({
+  args: { id: v.id("monitorGroups"), url: v.string(), dismissed: v.boolean() },
+  handler: async (ctx, { id, url, dismissed }) => {
+    const { group } = await ownedGroup(ctx, id);
+    findListing(group, url, dismissed ? "suggested" : "dismissed");
+    const state = dismissed ? ("dismissed" as const) : ("suggested" as const);
+    await ctx.db.patch(group._id, {
+      listings: group.listings.map((l) => (l.url === url ? { ...l, state } : l)),
+      updatedAt: Date.now(),
+    });
+  },
+});
+
+/** Pause or resume every monitor in a product, the same way as one at a time. */
+export const setPaused = mutation({
+  args: { id: v.id("monitorGroups"), paused: v.boolean() },
+  handler: async (ctx, { id, paused }) => {
+    const { userId, group } = await ownedGroup(ctx, id);
+    for (const m of await groupMonitors(ctx, group._id)) {
+      if ((m.status === "paused") === paused) continue;
+      await userFacing("We couldn't update the product.", () =>
+        updateMonitorForUser(ctx, userId, m._id, { status: paused ? "paused" : "active" })
+      );
+    }
+  },
+});
+
+/** Delete a product and every monitor in it. */
+export const remove = mutation({
+  args: { id: v.id("monitorGroups") },
+  handler: async (ctx, { id }) => {
+    const { userId, group } = await ownedGroup(ctx, id);
+    for (const m of await groupMonitors(ctx, group._id)) {
+      await userFacing("We couldn't delete the product.", () => removeMonitorForUser(ctx, userId, m._id));
+    }
+    await ctx.db.delete(group._id);
   },
 });

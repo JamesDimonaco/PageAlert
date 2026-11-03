@@ -1,4 +1,4 @@
-import { ConvexError, v, type Infer } from "convex/values";
+import { ConvexError, v, type Infer, type ObjectType } from "convex/values";
 import { mutation, query, internalAction, internalQuery, type MutationCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
@@ -540,159 +540,167 @@ async function hostNeedsProxy(ctx: MutationCtx, monitor: Doc<"monitors">): Promi
   );
 }
 
+const updateFields = {
+  name: v.optional(v.string()),
+  url: v.optional(v.string()),
+  prompt: v.optional(v.string()),
+  status: v.optional(statusValidator),
+  checkInterval: v.optional(checkIntervalValidator),
+  schema: v.optional(v.any()),
+  notificationChannels: v.optional(notificationChannelsValidator),
+  muted: v.optional(v.boolean()),
+  alertOn: v.optional(alertOnValidator),
+};
+
 export const update = mutation({
-  args: {
-    id: v.id("monitors"),
-    name: v.optional(v.string()),
-    url: v.optional(v.string()),
-    prompt: v.optional(v.string()),
-    status: v.optional(statusValidator),
-    checkInterval: v.optional(checkIntervalValidator),
-    schema: v.optional(v.any()),
-    notificationChannels: v.optional(notificationChannelsValidator),
-    muted: v.optional(v.boolean()),
-    alertOn: v.optional(alertOnValidator),
-  },
-  handler: async (ctx, { id, ...fields }) => {
-    const userId = await getAuthUserId(ctx);
-    const existing = await ctx.db.get(id);
-    if (!existing || existing.userId !== userId) throw new Error("Monitor not found");
-    if (await isBanned(ctx, userId)) throw new Error("This account has been suspended.");
+  args: { id: v.id("monitors"), ...updateFields },
+  handler: async (ctx, { id, ...fields }) => updateMonitorForUser(ctx, await getAuthUserId(ctx), id, fields),
+});
 
-    if (fields.name !== undefined) validateName(fields.name);
-    if (fields.url !== undefined) validateMonitorUrl(fields.url);
-    if (fields.prompt !== undefined) validatePrompt(fields.prompt);
+/** Edit one of this user's monitors. A product rewrites its monitors through this too. */
+export async function updateMonitorForUser(
+  ctx: MutationCtx,
+  userId: string,
+  id: Id<"monitors">,
+  fields: ObjectType<typeof updateFields>
+): Promise<Id<"monitors">> {
+  const existing = await ctx.db.get(id);
+  if (!existing || existing.userId !== userId) throw new Error("Monitor not found");
+  if (await isBanned(ctx, userId)) throw new Error("This account has been suspended.");
 
-    // Dynamic tier-based enforcement
-    const tier = (fields.checkInterval !== undefined || fields.notificationChannels !== undefined)
-      ? await getUserTier(ctx, userId)
-      : null;
+  if (fields.name !== undefined) validateName(fields.name);
+  if (fields.url !== undefined) validateMonitorUrl(fields.url);
+  if (fields.prompt !== undefined) validatePrompt(fields.prompt);
 
-    if (fields.checkInterval !== undefined && tier) {
-      fields.checkInterval = clampInterval(fields.checkInterval, tier) as typeof fields.checkInterval;
-    }
+  // Dynamic tier-based enforcement
+  const tier = (fields.checkInterval !== undefined || fields.notificationChannels !== undefined)
+    ? await getUserTier(ctx, userId)
+    : null;
 
-    // Free tier: only one monitor can use the restricted channels — see create
-    if (fields.notificationChannels !== undefined && tier === "free") {
-      fields.notificationChannels = withoutSms(fields.notificationChannels);
-      if (fields.notificationChannels.some(isRestrictedChannel)) {
-        const otherMonitors = await ctx.db
-          .query("monitors")
-          .withIndex("by_userId", (q) => q.eq("userId", userId))
-          .collect();
-        const otherWithChannels = otherMonitors.find((m) =>
-          m._id !== id &&
-          (existing.groupId === undefined || m.groupId !== existing.groupId) &&
-          (m as any).notificationChannels?.some(isRestrictedChannel)
-        );
-        if (otherWithChannels) {
-          fields.notificationChannels = fields.notificationChannels.filter(
-            (c) => !isRestrictedChannel(c)
-          ) as typeof fields.notificationChannels;
-        }
+  if (fields.checkInterval !== undefined && tier) {
+    fields.checkInterval = clampInterval(fields.checkInterval, tier) as typeof fields.checkInterval;
+  }
+
+  // Free tier: only one monitor can use the restricted channels — see create
+  if (fields.notificationChannels !== undefined && tier === "free") {
+    fields.notificationChannels = withoutSms(fields.notificationChannels);
+    if (fields.notificationChannels.some(isRestrictedChannel)) {
+      const otherMonitors = await ctx.db
+        .query("monitors")
+        .withIndex("by_userId", (q) => q.eq("userId", userId))
+        .collect();
+      const otherWithChannels = otherMonitors.find((m) =>
+        m._id !== id &&
+        (existing.groupId === undefined || m.groupId !== existing.groupId) &&
+        (m as any).notificationChannels?.some(isRestrictedChannel)
+      );
+      if (otherWithChannels) {
+        fields.notificationChannels = fields.notificationChannels.filter(
+          (c) => !isRestrictedChannel(c)
+        ) as typeof fields.notificationChannels;
       }
     }
+  }
 
-    const now = Date.now();
-    const updates: Record<string, unknown> = { updatedAt: now };
-    for (const [key, value] of Object.entries(fields)) {
-      if (value !== undefined) {
-        updates[key] = typeof value === "string" ? value.trim() : value;
-      }
+  const now = Date.now();
+  const updates: Record<string, unknown> = { updatedAt: now };
+  for (const [key, value] of Object.entries(fields)) {
+    if (value !== undefined) {
+      updates[key] = typeof value === "string" ? value.trim() : value;
     }
-    if (fields.url !== undefined) {
-      updates.host = displayHost(fields.url.trim());
-      // What the old site needed says nothing about the new one, and left set
-      // it would mark the new site as needing the proxy for everyone.
-      if (updates.host !== existing.host) updates.proxyPreferred = undefined;
-    }
+  }
+  if (fields.url !== undefined) {
+    updates.host = displayHost(fields.url.trim());
+    // What the old site needed says nothing about the new one, and left set
+    // it would mark the new site as needing the proxy for everyone.
+    if (updates.host !== existing.host) updates.proxyPreferred = undefined;
+  }
 
-    // Stock was not read while the option was off, and a new URL is a new
-    // product. Either way the stored reading is stale, and an old "out of
-    // stock" left in place would fire on the first read. Clearing it makes
-    // that read a baseline instead. A new price choice resets the price the
-    // same way. Each resets only its own half, so editing one option keeps
-    // the other's history. Clearing the fingerprint makes the next check read.
-    const next = fields.alertOn;
-    const before = existing.alertOn;
-    const stockTurnedOn = next?.backInStock === true && before?.backInStock !== true;
-    const priceChoiceSet =
-      (next?.priceDrop === true || next?.priceBelow !== undefined) &&
-      (next.priceDrop !== before?.priceDrop ||
-        next.priceBelow?.amount !== before?.priceBelow?.amount ||
-        next.priceBelow?.currency !== before?.priceBelow?.currency);
-    if (next) validateAlertOn(next);
-    const urlChanged = fields.url !== undefined && fields.url.trim() !== existing.url;
-    if (urlChanged) {
-      updates.lastSeen = undefined;
-      updates.productFingerprint = undefined;
-      // A new page is no longer the product's listing, so it leaves the
-      // product rather than the listing taking on a page it doesn't describe.
-      updates.productTitle = undefined;
-      updates.groupId = undefined;
-      await releaseListing(ctx, existing);
-    } else if (stockTurnedOn || priceChoiceSet) {
-      const { inStock, price, currency, pendingPrice } = existing.lastSeen ?? {};
-      updates.lastSeen = {
-        ...(!stockTurnedOn && inStock !== undefined ? { inStock } : {}),
-        ...(!priceChoiceSet && price !== undefined && currency !== undefined
-          ? { price, currency, ...(pendingPrice !== undefined ? { pendingPrice } : {}) }
-          : {}),
-      };
-      updates.productFingerprint = undefined;
-    }
-    // The schema, and the product title in it, describe the old page. Zero
-    // makes the drift refresh due, so the next check re-reads the new page
-    // and product reads wait until it has (see runQuickCheck).
-    if (urlChanged) updates.lastAiExtractAt = 0;
+  // Stock was not read while the option was off, and a new URL is a new
+  // product. Either way the stored reading is stale, and an old "out of
+  // stock" left in place would fire on the first read. Clearing it makes
+  // that read a baseline instead. A new price choice resets the price the
+  // same way. Each resets only its own half, so editing one option keeps
+  // the other's history. Clearing the fingerprint makes the next check read.
+  const next = fields.alertOn;
+  const before = existing.alertOn;
+  const stockTurnedOn = next?.backInStock === true && before?.backInStock !== true;
+  const priceChoiceSet =
+    (next?.priceDrop === true || next?.priceBelow !== undefined) &&
+    (next.priceDrop !== before?.priceDrop ||
+      next.priceBelow?.amount !== before?.priceBelow?.amount ||
+      next.priceBelow?.currency !== before?.priceBelow?.currency);
+  if (next) validateAlertOn(next);
+  const urlChanged = fields.url !== undefined && fields.url.trim() !== existing.url;
+  if (urlChanged) {
+    updates.lastSeen = undefined;
+    updates.productFingerprint = undefined;
+    // A new page is no longer the product's listing, so it leaves the
+    // product rather than the listing taking on a page it doesn't describe.
+    updates.productTitle = undefined;
+    updates.groupId = undefined;
+    await releaseListing(ctx, existing);
+  } else if (stockTurnedOn || priceChoiceSet) {
+    const { inStock, price, currency, pendingPrice } = existing.lastSeen ?? {};
+    updates.lastSeen = {
+      ...(!stockTurnedOn && inStock !== undefined ? { inStock } : {}),
+      ...(!priceChoiceSet && price !== undefined && currency !== undefined
+        ? { price, currency, ...(pendingPrice !== undefined ? { pendingPrice } : {}) }
+        : {}),
+    };
+    updates.productFingerprint = undefined;
+  }
+  // The schema, and the product title in it, describe the old page. Zero
+  // makes the drift refresh due, so the next check re-reads the new page
+  // and product reads wait until it has (see runQuickCheck).
+  if (urlChanged) updates.lastAiExtractAt = 0;
 
-    // Anything that takes a monitor out of "paused" clears the auto-pause and
-    // its email link, so the monitor reads as a plain active monitor again and
-    // an old email cannot restart it later. Keyed off leaving "paused" rather
-    // than off arriving at "active", because Rescan goes paused -> "scanning"
-    // -> active and would otherwise leave a running monitor wearing the
-    // "paused automatically" note for good.
-    //
-    // nextCheckAt is set on every resume, not just an auto-paused one: without
-    // it a monitor that was parked (nextCheckAt unset) and then paused comes
-    // back active with nothing scheduled and never runs again.
-    if (fields.status !== undefined && fields.status !== "paused" && existing.status === "paused") {
-      updates.nextCheckAt = now;
-      updates.autoPausedAt = undefined;
-      updates.resumeToken = undefined;
-      if (existing.nextCheckAt === undefined) {
-        // It was parked before it was paused. Same reasoning as the interval
-        // branch below: without a fresh budget the next single failure re-parks
-        // it and sends another "checks stopped" email.
-        updates.proxyBlockCount = 0;
-        updates.retryCount = 0;
-      }
-    }
-
-    // A new URL or prompt is in effect a new monitor, whose first error the
-    // owner has not been told about.
-    if (fields.url !== undefined || fields.prompt !== undefined) {
-      updates.lastErrorAlertAt = undefined;
-    }
-
-    // Recompute nextCheckAt when interval changes so it takes effect immediately
-    if (fields.checkInterval !== undefined) {
-      updates.nextCheckAt = now + effectiveIntervalMs({
-        checkInterval: fields.checkInterval,
-        proxyPreferred: existing.proxyPreferred,
-      });
-      // This un-parks a parked monitor. Give it a fresh budget on both
-      // counters, or the next single failure re-parks it and sends a second
-      // "checks stopped" email — a never-succeeded park sits at retryCount 32
-      // and would re-park on its very first check.
+  // Anything that takes a monitor out of "paused" clears the auto-pause and
+  // its email link, so the monitor reads as a plain active monitor again and
+  // an old email cannot restart it later. Keyed off leaving "paused" rather
+  // than off arriving at "active", because Rescan goes paused -> "scanning"
+  // -> active and would otherwise leave a running monitor wearing the
+  // "paused automatically" note for good.
+  //
+  // nextCheckAt is set on every resume, not just an auto-paused one: without
+  // it a monitor that was parked (nextCheckAt unset) and then paused comes
+  // back active with nothing scheduled and never runs again.
+  if (fields.status !== undefined && fields.status !== "paused" && existing.status === "paused") {
+    updates.nextCheckAt = now;
+    updates.autoPausedAt = undefined;
+    updates.resumeToken = undefined;
+    if (existing.nextCheckAt === undefined) {
+      // It was parked before it was paused. Same reasoning as the interval
+      // branch below: without a fresh budget the next single failure re-parks
+      // it and sends another "checks stopped" email.
       updates.proxyBlockCount = 0;
       updates.retryCount = 0;
     }
+  }
 
-    await ctx.db.patch(id, updates);
-    return id;
-  },
-});
+  // A new URL or prompt is in effect a new monitor, whose first error the
+  // owner has not been told about.
+  if (fields.url !== undefined || fields.prompt !== undefined) {
+    updates.lastErrorAlertAt = undefined;
+  }
+
+  // Recompute nextCheckAt when interval changes so it takes effect immediately
+  if (fields.checkInterval !== undefined) {
+    updates.nextCheckAt = now + effectiveIntervalMs({
+      checkInterval: fields.checkInterval,
+      proxyPreferred: existing.proxyPreferred,
+    });
+    // This un-parks a parked monitor. Give it a fresh budget on both
+    // counters, or the next single failure re-parks it and sends a second
+    // "checks stopped" email — a never-succeeded park sits at retryCount 32
+    // and would re-park on its very first check.
+    updates.proxyBlockCount = 0;
+    updates.retryCount = 0;
+  }
+
+  await ctx.db.patch(id, updates);
+  return id;
+}
 
 /**
  * Restart a monitor the inactivity reaper paused, from the link in its pause
@@ -769,40 +777,42 @@ async function releaseListing(ctx: MutationCtx, monitor: Doc<"monitors">): Promi
 
 export const remove = mutation({
   args: { id: v.id("monitors") },
-  handler: async (ctx, { id }) => {
-    const userId = await getAuthUserId(ctx);
-    const existing = await ctx.db.get(id);
-    if (!existing || existing.userId !== userId) throw new Error("Monitor not found");
-
-    const results = await ctx.db
-      .query("scrapeResults")
-      .withIndex("by_monitorId", (q) => q.eq("monitorId", id))
-      .collect();
-    for (const result of results) {
-      await ctx.db.delete(result._id);
-    }
-
-    const notifs = await ctx.db
-      .query("notifications")
-      .withIndex("by_monitorId", (q) => q.eq("monitorId", id))
-      .collect();
-    for (const notif of notifs) {
-      await ctx.db.delete(notif._id);
-    }
-
-    await ctx.db.delete(id);
-
-    await releaseListing(ctx, existing);
-
-    // Decrement public monitor counter
-    if (!existing.isAnonymous) {
-      const counter = await ctx.db.query("counters").withIndex("by_name", (q) => q.eq("name", "monitors")).unique();
-      if (counter && counter.value > 0) {
-        await ctx.db.patch(counter._id, { value: counter.value - 1 });
-      }
-    }
-  },
+  handler: async (ctx, { id }) => removeMonitorForUser(ctx, await getAuthUserId(ctx), id),
 });
+
+/** Delete one of this user's monitors with its history and notifications. */
+export async function removeMonitorForUser(ctx: MutationCtx, userId: string, id: Id<"monitors">): Promise<void> {
+  const existing = await ctx.db.get(id);
+  if (!existing || existing.userId !== userId) throw new Error("Monitor not found");
+
+  const results = await ctx.db
+    .query("scrapeResults")
+    .withIndex("by_monitorId", (q) => q.eq("monitorId", id))
+    .collect();
+  for (const result of results) {
+    await ctx.db.delete(result._id);
+  }
+
+  const notifs = await ctx.db
+    .query("notifications")
+    .withIndex("by_monitorId", (q) => q.eq("monitorId", id))
+    .collect();
+  for (const notif of notifs) {
+    await ctx.db.delete(notif._id);
+  }
+
+  await ctx.db.delete(id);
+
+  await releaseListing(ctx, existing);
+
+  // Decrement public monitor counter
+  if (!existing.isAnonymous) {
+    const counter = await ctx.db.query("counters").withIndex("by_name", (q) => q.eq("name", "monitors")).unique();
+    if (counter && counter.value > 0) {
+      await ctx.db.patch(counter._id, { value: counter.value - 1 });
+    }
+  }
+}
 
 export const updateBlacklist = mutation({
   args: {
