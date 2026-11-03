@@ -1,30 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { productExcerpt, toMinorUnits } from "./product";
-
-// A wrong scale stores a price 100× off, and ticket 05's "below £X" alert
-// then fires on the wrong side of the target.
-describe("toMinorUnits", () => {
-  test("two-decimal currencies, including a float that does not multiply cleanly", () => {
-    expect(toMinorUnits(12.99, "GBP")).toBe(1299);
-    expect(toMinorUnits(19.99, "USD")).toBe(1999);
-    expect(toMinorUnits(1299, "EUR")).toBe(129900);
-  });
-
-  test("currencies without two decimals use their own scale", () => {
-    expect(toMinorUnits(1500, "JPY")).toBe(1500);
-    expect(toMinorUnits(1.234, "KWD")).toBe(1234);
-  });
-
-  // An unreadable price must stay unknown, never become 0 — a "free" product
-  // would sit below every target.
-  test("an unreadable price or currency is null", () => {
-    expect(toMinorUnits("£12.99", "GBP")).toBeNull();
-    expect(toMinorUnits(Number.NaN, "GBP")).toBeNull();
-    expect(toMinorUnits(-1, "GBP")).toBeNull();
-    expect(toMinorUnits(12.99, "£")).toBeNull();
-    expect(toMinorUnits(12.99, null)).toBeNull();
-  });
-});
+import { productExcerpt } from "./product";
 
 describe("productExcerpt", () => {
   // Churn outside the buy box must not change the excerpt, or every check

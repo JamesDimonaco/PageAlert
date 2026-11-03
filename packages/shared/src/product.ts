@@ -61,23 +61,3 @@ export function productExcerpt(text: string, title: string): { excerpt: string; 
   const price = Math.max(0, flat.search(/[$£€]\s?\d/));
   return { excerpt: flat.slice(Math.max(0, price - EXCERPT_BEFORE), price + EXCERPT_AFTER).trim(), matched: false };
 }
-
-/**
- * A price in the currency's minor units (pence, cents, yen), or null when it
- * cannot be read. Money is never stored as a float.
- *
- * The currency sets the scale: JPY has no minor unit and KWD has three, so a
- * fixed ×100 would be wrong by 100× or 10× on those.
- */
-export function toMinorUnits(amount: unknown, currency: unknown): number | null {
-  if (typeof amount !== "number" || !Number.isFinite(amount) || amount < 0) return null;
-  if (typeof currency !== "string" || !/^[A-Z]{3}$/.test(currency)) return null;
-  let digits: number;
-  try {
-    digits = new Intl.NumberFormat("en", { style: "currency", currency }).resolvedOptions().maximumFractionDigits ?? 2;
-  } catch {
-    return null;
-  }
-  // Rounded because 19.99 * 100 is 1998.9999999999998.
-  return Math.round(amount * 10 ** digits);
-}

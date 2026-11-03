@@ -413,7 +413,7 @@ export async function scoreCandidates(
           const score = typeof entry.matchScore === "number" ? entry.matchScore : NaN;
           if (!Number.isFinite(index) || !Number.isFinite(score)) continue;
           const currency = typeof entry.currency === "string" ? entry.currency.toUpperCase() : null;
-          const price = toMinorUnits(entry.price, currency);
+          const price = typeof entry.price === "number" && currency !== null ? toMinorUnits(entry.price, currency) : null;
           scores.set(index, {
             matchScore: Math.max(0, Math.min(100, Math.round(score))),
             matchReason: typeof entry.matchReason === "string" ? entry.matchReason : "",
