@@ -703,17 +703,32 @@ export const runScheduledChecks = internalAction({
               // A product's listings tend to fail together, when the fault is
               // ours or the network's. The product sends one error alert for
               // them, claimed only by a listing that can deliver it. A park is
-              // final, so each listing still sends its own.
-              const canDeliver =
-                (channels.shouldSend("email") && !!freshErrMonitor.userEmail) ||
-                channels.shouldSend("push") ||
-                (channels.shouldSend("telegram") && telegramConnected) ||
-                channels.shouldSend("discord");
+              // final, so each listing still sends its own. Both are named
+              // after the product and the listing's site.
+              const canDeliver = async () => {
+                if (channels.shouldSend("email") && freshErrMonitor.userEmail) return true;
+                if (channels.shouldSend("telegram") && telegramConnected) return true;
+                if (channels.shouldSend("push")) {
+                  const subs = await ctx.runQuery(internal.pushSubscriptions.listForUser, { userId: freshErrMonitor.userId });
+                  if (subs.length > 0) return true;
+                }
+                if (!channels.shouldSend("discord")) return false;
+                const discord = await ctx.runQuery(internal.scheduler.getNotificationSetting, {
+                  userId: freshErrMonitor.userId,
+                  channel: "discord",
+                });
+                return !!(discord?.enabled && discord.target);
+              };
+              const groupId = freshErrMonitor.groupId;
               const productName =
-                freshErrMonitor.groupId !== undefined && !parked && !coolingDown && canDeliver
-                  ? await ctx.runMutation(internal.monitorGroups.claimErrorAlert, { id: freshErrMonitor.groupId })
-                  : null;
-              const quiet = coolingDown || (freshErrMonitor.groupId !== undefined && !parked && productName === null);
+                groupId === undefined
+                  ? null
+                  : parked
+                    ? await ctx.runQuery(internal.monitorGroups.nameOf, { id: groupId })
+                    : !coolingDown && (await canDeliver())
+                      ? await ctx.runMutation(internal.monitorGroups.claimErrorAlert, { id: groupId })
+                      : null;
+              const quiet = coolingDown || (groupId !== undefined && !parked && productName === null);
               const alertName = productName
                 ? `${productName} on ${displayHost(freshErrMonitor.url)}`
                 : freshErrMonitor.name;

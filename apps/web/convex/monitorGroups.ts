@@ -410,6 +410,12 @@ export const remove = mutation({
   },
 });
 
+/** A product's name, for naming it in an alert. Null when it is gone. */
+export const nameOf = internalQuery({
+  args: { id: v.id("monitorGroups") },
+  handler: async (ctx, { id }): Promise<string | null> => (await ctx.db.get(id))?.name ?? null,
+});
+
 async function ownedBy(ctx: QueryCtx, userId: string, id: Id<"monitorGroups">) {
   const group = await ctx.db.get(id);
   return group && group.userId === userId ? group : null;

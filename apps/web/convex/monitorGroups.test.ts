@@ -449,11 +449,19 @@ describe("a product's monitors on the scheduler", () => {
 
     await failAll({ status: "error", checkCount: 0, retryCount: 31 });
     expect(await emails("monitor-stopped")).toBe(2);
+    expect(subjects.filter((s) => s.startsWith("Checks stopped")).sort()).toEqual([
+      "Checks stopped: Sony WH-1000XM5 on argos.co.uk",
+      "Checks stopped: Sony WH-1000XM5 on currys.co.uk",
+    ]);
   });
 
-  // A listing whose channels are all off sends nothing. If it took the
+  // A listing that can't reach the user sends nothing. If it took the
   // product's one error alert, the listing that can email would stay silent.
-  it("lets only a listing that can deliver use up the product's error alert", async () => {
+  it.each([
+    ["no channels", []],
+    ["Discord, not connected", ["discord"]],
+    ["push, with no device", ["push"]],
+  ] as const)("doesn't let a listing with %s use up the product's error alert", async (_, silentChannels) => {
     vi.stubEnv("SCRAPER_URL", "https://scraper.test");
     vi.stubEnv("SCRAPER_API_KEY", "key");
     vi.stubGlobal("fetch", async () => Response.json({ message: "Site is down" }, { status: 500 }));
@@ -461,7 +469,7 @@ describe("a product's monitors on the scheduler", () => {
     const { as } = await signUp(t, "a@example.test");
     const { monitorIds } = await as.mutation(api.monitorGroups.create, PRODUCT);
     const [silent, emailing] = monitorIds as [Id<"monitors">, Id<"monitors">];
-    await t.run((ctx) => ctx.db.patch(silent, { notificationChannels: [] }));
+    await t.run((ctx) => ctx.db.patch(silent, { notificationChannels: [...silentChannels] }));
     const fail = async (id: Id<"monitors">) => {
       await t.run((ctx) =>
         ctx.db.patch(id, { status: "active", checkCount: 5, retryCount: 2, schema: { items: [], matchConditions: {} }, nextCheckAt: 0 })
