@@ -5,7 +5,7 @@ import { internalAction, internalMutation, internalQuery, type ActionCtx } from 
 import { internal } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
 import { formatMinorUnits, formatSmsPrice, isProductMonitor } from "@prowl/shared";
-import { deliverAlert } from "./alerts";
+import { alertChannels, deliverAlert } from "./alerts";
 import {
   displayHost,
   isBlockedError,
@@ -684,11 +684,10 @@ export const runScheduledChecks = internalAction({
           if (parked || willError) {
             const freshErrMonitor = await ctx.runQuery(internal.monitors.getInternal, { id: monitor._id });
             if (freshErrMonitor && !freshErrMonitor.muted) {
-              const monitorChannels = (freshErrMonitor as any).notificationChannels as string[] | undefined;
               const quiet = !parked && errorAlertCoolingDown;
-              const shouldSend = (channel: string) =>
-                !quiet && (!monitorChannels || monitorChannels.includes(channel));
-              const hasAnyChannel = !monitorChannels || monitorChannels.length > 0;
+              const channels = alertChannels(freshErrMonitor.notificationChannels);
+              const shouldSend = (channel: string) => !quiet && channels.shouldSend(channel);
+              const hasAnyChannel = channels.hasAnyChannel;
 
               // Looked up before the sends so the email knows whether to nudge
               // the user towards Telegram. Not gated on shouldSend: a user who
