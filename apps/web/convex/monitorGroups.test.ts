@@ -409,7 +409,9 @@ describe("a product's monitors on the scheduler", () => {
 
   // A site going down fails every listing of a product on it, and a scraper
   // fault fails all of them. One email per listing is a pile of identical mail.
-  it("sends one error email and one checks-stopped email per product, not one per listing", async () => {
+  // A park is different: it is the last word on that listing, so each one
+  // has to reach the user.
+  it("sends one error email per product, but a checks-stopped email per listing", async () => {
     vi.stubEnv("SCRAPER_URL", "https://scraper.test");
     vi.stubEnv("SCRAPER_API_KEY", "key");
     vi.stubGlobal("fetch", async () => Response.json({ message: "Site is down" }, { status: 500 }));
@@ -433,7 +435,7 @@ describe("a product's monitors on the scheduler", () => {
     expect(await t.run((ctx) => ctx.db.query("notifications").collect())).toHaveLength(2);
 
     await failAll({ status: "error", checkCount: 0, retryCount: 31 });
-    expect(await emails("monitor-stopped")).toBe(1);
+    expect(await emails("monitor-stopped")).toBe(2);
   });
 
   // A product page lists cases and bundles next to the product. Each new one

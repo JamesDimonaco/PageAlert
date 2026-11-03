@@ -686,14 +686,13 @@ export const runScheduledChecks = internalAction({
             if (freshErrMonitor && !freshErrMonitor.muted) {
               const coolingDown = !parked && errorAlertCoolingDown;
               // A product's listings tend to fail together, when the fault is
-              // ours or the network's. The product sends one alert for them.
+              // ours or the network's. The product sends one error alert for
+              // them. A park is final, so each listing still sends its own.
               const product =
-                freshErrMonitor.groupId !== undefined && !coolingDown
-                  ? await ctx.runMutation(internal.monitorGroups.claimErrorAlert, { id: freshErrMonitor.groupId, parked })
+                freshErrMonitor.groupId !== undefined && !parked && !coolingDown
+                  ? await ctx.runMutation(internal.monitorGroups.claimErrorAlert, { id: freshErrMonitor.groupId })
                   : null;
-              const productQuiet = freshErrMonitor.groupId !== undefined && product === null;
-              const quiet = coolingDown || productQuiet;
-              const loudPark = parked && !productQuiet;
+              const quiet = coolingDown || (freshErrMonitor.groupId !== undefined && !parked && product === null);
               const alertName = product
                 ? `${product.name} (${product.failing} listing${product.failing === 1 ? "" : "s"} failing)`
                 : freshErrMonitor.name;
@@ -728,7 +727,7 @@ export const runScheduledChecks = internalAction({
               // A park overrides channel selection on push for the same reason
               // it does on email below: it is the last thing we will ever say
               // about this monitor, so it should not be silently suppressed.
-              if (loudPark || shouldSend("push")) {
+              if (parked || shouldSend("push")) {
                 await ctx.runAction(internal.push.sendToUser, {
                   userId: freshErrMonitor.userId,
                   monitorId: freshErrMonitor._id,
@@ -742,7 +741,7 @@ export const runScheduledChecks = internalAction({
               // only one every user has. Telegram and Discord stay opt-in below,
               // so a park still reaches everyone without spamming a channel
               // someone deliberately turned off for this monitor.
-              if ((loudPark || shouldSend("email")) && freshErrMonitor.userEmail) {
+              if ((parked || shouldSend("email")) && freshErrMonitor.userEmail) {
                 if (parked) {
                   await ctx.runAction(internal.emails.sendMonitorStoppedAlert, {
                     to: freshErrMonitor.userEmail,
