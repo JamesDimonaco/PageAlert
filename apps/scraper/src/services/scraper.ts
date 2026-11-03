@@ -99,6 +99,8 @@ async function launchBrowser(): Promise<LaunchedBrowser> {
   }
 }
 
+const UNBLOCKER_TIMEOUT_MS = 45_000;
+
 /** Prefix for failures of the fallback provider itself, as opposed to the site blocking us. */
 export const FALLBACK_PROVIDER_ERROR = "Fallback provider error";
 
@@ -118,7 +120,7 @@ type ScrapflyResponse = {
  * protection and returns rendered HTML. Null when no key is configured so
  * the caller falls back to a direct fetch. Docs: docs/research/unblocker-providers.md
  */
-async function fetchViaUnblocker(url: string, timeout: number): Promise<string | null> {
+async function fetchViaUnblocker(url: string): Promise<string | null> {
   const key = process.env.SCRAPFLY_API_KEY;
   if (!key) {
     console.warn("[scraper] Fallback requested but SCRAPFLY_API_KEY not set, using direct connection");
@@ -127,9 +129,11 @@ async function fetchViaUnblocker(url: string, timeout: number): Promise<string |
   // asp=true lets Scrapfly escalate the proxy pool only when a site needs it,
   // so a plain page costs 6 credits and a protected one up to 30.
   const params = new URLSearchParams({ key, url, render_js: "true", asp: "true" });
-  // 45s leaves room for extraction inside the scheduler's 90s budget
+  // Its own budget, not the page timeout: callers rarely pass one, and the
+  // 30s default cut off anti-bot passes that take 30–45s. 45s still leaves
+  // room for extraction inside the scheduler's 90s budget.
   const res = await fetch(`https://api.scrapfly.io/scrape?${params}`, {
-    signal: AbortSignal.timeout(Math.min(timeout, 45_000)),
+    signal: AbortSignal.timeout(UNBLOCKER_TIMEOUT_MS),
   });
   const body = (await res.json().catch(() => null)) as ScrapflyResponse | null;
   const result = body?.result;
@@ -168,7 +172,7 @@ export async function scrapeUrl(
   const useProxy = options?.useProxy ?? false;
 
   // Fetched before taking a browser slot: the wait is pure HTTP
-  const unblockedHtml = useProxy ? await fetchViaUnblocker(url, timeout) : null;
+  const unblockedHtml = useProxy ? await fetchViaUnblocker(url) : null;
 
   // Resource exhaustion protection: limit concurrent contexts
   await acquireContextSlot();
@@ -214,9 +218,15 @@ export async function scrapeUrl(
         // Already rendered upstream; load it so the same DOM extraction runs
         await page.setContent(withBaseHref(unblockedHtml, url), { waitUntil: "domcontentloaded", timeout });
       } else {
-        // Use domcontentloaded instead of networkidle - much more reliable
-        // networkidle waits for zero network connections which many sites never reach
-        await page.goto(url, { waitUntil: "domcontentloaded", timeout });
+        try {
+          // Use domcontentloaded instead of networkidle - much more reliable
+          // networkidle waits for zero network connections which many sites never reach
+          await page.goto(url, { waitUntil: "domcontentloaded", timeout });
+        } catch (error) {
+          const drop = connectionDropReason(error);
+          if (!drop) throw error;
+          return { url, html: "", text: "", title: "", scrapedAt: new Date().toISOString(), blocked: true, blockReason: drop };
+        }
 
         // Wait for the body to have meaningful content
         await page.waitForFunction(
@@ -341,6 +351,18 @@ async function getTextWithLinks(page: Page): Promise<string> {
 }
 
 /**
+ * Akamai and similar WAFs often drop the connection instead of serving a block
+ * page. Reported as a generic failure, that never reached the proxy: REI and
+ * Best Buy monitors retried direct until they parked. Refused connections and
+ * DNS failures are left out, as those mean the site is down or the URL is wrong.
+ */
+function connectionDropReason(error: unknown): string | null {
+  const message = error instanceof Error ? error.message : "";
+  const code = message.match(/net::(ERR_(?:CONNECTION_RESET|CONNECTION_CLOSED|EMPTY_RESPONSE|HTTP2_PROTOCOL_ERROR))/)?.[1];
+  return code ? `Connection dropped (${code})` : null;
+}
+
+/**
  * Anti-bot services answer with a 403 whatever the page text says, and their
  * block pages often match none of detectAntiBot's markers. 503 is left out as
  * often a site outage, and 429 as usually our own burst being rate limited:
@@ -355,6 +377,10 @@ function blockedByStatus(status: number | undefined): { blocked: true; reason: s
  * High-confidence markers trigger immediately. Ambiguous markers only trigger
  * when the page has very little content (< 500 chars), since real pages can
  * contain phrases like "security check" or "access denied" in their normal content.
+ *
+ * High-confidence phrases are matched on visible text only. Matched on the
+ * HTML, they caught real shops: a reCAPTCHA script on a login form, or a
+ * <noscript> "please enable JavaScript" that a browser never shows.
  */
 export async function detectAntiBot(page: Page): Promise<{ blocked: boolean; reason?: string }> {
   try {
@@ -363,9 +389,18 @@ export async function detectAntiBot(page: Page): Promise<{ blocked: boolean; rea
       const text = (document.body?.innerText ?? "").toLowerCase();
       const textLen = text.length;
 
+      // Challenge widgets that are unmistakable whatever the page size:
+      // PerimeterX and DataDome.
+      const challengeSelectors: [string, string][] = [
+        ["#px-captcha", "CAPTCHA challenge"],
+        ['iframe[src*="captcha-delivery.com"]', "CAPTCHA challenge"],
+      ];
+      for (const [selector, reason] of challengeSelectors) {
+        if (document.querySelector(selector)) return { blocked: true, reason };
+      }
+
       // Always indicate blocking regardless of page size
       const highConfidence: [string, string][] = [
-        ["captcha", "CAPTCHA challenge"],
         ["verify you are human", "Human verification"],
         ["are you a robot", "Bot detection"],
         ["please enable javascript", "JavaScript required"],
@@ -374,15 +409,17 @@ export async function detectAntiBot(page: Page): Promise<{ blocked: boolean; rea
       ];
 
       for (const [marker, reason] of highConfidence) {
-        if (html.includes(marker) || text.includes(marker)) {
+        if (text.includes(marker)) {
           return { blocked: true, reason };
         }
       }
 
       // Only flag these on short pages (< 500 chars) — real product pages
-      // can legitimately contain "access denied" or "security check" in content
+      // can legitimately contain "access denied" or "security check" in
+      // content, or "protected by reCAPTCHA" under a form
       if (textLen < 500) {
         const ambiguous: [string, string][] = [
+          ["captcha", "CAPTCHA challenge"],
           ["access denied", "Access denied"],
           ["just a moment", "Cloudflare challenge"],
           ["pardon our interruption", "Anti-bot interruption"],

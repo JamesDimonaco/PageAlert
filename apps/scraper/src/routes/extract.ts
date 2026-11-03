@@ -40,8 +40,9 @@ extractRoutes.post("/", zValidator("json", extractSchema), async (c) => {
       const scraped = await scrapeUrl(url, { timeout, retryAttempt, useProxy });
 
       // Don't waste AI credits on anti-bot challenge pages — unless caller
-      // explicitly skips (e.g., forced retry where we want the AI to try anyway)
-      if (scraped.blocked && !skipBlockCheck) {
+      // explicitly skips (e.g., forced retry where we want the AI to try anyway).
+      // A dropped connection has no page at all, so there is nothing to try.
+      if (scraped.blocked && (!skipBlockCheck || !scraped.text)) {
         const safeUrl = (() => { try { return new URL(url).hostname; } catch { return "[invalid]"; } })();
         console.warn(`[extract] Blocked by anti-bot for ${safeUrl}: ${scraped.blockReason}`);
         return c.json({

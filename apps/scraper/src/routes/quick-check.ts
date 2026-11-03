@@ -102,7 +102,8 @@ quickCheckRoutes.post("/", zValidator("json", quickCheckSchema), async (c) => {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`[quick-check] Failed for ${url}:`, message);
 
-    const isTimeout = message.includes("Timeout") || message.includes("timed out");
+    // Case-insensitive: an AbortSignal timeout says "aborted due to timeout"
+    const isTimeout = /timeout|timed out/i.test(message);
     const isNavigation = message.includes("net::ERR_") || message.includes("Navigation failed");
     const isConcurrency = message.includes("concurrent");
     const isValidationError = message.includes("not allowed") || message.includes("URL")
@@ -120,7 +121,11 @@ quickCheckRoutes.post("/", zValidator("json", quickCheckSchema), async (c) => {
       userMessage = message;
       statusCode = 400;
     } else if (isTimeout) {
-      userMessage = "Page took too long to load. The site may be slow or blocking automated access.";
+      // Through the proxy a timeout is Scrapfly being slow, not a block. Worded
+      // to miss isBlockedError, or it counts toward parking the monitor.
+      userMessage = useProxy
+        ? "Page took too long to load, even through the proxy."
+        : "Page took too long to load. The site may be slow or blocking automated access.";
       statusCode = 504;
     } else if (isNavigation) {
       userMessage = "Could not reach the page. The URL may be invalid or the site may be down.";
