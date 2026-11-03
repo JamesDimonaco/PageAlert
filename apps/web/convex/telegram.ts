@@ -64,6 +64,28 @@ export const sendMatchAlert = internalAction({
   },
 });
 
+/** A watched product went from out of stock to in stock */
+export const sendBackInStockAlert = internalAction({
+  args: {
+    chatId: v.string(),
+    monitorId: v.string(),
+    url: v.string(),
+    productTitle: v.string(),
+  },
+  handler: async (_ctx, args) => {
+    const text = [
+      `✅ *Back in stock*`,
+      ``,
+      `${escMd(truncate(args.productTitle, 120))} is back in stock on ${escMd(displayHost(args.url))}\\.`,
+      ``,
+      `🔗 [View on site](${escUrl(args.url)})`,
+      `📊 [View in PageAlert](${escUrl(APP_URL + "/dashboard/monitors/" + args.monitorId)})`,
+    ].join("\n");
+
+    await sendMessage(getBotToken(), args.chatId, text);
+  },
+});
+
 function truncate(str: string, max: number): string {
   return str.length > max ? `${str.slice(0, max - 1)}…` : str;
 }

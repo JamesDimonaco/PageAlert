@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   GSM7_SEGMENT_LIMIT,
   fit,
+  formatBackInStockSms,
   formatMatchSms,
   formatQuotaExhaustedSms,
   formatVerificationSms,
@@ -53,6 +54,18 @@ describe("gsm7Length", () => {
     expect(gsm7Length("abc")).toBe(3);
     expect(gsm7Length("[]{}")).toBe(8);
     expect(gsm7Length("€")).toBe(2);
+  });
+});
+
+describe("formatBackInStockSms", () => {
+  it("fits a long product title into one segment", () => {
+    const body = formatBackInStockSms({
+      productTitle: "Sony WH-1000XM5 Wireless Noise Cancelling Over-Ear Headphones – Midnight Blue, 30 hour battery",
+      link: LINK,
+    });
+    expect(body.startsWith("PageAlert: back in stock: \"Sony")).toBe(true);
+    expect(body.endsWith(LINK)).toBe(true);
+    assertOneSegment(body);
   });
 });
 

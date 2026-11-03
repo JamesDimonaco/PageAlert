@@ -35,6 +35,33 @@ export const sendMatchAlert = internalAction({
   },
 });
 
+/** A watched product went from out of stock to in stock */
+export const sendBackInStockAlert = internalAction({
+  args: {
+    webhookUrl: v.string(),
+    monitorId: v.string(),
+    url: v.string(),
+    productTitle: v.string(),
+  },
+  handler: async (_ctx, args) => {
+    await sendWebhook(args.webhookUrl, {
+      embeds: [
+        {
+          title: "✅ Back in stock",
+          description: `${args.productTitle} is back in stock on ${displayHost(args.url)}.`,
+          color: 0x047857,
+          fields: [
+            { name: "Website", value: `[Open](${args.url})`, inline: true },
+            { name: "Dashboard", value: `[View](${APP_URL}/dashboard/monitors/${args.monitorId})`, inline: true },
+          ],
+          footer: { text: "PageAlert" },
+          timestamp: new Date().toISOString(),
+        },
+      ],
+    });
+  },
+});
+
 /** Send an error alert via Discord webhook */
 export const sendErrorAlert = internalAction({
   args: {

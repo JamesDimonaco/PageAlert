@@ -7,6 +7,7 @@ import { itemIdentity, RESUME_TOKEN_TTL_MS } from "@prowl/shared";
 import { effectiveTier, type Tier } from "./tiers";
 import { isBanned, requireLiveAccount } from "./account";
 import { reserveFallback, scraperDown } from "./admin";
+import { deliverAlert } from "./alerts";
 
 // ---- Resource Limits ----
 const MAX_NAME_LENGTH = 200;
@@ -528,6 +529,7 @@ export const update = mutation({
     schema: v.optional(v.any()),
     notificationChannels: v.optional(channelValidator),
     muted: v.optional(v.boolean()),
+    alertOn: v.optional(v.object({ backInStock: v.optional(v.boolean()) })),
   },
   handler: async (ctx, { id, ...fields }) => {
     const userId = await getAuthUserId(ctx);
@@ -581,6 +583,21 @@ export const update = mutation({
       // it would mark the new site as needing the proxy for everyone.
       if (updates.host !== existing.host) updates.proxyPreferred = undefined;
     }
+
+    // Stock was not read while the option was off, and a new URL is a new
+    // product. Either way the stored reading is stale, and an old "out of
+    // stock" left in place would fire on the first read. Clearing it makes
+    // that read a baseline instead.
+    const stockTurnedOn = fields.alertOn?.backInStock === true && existing.alertOn?.backInStock !== true;
+    const urlChanged = fields.url !== undefined && fields.url.trim() !== existing.url;
+    if (stockTurnedOn || urlChanged) {
+      updates.lastSeen = undefined;
+      updates.productFingerprint = undefined;
+    }
+    // The schema, and the product title in it, describe the old page. Zero
+    // makes the drift refresh due, so the next check re-reads the new page
+    // and product reads wait until it has (see runQuickCheck).
+    if (urlChanged) updates.lastAiExtractAt = 0;
 
     // Anything that takes a monitor out of "paused" clears the auto-pause and
     // its email link, so the monitor reads as a plain active monitor again and
@@ -814,79 +831,25 @@ export const sendInitialScanNotifications = internalAction({
     if (!monitor) return;
     if (monitor.muted) return; // Muted — skip all notifications
 
-    const monitorChannels = (monitor as any).notificationChannels as string[] | undefined;
-    const shouldSend = (channel: string) => !monitorChannels || monitorChannels.includes(channel);
-    const hasAnyChannel = !monitorChannels || monitorChannels.length > 0;
+    const plural = args.matchCount !== 1 ? "es" : "";
+    const base = {
+      monitorName: monitor.name,
+      monitorId: args.monitorId,
+      url: monitor.url,
+      matchCount: args.matchCount,
+      totalItems: args.totalItems,
+    };
 
-    // In-app notification
-    if (hasAnyChannel) {
-      await ctx.runMutation(internal.userNotifications.create, {
-        userId: monitor.userId,
-        monitorId: args.monitorId,
-        channel: "in_app",
-        title: `${monitor.name} — ${args.matchCount} match${args.matchCount !== 1 ? "es" : ""} found`,
-        message: `Initial scan found ${args.matchCount} match${args.matchCount !== 1 ? "es" : ""} out of ${args.totalItems} items on ${monitor.url}`,
-      }).catch((e) => console.error("[monitors] Notification failed:", e));
-    }
-
-    // Push
-    if (shouldSend("push")) {
-      await ctx.runAction(internal.push.sendToUser, {
-        userId: monitor.userId,
-        monitorId: args.monitorId,
-        title: `${monitor.name} — ${args.matchCount} match${args.matchCount !== 1 ? "es" : ""} found`,
-        body: `Initial scan found ${args.matchCount} match${args.matchCount !== 1 ? "es" : ""} out of ${args.totalItems} items`,
-        kind: "match",
-      }).catch((e) => console.error("[monitors] Notification failed:", e));
-    }
-
-    // Email
-    if (shouldSend("email") && monitor.userEmail) {
-      await ctx.runAction(internal.emails.sendMatchAlert, {
-        to: monitor.userEmail,
-        monitorName: monitor.name,
-        monitorId: args.monitorId,
-        url: monitor.url,
-        matchCount: args.matchCount,
-        matches: [],
-        totalItems: args.totalItems,
-      }).catch((e) => console.error("[monitors] Notification failed:", e));
-    }
-
-    // Telegram
-    if (shouldSend("telegram")) {
-      const telegramSetting = await ctx.runQuery(internal.scheduler.getNotificationSetting, {
-        userId: monitor.userId,
-        channel: "telegram",
-      });
-      if (telegramSetting?.enabled && telegramSetting.target) {
-        await ctx.runAction(internal.telegram.sendMatchAlert, {
-          chatId: telegramSetting.target,
-          monitorName: monitor.name,
-          monitorId: args.monitorId,
-          url: monitor.url,
-          matchCount: args.matchCount,
-          totalItems: args.totalItems,
-        }).catch((e) => console.error("[monitors] Notification failed:", e));
-      }
-    }
-
-    // Discord
-    if (shouldSend("discord")) {
-      const discordSetting = await ctx.runQuery(internal.scheduler.getNotificationSetting, {
-        userId: monitor.userId,
-        channel: "discord",
-      });
-      if (discordSetting?.enabled && discordSetting.target) {
-        await ctx.runAction(internal.discord.sendMatchAlert, {
-          webhookUrl: discordSetting.target,
-          monitorName: monitor.name,
-          monitorId: args.monitorId,
-          url: monitor.url,
-          matchCount: args.matchCount,
-          totalItems: args.totalItems,
-        }).catch((e) => console.error("[monitors] Notification failed:", e));
-      }
-    }
+    // No SMS: the first scan has never texted, and the user is on the page
+    // watching it finish.
+    await deliverAlert(ctx, monitor, {
+      type: "match",
+      title: `${monitor.name} — ${args.matchCount} match${plural} found`,
+      inAppMessage: `Initial scan found ${args.matchCount} match${plural} out of ${args.totalItems} items on ${monitor.url}`,
+      pushBody: `Initial scan found ${args.matchCount} match${plural} out of ${args.totalItems} items`,
+      email: (to) => ctx.runAction(internal.emails.sendMatchAlert, { ...base, to, matches: [] }),
+      telegram: (chatId) => ctx.runAction(internal.telegram.sendMatchAlert, { ...base, chatId }),
+      discord: (webhookUrl) => ctx.runAction(internal.discord.sendMatchAlert, { ...base, webhookUrl }),
+    });
   },
 });

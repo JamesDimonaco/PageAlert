@@ -1,8 +1,11 @@
 import { v } from "convex/values";
 import { effectiveTier } from "./tiers";
 import { claimActivation } from "./monitors";
-import { internalAction, internalMutation, internalQuery } from "./_generated/server";
+import { internalAction, internalMutation, internalQuery, type ActionCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
+import type { Doc } from "./_generated/dataModel";
+import { isSingleProduct } from "@prowl/shared";
+import { deliverAlert } from "./alerts";
 import {
   displayHost,
   isBlockedError,
@@ -100,6 +103,21 @@ function detectChanges(previousItems: Record<string, unknown>[], currentItems: R
 }
 
 const MAX_CONCURRENT_CHECKS = 10;
+
+/** A single-product monitor whose owner wants to hear when it is back in stock. */
+function wantsProductRead(monitor: Pick<Doc<"monitors">, "alertOn" | "schema">): boolean {
+  return monitor.alertOn?.backInStock === true && isSingleProduct(monitor.schema);
+}
+
+/** The scraper rejects longer titles with a 400, which would fail every check until the monitor parks. */
+const MAX_PRODUCT_TITLE = 500;
+
+/** The product's name as the last full read gave it, for finding it on the page and naming it in alerts. */
+function productTitle(monitor: Pick<Doc<"monitors">, "name" | "schema">): string {
+  const title = (monitor.schema as { items?: { title?: unknown }[] } | undefined)?.items?.[0]?.title;
+  const name = typeof title === "string" && title.trim() ? title.trim() : monitor.name;
+  return name.slice(0, MAX_PRODUCT_TITLE);
+}
 
 // Web push payloads are capped around 4KB once encrypted, and going over makes
 // the send throw rather than truncate — the alert would vanish silently.
@@ -517,25 +535,12 @@ export const runScheduledChecks = internalAction({
             if (!freshMonitor) console.log(`[scheduler] Monitor ${monitor._id} deleted during check, skipping notifications`);
             // Data already recorded above — just skip notifications
           } else {
-            // Per-monitor channel filtering using fresh data
-            const monitorChannels = (freshMonitor as any).notificationChannels as string[] | undefined;
-            const shouldSend = (channel: string) => !monitorChannels || monitorChannels.includes(channel);
-            const hasAnyChannel = !monitorChannels || monitorChannels.length > 0;
-
-            // Texts are opt-in per monitor, never opt-out. An absent list means
-            // "every channel" above, which is right for the ones that cost
-            // nothing — but every monitor made before the field existed has no
-            // list, so the shared rule would start texting for all of them the
-            // moment a user verified a number.
-            const shouldSendSms = monitorChannels?.includes("sms") === true;
-
             // Both paths now name the entries the user has not been told
             // about, so an alert means a genuinely new listing rather than a
             // page that merely still says what it said last time.
-            const isNewMatch = (checkResult.newMatchKeys?.length ?? 0) > 0;
             const newCount = checkResult.newMatchKeys?.length ?? 0;
 
-            if (isNewMatch) {
+            if (newCount > 0) {
               // Only the items the user has not seen. On the quick-check path
               // there is nothing to narrow to, so this is the whole match set.
               const newKeys = new Set(checkResult.newMatchKeys ?? []);
@@ -547,105 +552,45 @@ export const runScheduledChecks = internalAction({
                 .filter(({ m }) => newKeys.has(matchKey(m)));
               const newMatches = newWithIndex.map(({ m }) => m);
               const plural = newCount !== 1 ? "es" : "";
+              const base = {
+                monitorName: freshMonitor.name,
+                monitorId: freshMonitor._id,
+                url: freshMonitor.url,
+                matchCount: newCount,
+                totalItems: displayTotalItems,
+              };
 
               await ctx.scheduler.runAfter(0, internal.admin.notify, {
                 text: `Match: ${freshMonitor.name} found ${newCount} new on ${displayHost(freshMonitor.url)} (${freshMonitor.userEmail ?? "no email"})`,
               });
 
-              // Create in-app notification (unless all channels explicitly disabled)
-              if (hasAnyChannel) await ctx.runMutation(internal.userNotifications.create, {
-                userId: freshMonitor.userId,
-                monitorId: freshMonitor._id,
-                channel: "in_app",
+              await deliverAlert(ctx, freshMonitor, {
+                type: "match",
                 title: `${freshMonitor.name} — ${newCount} new match${plural}`,
-                message: `Found ${newCount} new match${plural} out of ${displayTotalItems} items on ${freshMonitor.url}`,
-              }).catch(() => {});
-
-              // Push. No settings lookup — a user's devices are the target,
-              // and push.ts resolves them. Same wording as the in-app card.
-              if (shouldSend("push")) {
-                await ctx.runAction(internal.push.sendToUser, {
-                  userId: freshMonitor.userId,
-                  monitorId: freshMonitor._id,
-                  title: `${freshMonitor.name} — ${newCount} new match${plural}`,
-                  body: `${newCount} new match${plural} out of ${displayTotalItems} items on ${displayHost(freshMonitor.url)}`,
-                  kind: "match",
-                }).catch(() => {});
-              }
-
-              // Send email
-              if (shouldSend("email") && freshMonitor.userEmail) {
-                await ctx.runAction(internal.emails.sendMatchAlert, {
-                  to: freshMonitor.userEmail,
-                  monitorName: freshMonitor.name,
-                  monitorId: freshMonitor._id,
-                  url: freshMonitor.url,
-                  matchCount: newCount,
-                  matches: newMatches,
-                  totalItems: displayTotalItems,
-                }).catch(() => {});
-              }
-
-              // Send to Telegram if configured and enabled for this monitor
-              if (shouldSend("telegram")) {
-                const telegramSetting = await ctx.runQuery(internal.scheduler.getNotificationSetting, {
-                  userId: freshMonitor.userId,
-                  channel: "telegram",
-                });
-                if (telegramSetting?.enabled && telegramSetting.target) {
-                  await ctx.runAction(internal.telegram.sendMatchAlert, {
-                    chatId: telegramSetting.target,
-                    monitorName: freshMonitor.name,
-                    monitorId: freshMonitor._id,
-                    url: freshMonitor.url,
-                    matchCount: newCount,
-                    totalItems: displayTotalItems,
+                inAppMessage: `Found ${newCount} new match${plural} out of ${displayTotalItems} items on ${freshMonitor.url}`,
+                pushBody: `${newCount} new match${plural} out of ${displayTotalItems} items on ${displayHost(freshMonitor.url)}`,
+                email: (to) => ctx.runAction(internal.emails.sendMatchAlert, { ...base, to, matches: newMatches }),
+                telegram: (chatId) =>
+                  ctx.runAction(internal.telegram.sendMatchAlert, {
+                    ...base,
+                    chatId,
                     matches: newWithIndex.slice(0, TELEGRAM_ALERT_ITEMS).map(({ m, index }) => ({
                       index,
                       title: String(m.title ?? m.name ?? "Item"),
                       matchScore: typeof m.matchScore === "number" ? m.matchScore : undefined,
                     })),
                     resultId: checkResult.resultId ?? undefined,
-                  }).catch(() => {});
-                }
-              }
-
-              // Send to Discord if configured and enabled for this monitor
-              if (shouldSend("discord")) {
-                const discordSetting = await ctx.runQuery(internal.scheduler.getNotificationSetting, {
-                  userId: freshMonitor.userId,
-                  channel: "discord",
-                });
-                if (discordSetting?.enabled && discordSetting.target) {
-                  await ctx.runAction(internal.discord.sendMatchAlert, {
-                    webhookUrl: discordSetting.target,
-                    monitorName: freshMonitor.name,
-                    monitorId: freshMonitor._id,
-                    url: freshMonitor.url,
-                    matchCount: newCount,
-                    totalItems: displayTotalItems,
-                  }).catch(() => {});
-                }
-              }
-
-              // Send to SMS if verified and enabled for this monitor. The
-              // allowance check lives inside sms.ts, so a refusal here is
-              // silent by design — the email alert has already gone.
-              if (shouldSendSms) {
-                const smsSetting = await ctx.runQuery(internal.scheduler.getNotificationSetting, {
-                  userId: freshMonitor.userId,
-                  channel: "sms",
-                });
-                if (smsSetting?.enabled && smsSetting.target) {
-                  await ctx.runAction(internal.sms.sendMatchAlert, {
+                  }),
+                discord: (webhookUrl) => ctx.runAction(internal.discord.sendMatchAlert, { ...base, webhookUrl }),
+                sms: (phone) =>
+                  ctx.runAction(internal.sms.sendMatchAlert, {
                     userId: freshMonitor.userId,
-                    phone: smsSetting.target,
+                    phone,
                     monitorName: freshMonitor.name,
                     monitorId: freshMonitor._id,
                     matchCount: newCount,
-                  }).catch(() => {});
-                }
-              }
+                  }),
+              });
             }
           }
         } catch (e) {
@@ -862,6 +807,8 @@ type ScoredCandidate = QuickCheckCandidate & {
   /** Null means the judgement never came back — distinct from having scored badly. */
   matchScore: number | null;
   matchReason: string;
+  /** Only when stock was asked for. Price is in minor units. */
+  stock?: { inStock: boolean | null; price: number | null; currency: string | null };
 };
 
 /** Entries judged in one check. The rest keep their place in the seen set and wait their turn. */
@@ -902,6 +849,10 @@ async function runQuickCheck(
     return runFullExtract(ctx, monitor, scraperUrl, scraperKey, retryAttempt, { useProxy, skipQuickCheck: true });
   }
 
+  // A stale schema may describe another page (the URL was edited), so its
+  // product title cannot be trusted until the drift refresh below re-reads it.
+  const readsProduct = wantsProductRead(monitor) && !shouldEscalateToAI(monitor);
+
   const matchConditions = monitor.schema?.matchConditions ?? {};
 
   const res = await fetch(`${scraperUrl}/api/quick-check`, {
@@ -915,6 +866,7 @@ async function runQuickCheck(
       matchConditions,
       ...(retryAttempt > 0 ? { retryAttempt } : {}),
       ...(useProxy ? { useProxy: true } : {}),
+      ...(readsProduct ? { productTitle: productTitle(monitor) } : {}),
     }),
     signal: AbortSignal.timeout(90_000),
   });
@@ -943,8 +895,20 @@ async function runQuickCheck(
 
   const contentHash: string | undefined = result.contentHash;
 
+  // The product's entry went into the seen set on the first check and is
+  // never judged again below, so a restock would go unseen. Re-read it
+  // whenever its own text changes. Placed before the unchanged short-circuit
+  // so a monitor that has just switched stock alerts on takes its baseline
+  // even on a page that has not moved.
+  if (readsProduct && result.product && result.product.hash !== monitor.productFingerprint) {
+    if (result.product.matched === false) {
+      console.warn(`[scheduler] Quick check ${monitor._id}: product title not on the page, reading on any page change`);
+    }
+    await readProduct(ctx, monitor, result.product, scraperUrl, scraperKey);
+  }
+
   // Cheap short-circuit: content identical to the last scan — record the
-  // check happened and stop. No AI, no result row, no notifications.
+  // check happened and stop. No result row, no match notifications.
   if (contentHash && monitor.contentFingerprint && contentHash === monitor.contentFingerprint) {
     await ctx.runMutation(internal.scheduler.recordCheckResult, {
       monitorId: monitor._id,
@@ -1076,14 +1040,21 @@ async function scoreQuickCheckCandidates(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   monitor: any,
   scraperUrl: string,
-  scraperKey: string
+  scraperKey: string,
+  readStock = false
 ): Promise<ScoredCandidate[]> {
   const unscored: ScoredCandidate[] = candidates.map((c) => ({ ...c, matchScore: null, matchReason: "" }));
   try {
     const res = await fetch(`${scraperUrl}/api/score`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-api-key": scraperKey },
-      body: JSON.stringify({ prompt: monitor.prompt, name: monitor.name, userId: monitor.userId, candidates }),
+      body: JSON.stringify({
+        prompt: monitor.prompt,
+        name: monitor.name,
+        userId: monitor.userId,
+        candidates,
+        ...(readStock ? { readStock: true } : {}),
+      }),
       signal: AbortSignal.timeout(60_000),
     });
     if (!res.ok) {
@@ -1098,6 +1069,39 @@ async function scoreQuickCheckCandidates(
     console.warn(`[scheduler] Scoring errored for ${monitor._id}: ${(e as Error).message} — alerting unscored`);
     return unscored;
   }
+}
+
+/**
+ * Read stock and price for a single-product monitor's one product.
+ *
+ * A failed read still stores the fingerprint, as an unknown reading, so the
+ * next attempt waits for the next change. Retrying on every check instead
+ * would bill a call per check for as long as the failure lasts. The cost is
+ * that a restock landing on a failed read is only seen on the next change.
+ */
+async function readProduct(
+  ctx: Pick<ActionCtx, "runMutation">,
+  monitor: Doc<"monitors">,
+  product: { excerpt: string; hash: string },
+  scraperUrl: string,
+  scraperKey: string
+): Promise<void> {
+  const [scored] = await scoreQuickCheckCandidates(
+    [{ title: productTitle(monitor), url: monitor.url, price: null, snippet: product.excerpt }],
+    monitor,
+    scraperUrl,
+    scraperKey,
+    true
+  );
+  if (!scored?.stock) {
+    console.warn(`[scheduler] Product read for ${monitor._id} came back without stock — retrying on the next change`);
+  }
+  await ctx.runMutation(internal.scheduler.recordProductRead, {
+    monitorId: monitor._id,
+    url: monitor.url,
+    productFingerprint: product.hash,
+    ...(scored?.stock ?? { inStock: null, price: null, currency: null }),
+  });
 }
 
 async function runFullExtract(
@@ -1278,6 +1282,85 @@ export const getNotificationSetting = internalQuery({
         q.eq("userId", args.userId).eq("channel", args.channel)
       )
       .unique();
+  },
+});
+
+/**
+ * Store a product read and decide whether it is a restock.
+ *
+ * Only a known out of stock followed by a known in stock alerts. No baseline
+ * never alerts, so switching the option on cannot fire for a product that was
+ * already in stock. An unreadable value keeps the last known one, so out,
+ * then unknown, then in still alerts. Scheduling the send here ties it to the
+ * write: a check that fails after this point cannot lose the alert.
+ */
+export const recordProductRead = internalMutation({
+  args: {
+    monitorId: v.id("monitors"),
+    // The URL the read was taken from. A read that finishes after the URL
+    // was edited describes the old page and is dropped.
+    url: v.string(),
+    productFingerprint: v.string(),
+    inStock: v.union(v.boolean(), v.null()),
+    price: v.union(v.number(), v.null()),
+    currency: v.union(v.string(), v.null()),
+  },
+  handler: async (ctx, args) => {
+    const monitor = await ctx.db.get(args.monitorId);
+    if (!monitor || monitor.url !== args.url) return { backInStock: false };
+
+    const previous = monitor.lastSeen ?? {};
+    const backInStock =
+      monitor.alertOn?.backInStock === true && previous.inStock === false && args.inStock === true;
+
+    await ctx.db.patch(args.monitorId, {
+      productFingerprint: args.productFingerprint,
+      lastSeen: {
+        ...previous,
+        ...(args.inStock !== null ? { inStock: args.inStock } : {}),
+        ...(args.price !== null && args.currency !== null ? { price: args.price, currency: args.currency } : {}),
+      },
+    });
+
+    if (backInStock) {
+      await ctx.scheduler.runAfter(0, internal.scheduler.sendBackInStockAlert, { monitorId: args.monitorId });
+    }
+    return { backInStock };
+  },
+});
+
+/** Tell the owner their product is back, on the same channels a match alert uses. */
+export const sendBackInStockAlert = internalAction({
+  args: { monitorId: v.id("monitors") },
+  handler: async (ctx, args) => {
+    const monitor = await ctx.runQuery(internal.monitors.getInternal, { id: args.monitorId });
+    if (!monitor || monitor.muted) return;
+
+    const title = productTitle(monitor);
+    const host = displayHost(monitor.url);
+    const message = `${title} is back in stock on ${host}.`;
+    const base = { monitorId: monitor._id, url: monitor.url, productTitle: title };
+
+    await ctx.scheduler.runAfter(0, internal.admin.notify, {
+      text: `Back in stock: ${monitor.name} on ${host} (${monitor.userEmail ?? "no email"})`,
+    });
+
+    await deliverAlert(ctx, monitor, {
+      type: "stock",
+      title: `${monitor.name} — back in stock`,
+      inAppMessage: message,
+      pushBody: truncateForPush(message),
+      email: (to) => ctx.runAction(internal.emails.sendBackInStockAlert, { ...base, to, monitorName: monitor.name }),
+      telegram: (chatId) => ctx.runAction(internal.telegram.sendBackInStockAlert, { ...base, chatId }),
+      discord: (webhookUrl) => ctx.runAction(internal.discord.sendBackInStockAlert, { ...base, webhookUrl }),
+      sms: (phone) =>
+        ctx.runAction(internal.sms.sendBackInStockAlert, {
+          userId: monitor.userId,
+          phone,
+          monitorId: monitor._id,
+          productTitle: title,
+        }),
+    });
   },
 });
 

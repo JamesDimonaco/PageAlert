@@ -31,7 +31,7 @@ import {
 import type { Id } from "@/convex/_generated/dataModel";
 import type { Doc } from "@/convex/_generated/dataModel";
 import type { ExtractedItem, ExtractionSchema, PriceChange } from "@prowl/shared";
-import { getItemKey, matchConfidence, MATCH_CONFIDENCE_LABEL } from "@prowl/shared";
+import { getItemKey, isSingleProduct, matchConfidence, MATCH_CONFIDENCE_LABEL } from "@prowl/shared";
 import { useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { timeAgo, timeUntil } from "@/lib/time";
@@ -59,6 +59,7 @@ interface OverviewTabProps {
     nextCheckAt?: number;
     notificationChannels?: string[];
     proxyPreferred?: boolean;
+    alertOn?: { backInStock?: boolean };
   };
   matches: ExtractedItem[];
   totalItems: number;
@@ -540,7 +541,7 @@ function MonitorSettingsForm({
   const [name, setName] = useState(monitor.name);
   const [prompt, setPrompt] = useState(monitor.prompt);
   const [checkInterval, setCheckInterval] = useState(monitor.checkInterval as CheckInterval);
-  // An unset list means "every configured channel" (scheduler.ts:450), so that
+  // An unset list means "every configured channel" (alertChannels in convex/alerts.ts), so that
   // is what the picker has to show. Seeding it to ["email"] meant toggling any
   // one chip saved email-only and silently narrowed the monitor.
   const explicitChannels = monitor.notificationChannels as Channel[] | undefined;
@@ -548,6 +549,8 @@ function MonitorSettingsForm({
   const [editedChannels, setEditedChannels] = useState<Channel[] | null>(null);
   const channels = editedChannels ?? explicitChannels ?? defaultChannels(configuredChannels) ?? ["email"];
   const channelsUnresolved = explicitChannels === undefined && configuredChannels === undefined;
+  const singleProduct = isSingleProduct(monitor.schema);
+  const [backInStock, setBackInStock] = useState(monitor.alertOn?.backInStock === true);
   const [saving, setSaving] = useState(false);
   const updateMutation = useMutation(api.monitors.update);
 
@@ -561,6 +564,9 @@ function MonitorSettingsForm({
       };
       if (editedChannels !== null) payload.notificationChannels = editedChannels;
       if (checkInterval !== monitor.checkInterval) payload.checkInterval = checkInterval;
+      if (backInStock !== (monitor.alertOn?.backInStock === true)) {
+        payload.alertOn = { ...monitor.alertOn, backInStock };
+      }
       await updateMutation(payload as Parameters<typeof updateMutation>[0]);
       onClose();
       toast.success("Monitor updated");
@@ -602,6 +608,17 @@ function MonitorSettingsForm({
             monitorId={monitorId}
             disabled={channelsUnresolved}
           />
+          {singleProduct && (
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={backInStock}
+                onChange={(e) => setBackInStock(e.target.checked)}
+                className="rounded border-border accent-primary h-4 w-4 shrink-0"
+              />
+              <span className="text-sm">Tell me when it&apos;s back in stock</span>
+            </label>
+          )}
           <div className="flex items-center gap-2 pt-2">
             <Button size="sm" className="gap-1.5" onClick={save} disabled={saving}>
               {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}

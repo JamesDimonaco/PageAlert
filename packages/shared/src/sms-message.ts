@@ -127,6 +127,10 @@ export function formatMatchSms({ monitorName, newCount, link }: MatchSmsArgs): s
   );
 }
 
+export function formatBackInStockSms({ productTitle, link }: { productTitle: string; link: string }): string {
+  return oneSegment(`PageAlert: back in stock: "`, toGsm7(productTitle), `" ${toGsm7(link)}`);
+}
+
 const MONTHS = [
   "January", "February", "March", "April", "May", "June",
   "July", "August", "September", "October", "November", "December",
