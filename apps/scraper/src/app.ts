@@ -5,6 +5,7 @@ import { scrapeRoutes } from "./routes/scrape.js";
 import { extractRoutes } from "./routes/extract.js";
 import { quickCheckRoutes } from "./routes/quick-check.js";
 import { scoreRoutes } from "./routes/score.js";
+import { findListingsRoutes } from "./routes/find-listings.js";
 import { authMiddleware } from "./middleware/auth.js";
 
 export const app = new Hono();
@@ -39,5 +40,6 @@ api.route("/scrape", scrapeRoutes);
 api.route("/extract", extractRoutes);
 api.route("/quick-check", quickCheckRoutes);
 api.route("/score", scoreRoutes);
+api.route("/find-listings", findListingsRoutes);
 
 app.route("/api", api);

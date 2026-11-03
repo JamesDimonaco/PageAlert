@@ -260,6 +260,21 @@ export function trackScanFailed(props: { url: string; error: string; durationMs:
   });
 }
 
+// ---- Find a product ----
+
+export function trackProductSearchStarted(props: { region: string }) {
+  trackEvent("product_search_started", props);
+}
+
+export function trackProductSearchCompleted(props: {
+  region: string;
+  resultCount: number;
+  durationMs: number;
+  failed: boolean;
+}) {
+  trackEvent("product_search_completed", props);
+}
+
 // ---- Match events ----
 
 export function trackMatchFound(props: { monitorId: string; matchCount: number }) {

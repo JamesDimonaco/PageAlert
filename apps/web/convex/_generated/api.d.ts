@@ -30,6 +30,7 @@ import type * as monitors from "../monitors.js";
 import type * as notificationSettings from "../notificationSettings.js";
 import type * as notifications from "../notifications.js";
 import type * as onboarding from "../onboarding.js";
+import type * as productSearch from "../productSearch.js";
 import type * as pulse from "../pulse.js";
 import type * as push from "../push.js";
 import type * as pushSubscriptions from "../pushSubscriptions.js";
@@ -73,6 +74,7 @@ declare const fullApi: ApiFromModules<{
   notificationSettings: typeof notificationSettings;
   notifications: typeof notifications;
   onboarding: typeof onboarding;
+  productSearch: typeof productSearch;
   pulse: typeof pulse;
   push: typeof push;
   pushSubscriptions: typeof pushSubscriptions;
