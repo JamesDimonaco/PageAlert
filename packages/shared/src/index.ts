@@ -16,3 +16,4 @@ export * from "./changelog";
 export * from "./money";
 export * from "./product-search";
 export * from "./product";
+export * from "./alert-guess";

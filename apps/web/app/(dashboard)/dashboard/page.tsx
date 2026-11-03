@@ -40,7 +40,12 @@ export default function DashboardPage() {
       toast.error("Monitor limit reached", { description: "Upgrade your plan to add more monitors." });
       return false;
     }
-    openWithDefaults({ name: `${source.name} (copy)`, url: source.url, prompt: source.prompt });
+    openWithDefaults({
+      name: `${source.name} (copy)`,
+      url: source.url,
+      prompt: source.prompt,
+      searchTerm: source.name,
+    });
     return true;
   }
 

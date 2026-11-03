@@ -18,10 +18,12 @@ import { toast } from "sonner";
 import { isUnreadableScan } from "@prowl/shared";
 import { trackMonitorCreated, trackScanStarted, trackScanCompleted, trackScanFailed } from "@/lib/posthog";
 
-interface CloneDefaults {
+export interface CloneDefaults {
   name: string;
   url: string;
   prompt: string;
+  /** Set by Clone. Beta users start on "Find a product" with this search. */
+  searchTerm?: string;
 }
 
 export type ScanStage = "idle" | "scraping" | "extracting" | "saving" | "done";

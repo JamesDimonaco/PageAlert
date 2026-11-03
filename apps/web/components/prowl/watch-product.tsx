@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { ConvexError } from "convex/values";
 import { AlertTriangle, CheckCircle2, Eye, Loader2 } from "lucide-react";
-import { toMinorUnits, type ProductListing, type SearchRegion } from "@prowl/shared";
+import { toMinorUnits, type GuessedAlertOn, type ProductListing, type SearchRegion } from "@prowl/shared";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { Button } from "@/components/ui/button";
@@ -23,19 +23,26 @@ interface WatchProductFormProps {
   listings: ProductListing[];
   /** URLs of the ticked listings. */
   ticked: Set<string>;
+  /** Criteria guessed from a cloned monitor's prompt. */
+  guess: GuessedAlertOn | null;
   onCreated: (groupId: Id<"monitorGroups">) => void;
 }
 
 /** The criteria step, then one monitor per ticked listing. Mount it per search, so the defaults follow the results. */
-export function WatchProductForm({ name, region, listings, ticked, onCreated }: WatchProductFormProps) {
+export function WatchProductForm({ name, region, listings, ticked, guess, onCreated }: WatchProductFormProps) {
   const create = useMutation(api.monitorGroups.create);
-  // Out of stock somewhere means a restock is what they are waiting for.
-  const [backInStock, setBackInStock] = useState(() => listings.some((l) => l.inStock === false));
-  const [priceChoice, setPriceChoice] = useState<PriceChoice>(() =>
-    listings.some((l) => l.inStock === false) ? "off" : "drop"
+  // A cloned prompt says what they wanted. Without one, out of stock somewhere
+  // means a restock is what they are waiting for.
+  const guessed = guess && (guess.backInStock || guess.priceDrop || guess.priceBelow) ? guess : null;
+  const outOfStock = listings.some((l) => l.inStock === false);
+  const [backInStock, setBackInStock] = useState(guessed ? guessed.backInStock : outOfStock);
+  const [priceChoice, setPriceChoice] = useState<PriceChoice>(
+    guessed ? (guessed.priceBelow ? "below" : guessed.priceDrop ? "drop" : "off") : outOfStock ? "off" : "drop"
   );
-  const [target, setTarget] = useState("");
-  const [currency, setCurrency] = useState(() => listings.find((l) => l.currency)?.currency ?? "");
+  const [target, setTarget] = useState(guessed?.priceBelow ? String(guessed.priceBelow.amount) : "");
+  const [currency, setCurrency] = useState(
+    () => guessed?.priceBelow?.currency ?? listings.find((l) => l.currency)?.currency ?? ""
+  );
   const configuredChannels = useConfiguredChannels();
   const [channels, setChannels] = useState<Channel[] | null>(null);
   const { allowedIntervals, isLoading: tierLoading } = useTier();

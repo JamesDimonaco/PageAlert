@@ -284,6 +284,11 @@ export function trackListingReviewed(approved: boolean, props: { site: string; l
   trackEvent(approved ? "listing_approved" : "listing_dismissed", props);
 }
 
+/** Clone opened the Find tab with a monitor's name. The flags say what was guessed from its prompt. */
+export function trackCloneAsProductOpened(props: { backInStock: boolean; priceDrop: boolean; priceBelow: boolean }) {
+  trackEvent("clone_as_product_opened", props);
+}
+
 // ---- Match events ----
 
 export function trackMatchFound(props: { monitorId: string; matchCount: number }) {
