@@ -541,7 +541,7 @@ function MonitorSettingsForm({
   const [name, setName] = useState(monitor.name);
   const [prompt, setPrompt] = useState(monitor.prompt);
   const [checkInterval, setCheckInterval] = useState(monitor.checkInterval as CheckInterval);
-  // An unset list means "every configured channel" (scheduler.ts:450), so that
+  // An unset list means "every configured channel" (alertChannels in convex/alerts.ts), so that
   // is what the picker has to show. Seeding it to ["email"] meant toggling any
   // one chip saved email-only and silently narrowed the monitor.
   const explicitChannels = monitor.notificationChannels as Channel[] | undefined;

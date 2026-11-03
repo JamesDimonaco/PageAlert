@@ -28,9 +28,10 @@ async function seedProductMonitor(lastSeen?: Doc<"monitors">["lastSeen"]) {
       updatedAt: Date.now(),
     })
   );
-  const read = (inStock: boolean | null) =>
+  const read = (inStock: boolean | null, url = "https://shop.test/xm5") =>
     t.mutation(internal.scheduler.recordProductRead, {
       monitorId: id,
+      url,
       productFingerprint: `hash-${String(inStock)}`,
       inStock,
       price: null,
@@ -88,6 +89,21 @@ test("turning the option back on takes a fresh baseline", async () => {
   await owner.mutation(api.monitors.update, { id, alertOn: { backInStock: false } });
   await owner.mutation(api.monitors.update, { id, alertOn: { backInStock: true } });
   expect(await read(true)).toEqual({ backInStock: false });
+  expect(await alertsScheduled()).toBe(0);
+});
+
+// A read that started before the URL was edited describes the old product.
+// Stored, it would become the new product's baseline, or alert for it.
+test("a read taken from a URL the monitor no longer has is dropped", async () => {
+  const { t, id, read, alertsScheduled } = await seedProductMonitor({ inStock: false });
+  await t.withIdentity({ subject: "user_1" }).mutation(api.monitors.update, { id, url: "https://shop.test/other" });
+
+  expect(await read(true, "https://shop.test/xm5")).toEqual({ backInStock: false });
+  const monitor = await t.run((ctx) => ctx.db.get(id));
+  expect(monitor?.lastSeen).toBeUndefined();
+  expect(monitor?.productFingerprint).toBeUndefined();
+  // Makes the drift refresh due, which holds product reads until the new page is re-read.
+  expect(monitor?.lastAiExtractAt).toBe(0);
   expect(await alertsScheduled()).toBe(0);
 });
 

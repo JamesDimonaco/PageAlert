@@ -354,7 +354,7 @@ const STOCK_PROMPT = `
 Also read the product's stock and price from its text. Add to each entry:
 - "inStock": true if it can be bought now, false if it is sold out or unavailable, null if the text does not say.
 - "price": the current selling price as a plain number (e.g. 1299.99), or null if none is shown.
-- "currency": the ISO 4217 code of that price (e.g. "GBP"), or null.`;
+- "currency": the three-letter ISO 4217 code of that price (e.g. "GBP", "USD", "EUR"), never a symbol such as "£" or "$". Use null if you cannot tell which currency it is.`;
 
 /**
  * Score pre-filtered entries against the user's request.
@@ -414,6 +414,9 @@ export async function scoreCandidates(
           if (!Number.isFinite(index) || !Number.isFinite(score)) continue;
           const currency = typeof entry.currency === "string" ? entry.currency.toUpperCase() : null;
           const price = typeof entry.price === "number" && currency !== null ? toMinorUnits(entry.price, currency) : null;
+          if (readStock && typeof entry.price === "number" && entry.price >= 0 && price === null) {
+            console.warn(`[extractor] Dropped price ${entry.price}: currency ${JSON.stringify(entry.currency ?? null)} is not an ISO 4217 code`);
+          }
           scores.set(index, {
             matchScore: Math.max(0, Math.min(100, Math.round(score))),
             matchReason: typeof entry.matchReason === "string" ? entry.matchReason : "",

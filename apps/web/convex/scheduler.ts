@@ -849,6 +849,10 @@ async function runQuickCheck(
     return runFullExtract(ctx, monitor, scraperUrl, scraperKey, retryAttempt, { useProxy, skipQuickCheck: true });
   }
 
+  // A stale schema may describe another page (the URL was edited), so its
+  // product title cannot be trusted until the drift refresh below re-reads it.
+  const readsProduct = wantsProductRead(monitor) && !shouldEscalateToAI(monitor);
+
   const matchConditions = monitor.schema?.matchConditions ?? {};
 
   const res = await fetch(`${scraperUrl}/api/quick-check`, {
@@ -862,7 +866,7 @@ async function runQuickCheck(
       matchConditions,
       ...(retryAttempt > 0 ? { retryAttempt } : {}),
       ...(useProxy ? { useProxy: true } : {}),
-      ...(wantsProductRead(monitor) ? { productTitle: productTitle(monitor) } : {}),
+      ...(readsProduct ? { productTitle: productTitle(monitor) } : {}),
     }),
     signal: AbortSignal.timeout(90_000),
   });
@@ -896,7 +900,7 @@ async function runQuickCheck(
   // whenever its own text changes. Placed before the unchanged short-circuit
   // so a monitor that has just switched stock alerts on takes its baseline
   // even on a page that has not moved.
-  if (wantsProductRead(monitor) && result.product && result.product.hash !== monitor.productFingerprint) {
+  if (readsProduct && result.product && result.product.hash !== monitor.productFingerprint) {
     if (result.product.matched === false) {
       console.warn(`[scheduler] Quick check ${monitor._id}: product title not on the page, reading on any page change`);
     }
@@ -1094,6 +1098,7 @@ async function readProduct(
   }
   await ctx.runMutation(internal.scheduler.recordProductRead, {
     monitorId: monitor._id,
+    url: monitor.url,
     productFingerprint: product.hash,
     ...(scored?.stock ?? { inStock: null, price: null, currency: null }),
   });
@@ -1292,6 +1297,9 @@ export const getNotificationSetting = internalQuery({
 export const recordProductRead = internalMutation({
   args: {
     monitorId: v.id("monitors"),
+    // The URL the read was taken from. A read that finishes after the URL
+    // was edited describes the old page and is dropped.
+    url: v.string(),
     productFingerprint: v.string(),
     inStock: v.union(v.boolean(), v.null()),
     price: v.union(v.number(), v.null()),
@@ -1299,7 +1307,7 @@ export const recordProductRead = internalMutation({
   },
   handler: async (ctx, args) => {
     const monitor = await ctx.db.get(args.monitorId);
-    if (!monitor) return { backInStock: false };
+    if (!monitor || monitor.url !== args.url) return { backInStock: false };
 
     const previous = monitor.lastSeen ?? {};
     const backInStock =

@@ -589,10 +589,15 @@ export const update = mutation({
     // stock" left in place would fire on the first read. Clearing it makes
     // that read a baseline instead.
     const stockTurnedOn = fields.alertOn?.backInStock === true && existing.alertOn?.backInStock !== true;
-    if (stockTurnedOn || (fields.url !== undefined && fields.url.trim() !== existing.url)) {
+    const urlChanged = fields.url !== undefined && fields.url.trim() !== existing.url;
+    if (stockTurnedOn || urlChanged) {
       updates.lastSeen = undefined;
       updates.productFingerprint = undefined;
     }
+    // The schema, and the product title in it, describe the old page. Zero
+    // makes the drift refresh due, so the next check re-reads the new page
+    // and product reads wait until it has (see runQuickCheck).
+    if (urlChanged) updates.lastAiExtractAt = 0;
 
     // Anything that takes a monitor out of "paused" clears the auto-pause and
     // its email link, so the monitor reads as a plain active monitor again and
