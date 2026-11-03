@@ -180,6 +180,9 @@ export default defineSchema({
     notificationChannels: v.optional(notificationChannelsValidator),
     checkInterval: checkIntervalValidator,
     listings: v.array(groupListingValidator),
+    // When any listing last sent an error alert, or a "checks stopped" one.
+    lastErrorAlertAt: v.optional(v.number()),
+    lastStoppedAlertAt: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
   }).index("by_userId", ["userId"]),

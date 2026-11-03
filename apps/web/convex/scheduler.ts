@@ -684,7 +684,19 @@ export const runScheduledChecks = internalAction({
           if (parked || willError) {
             const freshErrMonitor = await ctx.runQuery(internal.monitors.getInternal, { id: monitor._id });
             if (freshErrMonitor && !freshErrMonitor.muted) {
-              const quiet = !parked && errorAlertCoolingDown;
+              const coolingDown = !parked && errorAlertCoolingDown;
+              // A product's listings tend to fail together, when the fault is
+              // ours or the network's. The product sends one alert for them.
+              const product =
+                freshErrMonitor.groupId !== undefined && !coolingDown
+                  ? await ctx.runMutation(internal.monitorGroups.claimErrorAlert, { id: freshErrMonitor.groupId, parked })
+                  : null;
+              const productQuiet = freshErrMonitor.groupId !== undefined && product === null;
+              const quiet = coolingDown || productQuiet;
+              const loudPark = parked && !productQuiet;
+              const alertName = product
+                ? `${product.name} (${product.failing} listing${product.failing === 1 ? "" : "s"} failing)`
+                : freshErrMonitor.name;
               const channels = alertChannels(freshErrMonitor.notificationChannels);
               const shouldSend = (channel: string) => !quiet && channels.shouldSend(channel);
               const hasAnyChannel = channels.hasAnyChannel;
@@ -716,11 +728,11 @@ export const runScheduledChecks = internalAction({
               // A park overrides channel selection on push for the same reason
               // it does on email below: it is the last thing we will ever say
               // about this monitor, so it should not be silently suppressed.
-              if (parked || shouldSend("push")) {
+              if (loudPark || shouldSend("push")) {
                 await ctx.runAction(internal.push.sendToUser, {
                   userId: freshErrMonitor.userId,
                   monitorId: freshErrMonitor._id,
-                  title: `${freshErrMonitor.name} — ${parked ? "Checks stopped" : "Error"}`,
+                  title: `${alertName} — ${parked ? "Checks stopped" : "Error"}`,
                   body: truncateForPush(parked ? (freshErrMonitor.lastError ?? msg) : msg),
                   kind: "error",
                 }).catch(() => {});
@@ -730,11 +742,11 @@ export const runScheduledChecks = internalAction({
               // only one every user has. Telegram and Discord stay opt-in below,
               // so a park still reaches everyone without spamming a channel
               // someone deliberately turned off for this monitor.
-              if ((parked || shouldSend("email")) && freshErrMonitor.userEmail) {
+              if ((loudPark || shouldSend("email")) && freshErrMonitor.userEmail) {
                 if (parked) {
                   await ctx.runAction(internal.emails.sendMonitorStoppedAlert, {
                     to: freshErrMonitor.userEmail,
-                    monitorName: freshErrMonitor.name,
+                    monitorName: alertName,
                     monitorId: freshErrMonitor._id,
                     url: freshErrMonitor.url,
                     reason: parkReason ?? PARK_REASON_PROXY_BLOCKED,
@@ -743,7 +755,7 @@ export const runScheduledChecks = internalAction({
                 } else {
                   await ctx.runAction(internal.emails.sendErrorAlert, {
                     to: freshErrMonitor.userEmail,
-                    monitorName: freshErrMonitor.name,
+                    monitorName: alertName,
                     monitorId: freshErrMonitor._id,
                     url: freshErrMonitor.url,
                     error: msg,
@@ -756,7 +768,7 @@ export const runScheduledChecks = internalAction({
                 if (parked) {
                   await ctx.runAction(internal.telegram.sendMonitorStoppedAlert, {
                     chatId: telegramSetting.target,
-                    monitorName: freshErrMonitor.name,
+                    monitorName: alertName,
                     monitorId: freshErrMonitor._id,
                     url: freshErrMonitor.url,
                     reason: parkReason ?? PARK_REASON_PROXY_BLOCKED,
@@ -764,7 +776,7 @@ export const runScheduledChecks = internalAction({
                 } else {
                   await ctx.runAction(internal.telegram.sendErrorAlert, {
                     chatId: telegramSetting.target,
-                    monitorName: freshErrMonitor.name,
+                    monitorName: alertName,
                     monitorId: freshErrMonitor._id,
                     url: freshErrMonitor.url,
                     error: msg,
@@ -782,7 +794,7 @@ export const runScheduledChecks = internalAction({
                   if (parked) {
                     await ctx.runAction(internal.discord.sendMonitorStoppedAlert, {
                       webhookUrl: discordSetting.target,
-                      monitorName: freshErrMonitor.name,
+                      monitorName: alertName,
                       monitorId: freshErrMonitor._id,
                       url: freshErrMonitor.url,
                       reason: parkReason ?? PARK_REASON_PROXY_BLOCKED,
@@ -790,7 +802,7 @@ export const runScheduledChecks = internalAction({
                   } else {
                     await ctx.runAction(internal.discord.sendErrorAlert, {
                       webhookUrl: discordSetting.target,
-                      monitorName: freshErrMonitor.name,
+                      monitorName: alertName,
                       monitorId: freshErrMonitor._id,
                       url: freshErrMonitor.url,
                       error: msg,

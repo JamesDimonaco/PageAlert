@@ -387,6 +387,35 @@ describe("a product's monitors on the scheduler", () => {
     expect(productTitle).toBe("Sony WH-1000XM5");
   });
 
+  // A site going down fails every listing of a product on it, and a scraper
+  // fault fails all of them. One email per listing is a pile of identical mail.
+  it("sends one error email and one checks-stopped email per product, not one per listing", async () => {
+    vi.stubEnv("SCRAPER_URL", "https://scraper.test");
+    vi.stubEnv("SCRAPER_API_KEY", "key");
+    vi.stubGlobal("fetch", async () => Response.json({ message: "Site is down" }, { status: 500 }));
+    const t = harness();
+    const { as } = await signUp(t, "a@example.test");
+    const { monitorIds } = await as.mutation(api.monitorGroups.create, PRODUCT);
+    const failAll = async (fields: { status: "active" | "error"; checkCount: number; retryCount: number }) => {
+      await t.run(async (ctx) => {
+        for (const id of monitorIds) {
+          await ctx.db.patch(id, { ...fields, schema: { items: [], matchConditions: {} }, nextCheckAt: 0 });
+        }
+      });
+      await t.action(internal.scheduler.runScheduledChecks, {});
+    };
+    const emails = async (kind: string) =>
+      (await t.run((ctx) => ctx.db.query("emailSends").collect())).filter((e) => e.kind === kind).length;
+
+    await failAll({ status: "active", checkCount: 5, retryCount: 2 });
+    expect(await emails("error")).toBe(1);
+    // Each listing still gets its in-app notice, which records which one failed.
+    expect(await t.run((ctx) => ctx.db.query("notifications").collect())).toHaveLength(2);
+
+    await failAll({ status: "error", checkCount: 0, retryCount: 31 });
+    expect(await emails("monitor-stopped")).toBe(1);
+  });
+
   // A product page lists cases and bundles next to the product. Each new one
   // would send a "new match" alert the user never asked for: a product only
   // alerts on stock and price.
