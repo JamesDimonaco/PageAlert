@@ -15,6 +15,7 @@ import {
 import { ERROR_ALERT_COOLDOWN_MS, validateMonitorUrl } from "./shared";
 import {
   alertOnValidator,
+  type AlertOn,
   checkIntervalValidator,
   groupListingValidator,
   listingLabelValidator,
@@ -28,7 +29,6 @@ const MAX_PRODUCT_LISTINGS = 24;
 const MAX_NAME_LENGTH = 200;
 const MAX_SITE_LENGTH = 100;
 
-type AlertOn = Infer<typeof alertOnValidator>;
 type GroupListing = Infer<typeof groupListingValidator>;
 
 /** A listing's monitor prompt. A template rather than an AI call: the criteria are already structured. */

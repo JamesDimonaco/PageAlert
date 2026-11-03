@@ -39,3 +39,9 @@ export function toMinorUnits(amount: number, currency: string): number | null {
   if (exponent === null || !Number.isFinite(amount) || amount < 0) return null;
   return Math.round(amount * 10 ** exponent);
 }
+
+/** Integer minor units (1299) back to the amount as written (12.99). Null for an unknown currency. */
+export function fromMinorUnits(minor: number, currency: string): number | null {
+  const exponent = currencyExponent(currency);
+  return exponent === null ? null : minor / 10 ** exponent;
+}

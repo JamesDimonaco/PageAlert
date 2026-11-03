@@ -16,6 +16,7 @@ export const alertOnValidator = v.object({
   priceDrop: v.optional(v.boolean()),
   priceBelow: v.optional(v.object({ amount: v.number(), currency: v.string() })),
 });
+export type AlertOn = Infer<typeof alertOnValidator>;
 
 /** A feature a user can switch on under Settings → Beta features. */
 export const betaFeature = v.literal("find_a_product");

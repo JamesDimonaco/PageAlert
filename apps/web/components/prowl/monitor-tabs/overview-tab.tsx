@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label";
 import { AiInsightsCard } from "@/components/prowl/ai-insights";
 import { IntervalSelector } from "@/components/prowl/interval-selector";
 import { ChannelSelector, defaultChannels, useConfiguredChannels, type Channel } from "@/components/prowl/channel-selector";
-import { AlertOnFields, type PriceChoice } from "@/components/prowl/alert-on-fields";
+import { AlertOnFields, alertOnFromFields, targetText, type PriceChoice } from "@/components/prowl/alert-on-fields";
 import {
   ExternalLink,
   List,
@@ -32,7 +32,7 @@ import {
 import type { Id } from "@/convex/_generated/dataModel";
 import type { Doc } from "@/convex/_generated/dataModel";
 import type { ExtractedItem, ExtractionSchema, PriceChange } from "@prowl/shared";
-import { currencyExponent, getItemKey, isProductMonitor, matchConfidence, MATCH_CONFIDENCE_LABEL, toMinorUnits } from "@prowl/shared";
+import { currencyExponent, getItemKey, isProductMonitor, matchConfidence, MATCH_CONFIDENCE_LABEL } from "@prowl/shared";
 import { useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { timeAgo, timeUntil } from "@/lib/time";
@@ -571,9 +571,7 @@ function MonitorSettingsForm({
     ? "drop"
     : savedTarget !== undefined ? "below" : "off";
   const [priceChoice, setPriceChoice] = useState<PriceChoice>(savedChoice);
-  const [target, setTarget] = useState(
-    savedTarget !== undefined ? String(savedTarget.amount / 10 ** (currencyExponent(savedTarget.currency) ?? 2)) : ""
-  );
+  const [target, setTarget] = useState(targetText(savedTarget));
   const [saving, setSaving] = useState(false);
   const updateMutation = useMutation(api.monitors.update);
 
@@ -587,25 +585,18 @@ function MonitorSettingsForm({
       };
       if (editedChannels !== null) payload.notificationChannels = editedChannels;
       if (checkInterval !== monitor.checkInterval) payload.checkInterval = checkInterval;
-      if (priceChoice === "below" && !currency) {
-        toast.error("Pick the currency of your target price");
+      const fields = alertOnFromFields({ backInStock, priceChoice, target, currency });
+      if (fields.error !== undefined) {
+        toast.error(fields.error);
         return;
       }
-      const targetMinor = priceChoice === "below" ? toMinorUnits(Number(target), currency) : null;
-      if (priceChoice === "below" && !targetMinor) {
-        toast.error("Enter a target price above zero");
-        return;
-      }
+      const newTarget = fields.alertOn.priceBelow;
       if (
         backInStock !== (monitor.alertOn?.backInStock === true) ||
         priceChoice !== savedChoice ||
-        (targetMinor !== null && (targetMinor !== savedTarget?.amount || currency !== savedTarget.currency))
+        (newTarget !== undefined && (newTarget.amount !== savedTarget?.amount || newTarget.currency !== savedTarget.currency))
       ) {
-        payload.alertOn = {
-          backInStock,
-          ...(priceChoice === "drop" ? { priceDrop: true } : {}),
-          ...(targetMinor !== null ? { priceBelow: { amount: targetMinor, currency } } : {}),
-        };
+        payload.alertOn = fields.alertOn;
       }
       await updateMutation(payload as Parameters<typeof updateMutation>[0]);
       onClose();
