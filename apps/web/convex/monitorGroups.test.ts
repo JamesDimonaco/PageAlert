@@ -164,6 +164,23 @@ describe("monitorGroups.create", () => {
   });
 });
 
+// A monitor moved to another page would otherwise go on reading that page
+// for the old listing's title, and the product would show it as that listing.
+it("takes a monitor out of its product when its URL changes", async () => {
+  const t = harness();
+  const { as } = await signUp(t, "a@example.test");
+  const { groupId, monitorIds } = await as.mutation(api.monitorGroups.create, PRODUCT);
+  const id = monitorIds[0]!;
+
+  await as.mutation(api.monitors.update, { id, url: "https://shop.test/other" });
+
+  const monitor = await t.run((ctx) => ctx.db.get(id));
+  expect(monitor?.groupId).toBeUndefined();
+  expect(monitor?.productTitle).toBeUndefined();
+  const group = await as.query(api.monitorGroups.get, { id: groupId });
+  expect(group?.listings[0]).toMatchObject({ state: "suggested", monitor: null });
+});
+
 describe("a product's monitors on the scheduler", () => {
   function stubScraper(onQuickCheck: (body: Record<string, unknown>) => void = () => {}) {
     vi.stubEnv("SCRAPER_URL", "https://scraper.test");

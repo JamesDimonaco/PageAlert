@@ -606,6 +606,11 @@ export const update = mutation({
     if (urlChanged) {
       updates.lastSeen = undefined;
       updates.productFingerprint = undefined;
+      // A new page is no longer the product's listing, so it leaves the
+      // product rather than the listing taking on a page it doesn't describe.
+      updates.productTitle = undefined;
+      updates.groupId = undefined;
+      await releaseListing(ctx, existing);
     } else if (stockTurnedOn || priceChoiceSet) {
       const { inStock, price, currency, pendingPrice } = existing.lastSeen ?? {};
       updates.lastSeen = {
@@ -726,6 +731,22 @@ export const toggleMute = mutation({
   },
 });
 
+/**
+ * Put a monitor's listing back to a suggestion in its product, the same as
+ * stopping it there, so the listing never points at a monitor that has gone
+ * or now watches another page.
+ */
+async function releaseListing(ctx: MutationCtx, monitor: Doc<"monitors">): Promise<void> {
+  const group = monitor.groupId ? await ctx.db.get(monitor.groupId) : null;
+  if (!group) return;
+  await ctx.db.patch(group._id, {
+    listings: group.listings.map((l) =>
+      l.monitorId === monitor._id ? { ...l, state: "suggested" as const, monitorId: undefined } : l
+    ),
+    updatedAt: Date.now(),
+  });
+}
+
 export const remove = mutation({
   args: { id: v.id("monitors") },
   handler: async (ctx, { id }) => {
@@ -751,17 +772,7 @@ export const remove = mutation({
 
     await ctx.db.delete(id);
 
-    // The listing stays in its product as a suggestion, the same as stopping
-    // it there, rather than pointing at a monitor that no longer exists.
-    const group = existing.groupId ? await ctx.db.get(existing.groupId) : null;
-    if (group) {
-      await ctx.db.patch(group._id, {
-        listings: group.listings.map((l) =>
-          l.monitorId === id ? { ...l, state: "suggested" as const, monitorId: undefined } : l
-        ),
-        updatedAt: Date.now(),
-      });
-    }
+    await releaseListing(ctx, existing);
 
     // Decrement public monitor counter
     if (!existing.isAnonymous) {
