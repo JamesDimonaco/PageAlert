@@ -53,9 +53,7 @@ Respond with ONLY valid JSON in this exact format:
     "notices": [
       "Any limitations, e.g. 'RAM specs not shown on listing page - only visible on individual product pages'",
       "Another notice if needed"
-    ],
-    "tracksPrices": true,
-    "suggestedPriceTrackItems": ["Item title 1", "Item title 2"]
+    ]
   },
   "fields": {
     "title": "description",
@@ -85,8 +83,6 @@ Rules for insights:
   - If stock/availability isn't shown on this page
   - If prices might change or are regional
   - Keep each notice concise and actionable
-- "tracksPrices": true if the page contains prices associated with items (product listings, auction results, classified ads, etc). false if the page is a job board, news feed, forum, or other non-price content. This determines whether price tracking features are shown to the user.
-- "suggestedPriceTrackItems": If tracksPrices is true, list up to 5 item titles that are most relevant to the user's search prompt and most likely to have meaningful price changes. Pick items that match or nearly match the user's criteria. Omit if tracksPrices is false.
 
 Rules for extraction:
 - IMPORTANT: Extract ALL product/listing items on the page, not just ones that match the user's criteria. Include up to 50 items.
@@ -194,9 +190,8 @@ export async function extractWithAI(
     }
   }
 
-  // Normalise insights — always produce an object so tracksPrices is inferred even when AI omits insights
+  // Normalise insights — always produce an object, even when the AI omits it
   const rawInsights = (raw.insights as Record<string, unknown>) ?? {};
-  const inferredTracksPrices = Array.isArray(raw.items) && raw.items.some((item: Record<string, unknown>) => typeof item.price === "number");
   const insights = {
     understanding: String(rawInsights.understanding ?? ""),
     confidence: typeof rawInsights.confidence === "number" ? rawInsights.confidence : 50,
@@ -204,12 +199,6 @@ export async function extractWithAI(
     noMatchSignal: String(rawInsights.noMatchSignal ?? ""),
     notices: Array.isArray(rawInsights.notices)
       ? rawInsights.notices.filter((n): n is string => typeof n === "string")
-      : [],
-    tracksPrices: typeof rawInsights.tracksPrices === "boolean"
-      ? rawInsights.tracksPrices
-      : inferredTracksPrices,
-    suggestedPriceTrackItems: Array.isArray(rawInsights.suggestedPriceTrackItems)
-      ? rawInsights.suggestedPriceTrackItems.filter((n): n is string => typeof n === "string").slice(0, 5)
       : [],
   };
 

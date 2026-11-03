@@ -344,6 +344,29 @@ export const expireGrants = internalMutation({
   },
 });
 
+// ---- One-off: clear the retired priceAlerts field ----
+
+/**
+ * The old price-alert system is gone, but monitors still hold its field and
+ * Convex rejects a schema that stored documents don't match. Run this in prod
+ * after deploy, then drop `priceAlerts` from the schema:
+ *   npx convex run --prod admin:clearPriceAlerts '{}'
+ */
+export const clearPriceAlerts = internalMutation({
+  args: { cursor: v.optional(v.union(v.string(), v.null())) },
+  handler: async (ctx, args) => {
+    const { page, isDone, continueCursor } = await ctx.db
+      .query("monitors")
+      .paginate({ numItems: 200, cursor: args.cursor ?? null });
+    for (const m of page) {
+      if (m.priceAlerts !== undefined) await ctx.db.patch(m._id, { priceAlerts: undefined });
+    }
+    if (!isDone) {
+      await ctx.scheduler.runAfter(0, internal.admin.clearPriceAlerts, { cursor: continueCursor });
+    }
+  },
+});
+
 // ---- Outage recovery: apology email, one per user ----
 
 export const listApologyRecipients = internalQuery({

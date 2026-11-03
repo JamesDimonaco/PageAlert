@@ -127,33 +127,6 @@ export function formatMatchSms({ monitorName, newCount, link }: MatchSmsArgs): s
   );
 }
 
-export interface PriceSmsArgs {
-  monitorName: string;
-  variant: "threshold" | "single_drop" | "multiple";
-  changes: Array<{ title: string; oldPrice: number; newPrice: number; changePercent: number }>;
-  link: string;
-}
-
-export function formatPriceSms({ monitorName, variant, changes, link }: PriceSmsArgs): string {
-  const first = changes[0];
-  const tail = ` ${toGsm7(link)}`;
-
-  // With one item there is room to name the price, which is the whole point of
-  // the alert. With several there is not, so the count carries it instead.
-  if (first && (variant === "threshold" || variant === "single_drop" || changes.length === 1)) {
-    const money = `$${first.newPrice.toFixed(2)} (was $${first.oldPrice.toFixed(2)})`;
-    const lead = variant === "threshold" ? "PageAlert: price target hit - " : "PageAlert: ";
-    return oneSegment(lead, toGsm7(first.title), ` now ${money}${tail}`);
-  }
-
-  const n = changes.length;
-  return oneSegment(
-    `PageAlert: ${n} price change${n === 1 ? "" : "s"} on "`,
-    toGsm7(monitorName),
-    `"${tail}`
-  );
-}
-
 const MONTHS = [
   "January", "February", "March", "April", "May", "June",
   "July", "August", "September", "October", "November", "December",

@@ -3,7 +3,6 @@ import {
   GSM7_SEGMENT_LIMIT,
   fit,
   formatMatchSms,
-  formatPriceSms,
   formatQuotaExhaustedSms,
   formatVerificationSms,
   gsm7Length,
@@ -91,84 +90,6 @@ describe("formatMatchSms", () => {
     const body = formatMatchSms({ monitorName: "A very long monitor name that will need cutting down", newCount: 9999, link: LINK });
     assertOneSegment(body);
     expect(body.endsWith(`" ${LINK}`)).toBe(true);
-  });
-});
-
-describe("formatPriceSms", () => {
-  const drop = { title: "Sony WH-1000XM5", oldPrice: 379, newPrice: 279.99, changePercent: -26.1 };
-
-  it("names the price for a single drop", () => {
-    const body = formatPriceSms({ monitorName: "Headphones", variant: "single_drop", changes: [drop], link: LINK });
-    expect(body).toBe(`PageAlert: Sony WH-1000XM5 now $279.99 (was $379.00) ${LINK}`);
-    assertOneSegment(body);
-  });
-
-  it("leads with the target for a threshold crossing", () => {
-    const body = formatPriceSms({ monitorName: "Headphones", variant: "threshold", changes: [drop], link: LINK });
-    expect(body).toContain("price target hit");
-    assertOneSegment(body);
-  });
-
-  it("falls back to a count when several items moved", () => {
-    const changes = Array.from({ length: 4 }, (_, i) => ({ ...drop, title: `Item ${i}` }));
-    const body = formatPriceSms({ monitorName: "Headphones", variant: "multiple", changes, link: LINK });
-    expect(body).toBe(`PageAlert: 4 price changes on "Headphones" ${LINK}`);
-    assertOneSegment(body);
-  });
-
-  it("stays in one segment with a long item title", () => {
-    const body = formatPriceSms({
-      monitorName: "Headphones",
-      variant: "single_drop",
-      changes: [{ ...drop, title: "Sony WH-1000XM5 Wireless Industry Leading Noise Cancelling Headphones with Auto Noise Cancelling Optimizer" }],
-      link: LINK,
-    });
-    assertOneSegment(body);
-  });
-
-  /**
-   * Which form an alert takes is decided by `variant OR variant OR count === 1`.
-   * Every case below has a count other than one, or a variant of "multiple",
-   * so each leg of that condition is load-bearing on its own — with one change
-   * and a naming variant, all three legs agree and the branch is untested.
-   */
-  it("names the crossing item when a threshold fires on several", () => {
-    const changes = [
-      { title: "Sony WH-1000XM5", oldPrice: 379, newPrice: 279.99, changePercent: -26.1 },
-      { title: "Bose QC45", oldPrice: 329, newPrice: 299, changePercent: -9.1 },
-    ];
-    const body = formatPriceSms({ monitorName: "Headphones", variant: "threshold", changes, link: LINK });
-    expect(body).toContain("price target hit");
-    expect(body).toContain("Sony WH-1000XM5");
-    assertOneSegment(body);
-  });
-
-  it("names the dropped item when a single_drop arrives with others", () => {
-    const changes = [
-      { title: "Sony WH-1000XM5", oldPrice: 379, newPrice: 279.99, changePercent: -26.1 },
-      { title: "Bose QC45", oldPrice: 329, newPrice: 299, changePercent: -9.1 },
-    ];
-    const body = formatPriceSms({ monitorName: "Headphones", variant: "single_drop", changes, link: LINK });
-    expect(body).toContain("Sony WH-1000XM5 now $279.99");
-    assertOneSegment(body);
-  });
-
-  it("names the item when 'multiple' turns out to carry exactly one", () => {
-    const body = formatPriceSms({
-      monitorName: "Headphones",
-      variant: "multiple",
-      changes: [drop],
-      link: LINK,
-    });
-    expect(body).toContain("Sony WH-1000XM5 now $279.99");
-    expect(body).not.toContain("price change");
-    assertOneSegment(body);
-  });
-
-  it("handles an empty change list without throwing", () => {
-    const body = formatPriceSms({ monitorName: "Headphones", variant: "multiple", changes: [], link: LINK });
-    assertOneSegment(body);
-    expect(body).toContain("0 price changes");
   });
 });
 

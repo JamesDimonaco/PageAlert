@@ -49,13 +49,6 @@ import { timeAgo } from "@/lib/time";
 // Extended monitor type until Convex types are regenerated with npx convex dev
 type MonitorExt = NonNullable<ReturnType<typeof useMonitor>> & {
   muted?: boolean;
-  priceAlerts?: {
-    trackedItems: string[];
-    belowThreshold?: number;
-    aboveThreshold?: number;
-    onPriceDrop: boolean;
-    onPriceIncrease: boolean;
-  };
 };
 
 export default function MonitorDetailPage({
@@ -371,7 +364,6 @@ export default function MonitorDetailPage({
             monitorId={monitorId}
             monitor={monitor}
             matches={matches}
-            allItems={allItems}
             totalItems={allItems.length}
             results={results}
             scores={scores}
@@ -398,7 +390,7 @@ export default function MonitorDetailPage({
         </TabsContent>
 
         <TabsContent value="history" className="mt-6">
-          <HistoryTab results={results} priceAlerts={m.priceAlerts} />
+          <HistoryTab results={results} />
         </TabsContent>
       </Tabs>
 
