@@ -88,6 +88,7 @@ export default defineSchema({
     anonymousEmail: v.optional(v.string()),
     expiresAt: v.optional(v.number()),
     muted: v.optional(v.boolean()),
+    // Deprecated: run admin:clearPriceAlerts in prod, then delete this field.
     priceAlerts: v.optional(v.object({
       onPriceDrop: v.boolean(),
       onPriceIncrease: v.boolean(),
@@ -446,7 +447,7 @@ export default defineSchema({
   // `status` starts at sent/failed and is advanced by the Resend webhook.
   emailSends: defineTable({
     to: v.string(),
-    kind: v.string(), // match | error | first-read | monitor-stopped | inactivity-paused | price | anonymous-scan | onboarding-day0 | bulk
+    kind: v.string(), // set by each send() caller in emails.ts; old rows may hold retired kinds
     userId: v.optional(v.string()),
     monitorId: v.optional(v.string()),
     resendId: v.optional(v.string()),

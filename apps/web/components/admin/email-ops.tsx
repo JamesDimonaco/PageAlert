@@ -207,7 +207,7 @@ function RecentSends() {
       </CardHeader>
       <CardContent className="space-y-3">
         <p className="text-xs text-muted-foreground">
-          There is no retry for a failed match, error, or price alert — emailSends stores delivery metadata only, not the rendered
+          There is no retry for a failed match or error alert — emailSends stores delivery metadata only, not the rendered
           content, so those cannot be resent from here. A send sitting at &quot;sent&quot; means Resend accepted it and no delivery
           webhook has arrived yet, not that it&apos;s stuck.
         </p>

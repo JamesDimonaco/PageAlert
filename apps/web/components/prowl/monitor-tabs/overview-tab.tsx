@@ -8,7 +8,6 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { AiInsightsCard } from "@/components/prowl/ai-insights";
-import { PriceAlertCard } from "@/components/prowl/price-alert-card";
 import { IntervalSelector } from "@/components/prowl/interval-selector";
 import { ChannelSelector, defaultChannels, useConfiguredChannels, type Channel } from "@/components/prowl/channel-selector";
 import {
@@ -62,7 +61,6 @@ interface OverviewTabProps {
     proxyPreferred?: boolean;
   };
   matches: ExtractedItem[];
-  allItems: ExtractedItem[];
   totalItems: number;
   results: Doc<"scrapeResults">[];
   scores: Record<string, { matchScore: number; matchReason: string }>;
@@ -82,7 +80,7 @@ const RETRY_LIMIT = 3;
 const RETRY_WINDOW_MS = 60 * 60 * 1000; // 1 hour
 const ROWS_SHOWN = 8;
 
-export function OverviewTab({ monitorId, monitor, matches, allItems, totalItems, results, scores, onRescan, onToggleMute, settingsOpen, onSettingsOpenChange, onAdjustFilters, onViewItems, displayInterval }: OverviewTabProps) {
+export function OverviewTab({ monitorId, monitor, matches, totalItems, results, scores, onRescan, onToggleMute, settingsOpen, onSettingsOpenChange, onAdjustFilters, onViewItems, displayInterval }: OverviewTabProps) {
   const [insightsOpen, setInsightsOpen] = useState(false);
   const [showAll, setShowAll] = useState(false);
   const [retrying, setRetrying] = useState(false);
@@ -135,20 +133,6 @@ export function OverviewTab({ monitorId, monitor, matches, allItems, totalItems,
   const schema = monitor.schema as ExtractionSchema | undefined;
 
   const insights = schema?.insights;
-  const tracksPrices = insights?.tracksPrices
-    ?? allItems.some((item) => typeof item.price === "number");
-  const suggestedPriceTrackItems = insights?.suggestedPriceTrackItems ?? [];
-  const priceAlerts = (monitor as any).priceAlerts;
-
-  const currency = (() => {
-    const currencies = allItems
-      .map((i) => typeof i.currency === "string" ? i.currency : null)
-      .filter((c): c is string => c !== null);
-    if (currencies.length === 0) return "USD";
-    const counts = new Map<string, number>();
-    for (const c of currencies) counts.set(c, (counts.get(c) ?? 0) + 1);
-    return [...counts.entries()].sort((a, b) => b[1] - a[1])[0]![0];
-  })();
 
   // Titles that appeared on the most recent check. `changes.added` is the only
   // honest source: hasNewMatches is written from matchCount on the initial-scan
@@ -432,14 +416,6 @@ export function OverviewTab({ monitorId, monitor, matches, allItems, totalItems,
               const band = typeof judged?.matchScore === "number" ? MATCH_CONFIDENCE_LABEL[matchConfidence(judged.matchScore)] : "";
               const reason = judged?.matchReason ?? "";
               const delta = renderDelta(item, title, price);
-              const belowThreshold = priceAlerts?.belowThreshold;
-              // Only tracked items ever fire a below-threshold alert, so an
-              // untracked cheap item must not wear the badge that promises one.
-              const hitThreshold =
-                typeof belowThreshold === "number" &&
-                typeof item.price === "number" &&
-                item.price <= belowThreshold &&
-                (priceAlerts?.trackedItems ?? []).includes(key);
 
               const Row = safeUrl ? "a" : "div";
               return (
@@ -470,11 +446,6 @@ export function OverviewTab({ monitorId, monitor, matches, allItems, totalItems,
                   <div className="col-start-1 sm:col-start-2 flex items-baseline gap-2 tabular-nums whitespace-nowrap">
                     {price && <span className="text-base font-semibold">{price}</span>}
                     {delta}
-                    {hitThreshold && (
-                      <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-xs">
-                        Under {formatPrice(belowThreshold, currency)}
-                      </Badge>
-                    )}
                   </div>
 
                   {/* col 2 spanning both rows on mobile, col 3 on sm+: the open chip */}
@@ -502,17 +473,6 @@ export function OverviewTab({ monitorId, monitor, matches, allItems, totalItems,
           </Button>
         )}
       </div>
-
-      {tracksPrices && (
-        <PriceAlertCard
-          monitorId={monitorId}
-          priceAlerts={priceAlerts}
-          allItems={allItems}
-          suggestedPriceTrackItems={suggestedPriceTrackItems}
-          currency={currency}
-          muted={!!(monitor as any).muted}
-        />
-      )}
 
       {/* Monitor settings — collapsible */}
       <div>

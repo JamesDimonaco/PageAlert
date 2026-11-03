@@ -528,16 +528,6 @@ export const update = mutation({
     schema: v.optional(v.any()),
     notificationChannels: v.optional(channelValidator),
     muted: v.optional(v.boolean()),
-    priceAlerts: v.optional(v.object({
-      onPriceDrop: v.boolean(),
-      onPriceIncrease: v.boolean(),
-      belowThreshold: v.optional(v.number()),
-      aboveThreshold: v.optional(v.number()),
-      trackedItems: v.array(v.string()),
-      minChangePercent: v.optional(v.number()),
-      lastNotifiedAt: v.optional(v.number()),
-      cooldownMs: v.optional(v.number()),
-    })),
   },
   handler: async (ctx, { id, ...fields }) => {
     const userId = await getAuthUserId(ctx);
@@ -575,26 +565,6 @@ export const update = mutation({
             (c) => !isRestrictedChannel(c)
           ) as typeof fields.notificationChannels;
         }
-      }
-    }
-
-    // Validate priceAlerts if provided
-    if (fields.priceAlerts !== undefined) {
-      const pa = fields.priceAlerts;
-      if (pa.belowThreshold !== undefined && pa.belowThreshold <= 0) {
-        throw new Error("Below threshold must be a positive number");
-      }
-      if (pa.aboveThreshold !== undefined && pa.aboveThreshold <= 0) {
-        throw new Error("Above threshold must be a positive number");
-      }
-      if (pa.trackedItems.length > 20) {
-        throw new Error("Cannot track more than 20 items");
-      }
-      if (pa.minChangePercent !== undefined && (pa.minChangePercent < 0 || pa.minChangePercent > 50)) {
-        throw new Error("Min change percent must be between 0 and 50");
-      }
-      if (pa.cooldownMs !== undefined && (pa.cooldownMs < 0 || pa.cooldownMs > 7 * 24 * 60 * 60 * 1000)) {
-        throw new Error("Cooldown must be between 0 and 7 days");
       }
     }
 
@@ -880,7 +850,6 @@ export const sendInitialScanNotifications = internalAction({
         matchCount: args.matchCount,
         matches: [],
         totalItems: args.totalItems,
-        tracksPrices: !!(monitor.schema as any)?.insights?.tracksPrices,
       }).catch((e) => console.error("[monitors] Notification failed:", e));
     }
 

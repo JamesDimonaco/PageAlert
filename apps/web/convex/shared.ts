@@ -108,7 +108,7 @@ export function isBlockedError(message: string): boolean {
  * Deliberately not `getItemKey` from @prowl/shared, which falls back to
  * `title-price`. That key exists so the blacklist can pin an exact listing;
  * here a price move on the same product must not read as a new match, or every
- * repricing would email the user. Price changes have their own alert path.
+ * repricing would email the user.
  */
 export function matchKey(item: { url?: unknown; title?: unknown; name?: unknown }): string {
   const url = item.url ? String(item.url).trim() : "";
