@@ -344,16 +344,13 @@ test("a held big drop is confirmed on the next check of an unchanged page", asyn
   expect(scoreCalls()).toBe(2);
 });
 
-// If the confirming read failed or disagreed and the price stayed held, the
-// old fingerprint would force a paid read on every check, forever.
-test.each([
-  ["fails", { inStock: true, price: null, currency: null }],
-  ["reads another wild price", { inStock: true, price: 5000, currency: "GBP" }],
-])("a held big drop whose confirming read %s is dropped after that one read", async (_, confirming) => {
-  const { t, id, check, alertsScheduled, scoreCalls } = await onUnchangedPage([
-    { inStock: true, price: 9900, currency: "GBP" },
-    confirming,
-  ]);
+const HELD = { inStock: true, price: 9900, currency: "GBP" };
+const NO_PRICE = { inStock: true, price: null, currency: null };
+
+// A held price that stayed held for good would keep the old fingerprint, and
+// force a paid read on every check, forever.
+test("a held big drop whose confirming read shows another price is dropped at once", async () => {
+  const { t, id, check, alertsScheduled, scoreCalls } = await onUnchangedPage([HELD, { ...HELD, price: 5000 }]);
 
   for (let i = 0; i < 4; i++) await check();
 
@@ -362,4 +359,26 @@ test.each([
   const monitor = await t.run((ctx) => ctx.db.get(id));
   expect(monitor?.lastSeen).toEqual({ inStock: true, price: 29900, currency: "GBP" });
   expect(monitor?.productFingerprint).toBe("product-2");
+});
+
+test("a held big drop gives up after three confirming reads with no price", async () => {
+  const { t, id, check, alertsScheduled, scoreCalls } = await onUnchangedPage([HELD, NO_PRICE]);
+
+  for (let i = 0; i < 6; i++) await check();
+
+  expect(scoreCalls()).toBe(4);
+  expect(await alertsScheduled()).toBe(0);
+  const monitor = await t.run((ctx) => ctx.db.get(id));
+  expect(monitor?.lastSeen).toEqual({ inStock: true, price: 29900, currency: "GBP" });
+  expect(monitor?.productFingerprint).toBe("product-2");
+});
+
+// One read that misses the price is a glitch, not a reason to lose a real sale.
+test("a held big drop survives a confirming read with no price, and is confirmed by the next", async () => {
+  const { check, alertsScheduled, scoreCalls } = await onUnchangedPage([HELD, NO_PRICE, HELD]);
+
+  for (let i = 0; i < 4; i++) await check();
+
+  expect(scoreCalls()).toBe(3);
+  expect(await alertsScheduled()).toBe(1);
 });

@@ -107,6 +107,9 @@ const MAX_CONCURRENT_CHECKS = 10;
 /** How long after creating a product its owner may still be on the progress screen. */
 const PRODUCT_SCAN_WATCHED_MS = 15 * 60 * 1000;
 
+/** Reads that may try to confirm a held price before it is dropped. Each one is paid for. */
+const MAX_CONFIRM_ATTEMPTS = 3;
+
 /** A product monitor whose owner wants a stock or price alert. */
 function wantsProductRead(monitor: Pick<Doc<"monitors">, "alertOn" | "schema" | "groupId">): boolean {
   const on = monitor.alertOn;
@@ -1372,11 +1375,17 @@ export const recordProductRead = internalMutation({
       alerts.push({ kind: "stock" });
     }
 
-    // Kept as they are unless this read has a usable price. A held price is
-    // dropped: this read was its one chance to be confirmed.
-    let priceFields: { price?: number; currency?: string; pendingPrice?: number } =
+    // A held price whose confirming read had no price in its currency is read
+    // again, up to MAX_CONFIRM_ATTEMPTS times, then dropped.
+    const attempts = (previous.pendingAttempts ?? 0) + 1;
+    const stillHeld =
+      previous.pendingPrice !== undefined && attempts < MAX_CONFIRM_ATTEMPTS
+        ? { pendingPrice: previous.pendingPrice, pendingAttempts: attempts }
+        : {};
+    // Kept as they are unless this read has a usable price.
+    let priceFields: { price?: number; currency?: string; pendingPrice?: number; pendingAttempts?: number } =
       previous.price !== undefined && previous.currency !== undefined
-        ? { price: previous.price, currency: previous.currency }
+        ? { price: previous.price, currency: previous.currency, ...stillHeld }
         : {};
     if (args.price !== null && args.currency !== null && previous.currency !== undefined && previous.currency !== args.currency) {
       // Usually a misread or a geo-priced page. Taken as the baseline, it would
@@ -1389,11 +1398,11 @@ export const recordProductRead = internalMutation({
       const oldPrice = previous.currency === currency ? previous.price : undefined;
       // A fall of more than half is more often a misread (a monthly payment,
       // a deposit, an accessory's price) than a sale. It waits for the same
-      // price on the next read before it counts. Only one read is held, so a
-      // second wild price is dropped rather than held again.
+      // price on the next read before it counts. A different price on that
+      // read drops the hold, and a second wild one is not held again.
       const unconfirmed = oldPrice !== undefined && newPrice < oldPrice / 2 && previous.pendingPrice !== newPrice;
       if (unconfirmed) {
-        if (previous.pendingPrice === undefined) priceFields = { price: oldPrice, currency, pendingPrice: newPrice };
+        priceFields = { price: oldPrice, currency, ...(previous.pendingPrice === undefined ? { pendingPrice: newPrice } : {}) };
       } else {
         priceFields = { price: newPrice, currency };
         const price = { kind: "price" as const, oldPrice, newPrice, currency };
@@ -1410,10 +1419,10 @@ export const recordProductRead = internalMutation({
 
     const inStock = args.inStock ?? previous.inStock;
     await ctx.db.patch(args.monitorId, {
-      // A newly held price needs a second read. Keeping the old fingerprint
+      // A held price needs a confirming read. Keeping the old fingerprint
       // makes the next check read again, even if the page has not changed.
-      // Every other read advances it, so a failed confirmation is not
-      // retried, and paid for, on every check.
+      // Every other read advances it, so a failed confirmation is paid for
+      // a bounded number of times, not on every check.
       productFingerprint: priceFields.pendingPrice !== undefined ? monitor.productFingerprint : args.productFingerprint,
       lastSeen: { ...(inStock !== undefined ? { inStock } : {}), ...priceFields },
     });

@@ -656,12 +656,10 @@ export async function updateMonitorForUser(
     updates.groupId = undefined;
     await releaseListing(ctx, existing);
   } else if (stockTurnedOn || priceChoiceSet) {
-    const { inStock, price, currency, pendingPrice } = existing.lastSeen ?? {};
+    const { inStock, ...priceState } = existing.lastSeen ?? {};
     updates.lastSeen = {
       ...(!stockTurnedOn && inStock !== undefined ? { inStock } : {}),
-      ...(!priceChoiceSet && price !== undefined && currency !== undefined
-        ? { price, currency, ...(pendingPrice !== undefined ? { pendingPrice } : {}) }
-        : {}),
+      ...(!priceChoiceSet && priceState.price !== undefined && priceState.currency !== undefined ? priceState : {}),
     };
     updates.productFingerprint = undefined;
   }

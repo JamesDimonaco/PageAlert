@@ -135,6 +135,8 @@ export default defineSchema({
       // A fall of more than half, waiting for a second read to confirm it
       // before it replaces `price`. See recordProductRead.
       pendingPrice: v.optional(v.number()),
+      // Confirming reads of pendingPrice that came back with no price.
+      pendingAttempts: v.optional(v.number()),
     })),
     // Hash of the product's own text at the last read, or of the whole page
     // when its title could not be found — see productExcerpt
