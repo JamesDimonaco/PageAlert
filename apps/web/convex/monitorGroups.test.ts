@@ -100,6 +100,22 @@ describe("monitorGroups.create", () => {
     ]);
   });
 
+  // Prices are stored in minor units. A 279.99 or a -1 from a bad client would
+  // show on the product card as £2.80 or as a negative price.
+  it("drops listing prices that are not whole, non-negative minor units", async () => {
+    const t = harness();
+    const { as } = await signUp(t, "a@example.test");
+    const priced = (site: string, price: number) => ({ ...listing(site, true), price });
+
+    const { groupId } = await as.mutation(api.monitorGroups.create, {
+      ...PRODUCT,
+      listings: [priced("argos.co.uk", 27999), priced("currys.co.uk", 279.99), priced("johnlewis.com", -1)],
+    });
+
+    const group = await as.query(api.monitorGroups.get, { id: groupId });
+    expect(group?.listings.map((l) => l.price)).toEqual([27999, undefined, undefined]);
+  });
+
   it("refuses a user with the beta off", async () => {
     const t = harness();
     const { as } = await signUp(t, "a@example.test", false);

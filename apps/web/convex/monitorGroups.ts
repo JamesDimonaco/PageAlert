@@ -98,13 +98,17 @@ type FoundListing = Infer<typeof foundListingValidator>;
 
 /**
  * A found listing trimmed to fit, or null when its link could never be
- * watched: a suggestion like that is no use later either.
+ * watched: a suggestion like that is no use later either. A price that is not
+ * whole minor units is dropped, because the product card would show it as one.
  */
 function cleanListing(listing: FoundListing, fallbackTitle: string): FoundListing | null {
   const url = listing.url.trim();
   if (!isWatchableUrl(url)) return null;
+  const { price, ...rest } = listing;
+  const validPrice = price !== undefined && Number.isInteger(price) && price >= 0;
   return {
-    ...listing,
+    ...rest,
+    ...(validPrice ? { price } : {}),
     url,
     site: listing.site.slice(0, MAX_SITE_LENGTH),
     title: listing.title.trim().slice(0, MAX_NAME_LENGTH) || fallbackTitle,
