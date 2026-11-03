@@ -414,7 +414,15 @@ describe("a product's monitors on the scheduler", () => {
   it("sends one error email per product, but a checks-stopped email per listing", async () => {
     vi.stubEnv("SCRAPER_URL", "https://scraper.test");
     vi.stubEnv("SCRAPER_API_KEY", "key");
-    vi.stubGlobal("fetch", async () => Response.json({ message: "Site is down" }, { status: 500 }));
+    vi.stubEnv("RESEND_API_KEY", "key");
+    const subjects: string[] = [];
+    vi.stubGlobal("fetch", async (url: string, init: { body: string }) => {
+      if (url.includes("resend.com")) {
+        subjects.push((JSON.parse(init.body) as { subject: string }).subject);
+        return Response.json({ id: "email" });
+      }
+      return Response.json({ message: "Site is down" }, { status: 500 });
+    });
     const t = harness();
     const { as } = await signUp(t, "a@example.test");
     const { monitorIds } = await as.mutation(api.monitorGroups.create, PRODUCT);
@@ -431,6 +439,10 @@ describe("a product's monitors on the scheduler", () => {
 
     await failAll({ status: "active", checkCount: 5, retryCount: 2 });
     expect(await emails("error")).toBe(1);
+    // Named by product and site, not by a count that a batch of parallel checks undercounts.
+    expect(subjects.filter((s) => s.startsWith("Monitor error"))).toEqual([
+      expect.stringMatching(/^Monitor error: Sony WH-1000XM5 on (argos\.co\.uk|currys\.co\.uk)$/),
+    ]);
     // Each listing still gets its in-app notice, which records which one failed.
     expect(await t.run((ctx) => ctx.db.query("notifications").collect())).toHaveLength(2);
 

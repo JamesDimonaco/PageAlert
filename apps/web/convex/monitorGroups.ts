@@ -378,20 +378,19 @@ export const setPaused = mutation({
 
 /**
  * Claim the product's one error alert for the cooldown. Null if another
- * listing already sent it, or the product is gone. Otherwise its name and how
- * many of its listings are in error. "Checks stopped" alerts are not claimed
- * here: each one is final, so every parked listing sends its own.
+ * listing already sent it, or the product is gone. Otherwise its name.
+ * "Checks stopped" alerts are not claimed here: each one is final, so every
+ * parked listing sends its own.
  */
 export const claimErrorAlert = internalMutation({
   args: { id: v.id("monitorGroups") },
-  handler: async (ctx, { id }): Promise<{ name: string; failing: number } | null> => {
+  handler: async (ctx, { id }): Promise<string | null> => {
     const group = await ctx.db.get(id);
     if (!group) return null;
     const now = Date.now();
     if (now - (group.lastErrorAlertAt ?? 0) < ERROR_ALERT_COOLDOWN_MS) return null;
     await ctx.db.patch(id, { lastErrorAlertAt: now });
-    const failing = (await groupMonitors(ctx, id)).filter((m) => m.status === "error").length;
-    return { name: group.name, failing };
+    return group.name;
   },
 });
 

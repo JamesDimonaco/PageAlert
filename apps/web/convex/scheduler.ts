@@ -688,13 +688,13 @@ export const runScheduledChecks = internalAction({
               // A product's listings tend to fail together, when the fault is
               // ours or the network's. The product sends one error alert for
               // them. A park is final, so each listing still sends its own.
-              const product =
+              const productName =
                 freshErrMonitor.groupId !== undefined && !parked && !coolingDown
                   ? await ctx.runMutation(internal.monitorGroups.claimErrorAlert, { id: freshErrMonitor.groupId })
                   : null;
-              const quiet = coolingDown || (freshErrMonitor.groupId !== undefined && !parked && product === null);
-              const alertName = product
-                ? `${product.name} (${product.failing} listing${product.failing === 1 ? "" : "s"} failing)`
+              const quiet = coolingDown || (freshErrMonitor.groupId !== undefined && !parked && productName === null);
+              const alertName = productName
+                ? `${productName} on ${displayHost(freshErrMonitor.url)}`
                 : freshErrMonitor.name;
               const channels = alertChannels(freshErrMonitor.notificationChannels);
               const shouldSend = (channel: string) => !quiet && channels.shouldSend(channel);
