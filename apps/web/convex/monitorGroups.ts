@@ -1,7 +1,7 @@
 import { ConvexError, v, type Infer } from "convex/values";
 import { mutation, query, type MutationCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
-import { isSearchRegion } from "@prowl/shared";
+import { isSearchRegion, SEARCH_REGIONS } from "@prowl/shared";
 import { hasBetaFeature } from "./betaFeatures";
 import {
   allowedChannels,
@@ -370,6 +370,86 @@ export const remove = mutation({
       ctx,
       userId,
       monitors.map((m) => m._id)
+    );
+  },
+});
+
+type Price = { price: number; currency: string; site: string };
+
+export type ProductSummary = {
+  _id: Id<"monitorGroups">;
+  name: string;
+  watching: number;
+  /** Null when no listing has a price yet. */
+  cheapest: Price | null;
+  /** True if any listing is in stock, false if every known one is out, null if none is known. */
+  inStock: boolean | null;
+  lastCheckedAt?: number;
+  paused: number;
+  errored: number;
+};
+
+/**
+ * The signed-in user's products, each summed up from its watched listings'
+ * monitors for the dashboard card. A monitor's last read wins over the price
+ * and stock the search found.
+ */
+export const listMine = query({
+  args: {},
+  handler: async (ctx): Promise<ProductSummary[]> => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return [];
+    const groups = await ctx.db
+      .query("monitorGroups")
+      .withIndex("by_userId", (q) => q.eq("userId", identity.subject))
+      .order("desc")
+      .collect();
+    return Promise.all(
+      groups.map(async (group) => {
+        const rows = await Promise.all(
+          group.listings.map(async (listing) => {
+            const monitor = listing.monitorId ? await ctx.db.get(listing.monitorId) : null;
+            return monitor ? [{ listing, monitor }] : [];
+          })
+        );
+        const watched = rows.flat();
+
+        const prices: Price[] = watched.flatMap(({ listing, monitor }) => {
+          const seen = monitor.lastSeen;
+          if (seen?.price !== undefined && seen.currency) return [{ price: seen.price, currency: seen.currency, site: listing.site }];
+          if (listing.price !== undefined && listing.currency) return [{ price: listing.price, currency: listing.currency, site: listing.site }];
+          return [];
+        });
+        // Prices in two currencies can't be compared. A product is searched in
+        // one region, so a different currency is the odd one out: take the
+        // cheapest in the most common one. On a tie, the region's own
+        // currency wins, then the first code alphabetically.
+        const home = SEARCH_REGIONS.find((r) => r.code === group.region)?.currency;
+        const counts = new Map<string, number>();
+        for (const p of prices) counts.set(p.currency, (counts.get(p.currency) ?? 0) + 1);
+        const currency = [...counts]
+          .sort(([a, n], [b, m]) => m - n || (a === home ? -1 : b === home ? 1 : a.localeCompare(b)))[0]?.[0];
+        const cheapest = prices
+          .filter((p) => p.currency === currency)
+          .reduce<Price | null>((best, p) => (best === null || p.price < best.price ? p : best), null);
+
+        const stock = watched.flatMap(({ listing, monitor }) => {
+          const inStock = monitor.lastSeen?.inStock ?? listing.inStock;
+          return inStock === undefined ? [] : [inStock];
+        });
+        const checked = watched.flatMap(({ monitor }) => (monitor.lastCheckedAt ? [monitor.lastCheckedAt] : []));
+
+        return {
+          _id: group._id,
+          name: group.name,
+          watching: watched.length,
+          cheapest,
+          inStock: stock.length === 0 ? null : stock.includes(true),
+          lastCheckedAt: checked.length > 0 ? Math.max(...checked) : undefined,
+          paused: watched.filter(({ monitor }) => monitor.status === "paused").length,
+          errored: watched.filter(({ monitor }) => monitor.status === "error").length,
+        };
+      })
     );
   },
 });
