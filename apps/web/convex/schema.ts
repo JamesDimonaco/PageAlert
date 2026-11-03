@@ -5,6 +5,10 @@ import { v, type Infer } from "convex/values";
 export const emailCategory = v.union(v.literal("tips"), v.literal("updates"));
 export type EmailCategory = Infer<typeof emailCategory>;
 
+/** A feature a user can switch on under Settings → Beta features. */
+export const betaFeature = v.literal("find_a_product");
+export type BetaFeature = Infer<typeof betaFeature>;
+
 export default defineSchema({
   monitors: defineTable({
     userId: v.string(), // Better Auth user subject ID from ctx.auth
@@ -403,6 +407,8 @@ export default defineSchema({
     // Ids of the changelog entries this user has dismissed as a popup. See
     // whatsNew.ts.
     announcementsSeen: v.optional(v.array(v.string())),
+    // Beta features this user has switched on in Settings. See betaFeatures.ts.
+    betaFeatures: v.optional(v.array(betaFeature)),
   })
     .index("by_userId", ["userId"])
     // The daily pulse counts the last day of each, so it reads a window
