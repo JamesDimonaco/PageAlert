@@ -193,6 +193,13 @@ export function trackUpgradePromptClicked(props: { plan: string; currentTier: st
   });
 }
 
+export function trackUpgradeBanner(action: "shown" | "clicked", props: { currentTier: string; nextTier: string }) {
+  trackEvent(`upgrade_banner_${action}`, {
+    current_tier: props.currentTier,
+    target_plan: props.nextTier,
+  });
+}
+
 export function trackSubscriptionChanged(props: { from: string; to: string }) {
   trackEvent("subscription_changed", {
     from_tier: props.from,
@@ -294,6 +301,11 @@ export function trackProductCriteriaUpdated(props: {
   watchingCount: number;
 }) {
   trackEvent("product_criteria_updated", props);
+}
+
+/** Clone opened the Find tab with a monitor's name. The flags say what was guessed from its prompt. */
+export function trackCloneAsProductOpened(props: { backInStock: boolean; priceDrop: boolean; priceBelow: boolean }) {
+  trackEvent("clone_as_product_opened", props);
 }
 
 // ---- Match events ----
