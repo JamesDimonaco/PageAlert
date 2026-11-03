@@ -180,6 +180,73 @@ describe("monitorGroups.create", () => {
   });
 });
 
+describe("monitorGroups.listMine", () => {
+  // Before any check the card has only the search's facts, and only the owner
+  // may see them.
+  it("sums up the owner's product from the search before any check, and shows it to nobody else", async () => {
+    const t = harness();
+    const { as: owner } = await signUp(t, "a@example.test");
+    const { as: other } = await signUp(t, "b@example.test");
+    const { groupId } = await owner.mutation(api.monitorGroups.create, PRODUCT);
+
+    expect(await owner.query(api.monitorGroups.listMine, {})).toEqual([
+      {
+        _id: groupId,
+        name: "Sony WH-1000XM5",
+        watching: 2,
+        cheapest: { price: 27999, currency: "GBP", site: "argos.co.uk" },
+        inStock: false,
+        lastCheckedAt: undefined,
+        paused: 0,
+        errored: 0,
+      },
+    ]);
+    expect(await other.query(api.monitorGroups.listMine, {})).toEqual([]);
+  });
+
+  // The card is the live view of a product: a stale search price, or one
+  // listing's state hiding another's, would tell the user the wrong thing.
+  it("uses each listing's last read, and counts paused and errored listings", async () => {
+    const t = harness();
+    const { as } = await signUp(t, "a@example.test");
+    const { monitorIds } = await as.mutation(api.monitorGroups.create, PRODUCT);
+    await t.run(async (ctx) => {
+      await ctx.db.patch(monitorIds[0]!, { status: "paused", lastCheckedAt: 1000 });
+      await ctx.db.patch(monitorIds[1]!, {
+        status: "error",
+        lastCheckedAt: 2000,
+        lastSeen: { price: 25999, currency: "GBP", inStock: true },
+      });
+    });
+
+    const [product] = await as.query(api.monitorGroups.listMine, {});
+    expect(product).toMatchObject({
+      cheapest: { price: 25999, currency: "GBP", site: "currys.co.uk" },
+      inStock: true,
+      lastCheckedAt: 2000,
+      paused: 1,
+      errored: 1,
+    });
+  });
+
+  // 100 cents is not cheaper than 25999 pence in any useful sense.
+  it("takes the cheapest price in the most common currency", async () => {
+    const t = harness();
+    const { as } = await signUp(t, "a@example.test");
+    const { monitorIds } = await as.mutation(api.monitorGroups.create, {
+      ...PRODUCT,
+      listings: [listing("argos.co.uk", true), listing("currys.co.uk", true), listing("amazon.com", true)],
+    });
+    await t.run(async (ctx) => {
+      await ctx.db.patch(monitorIds[1]!, { lastSeen: { price: 25999, currency: "GBP" } });
+      await ctx.db.patch(monitorIds[2]!, { lastSeen: { price: 100, currency: "USD" } });
+    });
+
+    const [product] = await as.query(api.monitorGroups.listMine, {});
+    expect(product?.cheapest).toEqual({ price: 25999, currency: "GBP", site: "currys.co.uk" });
+  });
+});
+
 // A monitor moved to another page would otherwise go on reading that page
 // for the old listing's title, and the product would show it as that listing.
 it("takes a monitor out of its product when its URL changes", async () => {

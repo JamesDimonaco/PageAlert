@@ -196,3 +196,79 @@ export const get = query({
     return { ...group, listings };
   },
 });
+
+type Price = { price: number; currency: string; site: string };
+
+export type ProductSummary = {
+  _id: Id<"monitorGroups">;
+  name: string;
+  watching: number;
+  /** Null when no listing has a price yet. */
+  cheapest: Price | null;
+  /** True if any listing is in stock, false if every known one is out, null if none is known. */
+  inStock: boolean | null;
+  lastCheckedAt?: number;
+  paused: number;
+  errored: number;
+};
+
+/**
+ * The signed-in user's products, each summed up from its watched listings'
+ * monitors for the dashboard card. A monitor's last read wins over the price
+ * and stock the search found.
+ */
+export const listMine = query({
+  args: {},
+  handler: async (ctx): Promise<ProductSummary[]> => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return [];
+    const groups = await ctx.db
+      .query("monitorGroups")
+      .withIndex("by_userId", (q) => q.eq("userId", identity.subject))
+      .order("desc")
+      .collect();
+    return Promise.all(
+      groups.map(async (group) => {
+        const watched: { listing: GroupListing; monitor: Doc<"monitors"> }[] = [];
+        for (const listing of group.listings) {
+          const monitor = listing.monitorId ? await ctx.db.get(listing.monitorId) : null;
+          if (monitor) watched.push({ listing, monitor });
+        }
+
+        const prices: Price[] = watched.flatMap(({ listing, monitor }) => {
+          const seen = monitor.lastSeen;
+          if (seen?.price !== undefined && seen.currency) return [{ price: seen.price, currency: seen.currency, site: listing.site }];
+          if (listing.price !== undefined && listing.currency) return [{ price: listing.price, currency: listing.currency, site: listing.site }];
+          return [];
+        });
+        // Prices in two currencies can't be compared. A product is searched in
+        // one region, so a different currency is the odd one out: take the
+        // cheapest in the most common one.
+        const count = (currency: string) => prices.filter((p) => p.currency === currency).length;
+        let cheapest: Price | null = null;
+        for (const p of prices) {
+          if (!cheapest || count(p.currency) > count(cheapest.currency) || (p.currency === cheapest.currency && p.price < cheapest.price)) {
+            cheapest = p;
+          }
+        }
+
+        const stock = watched.flatMap(({ listing, monitor }) => {
+          const inStock = monitor.lastSeen?.inStock ?? listing.inStock;
+          return inStock === undefined ? [] : [inStock];
+        });
+        const checked = watched.flatMap(({ monitor }) => (monitor.lastCheckedAt ? [monitor.lastCheckedAt] : []));
+
+        return {
+          _id: group._id,
+          name: group.name,
+          watching: watched.length,
+          cheapest,
+          inStock: stock.length === 0 ? null : stock.includes(true),
+          lastCheckedAt: checked.length > 0 ? Math.max(...checked) : undefined,
+          paused: watched.filter(({ monitor }) => monitor.status === "paused").length,
+          errored: watched.filter(({ monitor }) => monitor.status === "error").length,
+        };
+      })
+    );
+  },
+});
