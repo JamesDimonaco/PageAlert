@@ -1,8 +1,10 @@
 "use client";
 
-import { Radar, LogOut, Settings, ShieldCheck, Plus } from "lucide-react";
+import { useState } from "react";
+import { Radar, LogOut, Settings, ShieldCheck, Plus, MessageSquare } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { NotificationBell } from "@/components/prowl/notification-bell";
+import { FeedbackDialog } from "@/components/prowl/feedback-dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -27,6 +29,7 @@ export function Navbar() {
   const { user, signOut } = useAuth();
   const { tier, grantUntil } = useTier();
   const isAdmin = useQuery(api.admin.isAdmin) === true;
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
 
   const initials = user?.name?.charAt(0)?.toUpperCase() ?? user?.email?.charAt(0)?.toUpperCase() ?? "?";
   // The dashboard index already leads with its own New Monitor CTA
@@ -107,6 +110,10 @@ export function Navbar() {
                 <Settings className="mr-2 h-4 w-4" />
                 Settings
               </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setFeedbackOpen(true)}>
+                <MessageSquare className="mr-2 h-4 w-4" />
+                Send feedback
+              </DropdownMenuItem>
               {isAdmin && (
                 <DropdownMenuItem onClick={() => router.push("/admin")}>
                   <ShieldCheck className="mr-2 h-4 w-4" />
@@ -120,6 +127,7 @@ export function Navbar() {
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
+          <FeedbackDialog open={feedbackOpen} onOpenChange={setFeedbackOpen} />
         </div>
       </div>
     </header>
