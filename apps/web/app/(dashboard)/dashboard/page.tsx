@@ -41,7 +41,13 @@ export default function DashboardPage() {
       toast.error("Monitor limit reached", { description: "Upgrade your plan to add more monitors." });
       return false;
     }
-    openWithDefaults({ name: `${source.name} (copy)`, url: source.url, prompt: source.prompt });
+    openWithDefaults({
+      name: `${source.name} (copy)`,
+      url: source.url,
+      prompt: source.prompt,
+      // A clone of a clone is "X (copy) (copy)"; the search wants just X.
+      searchTerm: source.name.replace(/( \(copy\))+$/, ""),
+    });
     return true;
   }
 

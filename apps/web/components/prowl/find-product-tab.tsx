@@ -12,6 +12,7 @@ import {
   type ListingLabel,
   type ProductListing,
   type SearchRegion,
+  type GuessedAlertOn,
 } from "@prowl/shared";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
@@ -22,7 +23,7 @@ import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toSafeUrl } from "@/lib/format";
 import { formatMinorUnits } from "@prowl/shared";
-import { trackProductSearchCompleted, trackProductSearchStarted } from "@/lib/posthog";
+import { trackCloneAsProductOpened, trackProductSearchCompleted, trackProductSearchStarted } from "@/lib/posthog";
 import { useTier } from "@/hooks/use-tier";
 import { ProductProgress, WatchProductForm } from "./watch-product";
 
@@ -33,17 +34,29 @@ const LABELS: Record<ListingLabel, string> = {
 };
 
 interface FindProductTabProps {
+  /** From Clone: the search to start with, and criteria guessed from the old prompt. Read on mount. */
+  clone: { query: string; guess: GuessedAlertOn } | null;
   /** Switch to the paste-a-URL form, carrying over what was typed. */
   onPasteUrl: (typed: string) => void;
   /** Called once the new product's monitors are under way. */
   onDone: () => void;
 }
 
-export function FindProductTab({ onPasteUrl, onDone }: FindProductTabProps) {
+export function FindProductTab({ clone, onPasteUrl, onDone }: FindProductTabProps) {
   const status = useQuery(api.productSearch.status);
   const search = useAction(api.productSearch.search);
 
-  const [query, setQuery] = useState("");
+  // Not searched for them: searches are limited, so the user presses Search.
+  const [query, setQuery] = useState(clone?.query ?? "");
+  useEffect(() => {
+    if (!clone) return;
+    const { guess } = clone;
+    trackCloneAsProductOpened({
+      backInStock: guess.backInStock,
+      priceDrop: guess.priceDrop,
+      priceBelow: guess.priceBelow !== null,
+    });
+  }, [clone]);
   const [picked, setPicked] = useState<SearchRegion | null>(null);
   const [guessed, setGuessed] = useState<SearchRegion | null>(null);
   const [changingRegion, setChangingRegion] = useState(false);
@@ -285,6 +298,7 @@ export function FindProductTab({ onPasteUrl, onDone }: FindProductTabProps) {
               region={searched.region}
               listings={shown}
               ticked={ticked}
+              guess={clone?.guess ?? null}
               onCreated={setCreatedId}
             />
           )}

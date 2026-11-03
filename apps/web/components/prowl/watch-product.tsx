@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { ConvexError } from "convex/values";
 import { AlertTriangle, CheckCircle2, Eye, Loader2 } from "lucide-react";
-import { toMinorUnits, type ProductListing, type SearchRegion } from "@prowl/shared";
+import { formatMinorUnits, toMinorUnits, type GuessedAlertOn, type ProductListing, type SearchRegion } from "@prowl/shared";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { Button } from "@/components/ui/button";
@@ -23,19 +23,34 @@ interface WatchProductFormProps {
   listings: ProductListing[];
   /** URLs of the ticked listings. */
   ticked: Set<string>;
+  /** Criteria guessed from a cloned monitor's prompt. */
+  guess: GuessedAlertOn | null;
   onCreated: (groupId: Id<"monitorGroups">) => void;
 }
 
 /** The criteria step, then one monitor per ticked listing. Mount it per search, so the defaults follow the results. */
-export function WatchProductForm({ name, region, listings, ticked, onCreated }: WatchProductFormProps) {
+export function WatchProductForm({ name, region, listings, ticked, guess, onCreated }: WatchProductFormProps) {
   const create = useMutation(api.monitorGroups.create);
-  // Out of stock somewhere means a restock is what they are waiting for.
-  const [backInStock, setBackInStock] = useState(() => listings.some((l) => l.inStock === false));
-  const [priceChoice, setPriceChoice] = useState<PriceChoice>(() =>
-    listings.some((l) => l.inStock === false) ? "off" : "drop"
+  // A cloned prompt says what they wanted. Without one, out of stock somewhere
+  // means a restock is what they are waiting for.
+  const guessed = guess && (guess.backInStock || guess.priceDrop || guess.priceBelow) ? guess : null;
+  const outOfStock = listings.some((l) => l.inStock === false);
+  const [backInStock, setBackInStock] = useState(guessed ? guessed.backInStock : outOfStock);
+  const [priceChoice, setPriceChoice] = useState<PriceChoice>(
+    guessed ? (guessed.priceBelow ? "below" : guessed.priceDrop ? "drop" : "off") : outOfStock ? "off" : "drop"
   );
-  const [target, setTarget] = useState("");
-  const [currency, setCurrency] = useState(() => listings.find((l) => l.currency)?.currency ?? "");
+  const resultsCurrency = listings.find((l) => l.currency)?.currency ?? null;
+  const oldTarget = guessed?.priceBelow ?? null;
+  // The old amount is only kept in the results' own currency. Moving it to
+  // another one would be a wrong price under the right label.
+  const targetFits =
+    !!oldTarget &&
+    !!resultsCurrency &&
+    (oldTarget.currency
+      ? oldTarget.currency === resultsCurrency
+      : !!oldTarget.symbol && !!formatMinorUnits(0, resultsCurrency)?.includes(oldTarget.symbol));
+  const [target, setTarget] = useState(oldTarget && targetFits ? String(oldTarget.amount) : "");
+  const [currency, setCurrency] = useState(resultsCurrency ?? "");
   const configuredChannels = useConfiguredChannels();
   const [channels, setChannels] = useState<Channel[] | null>(null);
   const { allowedIntervals, isLoading: tierLoading } = useTier();
@@ -104,6 +119,12 @@ export function WatchProductForm({ name, region, listings, ticked, onCreated }: 
         currency={currency}
         onCurrencyChange={setCurrency}
       />
+      {oldTarget && !targetFits && priceChoice === "below" && (
+        <p className="pl-6 text-xs text-muted-foreground">
+          Your old alert was under {oldTarget.written}.{" "}
+          {resultsCurrency ? `Set a target in ${resultsCurrency}.` : "Set a target and pick its currency."}
+        </p>
+      )}
       <div className="space-y-2">
         <Label className="text-sm font-medium">Check frequency</Label>
         <IntervalSelector value={shownInterval} onValueChange={setCheckInterval} />
