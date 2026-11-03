@@ -178,6 +178,17 @@ describe("below a target price", () => {
     const { read } = await seedProductMonitor({}, below);
     expect(await read(true, { price: 24000, currency: "JPY" })).toEqual([]);
   });
+
+  // A page that shows another currency on one read must not reset the
+  // baseline, or the next normal read looks like a first read and repeats an
+  // alert the user already had.
+  test("a read in another currency does not reset the price, so the next read does not alert again", async () => {
+    const { t, id, read } = await seedProductMonitor({}, { priceBelow: { amount: 10000, currency: "USD" } });
+    expect(await read(true, { price: 9000, currency: "USD" })).toEqual(["below"]);
+    expect(await read(true, { price: 12000, currency: "CAD" })).toEqual([]);
+    expect((await t.run((ctx) => ctx.db.get(id)))?.lastSeen).toEqual({ inStock: true, price: 9000, currency: "USD" });
+    expect(await read(true, { price: 9000, currency: "USD" })).toEqual([]);
+  });
 });
 
 // Nothing is read while the option is off, so the stored "out of stock" goes

@@ -1319,7 +1319,8 @@ type ProductAlert = Infer<typeof productAlertValidator>;
  * Store a product read and decide whether it is news.
  *
  * Stock alerts only on a known out of stock followed by a known in stock.
- * Price alerts compare against the last known price in the same currency:
+ * Price alerts compare against the last known price, and a read in another
+ * currency is ignored:
  * "any drop" on any fall, "below a target" when the price is at or below
  * the target and was not last time, so it does not repeat while it stays
  * low. A target already met on the first read alerts once.
@@ -1358,7 +1359,12 @@ export const recordProductRead = internalMutation({
       previous.price !== undefined && previous.currency !== undefined
         ? { price: previous.price, currency: previous.currency }
         : {};
-    if (args.price !== null && args.currency !== null) {
+    if (args.price !== null && args.currency !== null && previous.currency !== undefined && previous.currency !== args.currency) {
+      // Usually a misread or a geo-priced page. Taken as the baseline, it would
+      // make the next read in the usual currency look like a first read, and
+      // alert again about a price the user has already heard about.
+      console.warn(`[scheduler] ${monitor._id}: price read in ${args.currency}, not ${previous.currency}; keeping the last price`);
+    } else if (args.price !== null && args.currency !== null) {
       const newPrice = args.price;
       const currency = args.currency;
       const oldPrice = previous.currency === currency ? previous.price : undefined;
