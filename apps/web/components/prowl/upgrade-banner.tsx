@@ -13,28 +13,28 @@ const HIDE_FOR_MS = 7 * 24 * 60 * 60 * 1000;
 
 const noSubscribe = () => () => {};
 function readDismissed() {
-  return Date.now() - Number(localStorage.getItem(DISMISSED_KEY)) < HIDE_FOR_MS;
+  try {
+    return Date.now() - Number(localStorage.getItem(DISMISSED_KEY)) < HIDE_FOR_MS;
+  } catch {
+    return false;
+  }
 }
 
 const NEXT_TIER: Record<Tier, Tier | null> = { free: "sprint", sprint: "pro", pro: "max", max: null };
 
 /** Shown when every monitor slot on the plan is used. Never blocks anything. */
-export function UpgradeBanner({ tier, tierLoading, monitorCount }: {
+export function UpgradeBanner({ tier, tierResolved, atLimit }: {
   tier: Tier;
-  tierLoading: boolean;
-  monitorCount: number;
+  /** useTier's `resolved`, so a stale tier never shows the banner or fires its event */
+  tierResolved: boolean;
+  atLimit: boolean;
 }) {
-  // useTier reports loading again on every window focus; only the first load
-  // matters here, otherwise the banner would flicker each time.
-  const [tierReady, setTierReady] = useState(false);
-  if (!tierLoading && !tierReady) setTierReady(true);
-
   const dismissedRecently = useSyncExternalStore(noSubscribe, readDismissed, () => true);
   const [dismissedNow, setDismissedNow] = useState(false);
   const dismissed = dismissedRecently || dismissedNow;
 
   const next = NEXT_TIER[tier];
-  const visible = tierReady && !dismissed && next !== null && monitorCount >= TIER_LIMITS[tier].maxMonitors;
+  const visible = tierResolved && atLimit && !dismissed && next !== null;
 
   const trackedRef = useRef(false);
   useEffect(() => {
@@ -53,7 +53,11 @@ export function UpgradeBanner({ tier, tierLoading, monitorCount }: {
   const nextLimit = next === "max" ? "unlimited" : TIER_LIMITS[next].maxMonitors;
 
   function dismiss() {
-    localStorage.setItem(DISMISSED_KEY, String(Date.now()));
+    try {
+      localStorage.setItem(DISMISSED_KEY, String(Date.now()));
+    } catch {
+      // Storage blocked: hide for this visit only.
+    }
     setDismissedNow(true);
   }
 
@@ -61,7 +65,7 @@ export function UpgradeBanner({ tier, tierLoading, monitorCount }: {
     <div className="flex items-center gap-3 rounded-lg border border-border/40 bg-muted/30 px-4 py-2.5 text-sm">
       <Sparkles className="h-4 w-4 shrink-0 text-primary/70" />
       <p className="flex-1 text-muted-foreground">
-        You&apos;re using all {TIER_LIMITS[tier].maxMonitors} monitors on your plan. {nextName} gives you {nextLimit}.{" "}
+        You&apos;ve reached your plan&apos;s limit of {TIER_LIMITS[tier].maxMonitors} monitors. {nextName} gives you {nextLimit}.{" "}
         <Link
           href="/dashboard/settings?tab=billing"
           onClick={() => trackUpgradeBanner("clicked", { currentTier: tier, nextTier: next })}

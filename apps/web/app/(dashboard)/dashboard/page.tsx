@@ -31,7 +31,7 @@ import {
 export default function DashboardPage() {
   const { monitors, togglePause, deleteMonitor, updateMonitor, toggleMute } = useMonitors();
   const { open: openCreate, openWithDefaults } = useCreateMonitor();
-  const { tier, isLoading: tierLoading, maxMonitors } = useTier();
+  const { tier, resolved: tierResolved, maxMonitors } = useTier();
   const searchParams = useSearchParams();
   const router = useRouter();
   const atLimit = monitors.length >= maxMonitors;
@@ -219,7 +219,7 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-10">
-      <UpgradeBanner tier={tier} tierLoading={tierLoading} monitorCount={monitors.length} />
+      <UpgradeBanner tier={tier} tierResolved={tierResolved} atLimit={atLimit} />
 
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
