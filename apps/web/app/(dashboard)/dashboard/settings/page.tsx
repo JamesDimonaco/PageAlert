@@ -122,22 +122,22 @@ export default function SettingsPage() {
       <Tabs value={activeTab} onValueChange={handleTabChange}>
         <TabsList>
           <TabsTrigger value="notifications" className="relative">
-            <Bell className="mr-2 h-4 w-4" />
+            <Bell className="hidden sm:block" />
             Notifications
             {notifSettings && notifSettings.filter((s) => s.enabled).length === 0 && (
               <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-amber-400" />
             )}
           </TabsTrigger>
           <TabsTrigger value="profile">
-            <User className="mr-2 h-4 w-4" />
+            <User className="hidden sm:block" />
             Profile
           </TabsTrigger>
           <TabsTrigger value="billing">
-            <CreditCard className="mr-2 h-4 w-4" />
+            <CreditCard className="hidden sm:block" />
             Billing
           </TabsTrigger>
           <TabsTrigger value="api">
-            <KeyRound className="mr-2 h-4 w-4" />
+            <KeyRound className="hidden sm:block" />
             API
           </TabsTrigger>
         </TabsList>
