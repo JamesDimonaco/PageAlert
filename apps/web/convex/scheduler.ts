@@ -1409,7 +1409,7 @@ export const recordProductRead = internalMutation({
     } else if (args.price !== null && args.currency !== null) {
       const newPrice = args.price;
       const currency = args.currency;
-      const oldPrice = previous.currency === currency ? previous.price : undefined;
+      const oldPrice = previous.price;
       // A fall of more than half is more often a misread (a monthly payment,
       // a deposit, an accessory's price) than a sale. It waits for the same
       // price on the next read before it counts. A different price on that
