@@ -4,7 +4,7 @@ import { claimActivation } from "./monitors";
 import { internalAction, internalMutation, internalQuery, type ActionCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
-import { formatMinorUnits, formatSmsPrice, isSingleProduct } from "@prowl/shared";
+import { formatMinorUnits, formatSmsPrice, isProductMonitor } from "@prowl/shared";
 import { deliverAlert } from "./alerts";
 import {
   displayHost,
@@ -104,19 +104,28 @@ function detectChanges(previousItems: Record<string, unknown>[], currentItems: R
 
 const MAX_CONCURRENT_CHECKS = 10;
 
-/** A single-product monitor whose owner wants a stock or price alert. */
-function wantsProductRead(monitor: Pick<Doc<"monitors">, "alertOn" | "schema">): boolean {
+/** How long after creating a product its owner may still be on the progress screen. */
+const PRODUCT_SCAN_WATCHED_MS = 15 * 60 * 1000;
+
+/** A product monitor whose owner wants a stock or price alert. */
+function wantsProductRead(monitor: Pick<Doc<"monitors">, "alertOn" | "schema" | "groupId">): boolean {
   const on = monitor.alertOn;
   const wanted = on?.backInStock === true || on?.priceDrop === true || on?.priceBelow !== undefined;
-  return wanted && isSingleProduct(monitor.schema);
+  return wanted && isProductMonitor(monitor);
 }
 
 /** The scraper rejects longer titles with a 400, which would fail every check until the monitor parks. */
 const MAX_PRODUCT_TITLE = 500;
 
-/** The product's name as the last full read gave it, for finding it on the page and naming it in alerts. */
-function productTitle(monitor: Pick<Doc<"monitors">, "name" | "schema">): string {
-  const title = (monitor.schema as { items?: { title?: unknown }[] } | undefined)?.items?.[0]?.title;
+/**
+ * The product's name, for finding it on the page and naming it in alerts. A
+ * listing in a product uses its search result's title, because its page may
+ * hold several items and the first need not be the product. Otherwise it is
+ * the last full read's.
+ */
+function productTitle(monitor: Pick<Doc<"monitors">, "name" | "schema" | "productTitle">): string {
+  const title =
+    monitor.productTitle ?? (monitor.schema as { items?: { title?: unknown }[] } | undefined)?.items?.[0]?.title;
   const name = typeof title === "string" && title.trim() ? title.trim() : monitor.name;
   return name.slice(0, MAX_PRODUCT_TITLE);
 }
@@ -330,16 +339,21 @@ export const recordCheckResult = internalMutation({
     Object.assign(updates, hostStamp);
 
     // A successful first scan counts as a check, so a monitor reaching here
-    // with none has only ever failed: the first scan did not get in and a
-    // retry just has. Activation was never claimed for that user, and
-    // the person told "we'll keep trying" has heard nothing since.
+    // with none has either only ever failed (the first scan did not get in and
+    // a retry just has) or is a listing in a product, which is first-scanned
+    // here by design. Activation was never claimed for that user. The person
+    // told "we'll keep trying" has heard nothing since, so they get an email.
+    // A product's owner who could still be watching the scan in the app does
+    // not; one whose listing only got in after retries does.
     // Anonymous monitors are outside this: their owner is an anon_ id with no
     // account to activate and no dashboard to send them to.
     if (!monitor.checkCount && !monitor.isAnonymous) {
-      await claimActivation(ctx, monitor, args.matchCount, "got their first read after a failed first scan", false);
+      const watched = monitor.groupId !== undefined && now - monitor.createdAt < PRODUCT_SCAN_WATCHED_MS;
+      const how = watched ? "got their first product read" : "got their first read after a failed first scan";
+      await claimActivation(ctx, monitor, args.matchCount, how, false);
       // Same rule as the alerts: no list means every channel.
       const channels = monitor.notificationChannels;
-      if (monitor.userEmail && !monitor.muted && (!channels || channels.includes("email"))) {
+      if (!watched && monitor.userEmail && !monitor.muted && (!channels || channels.includes("email"))) {
         await ctx.scheduler.runAfter(0, internal.emails.sendFirstReadAlert, {
           to: monitor.userEmail,
           userId: monitor.userId,

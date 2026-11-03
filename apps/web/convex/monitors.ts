@@ -8,7 +8,7 @@ import { effectiveTier, type Tier } from "./tiers";
 import { isBanned, requireLiveAccount } from "./account";
 import { reserveFallback, scraperDown } from "./admin";
 import { deliverAlert } from "./alerts";
-import { alertOnValidator } from "./schema";
+import { alertOnValidator, checkIntervalValidator, notificationChannelsValidator, type CheckInterval } from "./schema";
 
 // ---- Resource Limits ----
 const MAX_NAME_LENGTH = 200;
@@ -39,8 +39,6 @@ async function getUserTier(ctx: { db: any }, userId: string): Promise<Tier> {
     .unique();
   return effectiveTier(record);
 }
-
-type CheckInterval = "5m" | "15m" | "30m" | "1h" | "6h" | "24h";
 
 /**
  * Channels the free tier is rationed on. Email and push are always available:
@@ -92,20 +90,24 @@ function validatePrompt(prompt: string): void {
   if (prompt.length > MAX_PROMPT_LENGTH) throw new Error(`Prompt exceeds maximum length of ${MAX_PROMPT_LENGTH} characters`);
 }
 
+export function validateAlertOn(alertOn: Infer<typeof alertOnValidator>): void {
+  if (alertOn.priceDrop && alertOn.priceBelow !== undefined) {
+    throw new ConvexError("Pick any price drop or a target price, not both.");
+  }
+  const target = alertOn.priceBelow;
+  if (
+    target !== undefined &&
+    (!Number.isInteger(target.amount) || target.amount <= 0 || currencyExponent(target.currency) === null)
+  ) {
+    throw new ConvexError("The target price must be above zero, in a real currency.");
+  }
+}
+
 const statusValidator = v.union(
   v.literal("scanning"),
   v.literal("active"),
   v.literal("paused"),
   v.literal("error")
-);
-
-export const intervalValidator = v.union(
-  v.literal("5m"),
-  v.literal("15m"),
-  v.literal("30m"),
-  v.literal("1h"),
-  v.literal("6h"),
-  v.literal("24h")
 );
 
 // ---- Queries ----
@@ -161,18 +163,30 @@ export const get = query({
   },
 });
 
+/**
+ * The creation rate limit as the client needs it: the limit, its window, and
+ * when the user's latest creations were. The client counts those inside the
+ * window with its own clock, because a query can't read one.
+ */
+export const creationAllowance = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return null;
+    const limit = CREATION_LIMITS[await getUserTier(ctx, identity.subject)];
+    const recent = await ctx.db
+      .query("monitorCreations")
+      .withIndex("by_userId_createdAt", (q) => q.eq("userId", identity.subject))
+      .order("desc")
+      .take(limit);
+    return { limit, windowMs: CREATION_WINDOW_MS, recent: recent.map((c) => c.createdAt) };
+  },
+});
+
 // ---- Mutations ----
 
-const channelValidator = v.array(v.union(
-  v.literal("email"),
-  v.literal("telegram"),
-  v.literal("discord"),
-  v.literal("push"),
-  v.literal("sms")
-));
-
-type ChannelList = Infer<typeof channelValidator>;
-const ALL_CHANNELS: ChannelList = channelValidator.element.members.map((m) => m.value);
+type ChannelList = Infer<typeof notificationChannelsValidator>;
+const ALL_CHANNELS: ChannelList = notificationChannelsValidator.element.members.map((m) => m.value);
 
 /**
  * Create a monitor in "scanning" state for this user. The caller runs the
@@ -188,6 +202,8 @@ export async function createMonitorForUser(
     prompt: string;
     checkInterval: CheckInterval;
     notificationChannels?: ChannelList;
+    /** The product this monitor watches a listing of. */
+    groupId?: Id<"monitorGroups">;
   }
 ): Promise<Id<"monitors">> {
   if (await isBanned(ctx, userId)) throw new Error("This account has been suspended.");
@@ -231,12 +247,16 @@ export async function createMonitorForUser(
   //
   // No list means every channel, so it is rationed as one. The web form always
   // sends a list; MCP leaves it out.
+  //
+  // A product counts as one monitor here: its listings are one thing to the
+  // user, and share one channel list.
   let channels = args.notificationChannels;
   if (tier === "free") {
     channels = withoutSms(channels ?? ALL_CHANNELS);
     if (channels.some(isRestrictedChannel)) {
       const existingWithChannels = existingMonitors.find((m) =>
-        m.notificationChannels?.some(isRestrictedChannel)
+        m.notificationChannels?.some(isRestrictedChannel) &&
+        (args.groupId === undefined || m.groupId !== args.groupId)
       );
       if (existingWithChannels) {
         channels = channels.filter((c) => !isRestrictedChannel(c));
@@ -252,6 +272,7 @@ export async function createMonitorForUser(
     prompt: args.prompt.trim(),
     checkInterval: checkInterval,
     notificationChannels: channels,
+    groupId: args.groupId,
     userId,
     userEmail,
     status: "scanning",
@@ -284,8 +305,8 @@ export const create = mutation({
     name: v.string(),
     url: v.string(),
     prompt: v.string(),
-    checkInterval: intervalValidator,
-    notificationChannels: v.optional(channelValidator),
+    checkInterval: checkIntervalValidator,
+    notificationChannels: v.optional(notificationChannelsValidator),
   },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
@@ -526,9 +547,9 @@ export const update = mutation({
     url: v.optional(v.string()),
     prompt: v.optional(v.string()),
     status: v.optional(statusValidator),
-    checkInterval: v.optional(intervalValidator),
+    checkInterval: v.optional(checkIntervalValidator),
     schema: v.optional(v.any()),
-    notificationChannels: v.optional(channelValidator),
+    notificationChannels: v.optional(notificationChannelsValidator),
     muted: v.optional(v.boolean()),
     alertOn: v.optional(alertOnValidator),
   },
@@ -561,6 +582,7 @@ export const update = mutation({
           .collect();
         const otherWithChannels = otherMonitors.find((m) =>
           m._id !== id &&
+          (existing.groupId === undefined || m.groupId !== existing.groupId) &&
           (m as any).notificationChannels?.some(isRestrictedChannel)
         );
         if (otherWithChannels) {
@@ -599,19 +621,16 @@ export const update = mutation({
       (next.priceDrop !== before?.priceDrop ||
         next.priceBelow?.amount !== before?.priceBelow?.amount ||
         next.priceBelow?.currency !== before?.priceBelow?.currency);
-    if (next?.priceDrop && next.priceBelow !== undefined) {
-      throw new ConvexError("Pick any price drop or a target price, not both.");
-    }
-    if (
-      next?.priceBelow !== undefined &&
-      (!Number.isInteger(next.priceBelow.amount) || next.priceBelow.amount <= 0 || currencyExponent(next.priceBelow.currency) === null)
-    ) {
-      throw new ConvexError("The target price must be above zero, in a real currency.");
-    }
+    if (next) validateAlertOn(next);
     const urlChanged = fields.url !== undefined && fields.url.trim() !== existing.url;
     if (urlChanged) {
       updates.lastSeen = undefined;
       updates.productFingerprint = undefined;
+      // A new page is no longer the product's listing, so it leaves the
+      // product rather than the listing taking on a page it doesn't describe.
+      updates.productTitle = undefined;
+      updates.groupId = undefined;
+      await releaseListing(ctx, existing);
     } else if (stockTurnedOn || priceChoiceSet) {
       const { inStock, price, currency, pendingPrice } = existing.lastSeen ?? {};
       updates.lastSeen = {
@@ -732,6 +751,22 @@ export const toggleMute = mutation({
   },
 });
 
+/**
+ * Put a monitor's listing back to a suggestion in its product, the same as
+ * stopping it there, so the listing never points at a monitor that has gone
+ * or now watches another page.
+ */
+async function releaseListing(ctx: MutationCtx, monitor: Doc<"monitors">): Promise<void> {
+  const group = monitor.groupId ? await ctx.db.get(monitor.groupId) : null;
+  if (!group) return;
+  await ctx.db.patch(group._id, {
+    listings: group.listings.map((l) =>
+      l.monitorId === monitor._id ? { ...l, state: "suggested" as const, monitorId: undefined } : l
+    ),
+    updatedAt: Date.now(),
+  });
+}
+
 export const remove = mutation({
   args: { id: v.id("monitors") },
   handler: async (ctx, { id }) => {
@@ -756,6 +791,8 @@ export const remove = mutation({
     }
 
     await ctx.db.delete(id);
+
+    await releaseListing(ctx, existing);
 
     // Decrement public monitor counter
     if (!existing.isAnonymous) {

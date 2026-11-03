@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { AiInsightsCard } from "@/components/prowl/ai-insights";
 import { IntervalSelector } from "@/components/prowl/interval-selector";
 import { ChannelSelector, defaultChannels, useConfiguredChannels, type Channel } from "@/components/prowl/channel-selector";
+import { AlertOnFields, type PriceChoice } from "@/components/prowl/alert-on-fields";
 import {
   ExternalLink,
   List,
@@ -31,7 +32,7 @@ import {
 import type { Id } from "@/convex/_generated/dataModel";
 import type { Doc } from "@/convex/_generated/dataModel";
 import type { ExtractedItem, ExtractionSchema, PriceChange } from "@prowl/shared";
-import { currencyExponent, getItemKey, isSingleProduct, matchConfidence, MATCH_CONFIDENCE_LABEL, toMinorUnits } from "@prowl/shared";
+import { currencyExponent, getItemKey, isProductMonitor, matchConfidence, MATCH_CONFIDENCE_LABEL, toMinorUnits } from "@prowl/shared";
 import { useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { timeAgo, timeUntil } from "@/lib/time";
@@ -52,6 +53,7 @@ interface OverviewTabProps {
     matchCount: number;
     checkCount?: number;
     schema?: unknown;
+    groupId?: string;
     status: string;
     lastError?: string;
     retryCount?: number;
@@ -77,8 +79,6 @@ interface OverviewTabProps {
 }
 
 type CheckInterval = "5m" | "15m" | "30m" | "1h" | "6h" | "24h";
-type PriceChoice = "off" | "drop" | "below";
-const CURRENCIES = Intl.supportedValuesOf("currency");
 
 /**
  * The product's currency, to preselect for a new target: the last read's,
@@ -563,11 +563,10 @@ function MonitorSettingsForm({
   const [editedChannels, setEditedChannels] = useState<Channel[] | null>(null);
   const channels = editedChannels ?? explicitChannels ?? defaultChannels(configuredChannels) ?? ["email"];
   const channelsUnresolved = explicitChannels === undefined && configuredChannels === undefined;
-  const singleProduct = isSingleProduct(monitor.schema);
+  const singleProduct = isProductMonitor(monitor);
   const [backInStock, setBackInStock] = useState(monitor.alertOn?.backInStock === true);
   const savedTarget = monitor.alertOn?.priceBelow;
   const [currency, setCurrency] = useState(savedTarget?.currency ?? productCurrency(monitor));
-  const exponent = currencyExponent(currency) ?? 2;
   const savedChoice: PriceChoice = monitor.alertOn?.priceDrop
     ? "drop"
     : savedTarget !== undefined ? "below" : "off";
@@ -650,61 +649,16 @@ function MonitorSettingsForm({
             disabled={channelsUnresolved}
           />
           {singleProduct && (
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={backInStock}
-                onChange={(e) => setBackInStock(e.target.checked)}
-                className="rounded border-border accent-primary h-4 w-4 shrink-0"
-              />
-              <span className="text-sm">Tell me when it&apos;s back in stock</span>
-            </label>
-          )}
-          {singleProduct && (
-            <fieldset className="space-y-2">
-              <legend className="text-sm font-medium">Price alerts</legend>
-              {([
-                ["off", "Off"],
-                ["drop", "Tell me about any price drop"],
-                ["below", "Only tell me when it's below a price"],
-              ] as const).map(([value, label]) => (
-                <label key={value} className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="radio"
-                    name="price-choice"
-                    checked={priceChoice === value}
-                    onChange={() => setPriceChoice(value)}
-                    className="border-border accent-primary h-4 w-4 shrink-0"
-                  />
-                  <span className="text-sm">{label}</span>
-                </label>
-              ))}
-              {priceChoice === "below" && (
-                <div className="flex items-center gap-2 pl-6">
-                  <Input
-                    type="number"
-                    inputMode="decimal"
-                    min={0}
-                    step={exponent === 0 ? 1 : 1 / 10 ** exponent}
-                    value={target}
-                    onChange={(e) => setTarget(e.target.value)}
-                    className="w-32"
-                    aria-label={`Target price in ${currency}`}
-                  />
-                  <select
-                    value={currency}
-                    onChange={(e) => setCurrency(e.target.value)}
-                    className="h-9 rounded-md border border-input bg-transparent px-2 text-sm"
-                    aria-label="Currency of the target price"
-                  >
-                    <option value="" disabled>Currency</option>
-                    {CURRENCIES.map((code) => (
-                      <option key={code} value={code}>{code}</option>
-                    ))}
-                  </select>
-                </div>
-              )}
-            </fieldset>
+            <AlertOnFields
+              backInStock={backInStock}
+              onBackInStockChange={setBackInStock}
+              priceChoice={priceChoice}
+              onPriceChoiceChange={setPriceChoice}
+              target={target}
+              onTargetChange={setTarget}
+              currency={currency}
+              onCurrencyChange={setCurrency}
+            />
           )}
           <div className="flex items-center gap-2 pt-2">
             <Button size="sm" className="gap-1.5" onClick={save} disabled={saving}>

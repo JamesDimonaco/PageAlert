@@ -28,6 +28,7 @@ import type * as http from "../http.js";
 import type * as inactivity from "../inactivity.js";
 import type * as logs from "../logs.js";
 import type * as mcp from "../mcp.js";
+import type * as monitorGroups from "../monitorGroups.js";
 import type * as monitors from "../monitors.js";
 import type * as notificationSettings from "../notificationSettings.js";
 import type * as notifications from "../notifications.js";
@@ -74,6 +75,7 @@ declare const fullApi: ApiFromModules<{
   inactivity: typeof inactivity;
   logs: typeof logs;
   mcp: typeof mcp;
+  monitorGroups: typeof monitorGroups;
   monitors: typeof monitors;
   notificationSettings: typeof notificationSettings;
   notifications: typeof notifications;

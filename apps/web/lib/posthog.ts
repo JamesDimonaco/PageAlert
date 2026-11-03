@@ -275,6 +275,15 @@ export function trackProductSearchCompleted(props: {
   trackEvent("product_search_completed", props);
 }
 
+export function trackProductGroupCreated(props: { listingCount: number; watchingCount: number }) {
+  trackEvent("product_group_created", props);
+}
+
+/** One per listing shown when a product is created: ticked is approved, unticked is dismissed. */
+export function trackListingReviewed(approved: boolean, props: { site: string; label: string }) {
+  trackEvent(approved ? "listing_approved" : "listing_dismissed", props);
+}
+
 // ---- Match events ----
 
 export function trackMatchFound(props: { monitorId: string; matchCount: number }) {
