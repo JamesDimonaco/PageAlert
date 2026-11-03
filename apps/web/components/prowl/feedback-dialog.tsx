@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { usePathname } from "next/navigation";
 import { useMutation } from "convex/react";
-import { ConvexError } from "convex/values";
+import { errorText } from "@/lib/utils";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
 import { api } from "@/convex/_generated/api";
@@ -45,7 +45,7 @@ export function FeedbackDialog({ open, onOpenChange }: { open: boolean; onOpenCh
       setKind("bug");
       onOpenChange(false);
     } catch (err) {
-      toast.error(err instanceof ConvexError ? String(err.data) : "Couldn't send. Try again.");
+      toast.error(errorText(err, "Couldn't send. Try again."));
     } finally {
       setSending(false);
     }

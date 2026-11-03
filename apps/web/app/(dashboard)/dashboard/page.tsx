@@ -19,6 +19,7 @@ import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { toast } from "sonner";
 import { trackMonitorDeleted, trackMonitorPaused, trackMonitorResumed, trackEvent, setUserProperties, captureException } from "@/lib/posthog";
+import { errorText } from "@/lib/utils";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
 import {
   Select,
@@ -193,7 +194,7 @@ export default function DashboardPage() {
       });
       // Scan budget already consumed atomically above
     } catch (e) {
-      const msg = e instanceof Error ? e.message : "Rescan failed";
+      const msg = errorText(e, e instanceof Error ? e.message : "Rescan failed");
       const durationMs = Date.now() - startTime;
       await saveScanError({ id: monitorId, error: msg }).catch((saveErr) => captureException(saveErr, { context: "saveScanError", monitorId }));
       await createLog({
@@ -352,8 +353,8 @@ export default function DashboardPage() {
                     trackMonitorPaused();
                     toast.success("Monitor paused");
                   }
-                } catch {
-                  toast.error("Failed to update monitor");
+                } catch (err) {
+                  toast.error("Failed to update monitor", { description: errorText(err, "Try again.") });
                 }
               }}
               onRescan={handleRescan}
@@ -380,13 +381,17 @@ export default function DashboardPage() {
       <DeleteDialog
         open={!!deleteTarget}
         onOpenChange={(open) => !open && setDeleteTarget(null)}
-        onConfirm={() => {
-          if (deleteTarget) {
-            deleteMonitor(deleteTarget._id);
-            trackMonitorDeleted();
-            toast.success("Monitor deleted");
-            setDeleteTarget(null);
+        onConfirm={async () => {
+          if (!deleteTarget) return;
+          try {
+            await deleteMonitor(deleteTarget._id);
+          } catch (err) {
+            toast.error("Failed to delete", { description: errorText(err, "Try again.") });
+            throw err;
           }
+          trackMonitorDeleted();
+          toast.success("Monitor deleted");
+          setDeleteTarget(null);
         }}
         monitorName={deleteTarget?.name ?? ""}
       />

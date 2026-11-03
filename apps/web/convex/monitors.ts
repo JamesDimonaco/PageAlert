@@ -1,11 +1,11 @@
-import { ConvexError, v, type Infer } from "convex/values";
-import { mutation, query, internalAction, internalQuery, type MutationCtx } from "./_generated/server";
+import { ConvexError, v, type Infer, type ObjectType } from "convex/values";
+import { mutation, query, internalAction, internalMutation, internalQuery, type MutationCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { displayHost, effectiveIntervalMs, ERROR_RECOVERY_INTERVAL_MS, intervalToMs, isBlockedError, MAX_RETRIES, validateMonitorUrl } from "./shared";
 import { currencyExponent, itemIdentity, RESUME_TOKEN_TTL_MS } from "@prowl/shared";
 import { effectiveTier, type Tier } from "./tiers";
-import { isBanned, requireLiveAccount } from "./account";
+import { drain, isBanned, requireLiveAccount, spent, SWEEP_BUDGET_BYTES, SWEEP_BUDGET_ROWS, type Allowance } from "./account";
 import { reserveFallback, scraperDown } from "./admin";
 import { deliverAlert } from "./alerts";
 import { alertOnValidator, checkIntervalValidator, notificationChannelsValidator, type CheckInterval } from "./schema";
@@ -56,9 +56,55 @@ function withoutSms<C extends string>(channels: C[]): C[] {
   return rest.length > 0 ? rest : (["email"] as C[]);
 }
 
-function clampInterval(interval: string, tier: Tier): CheckInterval {
+export function clampInterval(interval: string, tier: Tier): CheckInterval {
   const allowed = TIER_LIMITS[tier].allowedIntervals;
   return (allowed.includes(interval) ? interval : allowed[0]) as CheckInterval;
+}
+
+/** What a user's plan allows, read once per mutation however many monitors it changes. */
+export type Plan = {
+  tier: Tier;
+  /**
+   * The user's monitors, which only the free channel rule reads. Null when
+   * that rule doesn't apply: a paid plan, or a caller not changing channels.
+   */
+  monitors: Doc<"monitors">[] | null;
+};
+
+export async function readPlan(ctx: MutationCtx, userId: string, { channels }: { channels: boolean }): Promise<Plan> {
+  if (await isBanned(ctx, userId)) throw new ConvexError("This account has been suspended.");
+  const tier = await getUserTier(ctx, userId);
+  const monitors =
+    channels && tier === "free"
+      ? await ctx.db.query("monitors").withIndex("by_userId", (q) => q.eq("userId", userId)).collect()
+      : null;
+  return { tier, monitors };
+}
+
+/**
+ * The channels a monitor may use. Free tier can only have one monitor on the
+ * restricted channels. Push is not one of them: it costs us nothing per
+ * message and a subscription is bound to a device the user already owns, so
+ * there is nothing here to ration or to abuse.
+ *
+ * A product counts as one monitor here: its listings are one thing to the
+ * user, and share one channel list.
+ */
+export function allowedChannels(
+  plan: Plan,
+  channels: ChannelList,
+  own: { id?: Id<"monitors">; groupId?: Id<"monitorGroups"> }
+): ChannelList {
+  if (plan.tier !== "free") return channels;
+  if (plan.monitors === null) throw new Error("readPlan was called without channels");
+  const rest = withoutSms(channels);
+  const takenElsewhere = plan.monitors.some(
+    (m) =>
+      m._id !== own.id &&
+      (own.groupId === undefined || m.groupId !== own.groupId) &&
+      m.notificationChannels?.some(isRestrictedChannel)
+  );
+  return takenElsewhere ? rest.filter((c) => !isRestrictedChannel(c)) : rest;
 }
 
 // Formats a millisecond duration as a human-readable wait time, rounding
@@ -81,13 +127,13 @@ async function getAuthUserId(ctx: { auth: { getUserIdentity: () => Promise<{ sub
 
 
 function validateName(name: string): void {
-  if (name.length === 0) throw new Error("Name is required");
-  if (name.length > MAX_NAME_LENGTH) throw new Error(`Name exceeds maximum length of ${MAX_NAME_LENGTH} characters`);
+  if (name.length === 0) throw new ConvexError("Name is required");
+  if (name.length > MAX_NAME_LENGTH) throw new ConvexError(`Name exceeds maximum length of ${MAX_NAME_LENGTH} characters`);
 }
 
 function validatePrompt(prompt: string): void {
-  if (prompt.length === 0) throw new Error("Prompt is required");
-  if (prompt.length > MAX_PROMPT_LENGTH) throw new Error(`Prompt exceeds maximum length of ${MAX_PROMPT_LENGTH} characters`);
+  if (prompt.length === 0) throw new ConvexError("Prompt is required");
+  if (prompt.length > MAX_PROMPT_LENGTH) throw new ConvexError(`Prompt exceeds maximum length of ${MAX_PROMPT_LENGTH} characters`);
 }
 
 export function validateAlertOn(alertOn: Infer<typeof alertOnValidator>): void {
@@ -206,7 +252,7 @@ export async function createMonitorForUser(
     groupId?: Id<"monitorGroups">;
   }
 ): Promise<Id<"monitors">> {
-  if (await isBanned(ctx, userId)) throw new Error("This account has been suspended.");
+  if (await isBanned(ctx, userId)) throw new ConvexError("This account has been suspended.");
   // A token outlives the account it was minted for; see requireLiveAccount.
   await requireLiveAccount(ctx, userId);
 
@@ -229,7 +275,7 @@ export async function createMonitorForUser(
   if (recentCreations.length >= CREATION_LIMITS[tier]) {
     const oldestCreatedAt = Math.min(...recentCreations.map((c) => c.createdAt));
     const wait = formatWait(oldestCreatedAt + CREATION_WINDOW_MS - Date.now());
-    throw new Error(`Creation limit reached: your ${tier} plan allows ${CREATION_LIMITS[tier]} new monitors per 5 hours. You can create another in ${wait}.`);
+    throw new ConvexError(`Creation limit reached: your ${tier} plan allows ${CREATION_LIMITS[tier]} new monitors per 5 hours. You can create another in ${wait}.`);
   }
 
   const existingMonitors = await ctx.db
@@ -237,32 +283,17 @@ export async function createMonitorForUser(
     .withIndex("by_userId", (q) => q.eq("userId", userId))
     .collect();
   if (existingMonitors.length >= limits.maxMonitors) {
-    throw new Error(`Your ${tier} plan allows ${limits.maxMonitors} monitors. Upgrade for more.`);
+    throw new ConvexError(`Your ${tier} plan allows ${limits.maxMonitors} monitors. Upgrade for more.`);
   }
 
-  // Server-side enforcement: free tier can only have one monitor on the
-  // restricted channels. Push is not one of them — it costs us nothing per
-  // message and a subscription is bound to a device the user already owns,
-  // so there is nothing here to ration or to abuse.
-  //
-  // No list means every channel, so it is rationed as one. The web form always
-  // sends a list; MCP leaves it out.
-  //
-  // A product counts as one monitor here: its listings are one thing to the
-  // user, and share one channel list.
-  let channels = args.notificationChannels;
-  if (tier === "free") {
-    channels = withoutSms(channels ?? ALL_CHANNELS);
-    if (channels.some(isRestrictedChannel)) {
-      const existingWithChannels = existingMonitors.find((m) =>
-        m.notificationChannels?.some(isRestrictedChannel) &&
-        (args.groupId === undefined || m.groupId !== args.groupId)
-      );
-      if (existingWithChannels) {
-        channels = channels.filter((c) => !isRestrictedChannel(c));
-      }
-    }
-  }
+  // No list means every channel, so on free it is rationed as one. The web
+  // form always sends a list; MCP leaves it out.
+  const channels =
+    tier === "free"
+      ? allowedChannels({ tier, monitors: existingMonitors }, args.notificationChannels ?? ALL_CHANNELS, {
+          groupId: args.groupId,
+        })
+      : args.notificationChannels;
 
   const now = Date.now();
   const id = await ctx.db.insert("monitors", {
@@ -540,159 +571,150 @@ async function hostNeedsProxy(ctx: MutationCtx, monitor: Doc<"monitors">): Promi
   );
 }
 
+const updateFields = {
+  name: v.optional(v.string()),
+  url: v.optional(v.string()),
+  prompt: v.optional(v.string()),
+  status: v.optional(statusValidator),
+  checkInterval: v.optional(checkIntervalValidator),
+  schema: v.optional(v.any()),
+  notificationChannels: v.optional(notificationChannelsValidator),
+  muted: v.optional(v.boolean()),
+  alertOn: v.optional(alertOnValidator),
+};
+
 export const update = mutation({
-  args: {
-    id: v.id("monitors"),
-    name: v.optional(v.string()),
-    url: v.optional(v.string()),
-    prompt: v.optional(v.string()),
-    status: v.optional(statusValidator),
-    checkInterval: v.optional(checkIntervalValidator),
-    schema: v.optional(v.any()),
-    notificationChannels: v.optional(notificationChannelsValidator),
-    muted: v.optional(v.boolean()),
-    alertOn: v.optional(alertOnValidator),
-  },
-  handler: async (ctx, { id, ...fields }) => {
-    const userId = await getAuthUserId(ctx);
-    const existing = await ctx.db.get(id);
-    if (!existing || existing.userId !== userId) throw new Error("Monitor not found");
-    if (await isBanned(ctx, userId)) throw new Error("This account has been suspended.");
+  args: { id: v.id("monitors"), ...updateFields },
+  handler: async (ctx, { id, ...fields }) => updateMonitorForUser(ctx, await getAuthUserId(ctx), id, fields),
+});
 
-    if (fields.name !== undefined) validateName(fields.name);
-    if (fields.url !== undefined) validateMonitorUrl(fields.url);
-    if (fields.prompt !== undefined) validatePrompt(fields.prompt);
+/**
+ * Edit one of this user's monitors. A product rewrites its monitors through
+ * this too, passing the plan it read once for all of them.
+ */
+export async function updateMonitorForUser(
+  ctx: MutationCtx,
+  userId: string,
+  id: Id<"monitors">,
+  fields: ObjectType<typeof updateFields>,
+  plan?: Plan
+): Promise<Id<"monitors">> {
+  const existing = await ctx.db.get(id);
+  if (!existing || existing.userId !== userId) throw new ConvexError("Monitor not found");
+  const needsPlan = fields.checkInterval !== undefined || fields.notificationChannels !== undefined;
+  const rules = plan ?? (needsPlan ? await readPlan(ctx, userId, { channels: fields.notificationChannels !== undefined }) : null);
+  if (!rules && (await isBanned(ctx, userId))) throw new ConvexError("This account has been suspended.");
 
-    // Dynamic tier-based enforcement
-    const tier = (fields.checkInterval !== undefined || fields.notificationChannels !== undefined)
-      ? await getUserTier(ctx, userId)
-      : null;
+  if (fields.name !== undefined) validateName(fields.name);
+  if (fields.url !== undefined) validateMonitorUrl(fields.url);
+  if (fields.prompt !== undefined) validatePrompt(fields.prompt);
 
-    if (fields.checkInterval !== undefined && tier) {
-      fields.checkInterval = clampInterval(fields.checkInterval, tier) as typeof fields.checkInterval;
+  if (fields.checkInterval !== undefined && rules) {
+    fields.checkInterval = clampInterval(fields.checkInterval, rules.tier);
+  }
+  if (fields.notificationChannels !== undefined && rules) {
+    fields.notificationChannels = allowedChannels(rules, fields.notificationChannels, { id, groupId: existing.groupId });
+  }
+
+  const now = Date.now();
+  const updates: Record<string, unknown> = { updatedAt: now };
+  for (const [key, value] of Object.entries(fields)) {
+    if (value !== undefined) {
+      updates[key] = typeof value === "string" ? value.trim() : value;
     }
+  }
+  if (fields.url !== undefined) {
+    updates.host = displayHost(fields.url.trim());
+    // What the old site needed says nothing about the new one, and left set
+    // it would mark the new site as needing the proxy for everyone.
+    if (updates.host !== existing.host) updates.proxyPreferred = undefined;
+  }
 
-    // Free tier: only one monitor can use the restricted channels — see create
-    if (fields.notificationChannels !== undefined && tier === "free") {
-      fields.notificationChannels = withoutSms(fields.notificationChannels);
-      if (fields.notificationChannels.some(isRestrictedChannel)) {
-        const otherMonitors = await ctx.db
-          .query("monitors")
-          .withIndex("by_userId", (q) => q.eq("userId", userId))
-          .collect();
-        const otherWithChannels = otherMonitors.find((m) =>
-          m._id !== id &&
-          (existing.groupId === undefined || m.groupId !== existing.groupId) &&
-          (m as any).notificationChannels?.some(isRestrictedChannel)
-        );
-        if (otherWithChannels) {
-          fields.notificationChannels = fields.notificationChannels.filter(
-            (c) => !isRestrictedChannel(c)
-          ) as typeof fields.notificationChannels;
-        }
-      }
-    }
+  // Stock was not read while the option was off, and a new URL is a new
+  // product. Either way the stored reading is stale, and an old "out of
+  // stock" left in place would fire on the first read. Clearing it makes
+  // that read a baseline instead. A new price choice resets the price the
+  // same way. Each resets only its own half, so editing one option keeps
+  // the other's history. Clearing the fingerprint makes the next check read.
+  const next = fields.alertOn;
+  const before = existing.alertOn;
+  const stockTurnedOn = next?.backInStock === true && before?.backInStock !== true;
+  const priceChoiceSet =
+    (next?.priceDrop === true || next?.priceBelow !== undefined) &&
+    (next.priceDrop !== before?.priceDrop ||
+      next.priceBelow?.amount !== before?.priceBelow?.amount ||
+      next.priceBelow?.currency !== before?.priceBelow?.currency);
+  if (next) validateAlertOn(next);
+  const urlChanged = fields.url !== undefined && fields.url.trim() !== existing.url;
+  if (urlChanged) {
+    updates.lastSeen = undefined;
+    updates.productFingerprint = undefined;
+    // A new page is no longer the product's listing, so it leaves the
+    // product rather than the listing taking on a page it doesn't describe.
+    updates.productTitle = undefined;
+    updates.groupId = undefined;
+    await releaseListing(ctx, existing);
+  } else if (stockTurnedOn || priceChoiceSet) {
+    const { inStock, price, currency, pendingPrice } = existing.lastSeen ?? {};
+    updates.lastSeen = {
+      ...(!stockTurnedOn && inStock !== undefined ? { inStock } : {}),
+      ...(!priceChoiceSet && price !== undefined && currency !== undefined
+        ? { price, currency, ...(pendingPrice !== undefined ? { pendingPrice } : {}) }
+        : {}),
+    };
+    updates.productFingerprint = undefined;
+  }
+  // The schema, and the product title in it, describe the old page. Zero
+  // makes the drift refresh due, so the next check re-reads the new page
+  // and product reads wait until it has (see runQuickCheck).
+  if (urlChanged) updates.lastAiExtractAt = 0;
 
-    const now = Date.now();
-    const updates: Record<string, unknown> = { updatedAt: now };
-    for (const [key, value] of Object.entries(fields)) {
-      if (value !== undefined) {
-        updates[key] = typeof value === "string" ? value.trim() : value;
-      }
-    }
-    if (fields.url !== undefined) {
-      updates.host = displayHost(fields.url.trim());
-      // What the old site needed says nothing about the new one, and left set
-      // it would mark the new site as needing the proxy for everyone.
-      if (updates.host !== existing.host) updates.proxyPreferred = undefined;
-    }
-
-    // Stock was not read while the option was off, and a new URL is a new
-    // product. Either way the stored reading is stale, and an old "out of
-    // stock" left in place would fire on the first read. Clearing it makes
-    // that read a baseline instead. A new price choice resets the price the
-    // same way. Each resets only its own half, so editing one option keeps
-    // the other's history. Clearing the fingerprint makes the next check read.
-    const next = fields.alertOn;
-    const before = existing.alertOn;
-    const stockTurnedOn = next?.backInStock === true && before?.backInStock !== true;
-    const priceChoiceSet =
-      (next?.priceDrop === true || next?.priceBelow !== undefined) &&
-      (next.priceDrop !== before?.priceDrop ||
-        next.priceBelow?.amount !== before?.priceBelow?.amount ||
-        next.priceBelow?.currency !== before?.priceBelow?.currency);
-    if (next) validateAlertOn(next);
-    const urlChanged = fields.url !== undefined && fields.url.trim() !== existing.url;
-    if (urlChanged) {
-      updates.lastSeen = undefined;
-      updates.productFingerprint = undefined;
-      // A new page is no longer the product's listing, so it leaves the
-      // product rather than the listing taking on a page it doesn't describe.
-      updates.productTitle = undefined;
-      updates.groupId = undefined;
-      await releaseListing(ctx, existing);
-    } else if (stockTurnedOn || priceChoiceSet) {
-      const { inStock, price, currency, pendingPrice } = existing.lastSeen ?? {};
-      updates.lastSeen = {
-        ...(!stockTurnedOn && inStock !== undefined ? { inStock } : {}),
-        ...(!priceChoiceSet && price !== undefined && currency !== undefined
-          ? { price, currency, ...(pendingPrice !== undefined ? { pendingPrice } : {}) }
-          : {}),
-      };
-      updates.productFingerprint = undefined;
-    }
-    // The schema, and the product title in it, describe the old page. Zero
-    // makes the drift refresh due, so the next check re-reads the new page
-    // and product reads wait until it has (see runQuickCheck).
-    if (urlChanged) updates.lastAiExtractAt = 0;
-
-    // Anything that takes a monitor out of "paused" clears the auto-pause and
-    // its email link, so the monitor reads as a plain active monitor again and
-    // an old email cannot restart it later. Keyed off leaving "paused" rather
-    // than off arriving at "active", because Rescan goes paused -> "scanning"
-    // -> active and would otherwise leave a running monitor wearing the
-    // "paused automatically" note for good.
-    //
-    // nextCheckAt is set on every resume, not just an auto-paused one: without
-    // it a monitor that was parked (nextCheckAt unset) and then paused comes
-    // back active with nothing scheduled and never runs again.
-    if (fields.status !== undefined && fields.status !== "paused" && existing.status === "paused") {
-      updates.nextCheckAt = now;
-      updates.autoPausedAt = undefined;
-      updates.resumeToken = undefined;
-      if (existing.nextCheckAt === undefined) {
-        // It was parked before it was paused. Same reasoning as the interval
-        // branch below: without a fresh budget the next single failure re-parks
-        // it and sends another "checks stopped" email.
-        updates.proxyBlockCount = 0;
-        updates.retryCount = 0;
-      }
-    }
-
-    // A new URL or prompt is in effect a new monitor, whose first error the
-    // owner has not been told about.
-    if (fields.url !== undefined || fields.prompt !== undefined) {
-      updates.lastErrorAlertAt = undefined;
-    }
-
-    // Recompute nextCheckAt when interval changes so it takes effect immediately
-    if (fields.checkInterval !== undefined) {
-      updates.nextCheckAt = now + effectiveIntervalMs({
-        checkInterval: fields.checkInterval,
-        proxyPreferred: existing.proxyPreferred,
-      });
-      // This un-parks a parked monitor. Give it a fresh budget on both
-      // counters, or the next single failure re-parks it and sends a second
-      // "checks stopped" email — a never-succeeded park sits at retryCount 32
-      // and would re-park on its very first check.
+  // Anything that takes a monitor out of "paused" clears the auto-pause and
+  // its email link, so the monitor reads as a plain active monitor again and
+  // an old email cannot restart it later. Keyed off leaving "paused" rather
+  // than off arriving at "active", because Rescan goes paused -> "scanning"
+  // -> active and would otherwise leave a running monitor wearing the
+  // "paused automatically" note for good.
+  //
+  // nextCheckAt is set on every resume, not just an auto-paused one: without
+  // it a monitor that was parked (nextCheckAt unset) and then paused comes
+  // back active with nothing scheduled and never runs again.
+  if (fields.status !== undefined && fields.status !== "paused" && existing.status === "paused") {
+    updates.nextCheckAt = now;
+    updates.autoPausedAt = undefined;
+    updates.resumeToken = undefined;
+    if (existing.nextCheckAt === undefined) {
+      // It was parked before it was paused. Same reasoning as the interval
+      // branch below: without a fresh budget the next single failure re-parks
+      // it and sends another "checks stopped" email.
       updates.proxyBlockCount = 0;
       updates.retryCount = 0;
     }
+  }
 
-    await ctx.db.patch(id, updates);
-    return id;
-  },
-});
+  // A new URL or prompt is in effect a new monitor, whose first error the
+  // owner has not been told about.
+  if (fields.url !== undefined || fields.prompt !== undefined) {
+    updates.lastErrorAlertAt = undefined;
+  }
+
+  // Recompute nextCheckAt when interval changes so it takes effect immediately
+  if (fields.checkInterval !== undefined) {
+    updates.nextCheckAt = now + effectiveIntervalMs({
+      checkInterval: fields.checkInterval,
+      proxyPreferred: existing.proxyPreferred,
+    });
+    // This un-parks a parked monitor. Give it a fresh budget on both
+    // counters, or the next single failure re-parks it and sends a second
+    // "checks stopped" email — a never-succeeded park sits at retryCount 32
+    // and would re-park on its very first check.
+    updates.proxyBlockCount = 0;
+    updates.retryCount = 0;
+  }
+
+  await ctx.db.patch(id, updates);
+  return id;
+}
 
 /**
  * Restart a monitor the inactivity reaper paused, from the link in its pause
@@ -769,38 +791,51 @@ async function releaseListing(ctx: MutationCtx, monitor: Doc<"monitors">): Promi
 
 export const remove = mutation({
   args: { id: v.id("monitors") },
-  handler: async (ctx, { id }) => {
-    const userId = await getAuthUserId(ctx);
+  handler: async (ctx, { id }) => removeMonitorsForUser(ctx, await getAuthUserId(ctx), [id]),
+});
+
+/**
+ * Delete some of this user's monitors, then their history and notifications.
+ * The history goes in rounds, as account deletion does, because a busy
+ * monitor's history can be more than one transaction may delete.
+ */
+export async function removeMonitorsForUser(ctx: MutationCtx, userId: string, ids: Id<"monitors">[]): Promise<void> {
+  let listed = 0;
+  for (const id of ids) {
     const existing = await ctx.db.get(id);
-    if (!existing || existing.userId !== userId) throw new Error("Monitor not found");
-
-    const results = await ctx.db
-      .query("scrapeResults")
-      .withIndex("by_monitorId", (q) => q.eq("monitorId", id))
-      .collect();
-    for (const result of results) {
-      await ctx.db.delete(result._id);
-    }
-
-    const notifs = await ctx.db
-      .query("notifications")
-      .withIndex("by_monitorId", (q) => q.eq("monitorId", id))
-      .collect();
-    for (const notif of notifs) {
-      await ctx.db.delete(notif._id);
-    }
-
+    if (!existing || existing.userId !== userId) throw new ConvexError("Monitor not found");
     await ctx.db.delete(id);
-
     await releaseListing(ctx, existing);
+    if (!existing.isAnonymous) listed++;
+  }
 
-    // Decrement public monitor counter
-    if (!existing.isAnonymous) {
-      const counter = await ctx.db.query("counters").withIndex("by_name", (q) => q.eq("name", "monitors")).unique();
-      if (counter && counter.value > 0) {
-        await ctx.db.patch(counter._id, { value: counter.value - 1 });
+  // Decrement public monitor counter
+  if (listed > 0) {
+    const counter = await ctx.db.query("counters").withIndex("by_name", (q) => q.eq("name", "monitors")).unique();
+    if (counter) await ctx.db.patch(counter._id, { value: Math.max(0, counter.value - listed) });
+  }
+
+  await sweepMonitorHistory(ctx, ids);
+}
+
+async function sweepMonitorHistory(ctx: MutationCtx, ids: Id<"monitors">[]): Promise<void> {
+  const left: Allowance = { bytes: SWEEP_BUDGET_BYTES, rows: SWEEP_BUDGET_ROWS };
+  for (const [i, id] of ids.entries()) {
+    for (const table of ["scrapeResults", "notifications"] as const) {
+      await drain(ctx, ctx.db.query(table).withIndex("by_monitorId", (q) => q.eq("monitorId", id)), left);
+      if (spent(left)) {
+        await ctx.scheduler.runAfter(0, internal.monitors.sweepRemainingMonitorHistory, { ids: ids.slice(i) });
+        return;
       }
     }
+  }
+}
+
+/** Continues deleting the history of monitors that held more than one round's worth. */
+export const sweepRemainingMonitorHistory = internalMutation({
+  args: { ids: v.array(v.id("monitors")) },
+  handler: async (ctx, { ids }) => {
+    await sweepMonitorHistory(ctx, ids);
   },
 });
 

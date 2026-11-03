@@ -17,6 +17,7 @@ import { useAction, useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { toast } from "sonner";
 import { trackTestEmailSent, trackNotificationChannelToggled } from "@/lib/posthog";
+import { errorText } from "@/lib/utils";
 
 type NotificationChannel = "email" | "telegram" | "discord" | "push" | "sms";
 
@@ -44,7 +45,7 @@ export function NotificationSettings() {
     } catch (e) {
       setPushTest("idle");
       toast.error("Test failed", {
-        description: e instanceof Error ? e.message : "Try again",
+        description: errorText(e, e instanceof Error ? e.message : "Try again"),
       });
     }
   };
@@ -326,7 +327,7 @@ export function NotificationSettings() {
                       });
                     } catch (e) {
                       toast.error("Failed to send test email", {
-                        description: e instanceof Error ? e.message : "Please try again",
+                        description: errorText(e, e instanceof Error ? e.message : "Please try again"),
                       });
                     } finally {
                       setTestEmailSending(false);
@@ -423,7 +424,7 @@ export function NotificationSettings() {
                         toast.success("Text alerts on", { description: "Pick the monitors you want them for" });
                       } catch (e) {
                         toast.error("Could not confirm", {
-                          description: e instanceof Error ? e.message : "Check the code and try again",
+                          description: errorText(e, e instanceof Error ? e.message : "Check the code and try again"),
                         });
                       } finally {
                         setSmsSending(false);
@@ -501,7 +502,7 @@ export function NotificationSettings() {
                       toast.success("Code sent", { description: "Check your messages" });
                     } catch (e) {
                       toast.error("Could not send a code", {
-                        description: e instanceof Error ? e.message : "Check the number and try again",
+                        description: errorText(e, e instanceof Error ? e.message : "Check the number and try again"),
                       });
                     } finally {
                       setSmsSending(false);
@@ -613,7 +614,7 @@ export function NotificationSettings() {
                       await sendTelegramTest({ chatId });
                       toast.success("Test message sent to Telegram");
                     } catch (e) {
-                      toast.error("Test failed", { description: e instanceof Error ? e.message : "" });
+                      toast.error("Test failed", { description: errorText(e, e instanceof Error ? e.message : "") });
                     } finally {
                       setTelegramTesting(false);
                     }
@@ -676,8 +677,8 @@ export function NotificationSettings() {
                                 });
                               await Promise.all(updates);
                               toast.success(`Telegram enabled on all monitors`);
-                            } catch {
-                              toast.error("Failed to update monitors");
+                            } catch (err) {
+                              toast.error("Failed to update monitors", { description: errorText(err, "Try again.") });
                             }
                           },
                         },
@@ -688,7 +689,7 @@ export function NotificationSettings() {
                     }
                   } catch (e) {
                     toast.error("Failed to connect", {
-                      description: e instanceof Error ? e.message : "Check your Chat ID and try again",
+                      description: errorText(e, e instanceof Error ? e.message : "Check your Chat ID and try again"),
                     });
                   } finally {
                     setTelegramSaving(false);
@@ -780,8 +781,8 @@ export function NotificationSettings() {
                                   })
                                 );
                                 toast.success("Alerts enabled on all monitors");
-                              } catch {
-                                toast.error("Failed to update monitors");
+                              } catch (err) {
+                                toast.error("Failed to update monitors", { description: errorText(err, "Try again.") });
                               }
                             },
                           },
@@ -799,7 +800,7 @@ export function NotificationSettings() {
                       }
                     } catch (e) {
                       toast.error("Couldn't turn on alerts", {
-                        description: e instanceof Error ? e.message : "Try again",
+                        description: errorText(e, e instanceof Error ? e.message : "Try again"),
                       });
                     }
                   }}
@@ -1024,7 +1025,7 @@ export function NotificationSettings() {
                       toast.success("Discord connected", { description: "Test message sent" });
                     } catch (e) {
                       toast.error("Failed to connect", {
-                        description: e instanceof Error ? e.message : "Check your webhook URL and try again",
+                        description: errorText(e, e instanceof Error ? e.message : "Check your webhook URL and try again"),
                       });
                     } finally {
                       setDiscordSaving(false);

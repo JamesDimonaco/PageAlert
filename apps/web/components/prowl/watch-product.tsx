@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
-import { ConvexError } from "convex/values";
+import { errorText } from "@/lib/utils";
 import { AlertTriangle, CheckCircle2, Eye, Loader2 } from "lucide-react";
 import { formatMinorUnits, toMinorUnits, type GuessedAlertOn, type ProductListing, type SearchRegion } from "@prowl/shared";
 import { api } from "@/convex/_generated/api";
@@ -101,7 +101,7 @@ export function WatchProductForm({ name, region, listings, ticked, guess, onCrea
       for (const l of listings) trackListingReviewed(ticked.has(l.url), { site: l.site, label: l.label });
       onCreated(groupId);
     } catch (err) {
-      setError(err instanceof ConvexError ? String(err.data) : "We couldn't watch those listings. Try again.");
+      setError(errorText(err, "We couldn't watch those listings. Try again."));
     } finally {
       setSaving(false);
     }
@@ -208,7 +208,7 @@ export function ProductProgress({ groupId, onDone }: { groupId: Id<"monitorGroup
       </ul>
       <div className="flex justify-end">
         <Button type="button" variant="outline" onClick={onDone}>
-          Go to dashboard
+          Open product
         </Button>
       </div>
     </div>

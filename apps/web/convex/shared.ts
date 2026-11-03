@@ -1,3 +1,4 @@
+import { ConvexError } from "convex/values";
 import { canonicalUrl, DAY_MS } from "@prowl/shared";
 
 export { MATCH_SCORE_THRESHOLD, alertsOnScore, matchConfidence, MATCH_CONFIDENCE_LABEL, canonicalUrl } from "@prowl/shared";
@@ -181,26 +182,26 @@ const BLOCKED_HOSTS = [
  */
 export function validateMonitorUrl(url: string, maxLength = 2048): URL {
   if (url.length > maxLength) {
-    throw new Error(`URL exceeds maximum length of ${maxLength} characters`);
+    throw new ConvexError(`URL exceeds maximum length of ${maxLength} characters`);
   }
   let parsed: URL;
   try {
     parsed = new URL(url);
   } catch {
-    throw new Error("Invalid URL format");
+    throw new ConvexError("Invalid URL format");
   }
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    throw new Error("Only http and https URLs are allowed");
+    throw new ConvexError("Only http and https URLs are allowed");
   }
   const hostname = parsed.hostname.toLowerCase();
   if (BLOCKED_HOSTS.includes(hostname)) {
-    throw new Error("This hostname is not allowed");
+    throw new ConvexError("This hostname is not allowed");
   }
   const ipMatch = hostname.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
   if (ipMatch) {
     const [, a, b] = ipMatch.map(Number);
     if (a === 10 || (a === 172 && b! >= 16 && b! <= 31) || (a === 192 && b === 168) || a === 127 || (a === 169 && b === 254) || a === 0) {
-      throw new Error("URLs pointing to private/internal IP addresses are not allowed");
+      throw new ConvexError("URLs pointing to private/internal IP addresses are not allowed");
     }
   }
   // Block IPv6 private/link-local/loopback ranges (fc00::/7, fe80::/10, ::1, ::ffff-mapped private)
@@ -218,11 +219,11 @@ export function validateMonitorUrl(url: string, maxLength = 2048): URL {
       addr.startsWith("::ffff:192.168.") ||
       addr.startsWith("::ffff:0.")
     ) {
-      throw new Error("URLs pointing to private/internal IP addresses are not allowed");
+      throw new ConvexError("URLs pointing to private/internal IP addresses are not allowed");
     }
   }
   if (!hostname.includes(".")) {
-    throw new Error("URL must use a fully qualified domain name");
+    throw new ConvexError("URL must use a fully qualified domain name");
   }
   return parsed;
 }

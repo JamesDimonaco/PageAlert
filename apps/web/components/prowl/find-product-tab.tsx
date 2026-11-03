@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useAction, useQuery } from "convex/react";
-import { ConvexError } from "convex/values";
+import { errorText } from "@/lib/utils";
 import { ExternalLink, Loader2, Search } from "lucide-react";
 import {
   SEARCH_REGIONS,
@@ -39,7 +39,7 @@ interface FindProductTabProps {
   /** Switch to the paste-a-URL form, carrying over what was typed. */
   onPasteUrl: (typed: string) => void;
   /** Called once the new product's monitors are under way. */
-  onDone: () => void;
+  onDone: (groupId: Id<"monitorGroups">) => void;
 }
 
 export function FindProductTab({ clone, onPasteUrl, onDone }: FindProductTabProps) {
@@ -126,7 +126,7 @@ export function FindProductTab({ clone, onPasteUrl, onDone }: FindProductTabProp
       setSearched({ query: typed, region, at: Date.now() });
       trackProductSearchCompleted({ region, resultCount: listings.length, durationMs: Date.now() - started, failed: false });
     } catch (err) {
-      setError(err instanceof ConvexError ? String(err.data) : "The search didn't work. Try again.");
+      setError(errorText(err, "The search didn't work. Try again."));
       trackProductSearchCompleted({ region, resultCount: 0, durationMs: Date.now() - started, failed: true });
     } finally {
       setSearching(false);
@@ -152,7 +152,7 @@ export function FindProductTab({ clone, onPasteUrl, onDone }: FindProductTabProp
     });
   }
 
-  if (createdId) return <ProductProgress groupId={createdId} onDone={onDone} />;
+  if (createdId) return <ProductProgress groupId={createdId} onDone={() => onDone(createdId)} />;
 
   return (
     <div className="space-y-6">

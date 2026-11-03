@@ -17,9 +17,19 @@ interface DeleteDialogProps {
   onOpenChange: (open: boolean) => void;
   onConfirm: () => void | Promise<void>;
   monitorName: string;
+  title?: string;
+  /** What else goes with it. */
+  detail?: string;
 }
 
-export function DeleteDialog({ open, onOpenChange, onConfirm, monitorName }: DeleteDialogProps) {
+export function DeleteDialog({
+  open,
+  onOpenChange,
+  onConfirm,
+  monitorName,
+  title = "Delete Monitor",
+  detail = "This will remove all scrape history and cannot be undone.",
+}: DeleteDialogProps) {
   const [isDeleting, setIsDeleting] = useState(false);
 
   return (
@@ -30,11 +40,10 @@ export function DeleteDialog({ open, onOpenChange, onConfirm, monitorName }: Del
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-destructive/10">
               <Trash2 className="h-4 w-4 text-destructive" />
             </div>
-            Delete Monitor
+            {title}
           </DialogTitle>
           <DialogDescription>
-            Are you sure you want to delete <strong>&ldquo;{monitorName}&rdquo;</strong>? This will
-            remove all scrape history and cannot be undone.
+            Are you sure you want to delete <strong>&ldquo;{monitorName}&rdquo;</strong>? {detail}
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>

@@ -17,6 +17,7 @@ import type { Channel } from "@/components/prowl/channel-selector";
 import { toast } from "sonner";
 import { isUnreadableScan } from "@prowl/shared";
 import { trackMonitorCreated, trackScanStarted, trackScanCompleted, trackScanFailed } from "@/lib/posthog";
+import { errorText } from "@/lib/utils";
 
 export interface CloneDefaults {
   name: string;
@@ -106,7 +107,7 @@ export function CreateMonitorProvider({ children }: { children: ReactNode }) {
         trackMonitorCreated({ url: data.url, prompt: data.prompt, checkInterval: data.checkInterval });
       } catch (e) {
         isSubmittingRef.current = false;
-        const msg = e instanceof Error ? e.message : "Failed to create monitor";
+        const msg = errorText(e, "Try again.");
         toast.error("Failed to create monitor", { description: msg });
         return;
       }
@@ -277,7 +278,7 @@ export function CreateMonitorProvider({ children }: { children: ReactNode }) {
         setScanStage("done");
       } catch (e) {
         if (e instanceof Error && e.name === "AbortError") return;
-        const msg = e instanceof Error ? e.message : "Scan failed";
+        const msg = errorText(e, e instanceof Error ? e.message : "Scan failed");
         const durationMs = Date.now() - startTime;
 
         trackScanFailed({ url: data.url, error: msg, durationMs });
