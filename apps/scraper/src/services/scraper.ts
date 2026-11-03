@@ -389,10 +389,9 @@ export async function detectAntiBot(page: Page): Promise<{ blocked: boolean; rea
       const text = (document.body?.innerText ?? "").toLowerCase();
       const textLen = text.length;
 
-      // Challenge pages whose markup is unmistakable whatever their size:
-      // Amazon's captcha form, PerimeterX, and DataDome.
+      // Challenge widgets that are unmistakable whatever the page size:
+      // PerimeterX and DataDome.
       const challengeSelectors: [string, string][] = [
-        ['form[action*="validateCaptcha"]', "CAPTCHA challenge"],
         ["#px-captcha", "CAPTCHA challenge"],
         ['iframe[src*="captcha-delivery.com"]', "CAPTCHA challenge"],
       ];

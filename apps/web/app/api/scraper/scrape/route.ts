@@ -114,6 +114,8 @@ export async function POST(request: Request) {
 }
 
 function callScraper(scraperUrl: string, scraperKey: string, payload: { url: string; useProxy?: boolean }) {
+  // The proxied call spends up to 45s at Scrapfly before rendering starts.
+  // 55s direct plus 60s proxied stays inside maxDuration.
   return fetch(`${scraperUrl}/api/scrape`, {
     method: "POST",
     headers: {
@@ -121,7 +123,7 @@ function callScraper(scraperUrl: string, scraperKey: string, payload: { url: str
       "x-api-key": scraperKey,
     },
     body: JSON.stringify(payload),
-    signal: AbortSignal.timeout(55000),
+    signal: AbortSignal.timeout(payload.useProxy ? 60_000 : 55_000),
   });
 }
 
