@@ -104,7 +104,8 @@ export default defineSchema({
       price: v.optional(v.number()),
       currency: v.optional(v.string()),
     })),
-    // Hash of the product's own text at the last read — see productExcerpt
+    // Hash of the product's own text at the last read, or of the whole page
+    // when its title could not be found — see productExcerpt
     productFingerprint: v.optional(v.string()),
     // Deprecated: run admin:clearPriceAlerts in prod, then delete this field.
     priceAlerts: v.optional(v.object({

@@ -5,7 +5,7 @@ import { internalAction, internalMutation, internalQuery, type ActionCtx } from 
 import { internal } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
 import { isSingleProduct } from "@prowl/shared";
-import { captureEvent } from "./analytics";
+import { deliverAlert } from "./alerts";
 import {
   displayHost,
   isBlockedError,
@@ -104,29 +104,19 @@ function detectChanges(previousItems: Record<string, unknown>[], currentItems: R
 
 const MAX_CONCURRENT_CHECKS = 10;
 
-/**
- * Which channels an alert goes out on. No list means every channel, except
- * texts. Those are opt-in per monitor: every monitor made before the field
- * existed has no list, so the shared rule would start texting for all of
- * them the moment a user verified a number.
- */
-function alertChannels(notificationChannels: string[] | undefined) {
-  return {
-    shouldSend: (channel: string) => !notificationChannels || notificationChannels.includes(channel),
-    shouldSendSms: notificationChannels?.includes("sms") === true,
-    hasAnyChannel: !notificationChannels || notificationChannels.length > 0,
-  };
-}
-
 /** A single-product monitor whose owner wants to hear when it is back in stock. */
 function wantsProductRead(monitor: Pick<Doc<"monitors">, "alertOn" | "schema">): boolean {
   return monitor.alertOn?.backInStock === true && isSingleProduct(monitor.schema);
 }
 
+/** The scraper rejects longer titles with a 400, which would fail every check until the monitor parks. */
+const MAX_PRODUCT_TITLE = 500;
+
 /** The product's name as the last full read gave it, for finding it on the page and naming it in alerts. */
 function productTitle(monitor: Pick<Doc<"monitors">, "name" | "schema">): string {
   const title = (monitor.schema as { items?: { title?: unknown }[] } | undefined)?.items?.[0]?.title;
-  return typeof title === "string" && title.trim() ? title.trim() : monitor.name;
+  const name = typeof title === "string" && title.trim() ? title.trim() : monitor.name;
+  return name.slice(0, MAX_PRODUCT_TITLE);
 }
 
 // Web push payloads are capped around 4KB once encrypted, and going over makes
@@ -545,15 +535,12 @@ export const runScheduledChecks = internalAction({
             if (!freshMonitor) console.log(`[scheduler] Monitor ${monitor._id} deleted during check, skipping notifications`);
             // Data already recorded above — just skip notifications
           } else {
-            const { shouldSend, shouldSendSms, hasAnyChannel } = alertChannels(freshMonitor.notificationChannels);
-
             // Both paths now name the entries the user has not been told
             // about, so an alert means a genuinely new listing rather than a
             // page that merely still says what it said last time.
-            const isNewMatch = (checkResult.newMatchKeys?.length ?? 0) > 0;
             const newCount = checkResult.newMatchKeys?.length ?? 0;
 
-            if (isNewMatch) {
+            if (newCount > 0) {
               // Only the items the user has not seen. On the quick-check path
               // there is nothing to narrow to, so this is the whole match set.
               const newKeys = new Set(checkResult.newMatchKeys ?? []);
@@ -565,109 +552,45 @@ export const runScheduledChecks = internalAction({
                 .filter(({ m }) => newKeys.has(matchKey(m)));
               const newMatches = newWithIndex.map(({ m }) => m);
               const plural = newCount !== 1 ? "es" : "";
+              const base = {
+                monitorName: freshMonitor.name,
+                monitorId: freshMonitor._id,
+                url: freshMonitor.url,
+                matchCount: newCount,
+                totalItems: displayTotalItems,
+              };
 
               await ctx.scheduler.runAfter(0, internal.admin.notify, {
                 text: `Match: ${freshMonitor.name} found ${newCount} new on ${displayHost(freshMonitor.url)} (${freshMonitor.userEmail ?? "no email"})`,
               });
 
-              // Create in-app notification (unless all channels explicitly disabled)
-              if (hasAnyChannel) await ctx.runMutation(internal.userNotifications.create, {
-                userId: freshMonitor.userId,
-                monitorId: freshMonitor._id,
-                channel: "in_app",
+              await deliverAlert(ctx, freshMonitor, {
+                type: "match",
                 title: `${freshMonitor.name} — ${newCount} new match${plural}`,
-                message: `Found ${newCount} new match${plural} out of ${displayTotalItems} items on ${freshMonitor.url}`,
-              }).catch(() => {});
-
-              // Push. No settings lookup — a user's devices are the target,
-              // and push.ts resolves them. Same wording as the in-app card.
-              if (shouldSend("push")) {
-                await ctx.runAction(internal.push.sendToUser, {
-                  userId: freshMonitor.userId,
-                  monitorId: freshMonitor._id,
-                  title: `${freshMonitor.name} — ${newCount} new match${plural}`,
-                  body: `${newCount} new match${plural} out of ${displayTotalItems} items on ${displayHost(freshMonitor.url)}`,
-                  kind: "match",
-                }).catch(() => {});
-              }
-
-              // Send email
-              if (shouldSend("email") && freshMonitor.userEmail) {
-                await ctx.runAction(internal.emails.sendMatchAlert, {
-                  to: freshMonitor.userEmail,
-                  monitorName: freshMonitor.name,
-                  monitorId: freshMonitor._id,
-                  url: freshMonitor.url,
-                  matchCount: newCount,
-                  matches: newMatches,
-                  totalItems: displayTotalItems,
-                }).catch(() => {});
-              }
-
-              // Send to Telegram if configured and enabled for this monitor
-              if (shouldSend("telegram")) {
-                const telegramSetting = await ctx.runQuery(internal.scheduler.getNotificationSetting, {
-                  userId: freshMonitor.userId,
-                  channel: "telegram",
-                });
-                if (telegramSetting?.enabled && telegramSetting.target) {
-                  await ctx.runAction(internal.telegram.sendMatchAlert, {
-                    chatId: telegramSetting.target,
-                    monitorName: freshMonitor.name,
-                    monitorId: freshMonitor._id,
-                    url: freshMonitor.url,
-                    matchCount: newCount,
-                    totalItems: displayTotalItems,
+                inAppMessage: `Found ${newCount} new match${plural} out of ${displayTotalItems} items on ${freshMonitor.url}`,
+                pushBody: `${newCount} new match${plural} out of ${displayTotalItems} items on ${displayHost(freshMonitor.url)}`,
+                email: (to) => ctx.runAction(internal.emails.sendMatchAlert, { ...base, to, matches: newMatches }),
+                telegram: (chatId) =>
+                  ctx.runAction(internal.telegram.sendMatchAlert, {
+                    ...base,
+                    chatId,
                     matches: newWithIndex.slice(0, TELEGRAM_ALERT_ITEMS).map(({ m, index }) => ({
                       index,
                       title: String(m.title ?? m.name ?? "Item"),
                       matchScore: typeof m.matchScore === "number" ? m.matchScore : undefined,
                     })),
                     resultId: checkResult.resultId ?? undefined,
-                  }).catch(() => {});
-                }
-              }
-
-              // Send to Discord if configured and enabled for this monitor
-              if (shouldSend("discord")) {
-                const discordSetting = await ctx.runQuery(internal.scheduler.getNotificationSetting, {
-                  userId: freshMonitor.userId,
-                  channel: "discord",
-                });
-                if (discordSetting?.enabled && discordSetting.target) {
-                  await ctx.runAction(internal.discord.sendMatchAlert, {
-                    webhookUrl: discordSetting.target,
-                    monitorName: freshMonitor.name,
-                    monitorId: freshMonitor._id,
-                    url: freshMonitor.url,
-                    matchCount: newCount,
-                    totalItems: displayTotalItems,
-                  }).catch(() => {});
-                }
-              }
-
-              // Send to SMS if verified and enabled for this monitor. The
-              // allowance check lives inside sms.ts, so a refusal here is
-              // silent by design — the email alert has already gone.
-              if (shouldSendSms) {
-                const smsSetting = await ctx.runQuery(internal.scheduler.getNotificationSetting, {
-                  userId: freshMonitor.userId,
-                  channel: "sms",
-                });
-                if (smsSetting?.enabled && smsSetting.target) {
-                  await ctx.runAction(internal.sms.sendMatchAlert, {
+                  }),
+                discord: (webhookUrl) => ctx.runAction(internal.discord.sendMatchAlert, { ...base, webhookUrl }),
+                sms: (phone) =>
+                  ctx.runAction(internal.sms.sendMatchAlert, {
                     userId: freshMonitor.userId,
-                    phone: smsSetting.target,
+                    phone,
                     monitorName: freshMonitor.name,
                     monitorId: freshMonitor._id,
                     matchCount: newCount,
-                  }).catch(() => {});
-                }
-              }
-
-              if (hasAnyChannel) {
-                await captureEvent(freshMonitor.userId, "alert_sent", { type: "match", monitor_id: freshMonitor._id });
-              }
+                  }),
+              });
             }
           }
         } catch (e) {
@@ -974,9 +897,10 @@ async function runQuickCheck(
   // so a monitor that has just switched stock alerts on takes its baseline
   // even on a page that has not moved.
   if (wantsProductRead(monitor) && result.product && result.product.hash !== monitor.productFingerprint) {
+    if (result.product.matched === false) {
+      console.warn(`[scheduler] Quick check ${monitor._id}: product title not on the page, reading on any page change`);
+    }
     await readProduct(ctx, monitor, result.product, scraperUrl, scraperKey);
-  } else if (wantsProductRead(monitor) && result.product === null) {
-    console.warn(`[scheduler] Quick check ${monitor._id}: product title not found on the page, no stock read`);
   }
 
   // Cheap short-circuit: content identical to the last scan — record the
@@ -1146,8 +1070,10 @@ async function scoreQuickCheckCandidates(
 /**
  * Read stock and price for a single-product monitor's one product.
  *
- * A failed read records nothing, so the stored fingerprint still differs and
- * the next check tries again rather than losing a restock.
+ * A failed read still stores the fingerprint, as an unknown reading, so the
+ * next attempt waits for the next change. Retrying on every check instead
+ * would bill a call per check for as long as the failure lasts. The cost is
+ * that a restock landing on a failed read is only seen on the next change.
  */
 async function readProduct(
   ctx: Pick<ActionCtx, "runMutation">,
@@ -1164,13 +1090,12 @@ async function readProduct(
     true
   );
   if (!scored?.stock) {
-    console.warn(`[scheduler] Product read for ${monitor._id} came back without stock — will retry`);
-    return;
+    console.warn(`[scheduler] Product read for ${monitor._id} came back without stock — retrying on the next change`);
   }
   await ctx.runMutation(internal.scheduler.recordProductRead, {
     monitorId: monitor._id,
     productFingerprint: product.hash,
-    ...scored.stock,
+    ...(scored?.stock ?? { inStock: null, price: null, currency: null }),
   });
 }
 
@@ -1403,82 +1328,31 @@ export const sendBackInStockAlert = internalAction({
     const monitor = await ctx.runQuery(internal.monitors.getInternal, { id: args.monitorId });
     if (!monitor || monitor.muted) return;
 
-    const { shouldSend, shouldSendSms, hasAnyChannel } = alertChannels(monitor.notificationChannels);
-    if (!hasAnyChannel) return;
-
     const title = productTitle(monitor);
     const host = displayHost(monitor.url);
     const message = `${title} is back in stock on ${host}.`;
+    const base = { monitorId: monitor._id, url: monitor.url, productTitle: title };
 
     await ctx.scheduler.runAfter(0, internal.admin.notify, {
       text: `Back in stock: ${monitor.name} on ${host} (${monitor.userEmail ?? "no email"})`,
     });
 
-    await ctx.runMutation(internal.userNotifications.create, {
-      userId: monitor.userId,
-      monitorId: monitor._id,
-      channel: "in_app",
+    await deliverAlert(ctx, monitor, {
+      type: "stock",
       title: `${monitor.name} — back in stock`,
-      message,
-    }).catch(() => {});
-
-    if (shouldSend("push")) {
-      await ctx.runAction(internal.push.sendToUser, {
-        userId: monitor.userId,
-        monitorId: monitor._id,
-        title: `${monitor.name} — back in stock`,
-        body: truncateForPush(message),
-        kind: "stock",
-      }).catch(() => {});
-    }
-
-    if (shouldSend("email") && monitor.userEmail) {
-      await ctx.runAction(internal.emails.sendBackInStockAlert, {
-        to: monitor.userEmail,
-        monitorName: monitor.name,
-        monitorId: monitor._id,
-        url: monitor.url,
-        productTitle: title,
-      }).catch(() => {});
-    }
-
-    if (shouldSend("telegram")) {
-      const setting = await ctx.runQuery(internal.scheduler.getNotificationSetting, { userId: monitor.userId, channel: "telegram" });
-      if (setting?.enabled && setting.target) {
-        await ctx.runAction(internal.telegram.sendBackInStockAlert, {
-          chatId: setting.target,
-          monitorId: monitor._id,
-          url: monitor.url,
-          productTitle: title,
-        }).catch(() => {});
-      }
-    }
-
-    if (shouldSend("discord")) {
-      const setting = await ctx.runQuery(internal.scheduler.getNotificationSetting, { userId: monitor.userId, channel: "discord" });
-      if (setting?.enabled && setting.target) {
-        await ctx.runAction(internal.discord.sendBackInStockAlert, {
-          webhookUrl: setting.target,
-          monitorId: monitor._id,
-          url: monitor.url,
-          productTitle: title,
-        }).catch(() => {});
-      }
-    }
-
-    if (shouldSendSms) {
-      const setting = await ctx.runQuery(internal.scheduler.getNotificationSetting, { userId: monitor.userId, channel: "sms" });
-      if (setting?.enabled && setting.target) {
-        await ctx.runAction(internal.sms.sendBackInStockAlert, {
+      inAppMessage: message,
+      pushBody: truncateForPush(message),
+      email: (to) => ctx.runAction(internal.emails.sendBackInStockAlert, { ...base, to, monitorName: monitor.name }),
+      telegram: (chatId) => ctx.runAction(internal.telegram.sendBackInStockAlert, { ...base, chatId }),
+      discord: (webhookUrl) => ctx.runAction(internal.discord.sendBackInStockAlert, { ...base, webhookUrl }),
+      sms: (phone) =>
+        ctx.runAction(internal.sms.sendBackInStockAlert, {
           userId: monitor.userId,
-          phone: setting.target,
+          phone,
           monitorId: monitor._id,
           productTitle: title,
-        }).catch(() => {});
-      }
-    }
-
-    await captureEvent(monitor.userId, "alert_sent", { type: "stock", monitor_id: monitor._id });
+        }),
+    });
   },
 });
 

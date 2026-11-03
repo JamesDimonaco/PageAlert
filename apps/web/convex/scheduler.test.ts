@@ -2,13 +2,16 @@
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import schema from "./schema";
-import { internal } from "./_generated/api";
+import { api, internal } from "./_generated/api";
+import betterAuthSchema from "./betterAuth/schema";
 import type { Doc } from "./_generated/dataModel";
 
 const modules = import.meta.glob("./**/*.*s");
+const betterAuthModules = import.meta.glob("./betterAuth/**/*.*s");
 
 async function seedProductMonitor(lastSeen?: Doc<"monitors">["lastSeen"]) {
   const t = convexTest(schema, modules);
+  t.registerComponent("betterAuth", betterAuthSchema, betterAuthModules);
   const id = await t.run((ctx) =>
     ctx.db.insert("monitors", {
       userId: "user_1",
@@ -73,6 +76,19 @@ describe("back-in-stock fires only on out of stock to in stock", () => {
     expect(await read(true)).toEqual({ backInStock: true });
     expect(await alertsScheduled()).toBe(1);
   });
+});
+
+// Nothing is read while the option is off, so the stored "out of stock" goes
+// stale. A restock during that time must not alert the moment the user turns
+// the option back on.
+test("turning the option back on takes a fresh baseline", async () => {
+  const { t, id, read, alertsScheduled } = await seedProductMonitor({ inStock: false });
+  const owner = t.withIdentity({ subject: "user_1" });
+
+  await owner.mutation(api.monitors.update, { id, alertOn: { backInStock: false } });
+  await owner.mutation(api.monitors.update, { id, alertOn: { backInStock: true } });
+  expect(await read(true)).toEqual({ backInStock: false });
+  expect(await alertsScheduled()).toBe(0);
 });
 
 // Mute is the user's "stop telling me about this" switch. A stock alert that

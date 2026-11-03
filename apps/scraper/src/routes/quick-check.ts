@@ -87,14 +87,15 @@ quickCheckRoutes.post("/", zValidator("json", quickCheckSchema), async (c) => {
         // Enough of the entry for the AI to judge it without re-reading the page.
         snippet: segment.text.trim().slice(0, MAX_SNIPPET_LENGTH),
       }));
-    const excerpt = productTitle ? productExcerpt(text, productTitle) : null;
+    const product = productTitle ? productExcerpt(text, productTitle) : null;
 
     return c.json({
       url,
       accessible: true,
       contentHash: hashContent(text),
       candidates,
-      product: excerpt ? { excerpt, hash: hashContent(excerpt) } : null,
+      // Unmatched, the whole page is the trigger: a read on every change beats a silent alert.
+      product: product && { ...product, hash: hashContent(product.matched ? product.excerpt : text) },
       // Listing entries on the page, not just the matching ones — this is the
       // "out of N items" a user reads in an alert.
       totalEntries: entries.length,
