@@ -3,6 +3,7 @@ import {
   GSM7_SEGMENT_LIMIT,
   fit,
   formatProductSms,
+  formatSmsPrice,
   formatMatchSms,
   formatQuotaExhaustedSms,
   formatVerificationSms,
@@ -54,6 +55,19 @@ describe("gsm7Length", () => {
     expect(gsm7Length("abc")).toBe(3);
     expect(gsm7Length("[]{}")).toBe(8);
     expect(gsm7Length("€")).toBe(2);
+  });
+});
+
+// A text that says "price drop to 1,299.00" has lost the one thing that
+// makes the number a price.
+describe("formatSmsPrice", () => {
+  it("keeps a GSM-7 symbol", () => {
+    expect(formatSmsPrice(1299, "GBP")).toBe("£12.99");
+  });
+
+  it("uses the ISO code when the symbol is not GSM-7", () => {
+    expect(formatSmsPrice(129900, "INR")).toBe("INR 1,299.00");
+    assertOneSegment(formatSmsPrice(129900, "INR"));
   });
 });
 

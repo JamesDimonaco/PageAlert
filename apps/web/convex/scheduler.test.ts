@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import schema from "./schema";
 import { api, internal } from "./_generated/api";
 import betterAuthSchema from "./betterAuth/schema";
@@ -206,7 +206,7 @@ test("a target set under today's price waits for a crossing", async () => {
 
 // Each option resets only its own baseline. Editing the price choice must
 // not lose a known "out of stock", or the restock it was waiting for would
-// arrive as a silent baseline — and the reverse for a known price.
+// arrive as a silent baseline. The same goes the other way for a known price.
 test("a new price choice keeps the stock history", async () => {
   const { t, id, read } = await seedProductMonitor({ inStock: false, price: 29900, currency: "GBP" });
   await t.withIdentity({ subject: "user_1" }).mutation(api.monitors.update, {
@@ -268,4 +268,57 @@ test("a price alert names the old and new price in the product's currency", asyn
   });
   const [notification] = await t.run((ctx) => ctx.db.query("notifications").collect());
   expect(notification?.message).toBe("Sony WH-1000XM5 is now £279.00 on shop.test, down from £299.00.");
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
+});
+
+// The second read that confirms a big drop has to happen even when the page
+// has not changed since. If the held read advanced the fingerprint, the
+// unchanged-page gate would skip every later read and the drop would never
+// be confirmed.
+test("a held big drop is confirmed on the next check of an unchanged page", async () => {
+  vi.stubEnv("SCRAPER_URL", "https://scraper.test");
+  vi.stubEnv("SCRAPER_API_KEY", "key");
+  let scoreCalls = 0;
+  vi.stubGlobal("fetch", async (url: string) => {
+    if (url.endsWith("/api/quick-check")) {
+      return Response.json({
+        accessible: true,
+        contentHash: "page-2",
+        candidates: [],
+        totalEntries: 1,
+        product: { excerpt: "Sony WH-1000XM5 £99.00 In stock", hash: "product-2", matched: true },
+      });
+    }
+    if (url.endsWith("/api/score")) {
+      scoreCalls++;
+      return Response.json({
+        scored: [{
+          title: "Sony WH-1000XM5", url: null, price: null, snippet: "", matchScore: 90, matchReason: "",
+          stock: { inStock: true, price: 9900, currency: "GBP" },
+        }],
+      });
+    }
+    return new Response("not mocked", { status: 500 });
+  });
+
+  const { t, id, alertsScheduled } = await seedProductMonitor({ price: 29900, currency: "GBP" }, { priceDrop: true });
+  await t.run((ctx) =>
+    ctx.db.patch(id, { lastAiExtractAt: Date.now(), checkCount: 5, contentFingerprint: "page-1", productFingerprint: "product-1" })
+  );
+  const check = async () => {
+    await t.run((ctx) => ctx.db.patch(id, { nextCheckAt: 0 }));
+    await t.action(internal.scheduler.runScheduledChecks, {});
+  };
+
+  await check();
+  expect(await alertsScheduled()).toBe(0);
+  await check();
+  expect(await alertsScheduled()).toBe(1);
+  await check();
+  expect(await alertsScheduled()).toBe(1);
+  expect(scoreCalls).toBe(2);
 });

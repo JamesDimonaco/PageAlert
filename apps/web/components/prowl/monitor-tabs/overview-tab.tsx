@@ -81,14 +81,14 @@ type PriceChoice = "off" | "drop" | "below";
 const CURRENCIES = Intl.supportedValuesOf("currency");
 
 /**
- * The best guess at the product's currency, to preselect for a new target:
- * the last read's, else the full extract's. The extract prompt leaves USD
- * unmarked, hence the fallback. The user can change it.
+ * The product's currency, to preselect for a new target: the last read's,
+ * else the full extract's. Empty when neither is known, so the user picks
+ * one rather than a guess turning their target into another currency.
  */
 function productCurrency(monitor: OverviewTabProps["monitor"]): string {
   const itemCurrency = (monitor.schema as { items?: { currency?: unknown }[] } | undefined)?.items?.[0]?.currency;
-  const candidate = monitor.lastSeen?.currency ?? (typeof itemCurrency === "string" ? itemCurrency.toUpperCase() : "USD");
-  return currencyExponent(candidate) === null ? "USD" : candidate;
+  const candidate = monitor.lastSeen?.currency ?? (typeof itemCurrency === "string" ? itemCurrency.toUpperCase() : "");
+  return currencyExponent(candidate) === null ? "" : candidate;
 }
 
 const RETRY_LIMIT = 3;
@@ -588,6 +588,10 @@ function MonitorSettingsForm({
       };
       if (editedChannels !== null) payload.notificationChannels = editedChannels;
       if (checkInterval !== monitor.checkInterval) payload.checkInterval = checkInterval;
+      if (priceChoice === "below" && !currency) {
+        toast.error("Pick the currency of your target price");
+        return;
+      }
       const targetMinor = priceChoice === "below" ? toMinorUnits(Number(target), currency) : null;
       if (priceChoice === "below" && !targetMinor) {
         toast.error("Enter a target price above zero");
@@ -693,6 +697,7 @@ function MonitorSettingsForm({
                     className="h-9 rounded-md border border-input bg-transparent px-2 text-sm"
                     aria-label="Currency of the target price"
                   >
+                    <option value="" disabled>Currency</option>
                     {CURRENCIES.map((code) => (
                       <option key={code} value={code}>{code}</option>
                     ))}

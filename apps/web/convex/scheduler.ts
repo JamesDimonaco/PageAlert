@@ -4,7 +4,7 @@ import { claimActivation } from "./monitors";
 import { internalAction, internalMutation, internalQuery, type ActionCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
-import { formatMinorUnits, isSingleProduct } from "@prowl/shared";
+import { formatMinorUnits, formatSmsPrice, isSingleProduct } from "@prowl/shared";
 import { deliverAlert } from "./alerts";
 import {
   displayHost,
@@ -1369,7 +1369,9 @@ export const recordProductRead = internalMutation({
 
     const inStock = args.inStock ?? previous.inStock;
     await ctx.db.patch(args.monitorId, {
-      productFingerprint: args.productFingerprint,
+      // A held price needs a second read. Keeping the old fingerprint makes
+      // the next check read again, even if the page has not changed.
+      productFingerprint: priceFields.pendingPrice !== undefined ? monitor.productFingerprint : args.productFingerprint,
       lastSeen: { ...(inStock !== undefined ? { inStock } : {}), ...priceFields },
     });
 
@@ -1394,15 +1396,16 @@ function productAlertText(alert: ProductAlert, fullTitle: string, host: string) 
     return { headline: "Back in stock", message: `${title} is back in stock on ${host}.`, what: "back in stock" };
   }
   const now = money(alert.newPrice, alert.currency);
+  const nowForSms = formatSmsPrice(alert.newPrice, alert.currency);
   const was = alert.oldPrice !== undefined ? money(alert.oldPrice, alert.currency) : null;
   if (alert.reason === "below" && alert.target !== undefined) {
     return {
       headline: "Below your target price",
       message: `${title} is now ${now} on ${host}, below your ${money(alert.target, alert.currency)} target.${was ? ` It was ${was}.` : ""}`,
-      what: `now ${now}, below your target`,
+      what: `now ${nowForSms}, below your target`,
     };
   }
-  return { headline: "Price drop", message: `${title} is now ${now} on ${host}, down from ${was}.`, what: `price drop to ${now}` };
+  return { headline: "Price drop", message: `${title} is now ${now} on ${host}, down from ${was}.`, what: `price drop to ${nowForSms}` };
 }
 
 /** Tell the owner about a stock or price change, on the same channels a match alert uses. */

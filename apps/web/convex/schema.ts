@@ -112,7 +112,7 @@ export default defineSchema({
       price: v.optional(v.number()),
       currency: v.optional(v.string()),
       // A fall of more than half, waiting for a second read to confirm it
-      // before it replaces `price` — see recordProductRead.
+      // before it replaces `price`. See recordProductRead.
       pendingPrice: v.optional(v.number()),
     })),
     // Hash of the product's own text at the last read, or of the whole page

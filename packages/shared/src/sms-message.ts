@@ -9,6 +9,7 @@
  * segments. So every string is transliterated into GSM-7 first, then the
  * variable part is truncated against the space actually left.
  */
+import { currencyExponent, formatMinorUnits } from "./money";
 
 /** Characters in the GSM 03.38 basic alphabet. One septet each. */
 const GSM7_BASIC = new Set(
@@ -125,6 +126,19 @@ export function formatMatchSms({ monitorName, newCount, link }: MatchSmsArgs): s
     toGsm7(monitorName),
     `" ${toGsm7(link)}`
   );
+}
+
+/**
+ * A price for a text. Symbols outside GSM-7, such as ₹ ₩ ₺, would be dropped
+ * and leave a bare number, so those prices use the ISO code instead.
+ */
+export function formatSmsPrice(minor: number, currency: string): string {
+  const withSymbol = formatMinorUnits(minor, currency);
+  if (withSymbol !== null && toGsm7(withSymbol) === withSymbol) return withSymbol;
+  const exponent = currencyExponent(currency);
+  if (exponent === null) return `${minor} ${currency}`;
+  const withCode = new Intl.NumberFormat("en-US", { style: "currency", currency, currencyDisplay: "code" });
+  return toGsm7(withCode.format(minor / 10 ** exponent));
 }
 
 /** A stock or price alert. `what` is the news, such as "back in stock" or "price drop to £12.99". */
