@@ -1,10 +1,10 @@
-import { v } from "convex/values";
+import { v, type Infer } from "convex/values";
 import { effectiveTier } from "./tiers";
 import { claimActivation } from "./monitors";
 import { internalAction, internalMutation, internalQuery, type ActionCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
-import { isSingleProduct } from "@prowl/shared";
+import { formatMinorUnits, formatSmsPrice, isSingleProduct } from "@prowl/shared";
 import { deliverAlert } from "./alerts";
 import {
   displayHost,
@@ -104,9 +104,11 @@ function detectChanges(previousItems: Record<string, unknown>[], currentItems: R
 
 const MAX_CONCURRENT_CHECKS = 10;
 
-/** A single-product monitor whose owner wants to hear when it is back in stock. */
+/** A single-product monitor whose owner wants a stock or price alert. */
 function wantsProductRead(monitor: Pick<Doc<"monitors">, "alertOn" | "schema">): boolean {
-  return monitor.alertOn?.backInStock === true && isSingleProduct(monitor.schema);
+  const on = monitor.alertOn;
+  const wanted = on?.backInStock === true || on?.priceDrop === true || on?.priceBelow !== undefined;
+  return wanted && isSingleProduct(monitor.schema);
 }
 
 /** The scraper rejects longer titles with a 400, which would fail every check until the monitor parks. */
@@ -898,7 +900,7 @@ async function runQuickCheck(
   // The product's entry went into the seen set on the first check and is
   // never judged again below, so a restock would go unseen. Re-read it
   // whenever its own text changes. Placed before the unchanged short-circuit
-  // so a monitor that has just switched stock alerts on takes its baseline
+  // so a monitor that has just switched an alert on takes its baseline
   // even on a page that has not moved.
   if (readsProduct && result.product && result.product.hash !== monitor.productFingerprint) {
     if (result.product.matched === false) {
@@ -1285,14 +1287,33 @@ export const getNotificationSetting = internalQuery({
   },
 });
 
+const productAlertValidator = v.union(
+  v.object({ kind: v.literal("stock") }),
+  v.object({
+    kind: v.literal("price"),
+    reason: v.union(v.literal("drop"), v.literal("below")),
+    // Absent when a target is already met on the first read.
+    oldPrice: v.optional(v.number()),
+    newPrice: v.number(),
+    currency: v.string(),
+    target: v.optional(v.number()),
+  }),
+);
+type ProductAlert = Infer<typeof productAlertValidator>;
+
 /**
- * Store a product read and decide whether it is a restock.
+ * Store a product read and decide whether it is news.
  *
- * Only a known out of stock followed by a known in stock alerts. No baseline
- * never alerts, so switching the option on cannot fire for a product that was
- * already in stock. An unreadable value keeps the last known one, so out,
- * then unknown, then in still alerts. Scheduling the send here ties it to the
- * write: a check that fails after this point cannot lose the alert.
+ * Stock alerts only on a known out of stock followed by a known in stock.
+ * Price alerts compare against the last known price in the same currency:
+ * "any drop" on any fall, "below a target" when the price is at or below
+ * the target and was not last time, so it does not repeat while it stays
+ * low. A target already met on the first read alerts once.
+ *
+ * Otherwise no baseline never alerts, so switching an option on cannot fire
+ * straight away. An unreadable value keeps the last known one. Scheduling the send
+ * here ties it to the write: a check that fails after this point cannot
+ * lose the alert.
  */
 export const recordProductRead = internalMutation({
   args: {
@@ -1307,57 +1328,118 @@ export const recordProductRead = internalMutation({
   },
   handler: async (ctx, args) => {
     const monitor = await ctx.db.get(args.monitorId);
-    if (!monitor || monitor.url !== args.url) return { backInStock: false };
+    if (!monitor || monitor.url !== args.url) return { alerts: [] as ProductAlert[] };
 
     const previous = monitor.lastSeen ?? {};
-    const backInStock =
-      monitor.alertOn?.backInStock === true && previous.inStock === false && args.inStock === true;
+    const on = monitor.alertOn ?? {};
+    const alerts: ProductAlert[] = [];
 
+    if (on.backInStock === true && previous.inStock === false && args.inStock === true) {
+      alerts.push({ kind: "stock" });
+    }
+
+    // Kept as they are unless this read has a usable price.
+    let priceFields: { price?: number; currency?: string; pendingPrice?: number } =
+      previous.price !== undefined && previous.currency !== undefined
+        ? { price: previous.price, currency: previous.currency, ...(previous.pendingPrice !== undefined ? { pendingPrice: previous.pendingPrice } : {}) }
+        : {};
+    if (args.price !== null && args.currency !== null) {
+      const newPrice = args.price;
+      const currency = args.currency;
+      const oldPrice = previous.currency === currency ? previous.price : undefined;
+      // A fall of more than half is more often a misread (a monthly payment,
+      // a deposit, an accessory's price) than a sale. It waits for the same
+      // price on the next read before it counts.
+      const unconfirmed = oldPrice !== undefined && newPrice < oldPrice / 2 && previous.pendingPrice !== newPrice;
+      if (unconfirmed) {
+        priceFields = { price: oldPrice, currency, pendingPrice: newPrice };
+      } else {
+        priceFields = { price: newPrice, currency };
+        const price = { kind: "price" as const, oldPrice, newPrice, currency };
+        const target = on.priceBelow;
+        if (on.priceDrop === true && oldPrice !== undefined && newPrice < oldPrice) {
+          alerts.push({ ...price, reason: "drop" });
+        } else if (target && target.currency !== currency) {
+          console.warn(`[scheduler] ${monitor._id}: target is in ${target.currency} but the price read in ${currency}, not compared`);
+        } else if (target && newPrice <= target.amount && (oldPrice === undefined || oldPrice > target.amount)) {
+          alerts.push({ ...price, reason: "below", target: target.amount });
+        }
+      }
+    }
+
+    const inStock = args.inStock ?? previous.inStock;
     await ctx.db.patch(args.monitorId, {
-      productFingerprint: args.productFingerprint,
-      lastSeen: {
-        ...previous,
-        ...(args.inStock !== null ? { inStock: args.inStock } : {}),
-        ...(args.price !== null && args.currency !== null ? { price: args.price, currency: args.currency } : {}),
-      },
+      // A held price needs a second read. Keeping the old fingerprint makes
+      // the next check read again, even if the page has not changed.
+      productFingerprint: priceFields.pendingPrice !== undefined ? monitor.productFingerprint : args.productFingerprint,
+      lastSeen: { ...(inStock !== undefined ? { inStock } : {}), ...priceFields },
     });
 
-    if (backInStock) {
-      await ctx.scheduler.runAfter(0, internal.scheduler.sendBackInStockAlert, { monitorId: args.monitorId });
+    for (const alert of alerts) {
+      await ctx.scheduler.runAfter(0, internal.scheduler.sendProductAlert, { monitorId: args.monitorId, alert });
     }
-    return { backInStock };
+    return { alerts };
   },
 });
 
-/** Tell the owner their product is back, on the same channels a match alert uses. */
-export const sendBackInStockAlert = internalAction({
-  args: { monitorId: v.id("monitors") },
+function money(minor: number, currency: string): string {
+  return formatMinorUnits(minor, currency) ?? `${minor} ${currency}`;
+}
+
+/** Long enough to recognise; short enough that the price and site always fit in a push or a Telegram line. */
+const MAX_TITLE_IN_MESSAGE = 120;
+
+/** The wording of one alert: a headline, one sentence, and the news for an SMS. */
+function productAlertText(alert: ProductAlert, fullTitle: string, host: string) {
+  const title = fullTitle.length > MAX_TITLE_IN_MESSAGE ? `${fullTitle.slice(0, MAX_TITLE_IN_MESSAGE - 1)}…` : fullTitle;
+  if (alert.kind === "stock") {
+    return { headline: "Back in stock", message: `${title} is back in stock on ${host}.`, what: "back in stock" };
+  }
+  const now = money(alert.newPrice, alert.currency);
+  const nowForSms = formatSmsPrice(alert.newPrice, alert.currency);
+  const was = alert.oldPrice !== undefined ? money(alert.oldPrice, alert.currency) : null;
+  if (alert.reason === "below" && alert.target !== undefined) {
+    return {
+      headline: "Below your target price",
+      message: `${title} is now ${now} on ${host}, below your ${money(alert.target, alert.currency)} target.${was ? ` It was ${was}.` : ""}`,
+      what: `now ${nowForSms}, below your target`,
+    };
+  }
+  return { headline: "Price drop", message: `${title} is now ${now} on ${host}, down from ${was}.`, what: `price drop to ${nowForSms}` };
+}
+
+/** Tell the owner about a stock or price change, on the same channels a match alert uses. */
+export const sendProductAlert = internalAction({
+  args: { monitorId: v.id("monitors"), alert: productAlertValidator },
   handler: async (ctx, args) => {
     const monitor = await ctx.runQuery(internal.monitors.getInternal, { id: args.monitorId });
     if (!monitor || monitor.muted) return;
 
     const title = productTitle(monitor);
     const host = displayHost(monitor.url);
-    const message = `${title} is back in stock on ${host}.`;
-    const base = { monitorId: monitor._id, url: monitor.url, productTitle: title };
+    const { headline, message, what } = productAlertText(args.alert, title, host);
+    const kind = args.alert.kind;
+    const base = { monitorId: monitor._id, url: monitor.url, headline, message };
 
     await ctx.scheduler.runAfter(0, internal.admin.notify, {
-      text: `Back in stock: ${monitor.name} on ${host} (${monitor.userEmail ?? "no email"})`,
+      text: `${headline}: ${monitor.name} on ${host} (${monitor.userEmail ?? "no email"})`,
     });
 
     await deliverAlert(ctx, monitor, {
-      type: "stock",
-      title: `${monitor.name} — back in stock`,
+      type: kind,
+      title: `${monitor.name} — ${headline.toLowerCase()}`,
       inAppMessage: message,
       pushBody: truncateForPush(message),
-      email: (to) => ctx.runAction(internal.emails.sendBackInStockAlert, { ...base, to, monitorName: monitor.name }),
-      telegram: (chatId) => ctx.runAction(internal.telegram.sendBackInStockAlert, { ...base, chatId }),
-      discord: (webhookUrl) => ctx.runAction(internal.discord.sendBackInStockAlert, { ...base, webhookUrl }),
+      email: (to) =>
+        ctx.runAction(internal.emails.sendProductAlert, { ...base, to, kind, monitorName: monitor.name, productTitle: title }),
+      telegram: (chatId) => ctx.runAction(internal.telegram.sendProductAlert, { ...base, chatId }),
+      discord: (webhookUrl) => ctx.runAction(internal.discord.sendProductAlert, { ...base, webhookUrl }),
       sms: (phone) =>
-        ctx.runAction(internal.sms.sendBackInStockAlert, {
+        ctx.runAction(internal.sms.sendProductAlert, {
           userId: monitor.userId,
           phone,
           monitorId: monitor._id,
+          what,
           productTitle: title,
         }),
     });

@@ -2,7 +2,8 @@ import { describe, it, expect } from "vitest";
 import {
   GSM7_SEGMENT_LIMIT,
   fit,
-  formatBackInStockSms,
+  formatProductSms,
+  formatSmsPrice,
   formatMatchSms,
   formatQuotaExhaustedSms,
   formatVerificationSms,
@@ -57,13 +58,27 @@ describe("gsm7Length", () => {
   });
 });
 
-describe("formatBackInStockSms", () => {
+// A text that says "price drop to 1,299.00" has lost the one thing that
+// makes the number a price.
+describe("formatSmsPrice", () => {
+  it("keeps a GSM-7 symbol", () => {
+    expect(formatSmsPrice(1299, "GBP")).toBe("£12.99");
+  });
+
+  it("uses the ISO code when the symbol is not GSM-7", () => {
+    expect(formatSmsPrice(129900, "INR")).toBe("INR 1,299.00");
+    assertOneSegment(formatSmsPrice(129900, "INR"));
+  });
+});
+
+describe("formatProductSms", () => {
   it("fits a long product title into one segment", () => {
-    const body = formatBackInStockSms({
+    const body = formatProductSms({
+      what: "price drop to £12.99",
       productTitle: "Sony WH-1000XM5 Wireless Noise Cancelling Over-Ear Headphones – Midnight Blue, 30 hour battery",
       link: LINK,
     });
-    expect(body.startsWith("PageAlert: back in stock: \"Sony")).toBe(true);
+    expect(body.startsWith("PageAlert: price drop to £12.99: \"Sony")).toBe(true);
     expect(body.endsWith(LINK)).toBe(true);
     assertOneSegment(body);
   });

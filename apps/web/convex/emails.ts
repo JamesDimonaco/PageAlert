@@ -211,17 +211,19 @@ export const sendMatchAlert = internalAction({
   },
 });
 
-/** A watched product went from out of stock to in stock */
-export const sendBackInStockAlert = internalAction({
+/** A stock or price change on a watched product */
+export const sendProductAlert = internalAction({
   args: {
     to: v.string(),
     monitorName: v.string(),
     monitorId: v.string(),
     url: v.string(),
     productTitle: v.string(),
+    kind: v.union(v.literal("stock"), v.literal("price")),
+    headline: v.string(),
+    message: v.string(),
   },
   handler: async (ctx, args) => {
-    const host = safeHostname(args.url);
     const html = `
 <!DOCTYPE html>
 <html>
@@ -230,20 +232,17 @@ export const sendBackInStockAlert = internalAction({
   <div style="max-width:560px;margin:0 auto;padding:40px 20px">
     <div style="background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.1)">
       <div style="background:#047857;padding:24px 32px">
-        <h1 style="margin:0;color:#fff;font-size:20px;font-weight:600">Back in stock</h1>
+        <h1 style="margin:0;color:#fff;font-size:20px;font-weight:600">${esc(args.headline)}</h1>
         <p style="margin:4px 0 0;color:rgba(255,255,255,0.8);font-size:14px">${esc(args.monitorName)}</p>
       </div>
       <div style="padding:32px">
-        <p style="margin:0 0 24px;color:#333;font-size:16px">
-          <strong>${esc(args.productTitle)}</strong> is back in stock on
-          <a href="${safeHref(args.url)}" style="color:#4f46e5;text-decoration:none">${esc(host)}</a>.
-        </p>
+        <p style="margin:0 0 24px;color:#333;font-size:16px">${esc(args.message)}</p>
         <a href="${safeHref(args.url)}" style="display:inline-block;background:#047857;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:500;font-size:14px;margin-right:8px">View on site</a>
         <a href="${APP_URL}/dashboard/monitors/${args.monitorId}" style="display:inline-block;background:#f4f4f5;color:#333;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:500;font-size:14px">View in PageAlert</a>
       </div>
       <div style="padding:16px 32px;background:#f9fafb;border-top:1px solid #eee">
         <p style="margin:0;color:#999;font-size:12px">
-          You're receiving this because you asked to hear when this product is back in stock.
+          You're receiving this because you asked to hear about this product's ${args.kind}.
           <a href="${APP_URL}/dashboard/settings" style="color:#999">Manage notifications</a>
         </p>
       </div>
@@ -254,10 +253,10 @@ export const sendBackInStockAlert = internalAction({
 
     await send(ctx, {
       to: args.to,
-      subject: `Back in stock: ${args.productTitle}`,
+      subject: `${args.headline}: ${args.productTitle}`,
       html,
-      text: `Back in stock — ${args.monitorName}\n\n${args.productTitle} is back in stock on ${host}.\n\nView on site: ${args.url}\nView in PageAlert: ${APP_URL}/dashboard/monitors/${args.monitorId}`,
-      kind: "stock",
+      text: `${args.headline} — ${args.monitorName}\n\n${args.message}\n\nView on site: ${args.url}\nView in PageAlert: ${APP_URL}/dashboard/monitors/${args.monitorId}`,
+      kind: args.kind,
       monitorId: args.monitorId,
     });
   },

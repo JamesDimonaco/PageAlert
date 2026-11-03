@@ -1,13 +1,14 @@
-import { v, type Infer } from "convex/values";
+import { ConvexError, v, type Infer } from "convex/values";
 import { mutation, query, internalAction, internalQuery, type MutationCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { displayHost, effectiveIntervalMs, ERROR_RECOVERY_INTERVAL_MS, intervalToMs, isBlockedError, MAX_RETRIES, validateMonitorUrl } from "./shared";
-import { itemIdentity, RESUME_TOKEN_TTL_MS } from "@prowl/shared";
+import { currencyExponent, itemIdentity, RESUME_TOKEN_TTL_MS } from "@prowl/shared";
 import { effectiveTier, type Tier } from "./tiers";
 import { isBanned, requireLiveAccount } from "./account";
 import { reserveFallback, scraperDown } from "./admin";
 import { deliverAlert } from "./alerts";
+import { alertOnValidator } from "./schema";
 
 // ---- Resource Limits ----
 const MAX_NAME_LENGTH = 200;
@@ -529,7 +530,7 @@ export const update = mutation({
     schema: v.optional(v.any()),
     notificationChannels: v.optional(channelValidator),
     muted: v.optional(v.boolean()),
-    alertOn: v.optional(v.object({ backInStock: v.optional(v.boolean()) })),
+    alertOn: v.optional(alertOnValidator),
   },
   handler: async (ctx, { id, ...fields }) => {
     const userId = await getAuthUserId(ctx);
@@ -587,11 +588,38 @@ export const update = mutation({
     // Stock was not read while the option was off, and a new URL is a new
     // product. Either way the stored reading is stale, and an old "out of
     // stock" left in place would fire on the first read. Clearing it makes
-    // that read a baseline instead.
-    const stockTurnedOn = fields.alertOn?.backInStock === true && existing.alertOn?.backInStock !== true;
+    // that read a baseline instead. A new price choice resets the price the
+    // same way. Each resets only its own half, so editing one option keeps
+    // the other's history. Clearing the fingerprint makes the next check read.
+    const next = fields.alertOn;
+    const before = existing.alertOn;
+    const stockTurnedOn = next?.backInStock === true && before?.backInStock !== true;
+    const priceChoiceSet =
+      (next?.priceDrop === true || next?.priceBelow !== undefined) &&
+      (next.priceDrop !== before?.priceDrop ||
+        next.priceBelow?.amount !== before?.priceBelow?.amount ||
+        next.priceBelow?.currency !== before?.priceBelow?.currency);
+    if (next?.priceDrop && next.priceBelow !== undefined) {
+      throw new ConvexError("Pick any price drop or a target price, not both.");
+    }
+    if (
+      next?.priceBelow !== undefined &&
+      (!Number.isInteger(next.priceBelow.amount) || next.priceBelow.amount <= 0 || currencyExponent(next.priceBelow.currency) === null)
+    ) {
+      throw new ConvexError("The target price must be above zero, in a real currency.");
+    }
     const urlChanged = fields.url !== undefined && fields.url.trim() !== existing.url;
-    if (stockTurnedOn || urlChanged) {
+    if (urlChanged) {
       updates.lastSeen = undefined;
+      updates.productFingerprint = undefined;
+    } else if (stockTurnedOn || priceChoiceSet) {
+      const { inStock, price, currency, pendingPrice } = existing.lastSeen ?? {};
+      updates.lastSeen = {
+        ...(!stockTurnedOn && inStock !== undefined ? { inStock } : {}),
+        ...(!priceChoiceSet && price !== undefined && currency !== undefined
+          ? { price, currency, ...(pendingPrice !== undefined ? { pendingPrice } : {}) }
+          : {}),
+      };
       updates.productFingerprint = undefined;
     }
     // The schema, and the product title in it, describe the old page. Zero

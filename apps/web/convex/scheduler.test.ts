@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import schema from "./schema";
 import { api, internal } from "./_generated/api";
 import betterAuthSchema from "./betterAuth/schema";
@@ -9,7 +9,10 @@ import type { Doc } from "./_generated/dataModel";
 const modules = import.meta.glob("./**/*.*s");
 const betterAuthModules = import.meta.glob("./betterAuth/**/*.*s");
 
-async function seedProductMonitor(lastSeen?: Doc<"monitors">["lastSeen"]) {
+async function seedProductMonitor(
+  lastSeen?: Doc<"monitors">["lastSeen"],
+  alertOn: Doc<"monitors">["alertOn"] = { backInStock: true }
+) {
   const t = convexTest(schema, modules);
   t.registerComponent("betterAuth", betterAuthSchema, betterAuthModules);
   const id = await t.run((ctx) =>
@@ -22,24 +25,33 @@ async function seedProductMonitor(lastSeen?: Doc<"monitors">["lastSeen"]) {
       checkInterval: "1h",
       schema: { items: [{ title: "Sony WH-1000XM5" }] },
       matchCount: 0,
-      alertOn: { backInStock: true },
+      alertOn,
       lastSeen,
       createdAt: Date.now(),
       updatedAt: Date.now(),
     })
   );
-  const read = (inStock: boolean | null, url = "https://shop.test/xm5") =>
-    t.mutation(internal.scheduler.recordProductRead, {
+  const read = async (
+    inStock: boolean | null,
+    { price = null, currency = price === null ? null : "GBP", url = "https://shop.test/xm5" }: {
+      price?: number | null;
+      currency?: string | null;
+      url?: string;
+    } = {}
+  ) => {
+    const { alerts } = await t.mutation(internal.scheduler.recordProductRead, {
       monitorId: id,
       url,
-      productFingerprint: `hash-${String(inStock)}`,
+      productFingerprint: `hash-${String(inStock)}-${String(price)}`,
       inStock,
-      price: null,
-      currency: null,
+      price,
+      currency,
     });
+    return alerts.map((a) => (a.kind === "stock" ? "stock" : a.reason));
+  };
   const alertsScheduled = async () =>
     (await t.run((ctx) => ctx.db.system.query("_scheduled_functions").collect())).filter((job) =>
-      job.name.includes("sendBackInStockAlert")
+      job.name.includes("sendProductAlert")
     ).length;
   return { t, id, read, alertsScheduled };
 }
@@ -50,21 +62,21 @@ async function seedProductMonitor(lastSeen?: Doc<"monitors">["lastSeen"]) {
 describe("back-in-stock fires only on out of stock to in stock", () => {
   test("in stock to in stock is silent", async () => {
     const { read, alertsScheduled } = await seedProductMonitor({ inStock: true });
-    expect(await read(true)).toEqual({ backInStock: false });
+    expect(await read(true)).toEqual([]);
     expect(await alertsScheduled()).toBe(0);
   });
 
   test("out of stock to in stock alerts, once", async () => {
     const { read, alertsScheduled } = await seedProductMonitor({ inStock: false });
-    expect(await read(true)).toEqual({ backInStock: true });
-    expect(await read(true)).toEqual({ backInStock: false });
+    expect(await read(true)).toEqual(["stock"]);
+    expect(await read(true)).toEqual([]);
     expect(await alertsScheduled()).toBe(1);
   });
 
   // Switching the option on for a product already in stock must not alert.
   test("no baseline never alerts", async () => {
     const { read, alertsScheduled } = await seedProductMonitor();
-    expect(await read(true)).toEqual({ backInStock: false });
+    expect(await read(true)).toEqual([]);
     expect(await alertsScheduled()).toBe(0);
   });
 
@@ -72,10 +84,99 @@ describe("back-in-stock fires only on out of stock to in stock", () => {
   // or a glitch between out and in would swallow the restock.
   test("an unknown stock value never alerts and keeps the last known one", async () => {
     const { t, id, read, alertsScheduled } = await seedProductMonitor({ inStock: false });
-    expect(await read(null)).toEqual({ backInStock: false });
+    expect(await read(null)).toEqual([]);
     expect((await t.run((ctx) => ctx.db.get(id)))?.lastSeen?.inStock).toBe(false);
-    expect(await read(true)).toEqual({ backInStock: true });
+    expect(await read(true)).toEqual(["stock"]);
     expect(await alertsScheduled()).toBe(1);
+  });
+});
+
+// The user picked "any drop" to hear about cheaper prices, and nothing else.
+// A rise or a repeat of the same price would teach them to ignore the alert.
+describe("any price drop", () => {
+  const drop = { priceDrop: true };
+
+  test("a lower price alerts", async () => {
+    const { read } = await seedProductMonitor({ price: 29900, currency: "GBP" }, drop);
+    expect(await read(true, { price: 27900 })).toEqual(["drop"]);
+  });
+
+  test("the same price is silent", async () => {
+    const { read } = await seedProductMonitor({ price: 29900, currency: "GBP" }, drop);
+    expect(await read(true, { price: 29900 })).toEqual([]);
+  });
+
+  test("a higher price is silent", async () => {
+    const { read } = await seedProductMonitor({ price: 29900, currency: "GBP" }, drop);
+    expect(await read(true, { price: 31900 })).toEqual([]);
+  });
+
+  // An unreadable price is not a price of zero; reading it as one would
+  // announce a drop that never happened, then a rise, then a drop again.
+  test("a missing price never alerts and keeps the last known one", async () => {
+    const { read } = await seedProductMonitor({ price: 29900, currency: "GBP" }, drop);
+    expect(await read(true)).toEqual([]);
+    expect(await read(true, { price: 27900 })).toEqual(["drop"]);
+  });
+
+  // 2999 yen is not cheaper than 2999 pence; comparing across currencies
+  // would alert on a site switching region, not on a price change.
+  test("a price in another currency is not compared", async () => {
+    const { read } = await seedProductMonitor({ price: 29900, currency: "GBP" }, drop);
+    expect(await read(true, { price: 2999, currency: "JPY" })).toEqual([]);
+  });
+
+  // A misread (a monthly payment, an accessory's price) would announce a
+  // sale that is not there. A fall of more than half waits for a second read.
+  test("a single wild drop is silent and does not replace the price", async () => {
+    const { t, id, read } = await seedProductMonitor({ price: 29900, currency: "GBP" }, drop);
+    expect(await read(true, { price: 2500 })).toEqual([]);
+    expect(await read(true, { price: 29900 })).toEqual([]);
+    expect((await t.run((ctx) => ctx.db.get(id)))?.lastSeen).toEqual({ inStock: true, price: 29900, currency: "GBP" });
+  });
+
+  test("a big drop seen twice alerts once", async () => {
+    const { read } = await seedProductMonitor({ price: 29900, currency: "GBP" }, drop);
+    expect(await read(true, { price: 9900 })).toEqual([]);
+    expect(await read(true, { price: 9900 })).toEqual(["drop"]);
+    expect(await read(true, { price: 9900 })).toEqual([]);
+  });
+});
+
+// "Below £250" means "tell me when I can buy it for £250". Once said, saying
+// it again on every check while it stays cheap is noise.
+describe("below a target price", () => {
+  const below = { priceBelow: { amount: 25000, currency: "GBP" } };
+
+  test("crossing from above to at or below the target alerts", async () => {
+    const { read } = await seedProductMonitor({ price: 29900, currency: "GBP" }, below);
+    expect(await read(true, { price: 25000 })).toEqual(["below"]);
+  });
+
+  test("staying below the target does not alert again", async () => {
+    const { read } = await seedProductMonitor({ price: 29900, currency: "GBP" }, below);
+    expect(await read(true, { price: 24000 })).toEqual(["below"]);
+    expect(await read(true, { price: 23000 })).toEqual([]);
+  });
+
+  test("a drop that stays above the target is silent", async () => {
+    const { read } = await seedProductMonitor({ price: 29900, currency: "GBP" }, below);
+    expect(await read(true, { price: 27900 })).toEqual([]);
+  });
+
+  // A user setting a target the product already meets wants to hear now,
+  // not after the price has gone up and come back down.
+  test("a target already met on the first read alerts once", async () => {
+    const { read } = await seedProductMonitor({}, below);
+    expect(await read(true, { price: 24000 })).toEqual(["below"]);
+    expect(await read(true, { price: 23000 })).toEqual([]);
+  });
+
+  // 24,000 yen is not below £250. Comparing across currencies would alert
+  // on numbers that mean different money.
+  test("a price in another currency is never compared with the target", async () => {
+    const { read } = await seedProductMonitor({}, below);
+    expect(await read(true, { price: 24000, currency: "JPY" })).toEqual([]);
   });
 });
 
@@ -88,8 +189,44 @@ test("turning the option back on takes a fresh baseline", async () => {
 
   await owner.mutation(api.monitors.update, { id, alertOn: { backInStock: false } });
   await owner.mutation(api.monitors.update, { id, alertOn: { backInStock: true } });
-  expect(await read(true)).toEqual({ backInStock: false });
+  expect(await read(true)).toEqual([]);
   expect(await alertsScheduled()).toBe(0);
+});
+
+// A target set under today's price waits for the price to cross it.
+test("a target set under today's price waits for a crossing", async () => {
+  const { t, id, read } = await seedProductMonitor({ price: 29900, currency: "GBP" }, {});
+  await t.withIdentity({ subject: "user_1" }).mutation(api.monitors.update, {
+    id,
+    alertOn: { priceBelow: { amount: 25000, currency: "GBP" } },
+  });
+  expect(await read(true, { price: 27900 })).toEqual([]);
+  expect(await read(true, { price: 24000 })).toEqual(["below"]);
+});
+
+// Each option resets only its own baseline. Editing the price choice must
+// not lose a known "out of stock", or the restock it was waiting for would
+// arrive as a silent baseline. The same goes the other way for a known price.
+test("a new price choice keeps the stock history", async () => {
+  const { t, id, read } = await seedProductMonitor({ inStock: false, price: 29900, currency: "GBP" });
+  await t.withIdentity({ subject: "user_1" }).mutation(api.monitors.update, {
+    id,
+    alertOn: { backInStock: true, priceDrop: true },
+  });
+  const monitor = await t.run((ctx) => ctx.db.get(id));
+  expect(monitor?.lastSeen).toEqual({ inStock: false });
+  expect(monitor?.productFingerprint).toBeUndefined();
+  expect(await read(true, { price: 27900 })).toEqual(["stock"]);
+});
+
+test("turning stock alerts on keeps the price history", async () => {
+  const { t, id, read } = await seedProductMonitor({ inStock: true, price: 29900, currency: "GBP" }, { priceDrop: true });
+  await t.withIdentity({ subject: "user_1" }).mutation(api.monitors.update, {
+    id,
+    alertOn: { backInStock: true, priceDrop: true },
+  });
+  expect((await t.run((ctx) => ctx.db.get(id)))?.lastSeen).toEqual({ price: 29900, currency: "GBP" });
+  expect(await read(true, { price: 27900 })).toEqual(["drop"]);
 });
 
 // A read that started before the URL was edited describes the old product.
@@ -98,7 +235,7 @@ test("a read taken from a URL the monitor no longer has is dropped", async () =>
   const { t, id, read, alertsScheduled } = await seedProductMonitor({ inStock: false });
   await t.withIdentity({ subject: "user_1" }).mutation(api.monitors.update, { id, url: "https://shop.test/other" });
 
-  expect(await read(true, "https://shop.test/xm5")).toEqual({ backInStock: false });
+  expect(await read(true, { url: "https://shop.test/xm5" })).toEqual([]);
   const monitor = await t.run((ctx) => ctx.db.get(id));
   expect(monitor?.lastSeen).toBeUndefined();
   expect(monitor?.productFingerprint).toBeUndefined();
@@ -109,15 +246,79 @@ test("a read taken from a URL the monitor no longer has is dropped", async () =>
 
 // Mute is the user's "stop telling me about this" switch. A stock alert that
 // ignored it would break that promise.
-test("a muted monitor sends no back-in-stock alert", async () => {
+test("a muted monitor sends no product alert", async () => {
   const { t, id } = await seedProductMonitor({ inStock: false });
   const notifications = () => t.run((ctx) => ctx.db.query("notifications").collect());
 
   await t.run((ctx) => ctx.db.patch(id, { muted: true }));
-  await t.action(internal.scheduler.sendBackInStockAlert, { monitorId: id });
+  await t.action(internal.scheduler.sendProductAlert, { monitorId: id, alert: { kind: "stock" } });
   expect(await notifications()).toHaveLength(0);
 
   await t.run((ctx) => ctx.db.patch(id, { muted: false }));
-  await t.action(internal.scheduler.sendBackInStockAlert, { monitorId: id });
+  await t.action(internal.scheduler.sendProductAlert, { monitorId: id, alert: { kind: "stock" } });
   expect((await notifications()).map((n) => n.message)).toEqual(["Sony WH-1000XM5 is back in stock on shop.test."]);
+});
+
+// The price alert must quote prices in the product's own currency, never "$".
+test("a price alert names the old and new price in the product's currency", async () => {
+  const { t, id } = await seedProductMonitor({}, { priceDrop: true });
+  await t.action(internal.scheduler.sendProductAlert, {
+    monitorId: id,
+    alert: { kind: "price", reason: "drop", oldPrice: 29900, newPrice: 27900, currency: "GBP" },
+  });
+  const [notification] = await t.run((ctx) => ctx.db.query("notifications").collect());
+  expect(notification?.message).toBe("Sony WH-1000XM5 is now £279.00 on shop.test, down from £299.00.");
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
+});
+
+// The second read that confirms a big drop has to happen even when the page
+// has not changed since. If the held read advanced the fingerprint, the
+// unchanged-page gate would skip every later read and the drop would never
+// be confirmed.
+test("a held big drop is confirmed on the next check of an unchanged page", async () => {
+  vi.stubEnv("SCRAPER_URL", "https://scraper.test");
+  vi.stubEnv("SCRAPER_API_KEY", "key");
+  let scoreCalls = 0;
+  vi.stubGlobal("fetch", async (url: string) => {
+    if (url.endsWith("/api/quick-check")) {
+      return Response.json({
+        accessible: true,
+        contentHash: "page-2",
+        candidates: [],
+        totalEntries: 1,
+        product: { excerpt: "Sony WH-1000XM5 £99.00 In stock", hash: "product-2", matched: true },
+      });
+    }
+    if (url.endsWith("/api/score")) {
+      scoreCalls++;
+      return Response.json({
+        scored: [{
+          title: "Sony WH-1000XM5", url: null, price: null, snippet: "", matchScore: 90, matchReason: "",
+          stock: { inStock: true, price: 9900, currency: "GBP" },
+        }],
+      });
+    }
+    return new Response("not mocked", { status: 500 });
+  });
+
+  const { t, id, alertsScheduled } = await seedProductMonitor({ price: 29900, currency: "GBP" }, { priceDrop: true });
+  await t.run((ctx) =>
+    ctx.db.patch(id, { lastAiExtractAt: Date.now(), checkCount: 5, contentFingerprint: "page-1", productFingerprint: "product-1" })
+  );
+  const check = async () => {
+    await t.run((ctx) => ctx.db.patch(id, { nextCheckAt: 0 }));
+    await t.action(internal.scheduler.runScheduledChecks, {});
+  };
+
+  await check();
+  expect(await alertsScheduled()).toBe(0);
+  await check();
+  expect(await alertsScheduled()).toBe(1);
+  await check();
+  expect(await alertsScheduled()).toBe(1);
+  expect(scoreCalls).toBe(2);
 });

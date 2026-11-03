@@ -22,7 +22,7 @@ export function alertChannels(notificationChannels: string[] | undefined) {
  */
 export type AlertMessages = {
   /** Sent to PostHog as `alert_sent`'s type. */
-  type: "match" | "stock";
+  type: "match" | "stock" | "price";
   title: string;
   inAppMessage: string;
   pushBody: string;
