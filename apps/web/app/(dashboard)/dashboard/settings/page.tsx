@@ -27,6 +27,7 @@ import { authClient } from "@/lib/auth-client";
 import { toast } from "sonner";
 import {
   POSTHOG_KEY,
+  trackBetaFeatureToggled,
   trackUpgradePromptClicked,
 } from "@/lib/posthog";
 import { AnalyticsToggle } from "@/components/prowl/analytics-toggle";
@@ -99,6 +100,10 @@ export default function SettingsPage() {
   const [isDeleting, setIsDeleting] = useState(false);
   const deleteAccountMutation = useMutation(api.account.deleteAccount);
   const notifSettings = useQuery(api.notificationSettings.list);
+  const betaFeatures = useQuery(api.betaFeatures.list);
+  const setBetaFeature = useMutation(api.betaFeatures.set);
+  const findAProductOn = betaFeatures?.includes("find_a_product") ?? false;
+  const [isSavingBeta, setIsSavingBeta] = useState(false);
 
   const isPass = grantSource === "pass" && !!grantUntil;
   // A grant isn't a Polar subscription, so the portal has nothing to manage —
@@ -192,6 +197,44 @@ export default function SettingsPage() {
               </CardContent>
             </Card>
           )}
+
+          <Card className="border-border/30 bg-card/50 shadow-sm shadow-black/5">
+            <CardHeader className="pb-4">
+              <CardTitle className="text-lg font-semibold">Beta features</CardTitle>
+              <CardDescription className="text-sm">Try things before everyone else gets them</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-sm font-medium">Find a product</p>
+                  <p className="text-xs leading-relaxed text-muted-foreground">
+                    Type a product name and pick the shops to watch. It&apos;s an early version, so expect rough edges.
+                  </p>
+                </div>
+                <Button
+                  variant={findAProductOn ? "outline" : "default"}
+                  size="sm"
+                  disabled={betaFeatures === undefined || isSavingBeta}
+                  className="shrink-0"
+                  onClick={async () => {
+                    const enabled = !findAProductOn;
+                    setIsSavingBeta(true);
+                    try {
+                      await setBetaFeature({ feature: "find_a_product", enabled });
+                      trackBetaFeatureToggled({ feature: "find_a_product", enabled });
+                      toast.success(enabled ? "Find a product on" : "Find a product off");
+                    } catch {
+                      toast.error("Couldn't save that. Try again.");
+                    } finally {
+                      setIsSavingBeta(false);
+                    }
+                  }}
+                >
+                  {betaFeatures === undefined ? "Loading" : findAProductOn ? "Turn off" : "Turn on"}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
 
           <Card className="border-destructive/20 bg-card/50 shadow-sm shadow-black/5">
             <CardHeader className="pb-4">
