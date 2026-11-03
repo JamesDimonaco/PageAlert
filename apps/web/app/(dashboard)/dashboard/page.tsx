@@ -44,7 +44,8 @@ export default function DashboardPage() {
       name: `${source.name} (copy)`,
       url: source.url,
       prompt: source.prompt,
-      searchTerm: source.name,
+      // A clone of a clone is "X (copy) (copy)"; the search wants just X.
+      searchTerm: source.name.replace(/( \(copy\))+$/, ""),
     });
     return true;
   }
