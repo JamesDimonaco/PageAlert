@@ -294,6 +294,11 @@ export function trackListingReviewed(approved: boolean, props: { site: string; l
   trackEvent(approved ? "listing_approved" : "listing_dismissed", props);
 }
 
+/** Once per press, after the search settles. A failed search has a newCount of 0. */
+export function trackFindMoreListingsClicked(props: { newCount: number; failed: boolean }) {
+  trackEvent("find_more_listings_clicked", props);
+}
+
 export function trackProductCriteriaUpdated(props: {
   backInStock: boolean;
   price: "off" | "drop" | "below";

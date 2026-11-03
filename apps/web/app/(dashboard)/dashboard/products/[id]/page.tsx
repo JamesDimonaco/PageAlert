@@ -3,8 +3,8 @@
 import { use, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useMutation, useQuery } from "convex/react";
-import { ArrowLeft, ExternalLink, Loader2, MoreVertical, Pause, Play, Trash2 } from "lucide-react";
+import { useAction, useMutation, useQuery } from "convex/react";
+import { ArrowLeft, ExternalLink, Loader2, MoreVertical, Pause, Play, Search, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { SEARCH_REGIONS, formatMinorUnits } from "@prowl/shared";
 import { api } from "@/convex/_generated/api";
@@ -25,7 +25,12 @@ import { planNotes, ProductCriteriaForm } from "@/components/prowl/product-crite
 import { useTier } from "@/hooks/use-tier";
 import { toSafeUrl } from "@/lib/format";
 import { timeAgo } from "@/lib/time";
-import { trackListingReviewed, trackMonitorPaused, trackMonitorResumed } from "@/lib/posthog";
+import {
+  trackFindMoreListingsClicked,
+  trackListingReviewed,
+  trackMonitorPaused,
+  trackMonitorResumed,
+} from "@/lib/posthog";
 import { errorText } from "@/lib/utils";
 
 type Product = NonNullable<ReturnType<typeof useProduct>>;
@@ -48,7 +53,11 @@ export default function ProductPage({ params }: { params: Promise<{ id: string }
   const setListingDismissed = useMutation(api.monitorGroups.setListingDismissed);
   const setPaused = useMutation(api.monitorGroups.setPaused);
   const removeProduct = useMutation(api.monitorGroups.remove);
+  const findMore = useAction(api.productSearch.findMore);
   const router = useRouter();
+  const [finding, setFinding] = useState(false);
+  // Marked "New" until the user leaves the page.
+  const [newUrls, setNewUrls] = useState<ReadonlySet<string>>(new Set());
   const [showDismissed, setShowDismissed] = useState(false);
   const [busyUrls, setBusyUrls] = useState<ReadonlySet<string>>(new Set());
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -96,6 +105,29 @@ export default function ProductPage({ params }: { params: Promise<{ id: string }
         next.delete(url);
         return next;
       });
+    }
+  }
+
+  async function findMoreListings() {
+    setFinding(true);
+    try {
+      const { added, full: productFull } = await findMore({ groupId });
+      trackFindMoreListingsClicked({ newCount: added.length, failed: false });
+      setNewUrls((prev) => new Set([...prev, ...added]));
+      if (added.length > 0) {
+        toast.success(`Found ${added.length} new listing${added.length === 1 ? "" : "s"}`, {
+          description: productFull ? "This product is now full, so some weren't added." : undefined,
+        });
+      } else if (productFull) {
+        toast.info("This product is full", { description: "Nothing was added, and the search hasn't counted." });
+      } else {
+        toast.info("No new listings found", { description: "Everything the search found is already here." });
+      }
+    } catch (err) {
+      trackFindMoreListingsClicked({ newCount: 0, failed: true });
+      toast.error(errorText(err, FAILED));
+    } finally {
+      setFinding(false);
     }
   }
 
@@ -164,6 +196,7 @@ export default function ProductPage({ params }: { params: Promise<{ id: string }
             <ListingRow
               key={listing.url}
               listing={listing}
+              isNew={newUrls.has(listing.url)}
               busy={busyUrls.has(listing.url)}
               canWatch={!full}
               onWatch={() =>
@@ -205,15 +238,21 @@ export default function ProductPage({ params }: { params: Promise<{ id: string }
             />
           ))}
         </ul>
-        {dismissedCount > 0 && (
-          <button
-            type="button"
-            onClick={() => setShowDismissed(!showDismissed)}
-            className="text-xs text-muted-foreground underline hover:text-foreground"
-          >
-            {showDismissed ? "Hide dismissed" : `Show dismissed (${dismissedCount})`}
-          </button>
-        )}
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <Button size="sm" variant="outline" className="gap-2" onClick={() => void findMoreListings()} disabled={finding}>
+            {finding ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+            {finding ? "Searching…" : "Find more listings"}
+          </Button>
+          {dismissedCount > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowDismissed(!showDismissed)}
+              className="text-xs text-muted-foreground underline hover:text-foreground"
+            >
+              {showDismissed ? "Hide dismissed" : `Show dismissed (${dismissedCount})`}
+            </button>
+          )}
+        </div>
       </div>
 
       <ProductCriteriaForm
@@ -267,6 +306,7 @@ export default function ProductPage({ params }: { params: Promise<{ id: string }
 
 function ListingRow({
   listing,
+  isNew,
   busy,
   canWatch,
   onWatch,
@@ -275,6 +315,7 @@ function ListingRow({
   onRestore,
 }: {
   listing: Listing;
+  isNew: boolean;
   busy: boolean;
   canWatch: boolean;
   onWatch: () => void;
@@ -313,6 +354,7 @@ function ListingRow({
           <p className="text-sm font-medium leading-snug">{listing.title}</p>
         )}
         <div className="flex flex-wrap items-center gap-1.5 text-xs">
+          {isNew && <Badge>New</Badge>}
           {price && <span className="font-semibold">{price}</span>}
           {inStock !== undefined && (
             <Badge variant={inStock ? "secondary" : "destructive"}>{inStock ? "In stock" : "Out of stock"}</Badge>

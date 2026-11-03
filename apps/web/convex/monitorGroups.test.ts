@@ -53,6 +53,23 @@ afterEach(() => {
 });
 
 describe("monitorGroups.create", () => {
+  // Two links to one page would be two monitors, and two slots, for one listing.
+  it("keeps one listing per page when links differ only by tracking parameters", async () => {
+    const t = harness();
+    const { as } = await signUp(t, "a@example.test");
+    const tracked = { ...listing("argos.co.uk", true), url: "https://www.argos.co.uk/xm5?utm_source=x" };
+
+    const { groupId, monitorIds } = await as.mutation(api.monitorGroups.create, {
+      ...PRODUCT,
+      listings: [listing("argos.co.uk", true), tracked],
+    });
+
+    expect(monitorIds).toHaveLength(1);
+    expect((await as.query(api.monitorGroups.get, { id: groupId }))?.listings.map((l) => l.url)).toEqual([
+      "https://argos.co.uk/xm5",
+    ]);
+  });
+
   // The product only works if each ticked listing becomes a monitor carrying
   // the product's criteria, and nothing else does.
   it("creates one monitor per ticked listing, with the product's criteria, and keeps the rest as suggestions", async () => {

@@ -1,6 +1,6 @@
 import { ConvexError, v } from "convex/values";
 import { z } from "zod";
-import { action, internalMutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
+import { action, internalMutation, query, type ActionCtx, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { requireLiveAccount } from "./account";
 import { activityRow } from "./betaFeatures";
@@ -62,12 +62,12 @@ export const status = query({
  * Count one search against today's allowance, or refuse.
  *
  * Runs before the scraper call, in a mutation, so two searches started at
- * once cannot both read "4 used" and both go through. Also saves the region
- * as the user's default, which costs nothing extra here.
+ * once cannot both read "4 used" and both go through. Also saves
+ * `saveRegion` as the user's default, which costs nothing extra here.
  */
 export const reserve = internalMutation({
-  args: { userId: v.string(), region: v.string() },
-  handler: async (ctx, { userId, region }): Promise<{ day: string }> => {
+  args: { userId: v.string(), saveRegion: v.optional(v.string()) },
+  handler: async (ctx, { userId, saveRegion }): Promise<{ day: string }> => {
     await requireLiveAccount(ctx, userId);
     const activity = await activityRow(ctx, userId);
     if (!activity?.betaFeatures?.includes("find_a_product")) {
@@ -94,7 +94,9 @@ export const reserve = internalMutation({
       await ctx.db.insert("userTiers", { userId, tier: "free", ...counts, updatedAt: Date.now() });
     }
 
-    if (activity.searchRegion !== region) await ctx.db.patch(activity._id, { searchRegion: region });
+    if (saveRegion !== undefined && activity.searchRegion !== saveRegion) {
+      await ctx.db.patch(activity._id, { searchRegion: saveRegion });
+    }
 
     return { day };
   },
@@ -115,44 +117,99 @@ export const refund = internalMutation({
   },
 });
 
+/**
+ * Run one paid search, counted against the user's day: reserved first, and
+ * given back if it fails or finds nothing. Returns the day it was counted
+ * on, for a caller that has its own reason to give it back.
+ */
+async function findListings(
+  ctx: ActionCtx,
+  userId: string,
+  args: { query: string; region: string; saveRegion: boolean }
+): Promise<{ listings: ProductListing[]; day: string }> {
+  const query = args.query.trim();
+  const { region } = args;
+  if (query.length < 2 || query.length > 200) throw new ConvexError("Type a product name.");
+  if (!isSearchRegion(region)) throw new ConvexError("Pick a country to search.");
+
+  const scraperUrl = process.env.SCRAPER_URL;
+  const scraperKey = process.env.SCRAPER_API_KEY;
+  if (!scraperUrl || !scraperKey) {
+    console.error("[productSearch] SCRAPER_URL or SCRAPER_API_KEY not configured");
+    throw new ConvexError("Search isn't available right now.");
+  }
+
+  const { day } = await ctx.runMutation(internal.productSearch.reserve, {
+    userId,
+    ...(args.saveRegion ? { saveRegion: region } : {}),
+  });
+
+  let listings: ProductListing[];
+  try {
+    const res = await fetch(`${scraperUrl}/api/find-listings`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-api-key": scraperKey },
+      body: JSON.stringify({ query, region, userId }),
+      // The scraper stops itself at 110s, so this only fires if it hangs.
+      signal: AbortSignal.timeout(150_000),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    listings = scraperResponse.parse(await res.json()).listings;
+  } catch (error) {
+    console.error("[productSearch] Search failed:", error instanceof Error ? error.message : String(error));
+    await ctx.runMutation(internal.productSearch.refund, { userId, day });
+    throw new ConvexError("The search didn't work. It hasn't counted toward today's limit.");
+  }
+
+  if (listings.length === 0) await ctx.runMutation(internal.productSearch.refund, { userId, day });
+  return { listings, day };
+}
+
 export const search = action({
   args: { query: v.string(), region: v.string() },
   handler: async (ctx, args): Promise<ProductListing[]> => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new ConvexError("Sign in to search.");
+    const { listings } = await findListings(ctx, identity.subject, { ...args, saveRegion: true });
+    return listings;
+  },
+});
+
+/**
+ * Search again for a product's name and region, and add what's new to it as
+ * suggestions. Counts toward the daily limit like any search, even when all
+ * it finds is already in the product. Given back if nothing could be added
+ * because the product filled up, or was deleted, during the search. Returns
+ * the URLs it added, and whether the product filled up before everything new
+ * fit.
+ */
+export const findMore = action({
+  args: { groupId: v.id("monitorGroups") },
+  handler: async (ctx, { groupId }): Promise<{ added: string[]; full: boolean }> => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new ConvexError("Sign in to search.");
     const userId = identity.subject;
 
-    const query = args.query.trim();
-    if (query.length < 2 || query.length > 200) throw new ConvexError("Type a product name.");
-    if (!isSearchRegion(args.region)) throw new ConvexError("Pick a country to search.");
+    // Before the search is counted, so a product the user can't add to costs nothing.
+    const { name, region } = await ctx.runQuery(internal.monitorGroups.searchTarget, { userId, id: groupId });
+    // The product's region is not saved as the user's default: that is the
+    // region they last searched by hand.
+    const { listings, day } = await findListings(ctx, userId, { query: name, region, saveRegion: false });
+    if (listings.length === 0) return { added: [], full: false };
 
-    const scraperUrl = process.env.SCRAPER_URL;
-    const scraperKey = process.env.SCRAPER_API_KEY;
-    if (!scraperUrl || !scraperKey) {
-      console.error("[productSearch] SCRAPER_URL or SCRAPER_API_KEY not configured");
-      throw new ConvexError("Search isn't available right now.");
-    }
-
-    const { day } = await ctx.runMutation(internal.productSearch.reserve, { userId, region: args.region });
-
-    let listings: ProductListing[];
-    try {
-      const res = await fetch(`${scraperUrl}/api/find-listings`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-api-key": scraperKey },
-        body: JSON.stringify({ query, region: args.region, userId }),
-        // The scraper stops itself at 110s, so this only fires if it hangs.
-        signal: AbortSignal.timeout(150_000),
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      listings = scraperResponse.parse(await res.json()).listings;
-    } catch (error) {
-      console.error("[productSearch] Search failed:", error instanceof Error ? error.message : String(error));
+    const result = await ctx.runMutation(internal.monitorGroups.addSuggestions, {
+      userId,
+      id: groupId,
+      listings: listings.map((l) => ({
+        ...l,
+        price: l.price ?? undefined,
+        currency: l.currency ?? undefined,
+        inStock: l.inStock ?? undefined,
+      })),
+    });
+    if (result === null || (result.full && result.added.length === 0)) {
       await ctx.runMutation(internal.productSearch.refund, { userId, day });
-      throw new ConvexError("The search didn't work. It hasn't counted toward today's limit.");
     }
-
-    if (listings.length === 0) await ctx.runMutation(internal.productSearch.refund, { userId, day });
-    return listings;
+    return result ?? { added: [], full: false };
   },
 });
