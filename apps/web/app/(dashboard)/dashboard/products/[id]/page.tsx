@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { StatusBadge } from "@/components/prowl/status-badge";
 import { DeleteDialog } from "@/components/prowl/delete-dialog";
+import { UpgradeBanner } from "@/components/prowl/upgrade-banner";
 import { planNotes, ProductCriteriaForm } from "@/components/prowl/product-criteria-form";
 import { useTier } from "@/hooks/use-tier";
 import { toSafeUrl } from "@/lib/format";
@@ -41,7 +42,7 @@ export default function ProductPage({ params }: { params: Promise<{ id: string }
   const groupId = id as Id<"monitorGroups">;
   const product = useProduct(groupId);
   const monitors = useQuery(api.monitors.list);
-  const { maxMonitors, isLoading: tierLoading } = useTier();
+  const { tier, resolved: tierResolved, maxMonitors, isLoading: tierLoading } = useTier();
   const watchListing = useMutation(api.monitorGroups.watchListing);
   const unwatchListing = useMutation(api.monitorGroups.unwatchListing);
   const setListingDismissed = useMutation(api.monitorGroups.setListingDismissed);
@@ -111,6 +112,8 @@ export default function ProductPage({ params }: { params: Promise<{ id: string }
 
   return (
     <div className="space-y-6">
+      <UpgradeBanner tier={tier} tierResolved={tierResolved} atLimit={full} />
+
       <div className="flex items-center gap-3 overflow-hidden">
         <Link href="/dashboard" className="shrink-0">
           <Button variant="ghost" size="icon">
