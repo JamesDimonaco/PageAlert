@@ -49,4 +49,11 @@ describe("betaFeatures: Find a product", () => {
     await t.withIdentity({ subject: alice }).mutation(api.betaFeatures.set, { feature: "find_a_product", enabled: false });
     expect(await findAProduct(t, alice)).toBe(false);
   });
+
+  it("refuses a signed-out caller", async () => {
+    const t = harness();
+    await expect(t.mutation(api.betaFeatures.set, { feature: "find_a_product", enabled: true })).rejects.toThrow(
+      "Not authenticated"
+    );
+  });
 });

@@ -3,16 +3,20 @@ import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/s
 import { requireLiveAccount } from "./account";
 import { betaFeature, type BetaFeature } from "./schema";
 
+function activityRow(ctx: QueryCtx | MutationCtx, userId: string) {
+  return ctx.db
+    .query("userActivity")
+    .withIndex("by_userId", (q) => q.eq("userId", userId))
+    .unique();
+}
+
 /** Has this user switched the feature on? Off unless they have. */
 export async function hasBetaFeature(
   ctx: QueryCtx | MutationCtx,
   userId: string,
   feature: BetaFeature
 ): Promise<boolean> {
-  const row = await ctx.db
-    .query("userActivity")
-    .withIndex("by_userId", (q) => q.eq("userId", userId))
-    .unique();
+  const row = await activityRow(ctx, userId);
   return row?.betaFeatures?.includes(feature) ?? false;
 }
 
@@ -22,10 +26,7 @@ export const list = query({
   handler: async (ctx): Promise<BetaFeature[]> => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) return [];
-    const row = await ctx.db
-      .query("userActivity")
-      .withIndex("by_userId", (q) => q.eq("userId", identity.subject))
-      .unique();
+    const row = await activityRow(ctx, identity.subject);
     return row?.betaFeatures ?? [];
   },
 });
@@ -36,18 +37,15 @@ export const set = mutation({
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Not authenticated");
     const userId = identity.subject;
+    await requireLiveAccount(ctx, userId);
 
-    const row = await ctx.db
-      .query("userActivity")
-      .withIndex("by_userId", (q) => q.eq("userId", userId))
-      .unique();
+    const row = await activityRow(ctx, userId);
     const others = (row?.betaFeatures ?? []).filter((f) => f !== feature);
     const betaFeatures = enabled ? [...others, feature] : others;
     if (row) {
       await ctx.db.patch(row._id, { betaFeatures });
       return;
     }
-    await requireLiveAccount(ctx, userId);
     await ctx.db.insert("userActivity", { userId, lastSeenAt: Date.now(), betaFeatures });
   },
 });

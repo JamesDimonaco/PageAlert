@@ -103,6 +103,7 @@ export default function SettingsPage() {
   const betaFeatures = useQuery(api.betaFeatures.list);
   const setBetaFeature = useMutation(api.betaFeatures.set);
   const findAProductOn = betaFeatures?.includes("find_a_product") ?? false;
+  const [isSavingBeta, setIsSavingBeta] = useState(false);
 
   const isPass = grantSource === "pass" && !!grantUntil;
   // A grant isn't a Polar subscription, so the portal has nothing to manage —
@@ -213,15 +214,19 @@ export default function SettingsPage() {
                 <Button
                   variant={findAProductOn ? "outline" : "default"}
                   size="sm"
-                  disabled={betaFeatures === undefined}
+                  disabled={betaFeatures === undefined || isSavingBeta}
                   className="shrink-0"
                   onClick={async () => {
                     const enabled = !findAProductOn;
+                    setIsSavingBeta(true);
                     try {
                       await setBetaFeature({ feature: "find_a_product", enabled });
                       trackBetaFeatureToggled({ feature: "find_a_product", enabled });
+                      toast.success(enabled ? "Find a product on" : "Find a product off");
                     } catch {
                       toast.error("Couldn't save that. Try again.");
+                    } finally {
+                      setIsSavingBeta(false);
                     }
                   }}
                 >
