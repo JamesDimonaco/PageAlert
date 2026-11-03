@@ -38,18 +38,36 @@ const rawListing = z.object({
 
 const rawResponse = z.object({ listings: z.array(z.unknown()) });
 
+/** Index of the brace that closes the one at `start`, skipping braces inside strings. */
+function matchingBrace(text: string, start: number): number {
+  let depth = 0;
+  let inString = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (ch === "\\") i++;
+      else if (ch === '"') inString = false;
+    } else if (ch === '"') inString = true;
+    else if (ch === "{") depth++;
+    else if (ch === "}" && --depth === 0) return i;
+  }
+  return -1;
+}
+
 /**
- * The JSON object the answer ends with. Narration before it can hold braces of
- * its own, so this takes the first opening brace that parses through to the
- * last closing one.
+ * The answer's JSON object. Narration before or after it can hold braces of
+ * its own ("{GMT}"), so this takes the first balanced object that parses and
+ * has a listings key.
  */
-function finalJsonObject(text: string): unknown {
-  const end = text.lastIndexOf("}");
-  for (let start = text.indexOf("{"); start !== -1 && start < end; start = text.indexOf("{", start + 1)) {
+function answerObject(text: string): unknown {
+  for (let start = text.indexOf("{"); start !== -1; start = text.indexOf("{", start + 1)) {
+    const end = matchingBrace(text, start);
+    if (end === -1) continue;
     try {
-      return JSON.parse(text.slice(start, end + 1));
+      const value: unknown = JSON.parse(text.slice(start, end + 1));
+      if (typeof value === "object" && value !== null && "listings" in value) return value;
     } catch {
-      // Not the start of the answer; try the next brace.
+      // Narration, not the answer; try the next brace.
     }
   }
   throw new Error("AI returned no extractable JSON");
@@ -63,7 +81,7 @@ function finalJsonObject(text: string): unknown {
  * URLs and the first page per site, and converts prices to minor units.
  */
 export function parseListings(text: string): ProductListing[] {
-  const parsed = rawResponse.parse(finalJsonObject(text));
+  const parsed = rawResponse.parse(answerObject(text));
 
   const seen = new Set<string>();
   const listings: ProductListing[] = [];

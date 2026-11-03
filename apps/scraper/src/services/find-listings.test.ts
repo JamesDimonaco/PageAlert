@@ -74,6 +74,11 @@ describe("parseListings", () => {
     expect(parseListings(text).map((l) => l.site)).toEqual(["argos.co.uk"]);
   });
 
+  it("reads the answer when a note after it has braces", () => {
+    const text = `${answer([listing()])}\n\nPrices checked at 09:00 {GMT}.`;
+    expect(parseListings(text).map((l) => l.site)).toEqual(["argos.co.uk"]);
+  });
+
   it("fails when there is no answer to read, so the caller can refund the search", () => {
     expect(() => parseListings("Sorry, I could not search right now.")).toThrow();
     expect(() => parseListings('{"results": []}')).toThrow();

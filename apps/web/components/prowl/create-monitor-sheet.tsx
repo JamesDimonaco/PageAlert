@@ -90,9 +90,13 @@ export function CreateMonitorSheet({
   // interacts with the form for the first time after hydration, or when
   // they hit "Start over". See PROWL-038 Phase 3.
   const [hydratedFromDraft, setHydratedFromDraft] = useState(false);
-  const findAProduct = useQuery(api.betaFeatures.list)?.includes("find_a_product") ?? false;
+  const betaFeatures = useQuery(api.betaFeatures.list);
+  const findAProduct = betaFeatures?.includes("find_a_product") ?? false;
   const [tab, setTab] = useState<FormTab>("find");
-  const showUrlForm = !findAProduct || tab === "url";
+  const urlTab = !findAProduct || tab === "url";
+  // Nothing renders until the flag is known, or the URL form flashes up and
+  // then vanishes for beta users.
+  const showUrlForm = betaFeatures !== undefined && urlTab;
   // Mounted on the first visit to the tab, then kept, so URL-only users never
   // run its queries and results survive a look at the other tab.
   const [findVisited, setFindVisited] = useState(false);
@@ -156,7 +160,9 @@ export function CreateMonitorSheet({
         setCheckInterval(draft.checkInterval);
         setChannels(draft.channels);
         setHydratedFromDraft(true);
-        setTab("url");
+        // A name alone can be text carried over from Find a product, which is
+        // no reason to leave that tab.
+        setTab(draft.url || draft.prompt ? "url" : "find");
         trackMonitorDraftRestored();
         channelsSeededRef.current = true;
       } else {
@@ -301,7 +307,7 @@ export function CreateMonitorSheet({
               {step === "scanning" && (isInRetry ? "Retrying..." : "Scanning...")}
             </SheetTitle>
             <SheetDescription>
-              {step === "form" && (showUrlForm
+              {step === "form" && (urlTab
                 ? "Paste a URL and describe what you're looking for."
                 : "Type a product name and we'll find shops that sell it.")}
               {step === "scanning" && (isInRetry

@@ -5,7 +5,7 @@ let knownCurrencies: Set<string> | undefined;
  * JPY, 3 for KWD. Null for a code that is not a real currency, such as "UKP"
  * or "RMB": Intl formats any three letters, so it is checked against the list.
  */
-function currencyExponent(currency: string): number | null {
+export function currencyExponent(currency: string): number | null {
   knownCurrencies ??= new Set(Intl.supportedValuesOf("currency"));
   if (!knownCurrencies.has(currency)) return null;
   return new Intl.NumberFormat("en", { style: "currency", currency }).resolvedOptions().maximumFractionDigits ?? null;

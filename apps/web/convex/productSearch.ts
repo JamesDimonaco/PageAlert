@@ -3,7 +3,7 @@ import { z } from "zod";
 import { action, internalMutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { requireLiveAccount } from "./account";
-import { activityRow, hasBetaFeature } from "./betaFeatures";
+import { activityRow } from "./betaFeatures";
 import { effectiveTier, type Tier } from "./tiers";
 import { isSearchRegion, type ProductListing } from "@prowl/shared";
 
@@ -69,7 +69,8 @@ export const reserve = internalMutation({
   args: { userId: v.string(), region: v.string() },
   handler: async (ctx, { userId, region }): Promise<{ day: string }> => {
     await requireLiveAccount(ctx, userId);
-    if (!(await hasBetaFeature(ctx, userId, "find_a_product"))) {
+    const activity = await activityRow(ctx, userId);
+    if (!activity?.betaFeatures?.includes("find_a_product")) {
       throw new ConvexError("Find a product is a beta feature. Turn it on in Settings.");
     }
 
@@ -93,9 +94,7 @@ export const reserve = internalMutation({
       await ctx.db.insert("userTiers", { userId, tier: "free", ...counts, updatedAt: Date.now() });
     }
 
-    // The beta check above means this row exists.
-    const activity = await activityRow(ctx, userId);
-    if (activity && activity.searchRegion !== region) await ctx.db.patch(activity._id, { searchRegion: region });
+    if (activity.searchRegion !== region) await ctx.db.patch(activity._id, { searchRegion: region });
 
     return { day };
   },
