@@ -217,7 +217,8 @@ export default function DashboardPage() {
     statusFilter === "all" || (statusFilter === "muted" ? !!m.muted : m.status === statusFilter);
 
   // A product's monitors sit under one card, placed where its newest monitor
-  // would be. Until products load they wait, rather than flash up on their own.
+  // would be. Until products load they wait, rather than flash up on their
+  // own, and the empty states wait too.
   const products = useQuery(api.monitorGroups.listMine);
   const productById = new Map((products ?? []).map((p) => [p._id, p]));
   const placed = new Set<Id<"monitorGroups">>();
@@ -305,7 +306,7 @@ export default function DashboardPage() {
       </div>
 
       <div className="space-y-4">
-        {filtered.length === 0 ? (
+        {filtered.length === 0 && products !== undefined ? (
           monitors.length === 0 ? (
             <div className="rounded-xl bg-card/30 shadow-sm shadow-black/5 py-16 px-8">
               <div className="max-w-lg mx-auto text-center">

@@ -245,6 +245,23 @@ describe("monitorGroups.listMine", () => {
     const [product] = await as.query(api.monitorGroups.listMine, {});
     expect(product?.cheapest).toEqual({ price: 25999, currency: "GBP", site: "currys.co.uk" });
   });
+
+  // A tie decided by read order would make the card's price flip between checks.
+  it("breaks a currency tie by the product's region, then alphabetically", async () => {
+    const t = harness();
+    const { as } = await signUp(t, "a@example.test");
+    const { groupId, monitorIds } = await as.mutation(api.monitorGroups.create, PRODUCT);
+    await t.run(async (ctx) => {
+      await ctx.db.patch(monitorIds[1]!, { lastSeen: { price: 100, currency: "USD" } });
+      await ctx.db.patch(groupId, { region: "US" });
+    });
+    const [usProduct] = await as.query(api.monitorGroups.listMine, {});
+    expect(usProduct?.cheapest).toEqual({ price: 100, currency: "USD", site: "currys.co.uk" });
+
+    await t.run((ctx) => ctx.db.patch(groupId, { region: "DE" }));
+    const [deProduct] = await as.query(api.monitorGroups.listMine, {});
+    expect(deProduct?.cheapest).toEqual({ price: 27999, currency: "GBP", site: "argos.co.uk" });
+  });
 });
 
 // A monitor moved to another page would otherwise go on reading that page

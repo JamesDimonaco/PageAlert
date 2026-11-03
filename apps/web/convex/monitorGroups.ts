@@ -1,7 +1,7 @@
 import { ConvexError, v, type Infer } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
-import { isSearchRegion } from "@prowl/shared";
+import { isSearchRegion, SEARCH_REGIONS } from "@prowl/shared";
 import { hasBetaFeature } from "./betaFeatures";
 import { createMonitorForUser, validateAlertOn } from "./monitors";
 import { validateMonitorUrl } from "./shared";
@@ -229,11 +229,13 @@ export const listMine = query({
       .collect();
     return Promise.all(
       groups.map(async (group) => {
-        const watched: { listing: GroupListing; monitor: Doc<"monitors"> }[] = [];
-        for (const listing of group.listings) {
-          const monitor = listing.monitorId ? await ctx.db.get(listing.monitorId) : null;
-          if (monitor) watched.push({ listing, monitor });
-        }
+        const rows = await Promise.all(
+          group.listings.map(async (listing) => {
+            const monitor = listing.monitorId ? await ctx.db.get(listing.monitorId) : null;
+            return monitor ? [{ listing, monitor }] : [];
+          })
+        );
+        const watched = rows.flat();
 
         const prices: Price[] = watched.flatMap(({ listing, monitor }) => {
           const seen = monitor.lastSeen;
@@ -243,14 +245,16 @@ export const listMine = query({
         });
         // Prices in two currencies can't be compared. A product is searched in
         // one region, so a different currency is the odd one out: take the
-        // cheapest in the most common one.
-        const count = (currency: string) => prices.filter((p) => p.currency === currency).length;
-        let cheapest: Price | null = null;
-        for (const p of prices) {
-          if (!cheapest || count(p.currency) > count(cheapest.currency) || (p.currency === cheapest.currency && p.price < cheapest.price)) {
-            cheapest = p;
-          }
-        }
+        // cheapest in the most common one. On a tie, the region's own
+        // currency wins, then the first code alphabetically.
+        const home = SEARCH_REGIONS.find((r) => r.code === group.region)?.currency;
+        const counts = new Map<string, number>();
+        for (const p of prices) counts.set(p.currency, (counts.get(p.currency) ?? 0) + 1);
+        const currency = [...counts]
+          .sort(([a, n], [b, m]) => m - n || (a === home ? -1 : b === home ? 1 : a.localeCompare(b)))[0]?.[0];
+        const cheapest = prices
+          .filter((p) => p.currency === currency)
+          .reduce<Price | null>((best, p) => (best === null || p.price < best.price ? p : best), null);
 
         const stock = watched.flatMap(({ listing, monitor }) => {
           const inStock = monitor.lastSeen?.inStock ?? listing.inStock;
