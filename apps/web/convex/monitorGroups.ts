@@ -1,7 +1,7 @@
 import { ConvexError, v, type Infer } from "convex/values";
-import { mutation, query, type MutationCtx } from "./_generated/server";
+import { internalMutation, internalQuery, mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
-import { isSearchRegion, SEARCH_REGIONS } from "@prowl/shared";
+import { canonicalUrl, isSearchRegion, SEARCH_REGIONS } from "@prowl/shared";
 import { hasBetaFeature } from "./betaFeatures";
 import {
   allowedChannels,
@@ -23,6 +23,8 @@ import {
 
 /** One search returns at most 8, so a product starts with no more than that. */
 const MAX_LISTINGS = 8;
+/** "Find more listings" adds to a product up to this many, dismissed ones included. */
+const MAX_PRODUCT_LISTINGS = 24;
 const MAX_NAME_LENGTH = 200;
 const MAX_SITE_LENGTH = 100;
 
@@ -82,6 +84,33 @@ function isWatchableUrl(url: string): boolean {
   }
 }
 
+/** A listing as a search found it, before it has a state in a product. */
+const foundListingValidator = v.object({
+  site: v.string(),
+  url: v.string(),
+  title: v.string(),
+  price: v.optional(v.number()),
+  currency: v.optional(v.string()),
+  inStock: v.optional(v.boolean()),
+  label: listingLabelValidator,
+});
+type FoundListing = Infer<typeof foundListingValidator>;
+
+/**
+ * A found listing trimmed to fit, or null when its link could never be
+ * watched: a suggestion like that is no use later either.
+ */
+function cleanListing(listing: FoundListing, fallbackTitle: string): FoundListing | null {
+  const url = listing.url.trim();
+  if (!isWatchableUrl(url)) return null;
+  return {
+    ...listing,
+    url,
+    site: listing.site.slice(0, MAX_SITE_LENGTH),
+    title: listing.title.trim().slice(0, MAX_NAME_LENGTH) || fallbackTitle,
+  };
+}
+
 /**
  * Create a product from a search: one monitor per ticked listing, each with
  * the product's criteria, channels and interval. Unticked listings are kept
@@ -95,18 +124,7 @@ export const create = mutation({
     alertOn: alertOnValidator,
     notificationChannels: notificationChannelsValidator,
     checkInterval: checkIntervalValidator,
-    listings: v.array(
-      v.object({
-        site: v.string(),
-        url: v.string(),
-        title: v.string(),
-        price: v.optional(v.number()),
-        currency: v.optional(v.string()),
-        inStock: v.optional(v.boolean()),
-        label: listingLabelValidator,
-        watch: v.boolean(),
-      })
-    ),
+    listings: v.array(v.object({ ...foundListingValidator.fields, watch: v.boolean() })),
   },
   handler: async (ctx, args): Promise<{ groupId: Id<"monitorGroups">; monitorIds: Id<"monitors">[] }> => {
     const identity = await ctx.auth.getUserIdentity();
@@ -124,23 +142,15 @@ export const create = mutation({
 
     const seen = new Set<string>();
     const listings: (GroupListing & { watch: boolean })[] = [];
-    for (const { watch, ...listing } of args.listings) {
-      const url = listing.url.trim();
-      if (seen.has(url)) continue;
-      // A suggestion with a link we could never watch is no use later either.
-      if (!isWatchableUrl(url)) {
-        if (watch) throw new ConvexError(`We can't watch the link from ${listing.site}.`);
+    for (const { watch, ...found } of args.listings) {
+      const listing = cleanListing(found, name);
+      if (!listing) {
+        if (watch) throw new ConvexError(`We can't watch the link from ${found.site}.`);
         continue;
       }
-      seen.add(url);
-      listings.push({
-        ...listing,
-        url,
-        site: listing.site.slice(0, MAX_SITE_LENGTH),
-        title: listing.title.trim().slice(0, MAX_NAME_LENGTH) || name,
-        state: watch ? "watching" : "suggested",
-        watch,
-      });
+      if (seen.has(listing.url)) continue;
+      seen.add(listing.url);
+      listings.push({ ...listing, state: watch ? "watching" : "suggested", watch });
     }
     if (!listings.some((l) => l.watch)) throw new ConvexError("Tick at least one listing to watch.");
 
@@ -371,6 +381,58 @@ export const remove = mutation({
       userId,
       monitors.map((m) => m._id)
     );
+  },
+});
+
+async function groupWithRoom(ctx: QueryCtx, userId: string, id: Id<"monitorGroups">) {
+  const group = await ctx.db.get(id);
+  if (!group || group.userId !== userId) throw new ConvexError("Product not found.");
+  if (group.listings.length >= MAX_PRODUCT_LISTINGS) {
+    throw new ConvexError(
+      `This product already has ${MAX_PRODUCT_LISTINGS} listings, the most it can hold. Dismissed ones count too.`
+    );
+  }
+  return group;
+}
+
+/** What "Find more listings" searches for. Refuses a product the user doesn't own or that is full. */
+export const searchTarget = internalQuery({
+  args: { userId: v.string(), id: v.id("monitorGroups") },
+  handler: async (ctx, { userId, id }) => {
+    const { name, region } = await groupWithRoom(ctx, userId, id);
+    return { name, region };
+  },
+});
+
+/**
+ * Add a search's results to a product as suggestions. Skips any whose link is
+ * already in it, in any state, compared as canonical URLs so tracking
+ * parameters don't make a repeat look new. Accessories are not stored, the
+ * same as ones never revealed when a product is created. Stops at the cap;
+ * `full` says some new ones didn't fit.
+ */
+export const addSuggestions = internalMutation({
+  args: { userId: v.string(), id: v.id("monitorGroups"), listings: v.array(foundListingValidator) },
+  handler: async (ctx, { userId, id, listings }) => {
+    const group = await groupWithRoom(ctx, userId, id);
+    const seen = new Set(group.listings.map((l) => canonicalUrl(l.url)));
+    const added: GroupListing[] = [];
+    let full = false;
+    for (const found of listings) {
+      if (found.label === "accessory") continue;
+      const listing = cleanListing(found, group.name);
+      if (!listing || seen.has(canonicalUrl(listing.url))) continue;
+      if (group.listings.length + added.length >= MAX_PRODUCT_LISTINGS) {
+        full = true;
+        break;
+      }
+      seen.add(canonicalUrl(listing.url));
+      added.push({ ...listing, state: "suggested" });
+    }
+    if (added.length > 0) {
+      await ctx.db.patch(group._id, { listings: [...group.listings, ...added], updatedAt: Date.now() });
+    }
+    return { added: added.map((l) => l.url), full };
   },
 });
 
