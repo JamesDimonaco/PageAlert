@@ -186,9 +186,20 @@ describe("below a target price", () => {
     const { t, id, read } = await seedProductMonitor({}, { priceBelow: { amount: 10000, currency: "USD" } });
     expect(await read(true, { price: 9000, currency: "USD" })).toEqual(["below"]);
     expect(await read(true, { price: 12000, currency: "CAD" })).toEqual([]);
-    expect((await t.run((ctx) => ctx.db.get(id)))?.lastSeen).toEqual({ inStock: true, price: 9000, currency: "USD" });
+    expect((await t.run((ctx) => ctx.db.get(id)))?.lastSeen).toMatchObject({ price: 9000, currency: "USD" });
     expect(await read(true, { price: 9000, currency: "USD" })).toEqual([]);
+    expect((await t.run((ctx) => ctx.db.get(id)))?.lastSeen).toEqual({ inStock: true, price: 9000, currency: "USD" });
   });
+});
+
+// A site that really moves to another currency would otherwise keep the old
+// price forever, and price alerts would never fire again.
+test("two reads in a new currency make it the baseline, with no alert for the switch", async () => {
+  const { t, id, read } = await seedProductMonitor({ price: 29900, currency: "GBP" }, { priceDrop: true });
+  expect(await read(true, { price: 35000, currency: "USD" })).toEqual([]);
+  expect(await read(true, { price: 35000, currency: "USD" })).toEqual([]);
+  expect((await t.run((ctx) => ctx.db.get(id)))?.lastSeen).toEqual({ inStock: true, price: 35000, currency: "USD" });
+  expect(await read(true, { price: 34000, currency: "USD" })).toEqual(["drop"]);
 });
 
 // Nothing is read while the option is off, so the stored "out of stock" goes

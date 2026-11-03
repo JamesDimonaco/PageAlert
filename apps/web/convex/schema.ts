@@ -137,6 +137,9 @@ export default defineSchema({
       pendingPrice: v.optional(v.number()),
       // Confirming reads of pendingPrice that came back with no price.
       pendingAttempts: v.optional(v.number()),
+      // A price read in another currency than `currency`. A second read in it
+      // makes it the new baseline. See recordProductRead.
+      pendingCurrency: v.optional(v.string()),
     })),
     // Hash of the product's own text at the last read, or of the whole page
     // when its title could not be found — see productExcerpt
