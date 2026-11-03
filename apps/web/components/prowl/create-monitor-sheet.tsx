@@ -93,6 +93,10 @@ export function CreateMonitorSheet({
   const findAProduct = useQuery(api.betaFeatures.list)?.includes("find_a_product") ?? false;
   const [tab, setTab] = useState<FormTab>("find");
   const showUrlForm = !findAProduct || tab === "url";
+  // Mounted on the first visit to the tab, then kept, so URL-only users never
+  // run its queries and results survive a look at the other tab.
+  const [findVisited, setFindVisited] = useState(false);
+  if (findAProduct && tab === "find" && !findVisited) setFindVisited(true);
 
   // Timer
   const [elapsed, setElapsed] = useState(0);
@@ -315,15 +319,16 @@ export function CreateMonitorSheet({
                     <TabsTrigger value="url">Paste a URL</TabsTrigger>
                   </TabsList>
                 </Tabs>
-                {/* Hidden rather than unmounted, so results survive a look at the other tab. */}
-                <div hidden={tab !== "find"}>
-                  <FindProductTab
-                    onPasteUrl={(typed) => {
-                      if (typed) setName(typed);
-                      setTab("url");
-                    }}
-                  />
-                </div>
+                {findVisited && (
+                  <div hidden={tab !== "find"}>
+                    <FindProductTab
+                      onPasteUrl={(typed) => {
+                        if (typed) setName(typed);
+                        setTab("url");
+                      }}
+                    />
+                  </div>
+                )}
               </>
             )}
 

@@ -65,7 +65,13 @@ export function FindProductTab({ onPasteUrl }: FindProductTabProps) {
   }, [needsGuess]);
 
   const regionInfo = SEARCH_REGIONS.find((r) => r.code === region);
-  const outOfSearches = status?.remaining === 0;
+  // The count resets at UTC midnight, the day the server counts on.
+  const remaining = status
+    ? status.day === new Date().toISOString().slice(0, 10)
+      ? Math.max(0, status.limit - status.used)
+      : status.limit
+    : undefined;
+  const outOfSearches = remaining === 0;
 
   async function runSearch() {
     if (!region || query.trim().length < 2) return;
@@ -155,7 +161,7 @@ export function FindProductTab({ onPasteUrl }: FindProductTabProps) {
           )}
           {status && (
             <span>
-              {status.remaining} of {status.limit} searches left today
+              {remaining} of {status.limit} searches left today
             </span>
           )}
         </div>

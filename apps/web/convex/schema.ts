@@ -302,9 +302,11 @@ export default defineSchema({
     // carrier-facing policy promises three a day. See sms.claimVerification.
     smsCodeDay: v.optional(v.string()), // YYYY-MM-DD UTC
     smsCodeDayCount: v.optional(v.number()),
-    // Find a product searches today, counted like the SMS day. See productSearch.ts.
+    // Find a product searches today, counted like the SMS day. Count is what the
+    // user sees, less refunds; attempts counts every paid call. See productSearch.ts.
     productSearchDay: v.optional(v.string()), // YYYY-MM-DD UTC
     productSearchCount: v.optional(v.number()),
+    productSearchAttempts: v.optional(v.number()),
     reviewDismissed: v.optional(v.boolean()),
     updatedAt: v.number(),
   }).index("by_userId", ["userId"]),

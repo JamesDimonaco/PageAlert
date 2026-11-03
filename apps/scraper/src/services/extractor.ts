@@ -268,7 +268,7 @@ function repairTruncatedJson(json: string): string | null {
 }
 
 /** Try multiple strategies to extract a JSON string from AI response text */
-export function extractJson(text: string): string | null {
+function extractJson(text: string): string | null {
   const trimmed = text.trim();
 
   // Strategy 1: Already valid JSON

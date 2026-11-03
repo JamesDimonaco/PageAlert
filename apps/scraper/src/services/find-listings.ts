@@ -1,12 +1,15 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import { SEARCH_REGIONS, toMinorUnits, type ProductListing, type SearchRegion } from "@prowl/shared";
-import { extractJson, getClient, trackingParams } from "./extractor.js";
+import { getClient, trackingParams } from "./extractor.js";
 
 export const MAX_LISTINGS = 8;
 const MAX_SEARCHES = 5;
 // A long search can come back as pause_turn; each resume is another billed call.
 const MAX_RESUMES = 2;
+// Every call, resumes and SDK retries included, ends by then. Kept well under
+// the 150s Convex waits, so the caller always gets an answer it can refund on.
+const SEARCH_BUDGET_MS = 110_000;
 
 const FIND_PROMPT = `You find product pages in online shops.
 
@@ -36,6 +39,23 @@ const rawListing = z.object({
 const rawResponse = z.object({ listings: z.array(z.unknown()) });
 
 /**
+ * The JSON object the answer ends with. Narration before it can hold braces of
+ * its own, so this takes the first opening brace that parses through to the
+ * last closing one.
+ */
+function finalJsonObject(text: string): unknown {
+  const end = text.lastIndexOf("}");
+  for (let start = text.indexOf("{"); start !== -1 && start < end; start = text.indexOf("{", start + 1)) {
+    try {
+      return JSON.parse(text.slice(start, end + 1));
+    } catch {
+      // Not the start of the answer; try the next brace.
+    }
+  }
+  throw new Error("AI returned no extractable JSON");
+}
+
+/**
  * Turn the model's JSON into listings we can show.
  *
  * Drops entries that fail validation rather than the whole answer, since one
@@ -43,9 +63,7 @@ const rawResponse = z.object({ listings: z.array(z.unknown()) });
  * URLs and the first page per site, and converts prices to minor units.
  */
 export function parseListings(text: string): ProductListing[] {
-  const json = extractJson(text);
-  if (!json) throw new Error("AI returned no extractable JSON");
-  const parsed = rawResponse.parse(JSON.parse(json));
+  const parsed = rawResponse.parse(finalJsonObject(text));
 
   const seen = new Set<string>();
   const listings: ProductListing[] = [];
@@ -87,11 +105,16 @@ export async function findListings(query: string, region: SearchRegion, userId?:
     { role: "user", content: `Product: ${query}\nCountry: ${country}` },
   ];
 
+  const signal = AbortSignal.timeout(SEARCH_BUDGET_MS);
   let message: Anthropic.Message | undefined;
   for (let call = 0; call <= MAX_RESUMES; call++) {
     message = await client.messages.create({
       model: "claude-sonnet-5",
       max_tokens: 16000,
+      // Sonnet 5 thinks by default and those tokens come out of max_tokens,
+      // shared here with the search results the model reads. Finding pages and
+      // labelling them does not need the reasoning; the answer needs the room.
+      thinking: { type: "disabled" },
       system: FIND_PROMPT,
       tools: [
         {
@@ -103,15 +126,19 @@ export async function findListings(query: string, region: SearchRegion, userId?:
       ],
       messages,
       ...trackingParams(userId),
-    });
+    }, { signal });
     if (message.stop_reason !== "pause_turn") break;
     messages.push({ role: "assistant", content: message.content });
   }
   if (!message || message.stop_reason === "pause_turn") throw new Error("Search did not finish");
   if (message.stop_reason === "max_tokens") throw new Error("AI output hit the token limit");
 
-  // Search answers split the text into cited blocks; joined, they are the JSON.
+  // The answer is the text after the last search result. It can arrive as
+  // several cited blocks, which joined make the JSON; text before that is
+  // narration between searches.
+  const types = message.content.map((block) => block.type);
   const text = message.content
+    .slice(types.lastIndexOf("web_search_tool_result") + 1)
     .filter((block): block is Anthropic.TextBlock => block.type === "text")
     .map((block) => block.text)
     .join("");

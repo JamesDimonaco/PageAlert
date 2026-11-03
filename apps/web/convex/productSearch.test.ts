@@ -75,7 +75,7 @@ describe("productSearch.search", () => {
     for (let i = 0; i < 5; i++) {
       expect(await user.action(api.productSearch.search, SEARCH)).toHaveLength(1);
     }
-    expect((await user.query(api.productSearch.status, {}))?.remaining).toBe(0);
+    expect((await user.query(api.productSearch.status, {}))?.used).toBe(5);
     await expect(user.action(api.productSearch.search, SEARCH)).rejects.toThrow("all 5 searches");
     expect(fetchMock).toHaveBeenCalledTimes(5);
   });
@@ -86,7 +86,7 @@ describe("productSearch.search", () => {
     scraperReturns(() => new Response("{}", { status: 500 }));
 
     await expect(user.action(api.productSearch.search, SEARCH)).rejects.toThrow("hasn't counted");
-    expect((await user.query(api.productSearch.status, {}))?.remaining).toBe(5);
+    expect((await user.query(api.productSearch.status, {}))?.used).toBe(0);
   });
 
   it("does not count a search that found nothing", async () => {
@@ -95,7 +95,30 @@ describe("productSearch.search", () => {
     scraperReturns(() => new Response(JSON.stringify({ listings: [] }), { status: 200 }));
 
     expect(await user.action(api.productSearch.search, SEARCH)).toEqual([]);
-    expect((await user.query(api.productSearch.status, {}))?.remaining).toBe(5);
+    expect((await user.query(api.productSearch.status, {}))?.used).toBe(0);
+  });
+
+  it("refunds a 200 whose body is not listings", async () => {
+    const t = harness();
+    const user = await signUp(t);
+    scraperReturns(() => new Response(JSON.stringify({ listings: [{ url: 1 }] }), { status: 200 }));
+
+    await expect(user.action(api.productSearch.search, SEARCH)).rejects.toThrow("hasn't counted");
+    expect((await user.query(api.productSearch.status, {}))?.used).toBe(0);
+  });
+
+  it("stops retries at a hidden ceiling even though failures are refunded", async () => {
+    const t = harness();
+    const user = await signUp(t);
+    const fetchMock = scraperReturns(() => new Response("{}", { status: 500 }));
+
+    // Free is 5 a day, so the ceiling is 3 x 5 = 15 paid calls.
+    for (let i = 0; i < 15; i++) {
+      await expect(user.action(api.productSearch.search, SEARCH)).rejects.toThrow("hasn't counted");
+    }
+    await expect(user.action(api.productSearch.search, SEARCH)).rejects.toThrow("isn't working for you today");
+    expect(fetchMock).toHaveBeenCalledTimes(15);
+    expect((await user.query(api.productSearch.status, {}))?.used).toBe(0);
   });
 
   it("saves the region as the user's default", async () => {

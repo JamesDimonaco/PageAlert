@@ -1,25 +1,34 @@
 import { ConvexError, v } from "convex/values";
+import { z } from "zod";
 import { action, internalMutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { requireLiveAccount } from "./account";
-import { hasBetaFeature } from "./betaFeatures";
+import { activityRow, hasBetaFeature } from "./betaFeatures";
 import { effectiveTier, type Tier } from "./tiers";
 import { isSearchRegion, type ProductListing } from "@prowl/shared";
 
 const DAILY_SEARCH_LIMITS: Record<Tier, number> = { free: 5, sprint: 15, pro: 30, max: 100 };
 
+/**
+ * Paid calls allowed per day, refunded or not. Refunds keep failed searches
+ * off the user's count, so without this a broken or gamed search could be
+ * retried, and billed, without end.
+ */
+const attemptCeiling = (limit: number) => Math.max(10, 3 * limit);
+
 /** Today as a UTC date, the same day every other allowance in tiers.ts counts. */
 const today = () => new Date().toISOString().slice(0, 10);
 
-const listingValidator = v.object({
-  site: v.string(),
-  url: v.string(),
-  title: v.string(),
-  price: v.union(v.number(), v.null()),
-  currency: v.union(v.string(), v.null()),
-  inStock: v.union(v.boolean(), v.null()),
-  label: v.union(v.literal("same"), v.literal("similar"), v.literal("accessory")),
+const listingSchema = z.object({
+  site: z.string(),
+  url: z.string(),
+  title: z.string(),
+  price: z.number().int().nullable(),
+  currency: z.string().nullable(),
+  inStock: z.boolean().nullable(),
+  label: z.enum(["same", "similar", "accessory"]),
 });
+const scraperResponse = z.object({ listings: z.array(listingSchema).max(8) });
 
 function tierRow(ctx: QueryCtx | MutationCtx, userId: string) {
   return ctx.db
@@ -28,24 +37,24 @@ function tierRow(ctx: QueryCtx | MutationCtx, userId: string) {
     .unique();
 }
 
-function activityRow(ctx: QueryCtx | MutationCtx, userId: string) {
-  return ctx.db
-    .query("userActivity")
-    .withIndex("by_userId", (q) => q.eq("userId", userId))
-    .unique();
-}
-
-/** Searches left today, and the region the user last searched. */
+/**
+ * The user's search count, the day it was counted on, and their last region.
+ * The client compares `day` with its own UTC date, because a query can't read
+ * the clock: a count from yesterday means a full allowance today.
+ */
 export const status = query({
   args: {},
   handler: async (ctx) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) return null;
     const record = await tierRow(ctx, identity.subject);
-    const limit = DAILY_SEARCH_LIMITS[effectiveTier(record)];
-    const used = record?.productSearchDay === today() ? (record.productSearchCount ?? 0) : 0;
     const activity = await activityRow(ctx, identity.subject);
-    return { remaining: Math.max(0, limit - used), limit, region: activity?.searchRegion ?? null };
+    return {
+      day: record?.productSearchDay ?? null,
+      used: record?.productSearchCount ?? 0,
+      limit: DAILY_SEARCH_LIMITS[effectiveTier(record)],
+      region: activity?.searchRegion ?? null,
+    };
   },
 });
 
@@ -67,21 +76,21 @@ export const reserve = internalMutation({
     const day = today();
     const record = await tierRow(ctx, userId);
     const limit = DAILY_SEARCH_LIMITS[effectiveTier(record)];
-    const used = record?.productSearchDay === day ? (record.productSearchCount ?? 0) : 0;
+    const isToday = record?.productSearchDay === day;
+    const used = isToday ? (record?.productSearchCount ?? 0) : 0;
+    const attempts = isToday ? (record?.productSearchAttempts ?? 0) : 0;
     if (used >= limit) {
       throw new ConvexError(`You've used all ${limit} searches for today. Paste a URL instead, or search again tomorrow.`);
     }
+    if (attempts >= attemptCeiling(limit)) {
+      throw new ConvexError("Search isn't working for you today. Paste a URL instead, or try again tomorrow.");
+    }
 
+    const counts = { productSearchDay: day, productSearchCount: used + 1, productSearchAttempts: attempts + 1 };
     if (record) {
-      await ctx.db.patch(record._id, { productSearchDay: day, productSearchCount: used + 1 });
+      await ctx.db.patch(record._id, counts);
     } else {
-      await ctx.db.insert("userTiers", {
-        userId,
-        tier: "free",
-        productSearchDay: day,
-        productSearchCount: 1,
-        updatedAt: Date.now(),
-      });
+      await ctx.db.insert("userTiers", { userId, tier: "free", ...counts, updatedAt: Date.now() });
     }
 
     // The beta check above means this row exists.
@@ -95,7 +104,7 @@ export const reserve = internalMutation({
 /**
  * Give back a search that failed or found nothing. Takes the day it was
  * reserved on, so one that fails across UTC midnight does not take a search
- * off the new day's count.
+ * off the new day's count. Attempts are never given back.
  */
 export const refund = internalMutation({
   args: { userId: v.string(), day: v.string() },
@@ -109,7 +118,6 @@ export const refund = internalMutation({
 
 export const search = action({
   args: { query: v.string(), region: v.string() },
-  returns: v.array(listingValidator),
   handler: async (ctx, args): Promise<ProductListing[]> => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new ConvexError("Sign in to search.");
@@ -134,11 +142,11 @@ export const search = action({
         method: "POST",
         headers: { "Content-Type": "application/json", "x-api-key": scraperKey },
         body: JSON.stringify({ query, region: args.region, userId }),
-        // Several web searches plus the model's answer; usually well under this.
+        // The scraper stops itself at 110s, so this only fires if it hangs.
         signal: AbortSignal.timeout(150_000),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      listings = ((await res.json()) as { listings: ProductListing[] }).listings;
+      listings = scraperResponse.parse(await res.json()).listings;
     } catch (error) {
       console.error("[productSearch] Search failed:", error instanceof Error ? error.message : String(error));
       await ctx.runMutation(internal.productSearch.refund, { userId, day });

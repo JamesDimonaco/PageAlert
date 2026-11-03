@@ -69,6 +69,11 @@ describe("parseListings", () => {
     expect(parseListings(answer(many))).toHaveLength(8);
   });
 
+  it("reads the answer past narration that has braces of its own", () => {
+    const text = `I'll search for {Sony WH-1000XM5} in UK shops.\n\nHere is what I found:\n${answer([listing()])}`;
+    expect(parseListings(text).map((l) => l.site)).toEqual(["argos.co.uk"]);
+  });
+
   it("fails when there is no answer to read, so the caller can refund the search", () => {
     expect(() => parseListings("Sorry, I could not search right now.")).toThrow();
     expect(() => parseListings('{"results": []}')).toThrow();

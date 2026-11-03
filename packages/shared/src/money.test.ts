@@ -17,6 +17,9 @@ describe("toMinorUnits", () => {
 
   it("refuses what it cannot convert honestly", () => {
     expect(toMinorUnits(10, "NOPE")).toBeNull();
+    // Well-formed but not ISO 4217; Intl would format them happily.
+    expect(toMinorUnits(10, "UKP")).toBeNull();
+    expect(toMinorUnits(10, "RMB")).toBeNull();
     expect(toMinorUnits(-1, "GBP")).toBeNull();
     expect(toMinorUnits(Number.NaN, "GBP")).toBeNull();
   });

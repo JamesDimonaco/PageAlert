@@ -3,7 +3,7 @@ import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/s
 import { requireLiveAccount } from "./account";
 import { betaFeature, type BetaFeature } from "./schema";
 
-function activityRow(ctx: QueryCtx | MutationCtx, userId: string) {
+export function activityRow(ctx: QueryCtx | MutationCtx, userId: string) {
   return ctx.db
     .query("userActivity")
     .withIndex("by_userId", (q) => q.eq("userId", userId))
