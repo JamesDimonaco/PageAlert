@@ -275,11 +275,13 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-// The second read that confirms a big drop has to happen even when the page
-// has not changed since. If the held read advanced the fingerprint, the
-// unchanged-page gate would skip every later read and the drop would never
-// be confirmed.
-test("a held big drop is confirmed on the next check of an unchanged page", async () => {
+type Stock = { inStock: boolean | null; price: number | null; currency: string | null };
+
+/**
+ * A product monitor on a page that never changes, whose product reads return
+ * `reads` in turn (the last one repeats). Returns how many reads were paid for.
+ */
+async function onUnchangedPage(reads: Stock[]) {
   vi.stubEnv("SCRAPER_URL", "https://scraper.test");
   vi.stubEnv("SCRAPER_API_KEY", "key");
   let scoreCalls = 0;
@@ -294,18 +296,17 @@ test("a held big drop is confirmed on the next check of an unchanged page", asyn
       });
     }
     if (url.endsWith("/api/score")) {
+      const stock = reads[Math.min(scoreCalls, reads.length - 1)];
       scoreCalls++;
       return Response.json({
-        scored: [{
-          title: "Sony WH-1000XM5", url: null, price: null, snippet: "", matchScore: 90, matchReason: "",
-          stock: { inStock: true, price: 9900, currency: "GBP" },
-        }],
+        scored: [{ title: "Sony WH-1000XM5", url: null, price: null, snippet: "", matchScore: 90, matchReason: "", stock }],
       });
     }
     return new Response("not mocked", { status: 500 });
   });
 
-  const { t, id, alertsScheduled } = await seedProductMonitor({ price: 29900, currency: "GBP" }, { priceDrop: true });
+  const seeded = await seedProductMonitor({ price: 29900, currency: "GBP" }, { priceDrop: true });
+  const { t, id } = seeded;
   await t.run((ctx) =>
     ctx.db.patch(id, { lastAiExtractAt: Date.now(), checkCount: 5, contentFingerprint: "page-1", productFingerprint: "product-1" })
   );
@@ -313,6 +314,15 @@ test("a held big drop is confirmed on the next check of an unchanged page", asyn
     await t.run((ctx) => ctx.db.patch(id, { nextCheckAt: 0 }));
     await t.action(internal.scheduler.runScheduledChecks, {});
   };
+  return { ...seeded, check, scoreCalls: () => scoreCalls };
+}
+
+// The second read that confirms a big drop has to happen even when the page
+// has not changed since. If the held read advanced the fingerprint, the
+// unchanged-page gate would skip every later read and the drop would never
+// be confirmed.
+test("a held big drop is confirmed on the next check of an unchanged page", async () => {
+  const { check, alertsScheduled, scoreCalls } = await onUnchangedPage([{ inStock: true, price: 9900, currency: "GBP" }]);
 
   await check();
   expect(await alertsScheduled()).toBe(0);
@@ -320,5 +330,25 @@ test("a held big drop is confirmed on the next check of an unchanged page", asyn
   expect(await alertsScheduled()).toBe(1);
   await check();
   expect(await alertsScheduled()).toBe(1);
-  expect(scoreCalls).toBe(2);
+  expect(scoreCalls()).toBe(2);
+});
+
+// If the confirming read failed or disagreed and the price stayed held, the
+// old fingerprint would force a paid read on every check, forever.
+test.each([
+  ["fails", { inStock: true, price: null, currency: null }],
+  ["reads another wild price", { inStock: true, price: 5000, currency: "GBP" }],
+])("a held big drop whose confirming read %s is dropped after that one read", async (_, confirming) => {
+  const { t, id, check, alertsScheduled, scoreCalls } = await onUnchangedPage([
+    { inStock: true, price: 9900, currency: "GBP" },
+    confirming,
+  ]);
+
+  for (let i = 0; i < 4; i++) await check();
+
+  expect(scoreCalls()).toBe(2);
+  expect(await alertsScheduled()).toBe(0);
+  const monitor = await t.run((ctx) => ctx.db.get(id));
+  expect(monitor?.lastSeen).toEqual({ inStock: true, price: 29900, currency: "GBP" });
+  expect(monitor?.productFingerprint).toBe("product-2");
 });

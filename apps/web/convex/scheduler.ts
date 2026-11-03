@@ -1352,10 +1352,11 @@ export const recordProductRead = internalMutation({
       alerts.push({ kind: "stock" });
     }
 
-    // Kept as they are unless this read has a usable price.
+    // Kept as they are unless this read has a usable price. A held price is
+    // dropped: this read was its one chance to be confirmed.
     let priceFields: { price?: number; currency?: string; pendingPrice?: number } =
       previous.price !== undefined && previous.currency !== undefined
-        ? { price: previous.price, currency: previous.currency, ...(previous.pendingPrice !== undefined ? { pendingPrice: previous.pendingPrice } : {}) }
+        ? { price: previous.price, currency: previous.currency }
         : {};
     if (args.price !== null && args.currency !== null) {
       const newPrice = args.price;
@@ -1363,10 +1364,11 @@ export const recordProductRead = internalMutation({
       const oldPrice = previous.currency === currency ? previous.price : undefined;
       // A fall of more than half is more often a misread (a monthly payment,
       // a deposit, an accessory's price) than a sale. It waits for the same
-      // price on the next read before it counts.
+      // price on the next read before it counts. Only one read is held, so a
+      // second wild price is dropped rather than held again.
       const unconfirmed = oldPrice !== undefined && newPrice < oldPrice / 2 && previous.pendingPrice !== newPrice;
       if (unconfirmed) {
-        priceFields = { price: oldPrice, currency, pendingPrice: newPrice };
+        if (previous.pendingPrice === undefined) priceFields = { price: oldPrice, currency, pendingPrice: newPrice };
       } else {
         priceFields = { price: newPrice, currency };
         const price = { kind: "price" as const, oldPrice, newPrice, currency };
@@ -1383,8 +1385,10 @@ export const recordProductRead = internalMutation({
 
     const inStock = args.inStock ?? previous.inStock;
     await ctx.db.patch(args.monitorId, {
-      // A held price needs a second read. Keeping the old fingerprint makes
-      // the next check read again, even if the page has not changed.
+      // A newly held price needs a second read. Keeping the old fingerprint
+      // makes the next check read again, even if the page has not changed.
+      // Every other read advances it, so a failed confirmation is not
+      // retried, and paid for, on every check.
       productFingerprint: priceFields.pendingPrice !== undefined ? monitor.productFingerprint : args.productFingerprint,
       lastSeen: { ...(inStock !== undefined ? { inStock } : {}), ...priceFields },
     });
