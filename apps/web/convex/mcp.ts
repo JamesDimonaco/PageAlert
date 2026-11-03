@@ -12,10 +12,10 @@ import {
 import { requireKeyOwner } from "./apiKeys";
 import {
   createMonitorForUser,
-  intervalValidator,
   saveScanErrorForUser,
   saveScanResultForUser,
 } from "./monitors";
+import { checkIntervalValidator } from "./schema";
 
 /**
  * What the MCP route calls, one function per tool step. Each takes the raw API
@@ -107,7 +107,7 @@ export const createMonitor = mutation({
     url: v.string(),
     prompt: v.string(),
     name: v.string(),
-    checkInterval: v.optional(intervalValidator),
+    checkInterval: v.optional(checkIntervalValidator),
   },
   handler: async (ctx, { apiKey, checkInterval, ...args }): Promise<Id<"monitors">> => {
     const owner = await requireKeyOwner(ctx, apiKey);

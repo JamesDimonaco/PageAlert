@@ -8,7 +8,7 @@ import { effectiveTier, type Tier } from "./tiers";
 import { isBanned, requireLiveAccount } from "./account";
 import { reserveFallback, scraperDown } from "./admin";
 import { deliverAlert } from "./alerts";
-import { alertOnValidator, checkIntervalValidator, notificationChannelsValidator } from "./schema";
+import { alertOnValidator, checkIntervalValidator, notificationChannelsValidator, type CheckInterval } from "./schema";
 
 // ---- Resource Limits ----
 const MAX_NAME_LENGTH = 200;
@@ -39,8 +39,6 @@ async function getUserTier(ctx: { db: any }, userId: string): Promise<Tier> {
     .unique();
   return effectiveTier(record);
 }
-
-type CheckInterval = "5m" | "15m" | "30m" | "1h" | "6h" | "24h";
 
 /**
  * Channels the free tier is rationed on. Email and push are always available:
@@ -112,8 +110,6 @@ const statusValidator = v.union(
   v.literal("error")
 );
 
-export const intervalValidator = checkIntervalValidator;
-
 // ---- Queries ----
 
 /** Public: total non-anonymous monitors for social proof.
@@ -169,10 +165,8 @@ export const get = query({
 
 // ---- Mutations ----
 
-const channelValidator = notificationChannelsValidator;
-
-type ChannelList = Infer<typeof channelValidator>;
-const ALL_CHANNELS: ChannelList = channelValidator.element.members.map((m) => m.value);
+type ChannelList = Infer<typeof notificationChannelsValidator>;
+const ALL_CHANNELS: ChannelList = notificationChannelsValidator.element.members.map((m) => m.value);
 
 /**
  * Create a monitor in "scanning" state for this user. The caller runs the
@@ -291,8 +285,8 @@ export const create = mutation({
     name: v.string(),
     url: v.string(),
     prompt: v.string(),
-    checkInterval: intervalValidator,
-    notificationChannels: v.optional(channelValidator),
+    checkInterval: checkIntervalValidator,
+    notificationChannels: v.optional(notificationChannelsValidator),
   },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
@@ -533,9 +527,9 @@ export const update = mutation({
     url: v.optional(v.string()),
     prompt: v.optional(v.string()),
     status: v.optional(statusValidator),
-    checkInterval: v.optional(intervalValidator),
+    checkInterval: v.optional(checkIntervalValidator),
     schema: v.optional(v.any()),
-    notificationChannels: v.optional(channelValidator),
+    notificationChannels: v.optional(notificationChannelsValidator),
     muted: v.optional(v.boolean()),
     alertOn: v.optional(alertOnValidator),
   },
