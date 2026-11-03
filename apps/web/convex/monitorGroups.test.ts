@@ -387,6 +387,26 @@ describe("a product's monitors on the scheduler", () => {
     expect(productTitle).toBe("Sony WH-1000XM5");
   });
 
+  // A rescan from the listing's own page goes through the browser's scan
+  // save. It must stay as quiet about matches as the scheduler is.
+  it("sends no match alert when a listing's rescan finds matches", async () => {
+    const t = harness();
+    const { as } = await signUp(t, "a@example.test");
+    const { monitorIds } = await as.mutation(api.monitorGroups.create, { ...PRODUCT, listings: [listing("argos.co.uk", true)] });
+    const id = monitorIds[0]!;
+    await t.run((ctx) => ctx.db.patch(id, { status: "scanning" }));
+
+    await as.mutation(api.monitors.saveScanResult, {
+      id,
+      schema: { items: [{ title: "Sony WH-1000XM5" }, { title: "Carry case" }] },
+      matchCount: 2,
+    });
+
+    const jobs = await t.run((ctx) => ctx.db.system.query("_scheduled_functions").collect());
+    expect(jobs.some((job) => job.name.includes("sendInitialScanNotifications"))).toBe(false);
+    expect((await as.query(api.monitors.get, { id }))?.status).toBe("active");
+  });
+
   // A site going down fails every listing of a product on it, and a scraper
   // fault fails all of them. One email per listing is a pile of identical mail.
   it("sends one error email and one checks-stopped email per product, not one per listing", async () => {

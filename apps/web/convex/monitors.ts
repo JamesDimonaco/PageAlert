@@ -412,8 +412,9 @@ export async function saveScanResultForUser(
 
   await claimActivation(ctx, monitor, matchCount, "got their first scan", true);
 
-  // Send notifications for initial scan matches
-  if (matchCount > 0) {
+  // Send notifications for initial scan matches. A listing in a product
+  // alerts only on stock and price, as in the scheduler.
+  if (matchCount > 0 && monitor.groupId === undefined) {
     await ctx.scheduler.runAfter(0, internal.monitors.sendInitialScanNotifications, {
       monitorId: id,
       matchCount,
