@@ -41,3 +41,13 @@ test("one message a minute per user, each naming who sent it", async () => {
   expect(texts[0]).toContain("someone@example.com");
   expect(texts[0]).toContain("The save button does nothing");
 });
+
+// The privacy page says feedback is not stored in PageAlert, so the one row it leaves goes with the account.
+test("deleting the account removes the feedback rate-limit row", async () => {
+  const { t, user } = await signedIn("leaver@example.com");
+  await user.mutation(api.contact.send, { kind: "idea", message: "Dark mode", page: "/dashboard" });
+  await user.mutation(api.account.deleteAccount, {});
+
+  const counters = await t.run((ctx) => ctx.db.query("counters").collect());
+  expect(counters.filter((c) => c.name.startsWith("contact:"))).toEqual([]);
+});

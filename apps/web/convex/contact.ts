@@ -1,8 +1,9 @@
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import { mutation } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { requireLiveAccount } from "./account";
-import { FEEDBACK_MAX } from "./shared";
+import { claimSlot } from "./admin";
+import { FEEDBACK_MAX, feedbackSlotKey } from "./shared";
 import { effectiveTier } from "./tiers";
 
 const MIN_INTERVAL_MS = 60 * 1000;
@@ -13,7 +14,10 @@ const KINDS = {
   other: "💬 Message",
 } as const;
 
-/** "Send feedback" from the user menu. Goes to James on Telegram; he replies by email. */
+/**
+ * "Send feedback" from the user menu. Goes to James on Telegram; he replies by email.
+ * ConvexError, not Error: Convex hides a plain Error's message in production.
+ */
 export const send = mutation({
   args: {
     kind: v.union(v.literal("bug"), v.literal("idea"), v.literal("other")),
@@ -26,14 +30,12 @@ export const send = mutation({
     await requireLiveAccount(ctx, identity.subject);
 
     const text = message.trim();
-    if (!text) throw new Error("Write a message first.");
-    if (text.length > FEEDBACK_MAX) throw new Error(`Keep it under ${FEEDBACK_MAX} characters.`);
+    if (!text) throw new ConvexError("Write a message first.");
+    if (text.length > FEEDBACK_MAX) throw new ConvexError(`Keep it under ${FEEDBACK_MAX} characters.`);
 
-    const allowed = await ctx.runMutation(internal.admin.claimAlertSlot, {
-      key: `contact:${identity.subject}`,
-      minIntervalMs: MIN_INTERVAL_MS,
-    });
-    if (!allowed) throw new Error("You just sent one. Try again in a minute.");
+    if (!(await claimSlot(ctx, feedbackSlotKey(identity.subject), MIN_INTERVAL_MS))) {
+      throw new ConvexError("You just sent one. Try again in a minute.");
+    }
 
     const record = await ctx.db
       .query("userTiers")

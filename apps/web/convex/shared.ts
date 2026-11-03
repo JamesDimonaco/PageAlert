@@ -5,6 +5,9 @@ export { MATCH_SCORE_THRESHOLD, alertsOnScore, matchConfidence, MATCH_CONFIDENCE
 /** Longest message the feedback dialog accepts. */
 export const FEEDBACK_MAX = 2000;
 
+/** The counters row holding when this user last sent feedback. */
+export const feedbackSlotKey = (userId: string) => `contact:${userId}`;
+
 /** Maximum retry attempts before marking a monitor as error */
 export const MAX_RETRIES = 3;
 
