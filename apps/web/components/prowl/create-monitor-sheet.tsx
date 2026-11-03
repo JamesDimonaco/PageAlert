@@ -332,6 +332,10 @@ export function CreateMonitorSheet({
                         if (typed) setName(typed);
                         setTab("url");
                       }}
+                      onDone={() => {
+                        onOpenChange(false);
+                        router.push("/dashboard");
+                      }}
                     />
                   </div>
                 )}

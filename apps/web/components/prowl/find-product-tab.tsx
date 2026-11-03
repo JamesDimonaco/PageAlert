@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useAction, useQuery } from "convex/react";
 import { ConvexError } from "convex/values";
@@ -13,6 +14,7 @@ import {
   type SearchRegion,
 } from "@prowl/shared";
 import { api } from "@/convex/_generated/api";
+import type { Id } from "@/convex/_generated/dataModel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -21,6 +23,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { toSafeUrl } from "@/lib/format";
 import { formatMinorUnits } from "@prowl/shared";
 import { trackProductSearchCompleted, trackProductSearchStarted } from "@/lib/posthog";
+import { useTier } from "@/hooks/use-tier";
+import { ProductProgress, WatchProductForm } from "./watch-product";
 
 const LABELS: Record<ListingLabel, string> = {
   same: "Same product",
@@ -31,9 +35,11 @@ const LABELS: Record<ListingLabel, string> = {
 interface FindProductTabProps {
   /** Switch to the paste-a-URL form, carrying over what was typed. */
   onPasteUrl: (typed: string) => void;
+  /** Called once the new product's monitors are under way. */
+  onDone: () => void;
 }
 
-export function FindProductTab({ onPasteUrl }: FindProductTabProps) {
+export function FindProductTab({ onPasteUrl, onDone }: FindProductTabProps) {
   const status = useQuery(api.productSearch.status);
   const search = useAction(api.productSearch.search);
 
@@ -45,6 +51,14 @@ export function FindProductTab({ onPasteUrl }: FindProductTabProps) {
   const [results, setResults] = useState<ProductListing[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showAccessories, setShowAccessories] = useState(false);
+  const [searchedFor, setSearchedFor] = useState("");
+  const [searchCount, setSearchCount] = useState(0);
+  const [ticked, setTicked] = useState<Set<string>>(new Set());
+  const [createdId, setCreatedId] = useState<Id<"monitorGroups"> | null>(null);
+  const monitors = useQuery(api.monitors.list);
+  const { maxMonitors, isLoading: tierLoading } = useTier();
+  // Every monitor counts toward the plan, paused ones included.
+  const freeSlots = monitors === undefined || tierLoading ? 0 : Math.max(0, maxMonitors - monitors.length);
 
   const saved = status?.region && isSearchRegion(status.region) ? status.region : null;
   const region = picked ?? saved ?? guessed;
@@ -80,6 +94,9 @@ export function FindProductTab({ onPasteUrl }: FindProductTabProps) {
     setError(null);
     setResults(null);
     setShowAccessories(false);
+    setTicked(new Set());
+    setSearchedFor(query.trim());
+    setSearchCount((c) => c + 1);
     trackProductSearchStarted({ region });
     const started = Date.now();
     try {
@@ -96,6 +113,18 @@ export function FindProductTab({ onPasteUrl }: FindProductTabProps) {
 
   const accessories = results?.filter((l) => l.label === "accessory") ?? [];
   const shown = results?.filter((l) => showAccessories || l.label !== "accessory") ?? [];
+  const tickedCount = shown.filter((l) => ticked.has(l.url)).length;
+
+  function toggle(url: string) {
+    setTicked((prev) => {
+      const next = new Set(prev);
+      if (next.has(url)) next.delete(url);
+      else next.add(url);
+      return next;
+    });
+  }
+
+  if (createdId) return <ProductProgress groupId={createdId} onDone={onDone} />;
 
   return (
     <div className="space-y-6">
@@ -186,9 +215,26 @@ export function FindProductTab({ onPasteUrl }: FindProductTabProps) {
 
       {results && results.length > 0 && (
         <div className="space-y-2">
+          {freeSlots === 0 ? (
+            <p className="text-xs text-muted-foreground">
+              You&apos;re using all {maxMonitors} of your monitors. Paused ones still count, so delete one to free a
+              slot, or{" "}
+              <Link href="/dashboard/settings?tab=billing" className="underline hover:text-foreground">upgrade</Link>.
+            </p>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              Tick the listings to watch. You have {freeSlots} free monitor{freeSlots === 1 ? "" : "s"}.
+            </p>
+          )}
           <ul className="space-y-2">
             {shown.map((listing) => (
-              <ListingRow key={listing.url} listing={listing} />
+              <ListingRow
+                key={listing.url}
+                listing={listing}
+                checked={ticked.has(listing.url)}
+                disabled={!ticked.has(listing.url) && tickedCount >= freeSlots}
+                onToggle={() => toggle(listing.url)}
+              />
             ))}
           </ul>
           {accessories.length > 0 && (
@@ -200,18 +246,46 @@ export function FindProductTab({ onPasteUrl }: FindProductTabProps) {
               {showAccessories ? "Hide accessories" : `Show accessories (${accessories.length})`}
             </button>
           )}
+          {region && (
+            <WatchProductForm
+              key={searchCount}
+              name={searchedFor}
+              region={region}
+              listings={shown}
+              ticked={ticked}
+              onCreated={setCreatedId}
+            />
+          )}
         </div>
       )}
     </div>
   );
 }
 
-function ListingRow({ listing }: { listing: ProductListing }) {
+function ListingRow({
+  listing,
+  checked,
+  disabled,
+  onToggle,
+}: {
+  listing: ProductListing;
+  checked: boolean;
+  disabled: boolean;
+  onToggle: () => void;
+}) {
   const price = listing.price !== null && listing.currency ? formatMinorUnits(listing.price, listing.currency) : null;
   const href = toSafeUrl(listing.url);
   return (
     <li className="flex items-start justify-between gap-3 rounded-lg border border-border/40 bg-card/50 p-3">
-      <div className="min-w-0 space-y-1">
+      <input
+        type="checkbox"
+        checked={checked}
+        disabled={disabled}
+        onChange={onToggle}
+        aria-label={`Watch ${listing.site}`}
+        className="mt-1 h-4 w-4 shrink-0 rounded border-border accent-primary"
+      />
+      <div className="min-w-0 flex-1 space-y-1">
         <p className="text-xs text-muted-foreground">{listing.site}</p>
         <p className="text-sm font-medium leading-snug">{listing.title}</p>
         <div className="flex flex-wrap items-center gap-1.5 text-xs">

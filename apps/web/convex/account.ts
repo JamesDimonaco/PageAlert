@@ -262,6 +262,11 @@ const SWEEPS: readonly {
   rows: (ctx: MutationCtx, userId: string) => Rows;
 }[] = [
   {
+    table: "monitorGroups",
+    rows: (ctx, userId) =>
+      ctx.db.query("monitorGroups").withIndex("by_userId", (q) => q.eq("userId", userId)),
+  },
+  {
     table: "scrapeLogs",
     rows: (ctx, userId) =>
       ctx.db.query("scrapeLogs").withIndex("by_userId_createdAt", (q) => q.eq("userId", userId)),

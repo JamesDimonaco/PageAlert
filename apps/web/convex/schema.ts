@@ -21,6 +21,38 @@ export const alertOnValidator = v.object({
 export const betaFeature = v.literal("find_a_product");
 export type BetaFeature = Infer<typeof betaFeature>;
 
+export const checkIntervalValidator = v.union(
+  v.literal("5m"),
+  v.literal("15m"),
+  v.literal("30m"),
+  v.literal("1h"),
+  v.literal("6h"),
+  v.literal("24h")
+);
+
+export const notificationChannelsValidator = v.array(v.union(
+  v.literal("email"),
+  v.literal("telegram"),
+  v.literal("discord"),
+  v.literal("push"),
+  v.literal("sms")
+));
+
+export const listingLabelValidator = v.union(v.literal("same"), v.literal("similar"), v.literal("accessory"));
+
+/** One product page in a product (monitorGroups). Price is in minor units of `currency`. */
+export const groupListingValidator = v.object({
+  site: v.string(),
+  url: v.string(),
+  title: v.string(),
+  price: v.optional(v.number()),
+  currency: v.optional(v.string()),
+  inStock: v.optional(v.boolean()),
+  label: listingLabelValidator,
+  state: v.union(v.literal("suggested"), v.literal("watching"), v.literal("dismissed")),
+  monitorId: v.optional(v.id("monitors")),
+});
+
 export default defineSchema({
   monitors: defineTable({
     userId: v.string(), // Better Auth user subject ID from ctx.auth
@@ -34,14 +66,7 @@ export default defineSchema({
       v.literal("paused"),
       v.literal("error")
     ),
-    checkInterval: v.union(
-      v.literal("5m"),
-      v.literal("15m"),
-      v.literal("30m"),
-      v.literal("1h"),
-      v.literal("6h"),
-      v.literal("24h")
-    ),
+    checkInterval: checkIntervalValidator,
     schema: v.optional(v.any()),
     blacklistedItems: v.optional(v.array(v.string())),
     // SHA-256 of the page text from the last completed scan — used to skip
@@ -93,13 +118,7 @@ export default defineSchema({
     // is the only record that the owner is alive, and without it the next
     // day's run would pause the monitor again.
     lastResumedAt: v.optional(v.number()),
-    notificationChannels: v.optional(v.array(v.union(
-      v.literal("email"),
-      v.literal("telegram"),
-      v.literal("discord"),
-      v.literal("push"),
-      v.literal("sms")
-    ))),
+    notificationChannels: v.optional(notificationChannelsValidator),
     isAnonymous: v.optional(v.boolean()),
     anonymousEmail: v.optional(v.string()),
     expiresAt: v.optional(v.number()),
@@ -118,6 +137,9 @@ export default defineSchema({
     // Hash of the product's own text at the last read, or of the whole page
     // when its title could not be found — see productExcerpt
     productFingerprint: v.optional(v.string()),
+    // The product this monitor watches one listing of. Its alertOn, channels
+    // and interval are copied from there.
+    groupId: v.optional(v.id("monitorGroups")),
     // Deprecated: run admin:clearPriceAlerts in prod, then delete this field.
     priceAlerts: v.optional(v.object({
       onPriceDrop: v.boolean(),
@@ -141,7 +163,22 @@ export default defineSchema({
     .index("by_isAnonymous", ["isAnonymous"])
     .index("by_isAnonymous_expiresAt", ["isAnonymous", "expiresAt"])
     .index("by_resumeToken", ["resumeToken"])
-    .index("by_host_proxyPreferred", ["host", "proxyPreferred"]),
+    .index("by_host_proxyPreferred", ["host", "proxyPreferred"])
+    .index("by_groupId", ["groupId"]),
+
+  // A product: one search's listings, some of them watched by a monitor each.
+  // Listings are capped (see monitorGroups.ts), so they live on the row.
+  monitorGroups: defineTable({
+    userId: v.string(),
+    name: v.string(),
+    region: v.string(),
+    alertOn: alertOnValidator,
+    notificationChannels: v.optional(notificationChannelsValidator),
+    checkInterval: checkIntervalValidator,
+    listings: v.array(groupListingValidator),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_userId", ["userId"]),
 
   scrapeResults: defineTable({
     monitorId: v.id("monitors"),

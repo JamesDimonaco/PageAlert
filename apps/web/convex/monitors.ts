@@ -8,7 +8,7 @@ import { effectiveTier, type Tier } from "./tiers";
 import { isBanned, requireLiveAccount } from "./account";
 import { reserveFallback, scraperDown } from "./admin";
 import { deliverAlert } from "./alerts";
-import { alertOnValidator } from "./schema";
+import { alertOnValidator, checkIntervalValidator, notificationChannelsValidator } from "./schema";
 
 // ---- Resource Limits ----
 const MAX_NAME_LENGTH = 200;
@@ -92,6 +92,19 @@ function validatePrompt(prompt: string): void {
   if (prompt.length > MAX_PROMPT_LENGTH) throw new Error(`Prompt exceeds maximum length of ${MAX_PROMPT_LENGTH} characters`);
 }
 
+export function validateAlertOn(alertOn: Infer<typeof alertOnValidator>): void {
+  if (alertOn.priceDrop && alertOn.priceBelow !== undefined) {
+    throw new ConvexError("Pick any price drop or a target price, not both.");
+  }
+  const target = alertOn.priceBelow;
+  if (
+    target !== undefined &&
+    (!Number.isInteger(target.amount) || target.amount <= 0 || currencyExponent(target.currency) === null)
+  ) {
+    throw new ConvexError("The target price must be above zero, in a real currency.");
+  }
+}
+
 const statusValidator = v.union(
   v.literal("scanning"),
   v.literal("active"),
@@ -99,14 +112,7 @@ const statusValidator = v.union(
   v.literal("error")
 );
 
-export const intervalValidator = v.union(
-  v.literal("5m"),
-  v.literal("15m"),
-  v.literal("30m"),
-  v.literal("1h"),
-  v.literal("6h"),
-  v.literal("24h")
-);
+export const intervalValidator = checkIntervalValidator;
 
 // ---- Queries ----
 
@@ -163,15 +169,9 @@ export const get = query({
 
 // ---- Mutations ----
 
-const channelValidator = v.array(v.union(
-  v.literal("email"),
-  v.literal("telegram"),
-  v.literal("discord"),
-  v.literal("push"),
-  v.literal("sms")
-));
+const channelValidator = notificationChannelsValidator;
 
-type ChannelList = Infer<typeof channelValidator>;
+export type ChannelList = Infer<typeof channelValidator>;
 const ALL_CHANNELS: ChannelList = channelValidator.element.members.map((m) => m.value);
 
 /**
@@ -599,15 +599,7 @@ export const update = mutation({
       (next.priceDrop !== before?.priceDrop ||
         next.priceBelow?.amount !== before?.priceBelow?.amount ||
         next.priceBelow?.currency !== before?.priceBelow?.currency);
-    if (next?.priceDrop && next.priceBelow !== undefined) {
-      throw new ConvexError("Pick any price drop or a target price, not both.");
-    }
-    if (
-      next?.priceBelow !== undefined &&
-      (!Number.isInteger(next.priceBelow.amount) || next.priceBelow.amount <= 0 || currencyExponent(next.priceBelow.currency) === null)
-    ) {
-      throw new ConvexError("The target price must be above zero, in a real currency.");
-    }
+    if (next) validateAlertOn(next);
     const urlChanged = fields.url !== undefined && fields.url.trim() !== existing.url;
     if (urlChanged) {
       updates.lastSeen = undefined;
@@ -756,6 +748,18 @@ export const remove = mutation({
     }
 
     await ctx.db.delete(id);
+
+    // The listing stays in its product as a suggestion, the same as stopping
+    // it there, rather than pointing at a monitor that no longer exists.
+    const group = existing.groupId ? await ctx.db.get(existing.groupId) : null;
+    if (group) {
+      await ctx.db.patch(group._id, {
+        listings: group.listings.map((l) =>
+          l.monitorId === id ? { ...l, state: "suggested" as const, monitorId: undefined } : l
+        ),
+        updatedAt: Date.now(),
+      });
+    }
 
     // Decrement public monitor counter
     if (!existing.isAnonymous) {

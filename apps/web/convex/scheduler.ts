@@ -4,7 +4,7 @@ import { claimActivation } from "./monitors";
 import { internalAction, internalMutation, internalQuery, type ActionCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
-import { formatMinorUnits, formatSmsPrice, isSingleProduct } from "@prowl/shared";
+import { formatMinorUnits, formatSmsPrice, isProductMonitor, isSingleProduct } from "@prowl/shared";
 import { deliverAlert } from "./alerts";
 import {
   displayHost,
@@ -104,19 +104,26 @@ function detectChanges(previousItems: Record<string, unknown>[], currentItems: R
 
 const MAX_CONCURRENT_CHECKS = 10;
 
-/** A single-product monitor whose owner wants a stock or price alert. */
-function wantsProductRead(monitor: Pick<Doc<"monitors">, "alertOn" | "schema">): boolean {
+/** A product monitor whose owner wants a stock or price alert. */
+function wantsProductRead(monitor: Pick<Doc<"monitors">, "alertOn" | "schema" | "groupId">): boolean {
   const on = monitor.alertOn;
   const wanted = on?.backInStock === true || on?.priceDrop === true || on?.priceBelow !== undefined;
-  return wanted && isSingleProduct(monitor.schema);
+  return wanted && isProductMonitor(monitor);
 }
 
 /** The scraper rejects longer titles with a 400, which would fail every check until the monitor parks. */
 const MAX_PRODUCT_TITLE = 500;
 
-/** The product's name as the last full read gave it, for finding it on the page and naming it in alerts. */
+/**
+ * The product's name, for finding it on the page and naming it in alerts: the
+ * last full read's when that found one product, else the monitor's name. A
+ * listing in a product is named after the search result, and its page may hold
+ * several items, the first of which need not be the product.
+ */
 function productTitle(monitor: Pick<Doc<"monitors">, "name" | "schema">): string {
-  const title = (monitor.schema as { items?: { title?: unknown }[] } | undefined)?.items?.[0]?.title;
+  const title = isSingleProduct(monitor.schema)
+    ? (monitor.schema as { items: { title?: unknown }[] }).items[0]?.title
+    : undefined;
   const name = typeof title === "string" && title.trim() ? title.trim() : monitor.name;
   return name.slice(0, MAX_PRODUCT_TITLE);
 }
@@ -330,16 +337,19 @@ export const recordCheckResult = internalMutation({
     Object.assign(updates, hostStamp);
 
     // A successful first scan counts as a check, so a monitor reaching here
-    // with none has only ever failed: the first scan did not get in and a
-    // retry just has. Activation was never claimed for that user, and
-    // the person told "we'll keep trying" has heard nothing since.
+    // with none has either only ever failed (the first scan did not get in and
+    // a retry just has) or is a listing in a product, which is first-scanned
+    // here by design. Activation was never claimed for that user. The person
+    // told "we'll keep trying" has heard nothing since, so they get an email;
+    // the product's owner watched the scan in the app and does not.
     // Anonymous monitors are outside this: their owner is an anon_ id with no
     // account to activate and no dashboard to send them to.
     if (!monitor.checkCount && !monitor.isAnonymous) {
-      await claimActivation(ctx, monitor, args.matchCount, "got their first read after a failed first scan", false);
+      const how = monitor.groupId ? "got their first product read" : "got their first read after a failed first scan";
+      await claimActivation(ctx, monitor, args.matchCount, how, false);
       // Same rule as the alerts: no list means every channel.
       const channels = monitor.notificationChannels;
-      if (monitor.userEmail && !monitor.muted && (!channels || channels.includes("email"))) {
+      if (!monitor.groupId && monitor.userEmail && !monitor.muted && (!channels || channels.includes("email"))) {
         await ctx.scheduler.runAfter(0, internal.emails.sendFirstReadAlert, {
           to: monitor.userEmail,
           userId: monitor.userId,

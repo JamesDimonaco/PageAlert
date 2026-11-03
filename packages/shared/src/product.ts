@@ -8,6 +8,15 @@ export function isSingleProduct(schema: unknown): boolean {
   return Array.isArray(items) && items.length === 1;
 }
 
+/**
+ * Whether a monitor gets the stock and price checks. A listing in a product
+ * (one the user picked from a search) qualifies even when its page also shows
+ * other items, such as related products.
+ */
+export function isProductMonitor(monitor: { schema?: unknown; groupId?: string }): boolean {
+  return monitor.groupId !== undefined || isSingleProduct(monitor.schema);
+}
+
 /** Text kept before the title, for "Sold out" badges that sit above it. */
 const EXCERPT_BEFORE = 200;
 /**
