@@ -16,3 +16,8 @@
 - [ ] Remove the unused shared `detectChanges`. Keep anything other code still imports.
 - [ ] The `price_tracking_configured` and `price_alerts_updated` events go with the card.
 - [ ] Web and scraper typecheck, and existing tests pass.
+
+## Follow-up after deploy
+
+- [ ] James runs `npx convex run --prod admin:clearPriceAlerts '{}'` from `apps/web` on the personal profile.
+- [ ] A small PR removes `priceAlerts` from the schema and deletes `clearPriceAlerts`.

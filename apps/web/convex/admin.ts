@@ -357,7 +357,7 @@ export const clearPriceAlerts = internalMutation({
   handler: async (ctx, args) => {
     const { page, isDone, continueCursor } = await ctx.db
       .query("monitors")
-      .paginate({ numItems: 200, cursor: args.cursor ?? null });
+      .paginate({ numItems: 50, cursor: args.cursor ?? null });
     for (const m of page) {
       if (m.priceAlerts !== undefined) await ctx.db.patch(m._id, { priceAlerts: undefined });
     }
