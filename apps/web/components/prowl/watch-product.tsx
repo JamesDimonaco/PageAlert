@@ -187,7 +187,7 @@ export function ProductProgress({ groupId, onDone }: { groupId: Id<"monitorGroup
       </ul>
       <div className="flex justify-end">
         <Button type="button" variant="outline" onClick={onDone}>
-          Go to dashboard
+          Open product
         </Button>
       </div>
     </div>

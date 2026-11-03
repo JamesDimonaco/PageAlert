@@ -81,10 +81,12 @@ interface ChannelSelectorProps {
   onChange: (channels: Channel[]) => void;
   /** The monitor ID being edited — null for new monitors */
   monitorId?: string | null;
+  /** The product being edited. Its monitors share one channel list, so they count as one. */
+  groupId?: string;
   disabled?: boolean;
 }
 
-export function ChannelSelector({ value, onChange, monitorId, disabled }: ChannelSelectorProps) {
+export function ChannelSelector({ value, onChange, monitorId, groupId, disabled }: ChannelSelectorProps) {
   const router = useRouter();
   const { close: closeSheet } = useCreateMonitor();
   const { tier } = useTier();
@@ -98,6 +100,7 @@ export function ChannelSelector({ value, onChange, monitorId, disabled }: Channe
   const freeMonitorWithChannels = tier === "free"
     ? monitors.find((m) =>
         m._id !== monitorId &&
+        (groupId === undefined || m.groupId !== groupId) &&
         (m as any).notificationChannels?.some((c: string) => (RESTRICTED as string[]).includes(c))
       )
     : null;

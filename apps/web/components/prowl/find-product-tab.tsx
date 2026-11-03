@@ -36,7 +36,7 @@ interface FindProductTabProps {
   /** Switch to the paste-a-URL form, carrying over what was typed. */
   onPasteUrl: (typed: string) => void;
   /** Called once the new product's monitors are under way. */
-  onDone: () => void;
+  onDone: (groupId: Id<"monitorGroups">) => void;
 }
 
 export function FindProductTab({ onPasteUrl, onDone }: FindProductTabProps) {
@@ -139,7 +139,7 @@ export function FindProductTab({ onPasteUrl, onDone }: FindProductTabProps) {
     });
   }
 
-  if (createdId) return <ProductProgress groupId={createdId} onDone={onDone} />;
+  if (createdId) return <ProductProgress groupId={createdId} onDone={() => onDone(createdId)} />;
 
   return (
     <div className="space-y-6">

@@ -332,9 +332,9 @@ export function CreateMonitorSheet({
                         if (typed) setName(typed);
                         setTab("url");
                       }}
-                      onDone={() => {
+                      onDone={(groupId) => {
                         onOpenChange(false);
-                        router.push("/dashboard");
+                        router.push(`/dashboard/products/${groupId}`);
                       }}
                     />
                   </div>
