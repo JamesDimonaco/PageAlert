@@ -29,8 +29,10 @@ export function alertOnFromFields({ backInStock, priceChoice, target, currency }
 
 /** A saved target as the target field shows it. */
 export function targetText(priceBelow: AlertOn["priceBelow"]): string {
-  const amount = priceBelow ? fromMinorUnits(priceBelow.amount, priceBelow.currency) : null;
-  return amount === null ? "" : String(amount);
+  if (!priceBelow) return "";
+  const amount = fromMinorUnits(priceBelow.amount, priceBelow.currency);
+  // toFixed keeps the minor digits, so £45.50 reads "45.50" rather than "45.5".
+  return amount === null ? "" : amount.toFixed(currencyExponent(priceBelow.currency) ?? 0);
 }
 
 interface AlertOnFieldsProps {
