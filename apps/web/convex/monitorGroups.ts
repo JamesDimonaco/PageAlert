@@ -304,7 +304,8 @@ export const updateCriteria = mutation({
 
 /**
  * Watch a suggested listing. The plan's monitor limit and the creation rate
- * limit apply. Returns the channels and interval the plan allowed it.
+ * limit apply. Returns the channels and interval the plan allowed it, which
+ * the product itself does not take on.
  */
 export const watchListing = mutation({
   args: { id: v.id("monitorGroups"), url: v.string() },
@@ -313,16 +314,17 @@ export const watchListing = mutation({
     const listing = findListing(group, url, "suggested");
     const monitorId = await watchListingMonitor(ctx, { userId, userEmail }, group, listing);
     const monitor = await ctx.db.get(monitorId);
-    // As in create: store what the plan let the monitor have.
-    const checkInterval = monitor?.checkInterval ?? group.checkInterval;
-    const notificationChannels = monitor?.notificationChannels ?? group.notificationChannels;
+    // The product keeps its own settings. Taking one new monitor's clamp
+    // would change what the product's form shows and saves for every listing.
     await ctx.db.patch(group._id, {
       listings: group.listings.map((l) => (l.url === url ? { ...l, state: "watching" as const, monitorId } : l)),
-      checkInterval,
-      notificationChannels,
       updatedAt: Date.now(),
     });
-    return { monitorId, checkInterval, notificationChannels };
+    return {
+      monitorId,
+      checkInterval: monitor?.checkInterval ?? group.checkInterval,
+      notificationChannels: monitor?.notificationChannels ?? group.notificationChannels,
+    };
   },
 });
 

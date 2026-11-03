@@ -586,8 +586,10 @@ describe("managing a product", () => {
     expect(group).toMatchObject({ notificationChannels: ["email"], checkInterval: "1h" });
   });
 
-  // Otherwise the product says Telegram while the new listing never alerts there.
-  it("stores and returns the channels the plan gave a newly watched listing", async () => {
+  // The user is told what the new listing got. Stored on the product, one
+  // listing's clamp would change the settings its form shows and saves for
+  // every listing.
+  it("returns the channels the plan gave a newly watched listing, leaving the product's alone", async () => {
     const t = harness();
     const { as, userId } = await signUp(t, "a@example.test");
     const { groupId } = await as.mutation(api.monitorGroups.create, {
@@ -615,7 +617,7 @@ describe("managing a product", () => {
     const got = await as.mutation(api.monitorGroups.watchListing, { id: groupId, url: "https://currys.co.uk/xm5" });
 
     expect(got.notificationChannels).toEqual([]);
-    expect((await as.query(api.monitorGroups.get, { id: groupId }))?.notificationChannels).toEqual([]);
+    expect((await as.query(api.monitorGroups.get, { id: groupId }))?.notificationChannels).toEqual(["telegram"]);
   });
 
   it("lets nobody but the owner change a product", async () => {
