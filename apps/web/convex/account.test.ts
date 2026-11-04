@@ -154,6 +154,18 @@ function logRow(userId: string, extra: Partial<Row<"scrapeLogs">> = {}): Row<"sc
  */
 const FIXTURES: { [T in TableNames]: (refs: Refs) => Row<T> } = {
   monitors: ({ userId }) => monitorRow(userId),
+  monitorGroups: ({ userId, monitorId }) => ({
+    userId,
+    name: "Sony WH-1000XM5",
+    region: "GB",
+    alertOn: { backInStock: true },
+    checkInterval: "1h",
+    listings: [
+      { site: "argos.co.uk", url: "https://shop.test/xm5", title: "Sony WH-1000XM5", label: "same", state: "watching", monitorId },
+    ],
+    createdAt: NOW,
+    updatedAt: NOW,
+  }),
   scrapeResults: ({ monitorId }) => resultRow(monitorId),
   notifications: ({ userId, monitorId }) => ({
     userId,

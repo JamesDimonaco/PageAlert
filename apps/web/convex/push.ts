@@ -101,9 +101,9 @@ export const sendToUser = internalAction({
     body: v.string(),
     monitorId: v.string(),
     // Collapses repeat alerts of the same kind for one monitor instead of
-    // stacking them on the lock screen. Kinds are kept apart: a match and a
-    // price change from one check are two things the user wants to see.
-    kind: v.optional(v.union(v.literal("match"), v.literal("price"), v.literal("error"))),
+    // stacking them on the lock screen. Kinds are kept apart: a match and an
+    // error on one monitor are two things the user wants to see.
+    kind: v.optional(v.union(v.literal("match"), v.literal("error"), v.literal("stock"), v.literal("price"))),
   },
   handler: async (ctx, args) => {
     await deliver(ctx, args.userId, {

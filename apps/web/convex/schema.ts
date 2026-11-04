@@ -5,6 +5,56 @@ import { v, type Infer } from "convex/values";
 export const emailCategory = v.union(v.literal("tips"), v.literal("updates"));
 export type EmailCategory = Infer<typeof emailCategory>;
 
+/**
+ * Stock and price alerts on a single-product monitor (isSingleProduct in
+ * @prowl/shared). Absent means match alerts only. priceDrop and priceBelow
+ * are one choice: any drop, or below a target. The target carries its own
+ * currency, so it is never compared with a price in another one.
+ */
+export const alertOnValidator = v.object({
+  backInStock: v.optional(v.boolean()),
+  priceDrop: v.optional(v.boolean()),
+  priceBelow: v.optional(v.object({ amount: v.number(), currency: v.string() })),
+});
+export type AlertOn = Infer<typeof alertOnValidator>;
+
+/** A feature a user can switch on under Settings → Beta features. */
+export const betaFeature = v.literal("find_a_product");
+export type BetaFeature = Infer<typeof betaFeature>;
+
+export const checkIntervalValidator = v.union(
+  v.literal("5m"),
+  v.literal("15m"),
+  v.literal("30m"),
+  v.literal("1h"),
+  v.literal("6h"),
+  v.literal("24h")
+);
+export type CheckInterval = Infer<typeof checkIntervalValidator>;
+
+export const notificationChannelsValidator = v.array(v.union(
+  v.literal("email"),
+  v.literal("telegram"),
+  v.literal("discord"),
+  v.literal("push"),
+  v.literal("sms")
+));
+
+export const listingLabelValidator = v.union(v.literal("same"), v.literal("similar"), v.literal("accessory"));
+
+/** One product page in a product (monitorGroups). Price is in minor units of `currency`. */
+export const groupListingValidator = v.object({
+  site: v.string(),
+  url: v.string(),
+  title: v.string(),
+  price: v.optional(v.number()),
+  currency: v.optional(v.string()),
+  inStock: v.optional(v.boolean()),
+  label: listingLabelValidator,
+  state: v.union(v.literal("suggested"), v.literal("watching"), v.literal("dismissed")),
+  monitorId: v.optional(v.id("monitors")),
+});
+
 export default defineSchema({
   monitors: defineTable({
     userId: v.string(), // Better Auth user subject ID from ctx.auth
@@ -18,14 +68,7 @@ export default defineSchema({
       v.literal("paused"),
       v.literal("error")
     ),
-    checkInterval: v.union(
-      v.literal("5m"),
-      v.literal("15m"),
-      v.literal("30m"),
-      v.literal("1h"),
-      v.literal("6h"),
-      v.literal("24h")
-    ),
+    checkInterval: checkIntervalValidator,
     schema: v.optional(v.any()),
     blacklistedItems: v.optional(v.array(v.string())),
     // SHA-256 of the page text from the last completed scan — used to skip
@@ -77,17 +120,37 @@ export default defineSchema({
     // is the only record that the owner is alive, and without it the next
     // day's run would pause the monitor again.
     lastResumedAt: v.optional(v.number()),
-    notificationChannels: v.optional(v.array(v.union(
-      v.literal("email"),
-      v.literal("telegram"),
-      v.literal("discord"),
-      v.literal("push"),
-      v.literal("sms")
-    ))),
+    notificationChannels: v.optional(notificationChannelsValidator),
     isAnonymous: v.optional(v.boolean()),
     anonymousEmail: v.optional(v.string()),
     expiresAt: v.optional(v.number()),
     muted: v.optional(v.boolean()),
+    alertOn: v.optional(alertOnValidator),
+    // The product as the last read saw it. A value the read could not make
+    // out keeps the last known one. Price is in minor units of `currency`.
+    lastSeen: v.optional(v.object({
+      inStock: v.optional(v.boolean()),
+      price: v.optional(v.number()),
+      currency: v.optional(v.string()),
+      // A fall of more than half, waiting for a second read to confirm it
+      // before it replaces `price`. See recordProductRead.
+      pendingPrice: v.optional(v.number()),
+      // Confirming reads of pendingPrice or pendingCurrency that did not settle it.
+      pendingAttempts: v.optional(v.number()),
+      // A price read in another currency than `currency`. A second read in it
+      // makes it the new baseline. See recordProductRead.
+      pendingCurrency: v.optional(v.string()),
+    })),
+    // Hash of the product's own text at the last read, or of the whole page
+    // when its title could not be found — see productExcerpt
+    productFingerprint: v.optional(v.string()),
+    // The product this monitor watches one listing of. Its alertOn, channels
+    // and interval are copied from there.
+    groupId: v.optional(v.id("monitorGroups")),
+    // The search result's title, for finding the product on its page. Kept
+    // apart from `name`, which the user can edit.
+    productTitle: v.optional(v.string()),
+    // Deprecated: run admin:clearPriceAlerts in prod, then delete this field.
     priceAlerts: v.optional(v.object({
       onPriceDrop: v.boolean(),
       onPriceIncrease: v.boolean(),
@@ -110,7 +173,24 @@ export default defineSchema({
     .index("by_isAnonymous", ["isAnonymous"])
     .index("by_isAnonymous_expiresAt", ["isAnonymous", "expiresAt"])
     .index("by_resumeToken", ["resumeToken"])
-    .index("by_host_proxyPreferred", ["host", "proxyPreferred"]),
+    .index("by_host_proxyPreferred", ["host", "proxyPreferred"])
+    .index("by_groupId", ["groupId"]),
+
+  // A product: one search's listings, some of them watched by a monitor each.
+  // Listings are capped (see monitorGroups.ts), so they live on the row.
+  monitorGroups: defineTable({
+    userId: v.string(),
+    name: v.string(),
+    region: v.string(),
+    alertOn: alertOnValidator,
+    notificationChannels: v.optional(notificationChannelsValidator),
+    checkInterval: checkIntervalValidator,
+    listings: v.array(groupListingValidator),
+    // When any listing last sent an error alert. See claimErrorAlert.
+    lastErrorAlertAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_userId", ["userId"]),
 
   scrapeResults: defineTable({
     monitorId: v.id("monitors"),
@@ -297,6 +377,11 @@ export default defineSchema({
     // carrier-facing policy promises three a day. See sms.claimVerification.
     smsCodeDay: v.optional(v.string()), // YYYY-MM-DD UTC
     smsCodeDayCount: v.optional(v.number()),
+    // Find a product searches today, counted like the SMS day. Count is what the
+    // user sees, less refunds; attempts counts every paid call. See productSearch.ts.
+    productSearchDay: v.optional(v.string()), // YYYY-MM-DD UTC
+    productSearchCount: v.optional(v.number()),
+    productSearchAttempts: v.optional(v.number()),
     reviewDismissed: v.optional(v.boolean()),
     updatedAt: v.number(),
   }).index("by_userId", ["userId"]),
@@ -403,6 +488,10 @@ export default defineSchema({
     // Ids of the changelog entries this user has dismissed as a popup. See
     // whatsNew.ts.
     announcementsSeen: v.optional(v.array(v.string())),
+    // Beta features this user has switched on in Settings. See betaFeatures.ts.
+    betaFeatures: v.optional(v.array(betaFeature)),
+    // The country Find a product last searched, offered first next time.
+    searchRegion: v.optional(v.string()),
   })
     .index("by_userId", ["userId"])
     // The daily pulse counts the last day of each, so it reads a window
@@ -446,7 +535,7 @@ export default defineSchema({
   // `status` starts at sent/failed and is advanced by the Resend webhook.
   emailSends: defineTable({
     to: v.string(),
-    kind: v.string(), // match | error | first-read | monitor-stopped | inactivity-paused | price | anonymous-scan | onboarding-day0 | bulk
+    kind: v.string(), // set by each send() caller in emails.ts; old rows may hold retired kinds
     userId: v.optional(v.string()),
     monitorId: v.optional(v.string()),
     resendId: v.optional(v.string()),

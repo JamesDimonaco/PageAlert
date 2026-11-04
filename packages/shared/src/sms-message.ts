@@ -9,6 +9,7 @@
  * segments. So every string is transliterated into GSM-7 first, then the
  * variable part is truncated against the space actually left.
  */
+import { currencyExponent, formatMinorUnits } from "./money";
 
 /** Characters in the GSM 03.38 basic alphabet. One septet each. */
 const GSM7_BASIC = new Set(
@@ -127,31 +128,22 @@ export function formatMatchSms({ monitorName, newCount, link }: MatchSmsArgs): s
   );
 }
 
-export interface PriceSmsArgs {
-  monitorName: string;
-  variant: "threshold" | "single_drop" | "multiple";
-  changes: Array<{ title: string; oldPrice: number; newPrice: number; changePercent: number }>;
-  link: string;
+/**
+ * A price for a text. Symbols outside GSM-7, such as ₹ ₩ ₺, would be dropped
+ * and leave a bare number, so those prices use the ISO code instead.
+ */
+export function formatSmsPrice(minor: number, currency: string): string {
+  const withSymbol = formatMinorUnits(minor, currency);
+  if (withSymbol !== null && toGsm7(withSymbol) === withSymbol) return withSymbol;
+  const exponent = currencyExponent(currency);
+  if (exponent === null) return `${minor} ${currency}`;
+  const withCode = new Intl.NumberFormat("en-US", { style: "currency", currency, currencyDisplay: "code" });
+  return toGsm7(withCode.format(minor / 10 ** exponent));
 }
 
-export function formatPriceSms({ monitorName, variant, changes, link }: PriceSmsArgs): string {
-  const first = changes[0];
-  const tail = ` ${toGsm7(link)}`;
-
-  // With one item there is room to name the price, which is the whole point of
-  // the alert. With several there is not, so the count carries it instead.
-  if (first && (variant === "threshold" || variant === "single_drop" || changes.length === 1)) {
-    const money = `$${first.newPrice.toFixed(2)} (was $${first.oldPrice.toFixed(2)})`;
-    const lead = variant === "threshold" ? "PageAlert: price target hit - " : "PageAlert: ";
-    return oneSegment(lead, toGsm7(first.title), ` now ${money}${tail}`);
-  }
-
-  const n = changes.length;
-  return oneSegment(
-    `PageAlert: ${n} price change${n === 1 ? "" : "s"} on "`,
-    toGsm7(monitorName),
-    `"${tail}`
-  );
+/** A stock or price alert. `what` is the news, such as "back in stock" or "price drop to £12.99". */
+export function formatProductSms({ what, productTitle, link }: { what: string; productTitle: string; link: string }): string {
+  return oneSegment(`PageAlert: ${toGsm7(what)}: "`, toGsm7(productTitle), `" ${toGsm7(link)}`);
 }
 
 const MONTHS = [

@@ -32,6 +32,7 @@ import {
   BellOff,
   Clock,
   ExternalLink,
+  Package,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -45,17 +46,11 @@ import type { ExtractedItem, ExtractionSchema } from "@prowl/shared";
 import { toast } from "sonner";
 import { trackEvent, captureException } from "@/lib/posthog";
 import { timeAgo } from "@/lib/time";
+import { errorText } from "@/lib/utils";
 
 // Extended monitor type until Convex types are regenerated with npx convex dev
 type MonitorExt = NonNullable<ReturnType<typeof useMonitor>> & {
   muted?: boolean;
-  priceAlerts?: {
-    trackedItems: string[];
-    belowThreshold?: number;
-    aboveThreshold?: number;
-    onPriceDrop: boolean;
-    onPriceIncrease: boolean;
-  };
 };
 
 export default function MonitorDetailPage({
@@ -72,6 +67,7 @@ export default function MonitorDetailPage({
   const atLimit = monitors.length >= maxMonitors;
   const scanBudget = useQuery(api.tiers.canScan);
   const scores = useQuery(api.monitors.latestScores, { monitorId }) ?? {};
+  const product = useQuery(api.monitorGroups.get, monitor?.groupId ? { id: monitor.groupId } : "skip");
   const consumeScan = useMutation(api.tiers.consumeScan);
   const saveScanResult = useMutation(api.monitors.saveScanResult);
   const saveScanError = useMutation(api.monitors.saveScanError);
@@ -142,7 +138,7 @@ export default function MonitorDetailPage({
       }).catch((e) => captureException(e, { context: "createLog_rescan", monitorId: id }));
       toast.success("Rescan complete", { description: `${totalItems} items, ${matchCount} matches` });
     } catch (e) {
-      const msg = e instanceof Error ? e.message : "Rescan failed";
+      const msg = errorText(e, e instanceof Error ? e.message : "Rescan failed");
       const durationMs = Date.now() - startTime;
       await saveScanError({ id, error: msg }).catch((saveErr) => {
         console.error("[rescan] Failed to persist error state:", saveErr, { monitorId: id, error: msg });
@@ -198,7 +194,7 @@ export default function MonitorDetailPage({
     ["5m", "15m", "30m", "1h"].includes(monitor.checkInterval);
 
   const CHANNEL_NAMES: Record<string, string> = { email: "email", push: "browser", telegram: "Telegram", discord: "Discord", sms: "text" };
-  // An unset list means "send on every configured channel" (scheduler.ts:450),
+  // An unset list means "send on every configured channel" (alertChannels in convex/alerts.ts),
   // not "send on none" — monitors created before the field existed have no list.
   const explicitChannels = monitor.notificationChannels;
   const channels = explicitChannels ?? [];
@@ -225,6 +221,14 @@ export default function MonitorDetailPage({
               </Badge>
             )}
           </div>
+          {product && (
+            <Link href={`/dashboard/products/${product._id}`} className="mt-1.5 inline-block">
+              <Badge variant="outline" className="gap-1 hover:bg-muted">
+                <Package className="h-3 w-3" />
+                Part of {product.name}
+              </Badge>
+            </Link>
+          )}
           <p className="text-muted-foreground mt-1.5 text-sm leading-relaxed line-clamp-2" title={monitor.prompt}>
             &ldquo;{monitor.prompt}&rdquo;
           </p>
@@ -295,7 +299,7 @@ export default function MonitorDetailPage({
                     await togglePause(monitorId);
                     toast.success(monitor.status === "paused" ? "Monitor resumed" : "Monitor paused");
                   } catch (err) {
-                    toast.error("Failed to update monitor", { description: err instanceof Error ? err.message : "" });
+                    toast.error("Failed to update monitor", { description: errorText(err, "Try again.") });
                   }
                 }}
               >
@@ -371,7 +375,6 @@ export default function MonitorDetailPage({
             monitorId={monitorId}
             monitor={monitor}
             matches={matches}
-            allItems={allItems}
             totalItems={allItems.length}
             results={results}
             scores={scores}
@@ -398,7 +401,7 @@ export default function MonitorDetailPage({
         </TabsContent>
 
         <TabsContent value="history" className="mt-6">
-          <HistoryTab results={results} priceAlerts={m.priceAlerts} />
+          <HistoryTab results={results} />
         </TabsContent>
       </Tabs>
 
@@ -411,7 +414,7 @@ export default function MonitorDetailPage({
             toast.success("Monitor deleted");
             router.push("/dashboard");
           } catch (err) {
-            toast.error("Failed to delete", { description: err instanceof Error ? err.message : "" });
+            toast.error("Failed to delete", { description: errorText(err, "Try again.") });
           }
         }}
         monitorName={monitor.name}

@@ -8,9 +8,9 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { AiInsightsCard } from "@/components/prowl/ai-insights";
-import { PriceAlertCard } from "@/components/prowl/price-alert-card";
 import { IntervalSelector } from "@/components/prowl/interval-selector";
 import { ChannelSelector, defaultChannels, useConfiguredChannels, type Channel } from "@/components/prowl/channel-selector";
+import { AlertOnFields, alertOnFromFields, targetText, type PriceChoice } from "@/components/prowl/alert-on-fields";
 import {
   ExternalLink,
   List,
@@ -32,12 +32,12 @@ import {
 import type { Id } from "@/convex/_generated/dataModel";
 import type { Doc } from "@/convex/_generated/dataModel";
 import type { ExtractedItem, ExtractionSchema, PriceChange } from "@prowl/shared";
-import { getItemKey, matchConfidence, MATCH_CONFIDENCE_LABEL } from "@prowl/shared";
+import { currencyExponent, getItemKey, isProductMonitor, matchConfidence, MATCH_CONFIDENCE_LABEL } from "@prowl/shared";
 import { useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { timeAgo, timeUntil } from "@/lib/time";
 import { formatPrice, toSafeUrl } from "@/lib/format";
-import { cn } from "@/lib/utils";
+import { cn, errorText } from "@/lib/utils";
 import { toast } from "sonner";
 import { trackEvent } from "@/lib/posthog";
 
@@ -53,6 +53,7 @@ interface OverviewTabProps {
     matchCount: number;
     checkCount?: number;
     schema?: unknown;
+    groupId?: string;
     status: string;
     lastError?: string;
     retryCount?: number;
@@ -60,9 +61,10 @@ interface OverviewTabProps {
     nextCheckAt?: number;
     notificationChannels?: string[];
     proxyPreferred?: boolean;
+    alertOn?: { backInStock?: boolean; priceDrop?: boolean; priceBelow?: { amount: number; currency: string } };
+    lastSeen?: { currency?: string };
   };
   matches: ExtractedItem[];
-  allItems: ExtractedItem[];
   totalItems: number;
   results: Doc<"scrapeResults">[];
   scores: Record<string, { matchScore: number; matchReason: string }>;
@@ -78,11 +80,22 @@ interface OverviewTabProps {
 
 type CheckInterval = "5m" | "15m" | "30m" | "1h" | "6h" | "24h";
 
+/**
+ * The product's currency, to preselect for a new target: the last read's,
+ * else the full extract's. Empty when neither is known, so the user picks
+ * one rather than a guess turning their target into another currency.
+ */
+function productCurrency(monitor: OverviewTabProps["monitor"]): string {
+  const itemCurrency = (monitor.schema as { items?: { currency?: unknown }[] } | undefined)?.items?.[0]?.currency;
+  const candidate = monitor.lastSeen?.currency ?? (typeof itemCurrency === "string" ? itemCurrency.toUpperCase() : "");
+  return currencyExponent(candidate) === null ? "" : candidate;
+}
+
 const RETRY_LIMIT = 3;
 const RETRY_WINDOW_MS = 60 * 60 * 1000; // 1 hour
 const ROWS_SHOWN = 8;
 
-export function OverviewTab({ monitorId, monitor, matches, allItems, totalItems, results, scores, onRescan, onToggleMute, settingsOpen, onSettingsOpenChange, onAdjustFilters, onViewItems, displayInterval }: OverviewTabProps) {
+export function OverviewTab({ monitorId, monitor, matches, totalItems, results, scores, onRescan, onToggleMute, settingsOpen, onSettingsOpenChange, onAdjustFilters, onViewItems, displayInterval }: OverviewTabProps) {
   const [insightsOpen, setInsightsOpen] = useState(false);
   const [showAll, setShowAll] = useState(false);
   const [retrying, setRetrying] = useState(false);
@@ -135,20 +148,6 @@ export function OverviewTab({ monitorId, monitor, matches, allItems, totalItems,
   const schema = monitor.schema as ExtractionSchema | undefined;
 
   const insights = schema?.insights;
-  const tracksPrices = insights?.tracksPrices
-    ?? allItems.some((item) => typeof item.price === "number");
-  const suggestedPriceTrackItems = insights?.suggestedPriceTrackItems ?? [];
-  const priceAlerts = (monitor as any).priceAlerts;
-
-  const currency = (() => {
-    const currencies = allItems
-      .map((i) => typeof i.currency === "string" ? i.currency : null)
-      .filter((c): c is string => c !== null);
-    if (currencies.length === 0) return "USD";
-    const counts = new Map<string, number>();
-    for (const c of currencies) counts.set(c, (counts.get(c) ?? 0) + 1);
-    return [...counts.entries()].sort((a, b) => b[1] - a[1])[0]![0];
-  })();
 
   // Titles that appeared on the most recent check. `changes.added` is the only
   // honest source: hasNewMatches is written from matchCount on the initial-scan
@@ -432,14 +431,6 @@ export function OverviewTab({ monitorId, monitor, matches, allItems, totalItems,
               const band = typeof judged?.matchScore === "number" ? MATCH_CONFIDENCE_LABEL[matchConfidence(judged.matchScore)] : "";
               const reason = judged?.matchReason ?? "";
               const delta = renderDelta(item, title, price);
-              const belowThreshold = priceAlerts?.belowThreshold;
-              // Only tracked items ever fire a below-threshold alert, so an
-              // untracked cheap item must not wear the badge that promises one.
-              const hitThreshold =
-                typeof belowThreshold === "number" &&
-                typeof item.price === "number" &&
-                item.price <= belowThreshold &&
-                (priceAlerts?.trackedItems ?? []).includes(key);
 
               const Row = safeUrl ? "a" : "div";
               return (
@@ -470,11 +461,6 @@ export function OverviewTab({ monitorId, monitor, matches, allItems, totalItems,
                   <div className="col-start-1 sm:col-start-2 flex items-baseline gap-2 tabular-nums whitespace-nowrap">
                     {price && <span className="text-base font-semibold">{price}</span>}
                     {delta}
-                    {hitThreshold && (
-                      <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-xs">
-                        Under {formatPrice(belowThreshold, currency)}
-                      </Badge>
-                    )}
                   </div>
 
                   {/* col 2 spanning both rows on mobile, col 3 on sm+: the open chip */}
@@ -502,17 +488,6 @@ export function OverviewTab({ monitorId, monitor, matches, allItems, totalItems,
           </Button>
         )}
       </div>
-
-      {tracksPrices && (
-        <PriceAlertCard
-          monitorId={monitorId}
-          priceAlerts={priceAlerts}
-          allItems={allItems}
-          suggestedPriceTrackItems={suggestedPriceTrackItems}
-          currency={currency}
-          muted={!!(monitor as any).muted}
-        />
-      )}
 
       {/* Monitor settings — collapsible */}
       <div>
@@ -580,7 +555,7 @@ function MonitorSettingsForm({
   const [name, setName] = useState(monitor.name);
   const [prompt, setPrompt] = useState(monitor.prompt);
   const [checkInterval, setCheckInterval] = useState(monitor.checkInterval as CheckInterval);
-  // An unset list means "every configured channel" (scheduler.ts:450), so that
+  // An unset list means "every configured channel" (alertChannels in convex/alerts.ts), so that
   // is what the picker has to show. Seeding it to ["email"] meant toggling any
   // one chip saved email-only and silently narrowed the monitor.
   const explicitChannels = monitor.notificationChannels as Channel[] | undefined;
@@ -588,6 +563,15 @@ function MonitorSettingsForm({
   const [editedChannels, setEditedChannels] = useState<Channel[] | null>(null);
   const channels = editedChannels ?? explicitChannels ?? defaultChannels(configuredChannels) ?? ["email"];
   const channelsUnresolved = explicitChannels === undefined && configuredChannels === undefined;
+  const singleProduct = isProductMonitor(monitor);
+  const [backInStock, setBackInStock] = useState(monitor.alertOn?.backInStock === true);
+  const savedTarget = monitor.alertOn?.priceBelow;
+  const [currency, setCurrency] = useState(savedTarget?.currency ?? productCurrency(monitor));
+  const savedChoice: PriceChoice = monitor.alertOn?.priceDrop
+    ? "drop"
+    : savedTarget !== undefined ? "below" : "off";
+  const [priceChoice, setPriceChoice] = useState<PriceChoice>(savedChoice);
+  const [target, setTarget] = useState(targetText(savedTarget));
   const [saving, setSaving] = useState(false);
   const updateMutation = useMutation(api.monitors.update);
 
@@ -601,11 +585,24 @@ function MonitorSettingsForm({
       };
       if (editedChannels !== null) payload.notificationChannels = editedChannels;
       if (checkInterval !== monitor.checkInterval) payload.checkInterval = checkInterval;
+      const fields = alertOnFromFields({ backInStock, priceChoice, target, currency });
+      if (fields.error !== undefined) {
+        toast.error(fields.error);
+        return;
+      }
+      const newTarget = fields.alertOn.priceBelow;
+      if (
+        backInStock !== (monitor.alertOn?.backInStock === true) ||
+        priceChoice !== savedChoice ||
+        (newTarget !== undefined && (newTarget.amount !== savedTarget?.amount || newTarget.currency !== savedTarget.currency))
+      ) {
+        payload.alertOn = fields.alertOn;
+      }
       await updateMutation(payload as Parameters<typeof updateMutation>[0]);
       onClose();
       toast.success("Monitor updated");
     } catch (e) {
-      toast.error("Failed to update", { description: e instanceof Error ? e.message : "" });
+      toast.error("Failed to update", { description: errorText(e, "Try again.") });
     } finally {
       setSaving(false);
     }
@@ -642,6 +639,18 @@ function MonitorSettingsForm({
             monitorId={monitorId}
             disabled={channelsUnresolved}
           />
+          {singleProduct && (
+            <AlertOnFields
+              backInStock={backInStock}
+              onBackInStockChange={setBackInStock}
+              priceChoice={priceChoice}
+              onPriceChoiceChange={setPriceChoice}
+              target={target}
+              onTargetChange={setTarget}
+              currency={currency}
+              onCurrencyChange={setCurrency}
+            />
+          )}
           <div className="flex items-center gap-2 pt-2">
             <Button size="sm" className="gap-1.5" onClick={save} disabled={saving}>
               {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}

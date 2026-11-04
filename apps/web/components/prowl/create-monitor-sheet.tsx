@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ChannelSelector, defaultChannels, useConfiguredChannels, type Channel } from "@/components/prowl/channel-selector";
 import { IntervalSelector } from "@/components/prowl/interval-selector";
 import {
@@ -24,10 +25,12 @@ import {
   MessageCircle,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
+import { useQuery } from "convex/react";
+import { api } from "@/convex/_generated/api";
 import { useMonitor } from "@/hooks/use-monitors";
 import type { Id } from "@/convex/_generated/dataModel";
 import { toast } from "sonner";
-import { sessionBoundParams } from "@prowl/shared";
+import { guessAlertOn, sessionBoundParams, type GuessedAlertOn } from "@prowl/shared";
 import {
   readMonitorDraft,
   writeMonitorDraft,
@@ -36,9 +39,11 @@ import {
 import { trackMonitorDraftRestored, trackMonitorDraftCleared } from "@/lib/posthog";
 import { MONITOR_MODES, type MonitorModeId } from "@/lib/monitor-modes";
 import { ScanStep } from "./scan-step";
-import type { ScanStage } from "@/hooks/use-create-monitor";
+import { FindProductTab } from "./find-product-tab";
+import type { CloneDefaults, ScanStage } from "@/hooks/use-create-monitor";
 
 type CheckInterval = "5m" | "15m" | "30m" | "1h" | "6h" | "24h";
+type FormTab = "find" | "url";
 
 interface CreateMonitorSheetProps {
   open: boolean;
@@ -55,7 +60,7 @@ interface CreateMonitorSheetProps {
   }) => void;
   onCancelScan: () => void;
   onConfirm: () => void;
-  cloneDefaults?: { name: string; url: string; prompt: string } | null;
+  cloneDefaults?: CloneDefaults | null;
   onCloneDefaultsConsumed?: () => void;
 }
 
@@ -85,6 +90,19 @@ export function CreateMonitorSheet({
   // interacts with the form for the first time after hydration, or when
   // they hit "Start over". See PROWL-038 Phase 3.
   const [hydratedFromDraft, setHydratedFromDraft] = useState(false);
+  const betaFeatures = useQuery(api.betaFeatures.list);
+  const findAProduct = betaFeatures?.includes("find_a_product") ?? false;
+  const [tab, setTab] = useState<FormTab>("find");
+  const urlTab = !findAProduct || tab === "url";
+  // Nothing renders until the flag is known, or the URL form flashes up and
+  // then vanishes for beta users.
+  const showUrlForm = betaFeatures !== undefined && urlTab;
+  // Mounted on the first visit to the tab, then kept, so URL-only users never
+  // run its queries and results survive a look at the other tab.
+  const [findVisited, setFindVisited] = useState(false);
+  if (findAProduct && tab === "find" && !findVisited) setFindVisited(true);
+  // What Clone hands the Find tab. Cleared on close so a later open starts empty.
+  const [cloneSeed, setCloneSeed] = useState<{ query: string; guess: GuessedAlertOn } | null>(null);
 
   // Timer
   const [elapsed, setElapsed] = useState(0);
@@ -144,14 +162,21 @@ export function CreateMonitorSheet({
         setCheckInterval(draft.checkInterval);
         setChannels(draft.channels);
         setHydratedFromDraft(true);
+        // A name alone can be text carried over from Find a product, which is
+        // no reason to leave that tab.
+        setTab(draft.url || draft.prompt ? "url" : "find");
         trackMonitorDraftRestored();
         channelsSeededRef.current = true;
       } else {
         resetForm();
         setHydratedFromDraft(false);
+        setTab("find");
       }
     }
-    if (!open) channelsSeededRef.current = false;
+    if (!open) {
+      channelsSeededRef.current = false;
+      setCloneSeed(null);
+    }
     prevOpenRef.current = open;
   }, [open, activeMonitorId, isScanning]);
 
@@ -187,6 +212,10 @@ export function CreateMonitorSheet({
       setName(cloneDefaults.name);
       setUrl(cloneDefaults.url);
       setPrompt(cloneDefaults.prompt);
+      const { searchTerm } = cloneDefaults;
+      setCloneSeed(searchTerm ? { query: searchTerm, guess: guessAlertOn(cloneDefaults.prompt) } : null);
+      // Without the beta, "find" still shows the URL form.
+      setTab(searchTerm ? "find" : "url");
       onCloneDefaultsConsumed?.();
     }
   }, [cloneDefaults, open, onCloneDefaultsConsumed]);
@@ -286,7 +315,9 @@ export function CreateMonitorSheet({
               {step === "scanning" && (isInRetry ? "Retrying..." : "Scanning...")}
             </SheetTitle>
             <SheetDescription>
-              {step === "form" && "Paste a URL and describe what you're looking for."}
+              {step === "form" && (urlTab
+                ? "Paste a URL and describe what you're looking for."
+                : "Type a product name and we'll find shops that sell it.")}
               {step === "scanning" && (isInRetry
                 ? "The first attempt was blocked — automatically retrying."
                 : "AI is scanning the page and extracting data...")}
@@ -294,8 +325,36 @@ export function CreateMonitorSheet({
           </SheetHeader>
 
           <div className="mt-6">
+            {step === "form" && findAProduct && (
+              <>
+                <Tabs value={tab} onValueChange={(v) => setTab(v as FormTab)} className="mb-6">
+                  <TabsList className="w-full">
+                    <TabsTrigger value="find">Find a product</TabsTrigger>
+                    <TabsTrigger value="url">Paste a URL</TabsTrigger>
+                  </TabsList>
+                </Tabs>
+                {findVisited && (
+                  <div hidden={tab !== "find"}>
+                    <FindProductTab
+                      // The seed lands an effect after the sheet opens, so remount to take it.
+                      key={cloneSeed?.query ?? ""}
+                      clone={cloneSeed}
+                      onPasteUrl={(typed) => {
+                        if (typed) setName(typed);
+                        setTab("url");
+                      }}
+                      onDone={(groupId) => {
+                        onOpenChange(false);
+                        router.push(`/dashboard/products/${groupId}`);
+                      }}
+                    />
+                  </div>
+                )}
+              </>
+            )}
+
             {/* ---- STEP 1: FORM ---- */}
-            {step === "form" && (
+            {step === "form" && showUrlForm && (
               <form
                 onSubmit={(e) => {
                   e.preventDefault();

@@ -1,4 +1,5 @@
 import type { PostHog } from "posthog-js";
+import type { BetaFeature } from "@/convex/schema";
 
 export const POSTHOG_KEY = process.env.NEXT_PUBLIC_POSTHOG_KEY;
 export const POSTHOG_HOST = process.env.NEXT_PUBLIC_POSTHOG_HOST ?? "https://us.i.posthog.com";
@@ -192,6 +193,13 @@ export function trackUpgradePromptClicked(props: { plan: string; currentTier: st
   });
 }
 
+export function trackUpgradeBanner(action: "shown" | "clicked", props: { currentTier: string; nextTier: string }) {
+  trackEvent(`upgrade_banner_${action}`, {
+    current_tier: props.currentTier,
+    target_plan: props.nextTier,
+  });
+}
+
 export function trackSubscriptionChanged(props: { from: string; to: string }) {
   trackEvent("subscription_changed", {
     from_tier: props.from,
@@ -259,6 +267,52 @@ export function trackScanFailed(props: { url: string; error: string; durationMs:
   });
 }
 
+// ---- Find a product ----
+
+export function trackProductSearchStarted(props: { region: string }) {
+  trackEvent("product_search_started", props);
+}
+
+export function trackProductSearchCompleted(props: {
+  region: string;
+  resultCount: number;
+  durationMs: number;
+  failed: boolean;
+}) {
+  trackEvent("product_search_completed", props);
+}
+
+export function trackProductGroupCreated(props: { listingCount: number; watchingCount: number }) {
+  trackEvent("product_group_created", props);
+}
+
+/**
+ * One per listing shown when a product is created: ticked is approved, unticked
+ * is dismissed. Also on the product view, when a suggestion is watched or dismissed.
+ */
+export function trackListingReviewed(approved: boolean, props: { site: string; label: string }) {
+  trackEvent(approved ? "listing_approved" : "listing_dismissed", props);
+}
+
+/** Once per press, after the search settles. A failed search has a newCount of 0. */
+export function trackFindMoreListingsClicked(props: { newCount: number; failed: boolean }) {
+  trackEvent("find_more_listings_clicked", props);
+}
+
+export function trackProductCriteriaUpdated(props: {
+  backInStock: boolean;
+  price: "off" | "drop" | "below";
+  checkInterval: string;
+  watchingCount: number;
+}) {
+  trackEvent("product_criteria_updated", props);
+}
+
+/** Clone opened the Find tab with a monitor's name. The flags say what was guessed from its prompt. */
+export function trackCloneAsProductOpened(props: { backInStock: boolean; priceDrop: boolean; priceBelow: boolean }) {
+  trackEvent("clone_as_product_opened", props);
+}
+
 // ---- Match events ----
 
 export function trackMatchFound(props: { monitorId: string; matchCount: number }) {
@@ -297,6 +351,10 @@ export function trackNotificationChannelToggled(props: { channel: string; enable
     channel: props.channel,
     enabled: props.enabled,
   });
+}
+
+export function trackBetaFeatureToggled(props: { feature: BetaFeature; enabled: boolean }) {
+  trackEvent("beta_feature_toggled", props);
 }
 
 export function trackWhatsNew(props: { announcement: string; action: "shown" | "dismissed" | "clicked_cta" | "opened_changelog" }) {

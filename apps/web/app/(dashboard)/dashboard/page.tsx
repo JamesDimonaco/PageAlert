@@ -5,10 +5,13 @@ import { Button } from "@/components/ui/button";
 import { Plus, Search, Radar, Sparkles } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { MonitorCard } from "@/components/prowl/monitor-card";
+import { ProductCard } from "@/components/prowl/product-card";
+import type { ProductSummary } from "@/convex/monitorGroups";
 import { StatsCards } from "@/components/prowl/stats-cards";
 import { DeleteDialog } from "@/components/prowl/delete-dialog";
 import { ReviewPrompt } from "@/components/prowl/review-prompt";
 import { OnboardingChecklist } from "@/components/prowl/onboarding-checklist";
+import { UpgradeBanner } from "@/components/prowl/upgrade-banner";
 import { useMonitors } from "@/hooks/use-monitors";
 import { useCreateMonitor } from "@/hooks/use-create-monitor";
 import { useTier } from "@/hooks/use-tier";
@@ -18,6 +21,7 @@ import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { toast } from "sonner";
 import { trackMonitorDeleted, trackMonitorPaused, trackMonitorResumed, trackEvent, setUserProperties, captureException } from "@/lib/posthog";
+import { errorText } from "@/lib/utils";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
 import {
   Select,
@@ -30,7 +34,7 @@ import {
 export default function DashboardPage() {
   const { monitors, togglePause, deleteMonitor, updateMonitor, toggleMute } = useMonitors();
   const { open: openCreate, openWithDefaults } = useCreateMonitor();
-  const { tier, maxMonitors } = useTier();
+  const { tier, resolved: tierResolved, maxMonitors } = useTier();
   const searchParams = useSearchParams();
   const router = useRouter();
   const atLimit = monitors.length >= maxMonitors;
@@ -40,7 +44,13 @@ export default function DashboardPage() {
       toast.error("Monitor limit reached", { description: "Upgrade your plan to add more monitors." });
       return false;
     }
-    openWithDefaults({ name: `${source.name} (copy)`, url: source.url, prompt: source.prompt });
+    openWithDefaults({
+      name: `${source.name} (copy)`,
+      url: source.url,
+      prompt: source.prompt,
+      // A clone of a clone is "X (copy) (copy)"; the search wants just X.
+      searchTerm: source.name.replace(/( \(copy\))+$/, ""),
+    });
     return true;
   }
 
@@ -186,7 +196,7 @@ export default function DashboardPage() {
       });
       // Scan budget already consumed atomically above
     } catch (e) {
-      const msg = e instanceof Error ? e.message : "Rescan failed";
+      const msg = errorText(e, e instanceof Error ? e.message : "Rescan failed");
       const durationMs = Date.now() - startTime;
       await saveScanError({ id: monitorId, error: msg }).catch((saveErr) => captureException(saveErr, { context: "saveScanError", monitorId }));
       await createLog({
@@ -206,18 +216,41 @@ export default function DashboardPage() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
 
-  const filtered = monitors.filter((m) => {
-    const matchesSearch =
-      !search ||
-      m.name.toLowerCase().includes(search.toLowerCase()) ||
-      m.url.toLowerCase().includes(search.toLowerCase()) ||
-      m.prompt.toLowerCase().includes(search.toLowerCase());
-    const matchesStatus = statusFilter === "all" || (statusFilter === "muted" ? !!(m as any).muted : m.status === statusFilter);
-    return matchesSearch && matchesStatus;
-  });
+  const matchesSearch = (m: Doc<"monitors">) =>
+    !search ||
+    m.name.toLowerCase().includes(search.toLowerCase()) ||
+    m.url.toLowerCase().includes(search.toLowerCase()) ||
+    m.prompt.toLowerCase().includes(search.toLowerCase());
+  const matchesStatus = (m: Doc<"monitors">) =>
+    statusFilter === "all" || (statusFilter === "muted" ? !!m.muted : m.status === statusFilter);
+
+  // A product's monitors sit under one card, placed where its newest monitor
+  // would be. Until products load they wait, rather than flash up on their
+  // own, and the empty states wait too.
+  const products = useQuery(api.monitorGroups.listMine);
+  const productById = new Map((products ?? []).map((p) => [p._id, p]));
+  const placed = new Set<Id<"monitorGroups">>();
+  const filtered: ({ monitor: Doc<"monitors"> } | { product: ProductSummary; monitors: Doc<"monitors">[] })[] = [];
+  for (const m of monitors) {
+    const product = m.groupId && productById.get(m.groupId);
+    if (!product) {
+      if (m.groupId && products === undefined) continue;
+      if (matchesSearch(m) && matchesStatus(m)) filtered.push({ monitor: m });
+      continue;
+    }
+    if (placed.has(product._id)) continue;
+    placed.add(product._id);
+    const children = monitors.filter((c) => c.groupId === product._id);
+    const nameMatches = product.name.toLowerCase().includes(search.toLowerCase());
+    if (children.some((c) => matchesStatus(c) && (nameMatches || matchesSearch(c)))) {
+      filtered.push({ product, monitors: children });
+    }
+  }
 
   return (
     <div className="space-y-10">
+      <UpgradeBanner tier={tier} tierResolved={tierResolved} atLimit={atLimit} />
+
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Dashboard</h1>
@@ -283,7 +316,7 @@ export default function DashboardPage() {
       </div>
 
       <div className="space-y-4">
-        {filtered.length === 0 ? (
+        {filtered.length === 0 && products !== undefined ? (
           monitors.length === 0 ? (
             <div className="rounded-xl bg-card/30 shadow-sm shadow-black/5 py-16 px-8">
               <div className="max-w-lg mx-auto text-center">
@@ -328,10 +361,12 @@ export default function DashboardPage() {
             </div>
           )
         ) : (
-          filtered.map((monitor) => (
+          filtered.map((item) => "product" in item ? (
+            <ProductCard key={item.product._id} product={item.product} monitors={item.monitors} />
+          ) : (
             <MonitorCard
-              key={monitor._id}
-              monitor={monitor}
+              key={item.monitor._id}
+              monitor={item.monitor}
               onTogglePause={async (id) => {
                 const m = monitors.find((x) => x._id === id);
                 try {
@@ -343,8 +378,8 @@ export default function DashboardPage() {
                     trackMonitorPaused();
                     toast.success("Monitor paused");
                   }
-                } catch {
-                  toast.error("Failed to update monitor");
+                } catch (err) {
+                  toast.error("Failed to update monitor", { description: errorText(err, "Try again.") });
                 }
               }}
               onRescan={handleRescan}
@@ -371,13 +406,17 @@ export default function DashboardPage() {
       <DeleteDialog
         open={!!deleteTarget}
         onOpenChange={(open) => !open && setDeleteTarget(null)}
-        onConfirm={() => {
-          if (deleteTarget) {
-            deleteMonitor(deleteTarget._id);
-            trackMonitorDeleted();
-            toast.success("Monitor deleted");
-            setDeleteTarget(null);
+        onConfirm={async () => {
+          if (!deleteTarget) return;
+          try {
+            await deleteMonitor(deleteTarget._id);
+          } catch (err) {
+            toast.error("Failed to delete", { description: errorText(err, "Try again.") });
+            throw err;
           }
+          trackMonitorDeleted();
+          toast.success("Monitor deleted");
+          setDeleteTarget(null);
         }}
         monitorName={deleteTarget?.name ?? ""}
       />

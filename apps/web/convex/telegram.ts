@@ -64,6 +64,29 @@ export const sendMatchAlert = internalAction({
   },
 });
 
+/** A stock or price change on a watched product */
+export const sendProductAlert = internalAction({
+  args: {
+    chatId: v.string(),
+    monitorId: v.string(),
+    url: v.string(),
+    headline: v.string(),
+    message: v.string(),
+  },
+  handler: async (_ctx, args) => {
+    const text = [
+      `*${escMd(args.headline)}*`,
+      ``,
+      escMd(args.message),
+      ``,
+      `🔗 [View on site](${escUrl(args.url)})`,
+      `📊 [View in PageAlert](${escUrl(APP_URL + "/dashboard/monitors/" + args.monitorId)})`,
+    ].join("\n");
+
+    await sendMessage(getBotToken(), args.chatId, text);
+  },
+});
+
 function truncate(str: string, max: number): string {
   return str.length > max ? `${str.slice(0, max - 1)}…` : str;
 }
@@ -147,130 +170,6 @@ export const sendInactivityPaused = internalAction({
     ].join("\n");
 
     await sendMessage(token, args.chatId, text);
-  },
-});
-
-/** Send a price change alert via Telegram */
-export const sendPriceAlert = internalAction({
-  args: {
-    chatId: v.string(),
-    monitorName: v.string(),
-    monitorId: v.string(),
-    url: v.string(),
-    variant: v.union(v.literal("threshold"), v.literal("single_drop"), v.literal("multiple")),
-    priceChanges: v.array(
-      v.object({
-        title: v.string(),
-        oldPrice: v.number(),
-        newPrice: v.number(),
-        change: v.number(),
-        changePercent: v.number(),
-      })
-    ),
-    belowThreshold: v.optional(v.number()),
-    aboveThreshold: v.optional(v.number()),
-    belowHits: v.array(
-      v.object({
-        title: v.string(),
-        oldPrice: v.number(),
-        newPrice: v.number(),
-        change: v.number(),
-        changePercent: v.number(),
-      })
-    ),
-    aboveHits: v.array(
-      v.object({
-        title: v.string(),
-        oldPrice: v.number(),
-        newPrice: v.number(),
-        change: v.number(),
-        changePercent: v.number(),
-      })
-    ),
-    trackedItemCount: v.number(),
-  },
-  handler: async (_ctx, args) => {
-    const token = getBotToken();
-
-    const lines: string[] = [];
-
-    if (args.variant === "threshold") {
-      lines.push(`🎯 *Price Target Hit — ${escMd(args.monitorName)}*`);
-      lines.push("");
-
-      if (args.belowHits.length > 0 && args.belowThreshold !== undefined) {
-        lines.push(
-          `⚡ Below your $${escMd(args.belowThreshold.toFixed(2))} threshold:`
-        );
-        lines.push("");
-        for (const item of args.belowHits) {
-          lines.push(`• ${escMd(item.title)}`);
-          lines.push(
-            `  now *$${escMd(item.newPrice.toFixed(2))}* \\(was ~$${escMd(item.oldPrice.toFixed(2))}~\\)`
-          );
-        }
-      }
-
-      if (args.aboveHits.length > 0 && args.aboveThreshold !== undefined) {
-        if (args.belowHits.length > 0) lines.push("");
-        lines.push(
-          `⚡ Above your $${escMd(args.aboveThreshold.toFixed(2))} threshold:`
-        );
-        lines.push("");
-        for (const item of args.aboveHits) {
-          lines.push(`• ${escMd(item.title)}`);
-          lines.push(
-            `  now *$${escMd(item.newPrice.toFixed(2))}* \\(was ~$${escMd(item.oldPrice.toFixed(2))}~\\)`
-          );
-        }
-      }
-    } else if (args.variant === "single_drop" && args.priceChanges.length > 0) {
-      lines.push(`📉 *Price Drop — ${escMd(args.monitorName)}*`);
-      lines.push("");
-      const item = args.priceChanges[0]!;
-      const pct = Math.abs(item.changePercent).toFixed(1);
-      lines.push(`• ${escMd(item.title)}`);
-      lines.push(
-        `  ~$${escMd(item.oldPrice.toFixed(2))}~ → *$${escMd(item.newPrice.toFixed(2))}* ▼${escMd(pct)}%`
-      );
-    } else {
-      // multiple
-      lines.push(`📊 *Price Changes — ${escMd(args.monitorName)}*`);
-      lines.push("");
-
-      const drops = args.priceChanges.filter((c) => c.change < 0);
-      const increases = args.priceChanges.filter((c) => c.change > 0);
-
-      if (drops.length > 0) {
-        lines.push("📉 Drops:");
-        for (const item of drops) {
-          const pct = Math.abs(item.changePercent).toFixed(1);
-          lines.push(`• ${escMd(item.title)}`);
-          lines.push(
-            `  ~$${escMd(item.oldPrice.toFixed(2))}~ → *$${escMd(item.newPrice.toFixed(2))}* ▼${escMd(pct)}%`
-          );
-        }
-      }
-
-      if (increases.length > 0) {
-        if (drops.length > 0) lines.push("");
-        lines.push("📈 Increases:");
-        for (const item of increases) {
-          const pct = Math.abs(item.changePercent).toFixed(1);
-          lines.push(`• ${escMd(item.title)}`);
-          lines.push(
-            `  ~$${escMd(item.oldPrice.toFixed(2))}~ → *$${escMd(item.newPrice.toFixed(2))}* ▲${escMd(pct)}%`
-          );
-        }
-      }
-    }
-
-    lines.push("");
-    lines.push(
-      `🔗 [View monitor](${escUrl(APP_URL + "/dashboard/monitors/" + args.monitorId)})`
-    );
-
-    await sendMessage(token, args.chatId, lines.join("\n"));
   },
 });
 

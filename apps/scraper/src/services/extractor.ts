@@ -2,7 +2,7 @@ import AnthropicOriginal from "@anthropic-ai/sdk";
 import { PostHog } from "posthog-node";
 import { Anthropic as PostHogAnthropic } from "@posthog/ai";
 import type { ExtractionSchema, ExtractedItem } from "@prowl/shared";
-import { applyMatchConditions } from "@prowl/shared";
+import { applyMatchConditions, toMinorUnits } from "@prowl/shared";
 
 // PostHog LLM observability — tracks token usage, cost, latency per generation
 const posthogKey = process.env.POSTHOG_KEY;
@@ -21,10 +21,10 @@ const isTracked = () => Boolean(posthog && process.env.ANTHROPIC_API_KEY);
  * it. Without one the wrapper already skips creating a person. Only the
  * wrapped client strips these fields, so the plain client must not receive them.
  */
-const trackingParams = (userId?: string) =>
+export const trackingParams = (userId?: string) =>
   isTracked() && userId ? { posthogDistinctId: userId } : {};
 
-const getClient = (): AnthropicOriginal => {
+export const getClient = (): AnthropicOriginal => {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (posthog && apiKey) {
     // Wrapped client — auto-captures $ai_generation events
@@ -53,9 +53,7 @@ Respond with ONLY valid JSON in this exact format:
     "notices": [
       "Any limitations, e.g. 'RAM specs not shown on listing page - only visible on individual product pages'",
       "Another notice if needed"
-    ],
-    "tracksPrices": true,
-    "suggestedPriceTrackItems": ["Item title 1", "Item title 2"]
+    ]
   },
   "fields": {
     "title": "description",
@@ -85,8 +83,6 @@ Rules for insights:
   - If stock/availability isn't shown on this page
   - If prices might change or are regional
   - Keep each notice concise and actionable
-- "tracksPrices": true if the page contains prices associated with items (product listings, auction results, classified ads, etc). false if the page is a job board, news feed, forum, or other non-price content. This determines whether price tracking features are shown to the user.
-- "suggestedPriceTrackItems": If tracksPrices is true, list up to 5 item titles that are most relevant to the user's search prompt and most likely to have meaningful price changes. Pick items that match or nearly match the user's criteria. Omit if tracksPrices is false.
 
 Rules for extraction:
 - IMPORTANT: Extract ALL product/listing items on the page, not just ones that match the user's criteria. Include up to 50 items.
@@ -194,9 +190,8 @@ export async function extractWithAI(
     }
   }
 
-  // Normalise insights — always produce an object so tracksPrices is inferred even when AI omits insights
+  // Normalise insights — always produce an object, even when the AI omits it
   const rawInsights = (raw.insights as Record<string, unknown>) ?? {};
-  const inferredTracksPrices = Array.isArray(raw.items) && raw.items.some((item: Record<string, unknown>) => typeof item.price === "number");
   const insights = {
     understanding: String(rawInsights.understanding ?? ""),
     confidence: typeof rawInsights.confidence === "number" ? rawInsights.confidence : 50,
@@ -204,12 +199,6 @@ export async function extractWithAI(
     noMatchSignal: String(rawInsights.noMatchSignal ?? ""),
     notices: Array.isArray(rawInsights.notices)
       ? rawInsights.notices.filter((n): n is string => typeof n === "string")
-      : [],
-    tracksPrices: typeof rawInsights.tracksPrices === "boolean"
-      ? rawInsights.tracksPrices
-      : inferredTracksPrices,
-    suggestedPriceTrackItems: Array.isArray(rawInsights.suggestedPriceTrackItems)
-      ? rawInsights.suggestedPriceTrackItems.filter((n): n is string => typeof n === "string").slice(0, 5)
       : [],
   };
 
@@ -334,6 +323,13 @@ export interface ScoredCandidate extends ScoreCandidate {
   matchScore: number | null;
   /** One line the user can read to see why. */
   matchReason: string;
+  /** Present only when stock was asked for. Null fields mean the text did not say. */
+  stock?: {
+    inStock: boolean | null;
+    /** Minor units of `currency`. */
+    price: number | null;
+    currency: string | null;
+  };
 }
 
 const SCORING_PROMPT = `You judge whether listing entries match what a user asked to be alerted about.
@@ -353,6 +349,13 @@ Respond with ONLY valid JSON, no markdown fences:
 
 Return one entry per input index, in any order. Keep each reason under 20 words.`;
 
+const STOCK_PROMPT = `
+
+Also read the product's stock and price from its text. Add to each entry:
+- "inStock": true if it can be bought now, false if it is sold out or unavailable, null if the text does not say.
+- "price": the current selling price as a plain number (e.g. 1299.99), or null if none is shown.
+- "currency": the three-letter ISO 4217 code of that price (e.g. "GBP", "USD", "EUR"), never a symbol such as "£" or "$". Use null if you cannot tell which currency it is.`;
+
 /**
  * Score pre-filtered entries against the user's request.
  *
@@ -366,7 +369,8 @@ export async function scoreCandidates(
   candidates: ScoreCandidate[],
   prompt: string,
   monitorName?: string,
-  userId?: string
+  userId?: string,
+  readStock = false
 ): Promise<ScoredCandidate[]> {
   if (candidates.length === 0) return [];
 
@@ -383,7 +387,7 @@ export async function scoreCandidates(
     max_tokens: 2048,
     // A short judging task; the reasoning tokens would come out of max_tokens.
     thinking: { type: "disabled" },
-    system: SCORING_PROMPT,
+    system: readStock ? SCORING_PROMPT + STOCK_PROMPT : SCORING_PROMPT,
     ...trackingParams(userId),
     messages: [
       {
@@ -398,7 +402,7 @@ export async function scoreCandidates(
     .map((block) => block.text)
     .join("");
 
-  const scores = new Map<number, { matchScore: number; matchReason: string }>();
+  const scores = new Map<number, { matchScore: number; matchReason: string; stock: ScoredCandidate["stock"] }>();
   const jsonString = extractJson(responseText);
   if (jsonString) {
     try {
@@ -408,9 +412,21 @@ export async function scoreCandidates(
           const index = typeof entry.index === "number" ? entry.index : NaN;
           const score = typeof entry.matchScore === "number" ? entry.matchScore : NaN;
           if (!Number.isFinite(index) || !Number.isFinite(score)) continue;
+          const currency = typeof entry.currency === "string" ? entry.currency.toUpperCase() : null;
+          const price = typeof entry.price === "number" && currency !== null ? toMinorUnits(entry.price, currency) : null;
+          if (readStock && typeof entry.price === "number" && entry.price >= 0 && price === null) {
+            console.warn(`[extractor] Dropped price ${entry.price}: currency ${JSON.stringify(entry.currency ?? null)} is not an ISO 4217 code`);
+          }
           scores.set(index, {
             matchScore: Math.max(0, Math.min(100, Math.round(score))),
             matchReason: typeof entry.matchReason === "string" ? entry.matchReason : "",
+            stock: readStock
+              ? {
+                  inStock: typeof entry.inStock === "boolean" ? entry.inStock : null,
+                  price,
+                  currency: price === null ? null : currency,
+                }
+              : undefined,
           });
         }
       }
@@ -427,6 +443,7 @@ export async function scoreCandidates(
       ...candidate,
       matchScore: scored?.matchScore ?? null,
       matchReason: scored?.matchReason ?? "",
+      ...(scored?.stock ? { stock: scored.stock } : {}),
     };
   });
 }

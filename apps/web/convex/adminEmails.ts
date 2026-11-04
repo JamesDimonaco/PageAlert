@@ -95,7 +95,7 @@ export const retireStaleQueued = mutation({
  * Only the onboarding queue can be requeued this way: it regenerates its
  * email from a template at send time. emailSends (the record behind
  * recentSends below) stores only delivery metadata, not the rendered
- * content, so there is no equivalent "requeue" for a match/error/price
+ * content, so there is no equivalent "requeue" for a match or error
  * alert that already failed.
  */
 export const requeueFailed = mutation({

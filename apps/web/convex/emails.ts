@@ -130,7 +130,6 @@ export const sendMatchAlert = internalAction({
     matchCount: v.number(),
     matches: v.array(v.any()),
     totalItems: v.number(),
-    tracksPrices: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const safeName = esc(args.monitorName);
@@ -157,14 +156,6 @@ export const sendMatchAlert = internalAction({
 
     const moreText = args.matchCount > 5 ? `<p style="color:#666;font-size:14px">+${args.matchCount - 5} more new matches</p>` : "";
 
-    const priceDiscovery = args.tracksPrices
-      ? `<div style="margin-top:24px;padding-top:24px;border-top:1px solid #eee">
-          <p style="margin:0 0 8px;color:#333;font-size:14px">📊 This page has prices — want price drop alerts?</p>
-          <p style="margin:0 0 12px;color:#666;font-size:13px">Set up price tracking to get notified when prices change.</p>
-          <a href="${APP_URL}/dashboard/monitors/${args.monitorId}?section=price-alerts" style="color:#4f46e5;font-size:13px;font-weight:500;text-decoration:none">Set up price alerts →</a>
-        </div>`
-      : "";
-
     const html = `
 <!DOCTYPE html>
 <html>
@@ -186,7 +177,6 @@ export const sendMatchAlert = internalAction({
           <a href="${safeHref(viewOnSiteUrl)}" style="display:inline-block;background:#4f46e5;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:500;font-size:14px;margin-right:8px">View on site</a>
           <a href="${APP_URL}/dashboard/monitors/${args.monitorId}" style="display:inline-block;background:#f4f4f5;color:#333;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:500;font-size:14px">View in PageAlert</a>
         </div>
-        ${priceDiscovery}
       </div>
       <div style="padding:16px 32px;background:#f9fafb;border-top:1px solid #eee">
         <p style="margin:0;color:#999;font-size:12px">
@@ -200,9 +190,6 @@ export const sendMatchAlert = internalAction({
 </html>`;
 
     const plainItemsText = args.totalItems > 0 ? ` out of ${args.totalItems} items` : "";
-    const priceDiscoveryText = args.tracksPrices
-      ? "\n\nThis page has prices — set up price tracking to get notified when prices change.\nSet up price alerts: " + `${APP_URL}/dashboard/monitors/${args.monitorId}?section=price-alerts`
-      : "";
     const plainMatches = args.matches
       .slice(0, 5)
       .map((m: Record<string, unknown>) => {
@@ -211,7 +198,7 @@ export const sendMatchAlert = internalAction({
         return `• ${String(m.title ?? m.name ?? "Item")}${price}${band}`;
       })
       .join("\n");
-    const text = `Match Found — ${args.monitorName}\n\nYour monitor found ${args.matchCount} new match${args.matchCount !== 1 ? "es" : ""}${plainItemsText} on ${safeHostname(args.url)}.\n\n${plainMatches}\n${args.matchCount > 5 ? `+${args.matchCount - 5} more` : ""}\n\nView on site: ${viewOnSiteUrl}\nView in PageAlert: ${APP_URL}/dashboard/monitors/${args.monitorId}` + priceDiscoveryText;
+    const text = `Match Found — ${args.monitorName}\n\nYour monitor found ${args.matchCount} new match${args.matchCount !== 1 ? "es" : ""}${plainItemsText} on ${safeHostname(args.url)}.\n\n${plainMatches}\n${args.matchCount > 5 ? `+${args.matchCount - 5} more` : ""}\n\nView on site: ${viewOnSiteUrl}\nView in PageAlert: ${APP_URL}/dashboard/monitors/${args.monitorId}`;
 
     await send(ctx, {
       to: args.to,
@@ -219,6 +206,57 @@ export const sendMatchAlert = internalAction({
       html,
       text,
       kind: "match",
+      monitorId: args.monitorId,
+    });
+  },
+});
+
+/** A stock or price change on a watched product */
+export const sendProductAlert = internalAction({
+  args: {
+    to: v.string(),
+    monitorName: v.string(),
+    monitorId: v.string(),
+    url: v.string(),
+    productTitle: v.string(),
+    kind: v.union(v.literal("stock"), v.literal("price")),
+    headline: v.string(),
+    message: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const html = `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f4f4f5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif">
+  <div style="max-width:560px;margin:0 auto;padding:40px 20px">
+    <div style="background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.1)">
+      <div style="background:#047857;padding:24px 32px">
+        <h1 style="margin:0;color:#fff;font-size:20px;font-weight:600">${esc(args.headline)}</h1>
+        <p style="margin:4px 0 0;color:rgba(255,255,255,0.8);font-size:14px">${esc(args.monitorName)}</p>
+      </div>
+      <div style="padding:32px">
+        <p style="margin:0 0 24px;color:#333;font-size:16px">${esc(args.message)}</p>
+        <a href="${safeHref(args.url)}" style="display:inline-block;background:#047857;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:500;font-size:14px;margin-right:8px">View on site</a>
+        <a href="${APP_URL}/dashboard/monitors/${args.monitorId}" style="display:inline-block;background:#f4f4f5;color:#333;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:500;font-size:14px">View in PageAlert</a>
+      </div>
+      <div style="padding:16px 32px;background:#f9fafb;border-top:1px solid #eee">
+        <p style="margin:0;color:#999;font-size:12px">
+          You're receiving this because you asked to hear about this product's ${args.kind}.
+          <a href="${APP_URL}/dashboard/settings" style="color:#999">Manage notifications</a>
+        </p>
+      </div>
+    </div>
+  </div>
+</body>
+</html>`;
+
+    await send(ctx, {
+      to: args.to,
+      subject: `${args.headline}: ${args.productTitle}`,
+      html,
+      text: `${args.headline} — ${args.monitorName}\n\n${args.message}\n\nView on site: ${args.url}\nView in PageAlert: ${APP_URL}/dashboard/monitors/${args.monitorId}`,
+      kind: args.kind,
       monitorId: args.monitorId,
     });
   },
@@ -469,150 +507,6 @@ export const sendAnonymousScanComplete = internalAction({
       html,
       text: `Your scan is ready!\n\nWe found ${args.totalItems} items${args.matchCount > 0 ? ` with ${args.matchCount} matches` : ""} on ${args.monitorName}.\n\nView results: ${APP_URL}/try/${args.monitorId}\n\nWe'll check every 24 hours and email you when new matches appear.\n\nCreate a free account for more: ${APP_URL}/login`,
       kind: "anonymous-scan",
-      monitorId: args.monitorId,
-    });
-  },
-});
-
-/** Send a price alert email (single drop, multiple changes, or threshold hit) */
-export const sendPriceAlert = internalAction({
-  args: {
-    to: v.string(),
-    monitorName: v.string(),
-    monitorId: v.string(),
-    url: v.string(),
-    variant: v.union(v.literal("threshold"), v.literal("single_drop"), v.literal("multiple")),
-    priceChanges: v.array(v.object({
-      title: v.string(),
-      oldPrice: v.number(),
-      newPrice: v.number(),
-      change: v.number(),
-      changePercent: v.number(),
-    })),
-    belowThreshold: v.optional(v.number()),
-    aboveThreshold: v.optional(v.number()),
-    belowHits: v.array(v.object({
-      title: v.string(),
-      oldPrice: v.number(),
-      newPrice: v.number(),
-      change: v.number(),
-      changePercent: v.number(),
-    })),
-    aboveHits: v.array(v.object({
-      title: v.string(),
-      oldPrice: v.number(),
-      newPrice: v.number(),
-      change: v.number(),
-      changePercent: v.number(),
-    })),
-    trackedItemCount: v.number(),
-  },
-  handler: async (ctx, args) => {
-    const fmt = (n: number) => `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-    const pct = (n: number) => `${Math.abs(n).toFixed(1)}%`;
-    const manageUrl = `${APP_URL}/dashboard/monitors/${args.monitorId}?section=price-alerts`;
-
-    // Subject line
-    const firstBelow = args.belowHits[0];
-    const firstAbove = args.aboveHits[0];
-    const firstHit = firstBelow ?? firstAbove;
-    const firstChange = args.priceChanges[0];
-    let subject: string;
-    if (args.variant === "threshold" && firstHit) {
-      const threshold = firstBelow ? args.belowThreshold : args.aboveThreshold;
-      const direction = firstBelow ? "dropped below" : "rose above";
-      subject = threshold != null
-        ? `🎯 ${firstHit.title} ${direction} your ${fmt(threshold)} target!`
-        : `🎯 ${firstHit.title} — price target hit!`;
-    } else if (args.variant === "single_drop" && firstChange) {
-      subject = `${firstChange.title} dropped to ${fmt(firstChange.newPrice)} (-${pct(firstChange.changePercent)})`;
-    } else {
-      subject = `Price alert: ${args.priceChanges.length} price changes on ${args.monitorName}`;
-    }
-
-    // Header config
-    const isMultiple = args.variant === "multiple";
-    const headerColor = isMultiple ? "#3b82f6" : "#10b981";
-    const headerTitle = args.variant === "threshold" ? "Price Target Hit!" : isMultiple ? "Price Changes Detected" : "Price Drop";
-
-    // Build price change row HTML
-    const row = (item: { title: string; oldPrice: number; newPrice: number; changePercent: number }) => {
-      const arrow = item.newPrice < item.oldPrice ? "▼" : item.newPrice > item.oldPrice ? "▲" : "";
-      const arrowHtml = arrow ? `  ${arrow} ${pct(item.changePercent)}` : "";
-      return `<div style="border-bottom:1px solid #eee;padding:8px 0"><p style="margin:0;font-weight:600;color:#333">${esc(item.title)}</p><p style="margin:4px 0 0;color:#666;font-size:14px">${fmt(item.oldPrice)} → ${fmt(item.newPrice)}${arrowHtml}</p></div>`;
-    };
-
-    // Body content
-    let bodyHtml = "";
-    if (args.variant === "threshold") {
-      if (args.belowHits.length > 0) {
-        bodyHtml += `<p style="margin:0 0 8px;color:#10b981;font-weight:600">⚡ Below your ${fmt(args.belowThreshold ?? 0)} threshold</p>`;
-        bodyHtml += args.belowHits.map(row).join("");
-      }
-      if (args.aboveHits.length > 0) {
-        bodyHtml += `<p style="margin:16px 0 8px;color:#f59e0b;font-weight:600">⚡ Above your ${fmt(args.aboveThreshold ?? 0)} threshold</p>`;
-        bodyHtml += args.aboveHits.map(row).join("");
-      }
-    } else if (isMultiple) {
-      const drops = args.priceChanges.filter((c) => c.change < 0);
-      const increases = args.priceChanges.filter((c) => c.change > 0);
-      if (drops.length > 0) {
-        bodyHtml += `<p style="margin:0 0 8px;color:#10b981;font-weight:600">Price Drops</p>`;
-        bodyHtml += drops.map(row).join("");
-      }
-      if (increases.length > 0) {
-        bodyHtml += `<p style="margin:${drops.length > 0 ? "16" : "0"}px 0 8px;color:#f59e0b;font-weight:600">Price Increases</p>`;
-        bodyHtml += increases.map(row).join("");
-      }
-    } else {
-      bodyHtml += args.priceChanges.map(row).join("");
-    }
-
-    const html = `
-<!DOCTYPE html>
-<html>
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:0;background:#f4f4f5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif">
-  <div style="max-width:560px;margin:0 auto;padding:40px 20px">
-    <div style="background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.1)">
-      <div style="background:${headerColor};padding:24px 32px">
-        <h1 style="margin:0;color:#fff;font-size:20px;font-weight:600">${headerTitle}</h1>
-        <p style="margin:4px 0 0;color:rgba(255,255,255,0.8);font-size:14px">${esc(args.monitorName)}</p>
-      </div>
-      <div style="padding:32px">
-        ${bodyHtml}
-        <div style="margin-top:24px">
-          <a href="${safeHref(args.url)}" style="display:inline-block;background:${headerColor};color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:500;font-size:14px;margin-right:8px">View on site</a>
-          <a href="${APP_URL}/dashboard/monitors/${args.monitorId}" style="display:inline-block;background:#f4f4f5;color:#333;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:500;font-size:14px">View in PageAlert</a>
-        </div>
-      </div>
-      <div style="padding:16px 32px;background:#f9fafb;border-top:1px solid #eee">
-        <p style="margin:0;color:#999;font-size:12px">
-          Tracking ${args.trackedItemCount} items · <a href="${safeHref(manageUrl)}" style="color:#999">Manage price alerts</a>
-        </p>
-      </div>
-    </div>
-  </div>
-</body>
-</html>`;
-
-    const rowText = (item: { title: string; oldPrice: number; newPrice: number; changePercent: number }) =>
-      `• ${item.title}: ${fmt(item.oldPrice)} → ${fmt(item.newPrice)} (${item.newPrice < item.oldPrice ? "-" : "+"}${pct(item.changePercent)})`;
-    let textBody = "";
-    if (args.variant === "threshold") {
-      if (args.belowHits.length > 0) textBody += `Below ${fmt(args.belowThreshold ?? 0)} threshold:\n${args.belowHits.map(rowText).join("\n")}\n\n`;
-      if (args.aboveHits.length > 0) textBody += `Above ${fmt(args.aboveThreshold ?? 0)} threshold:\n${args.aboveHits.map(rowText).join("\n")}\n\n`;
-    } else {
-      textBody += args.priceChanges.map(rowText).join("\n") + "\n\n";
-    }
-    const text = `${headerTitle} — ${args.monitorName}\n\n${textBody}View on site: ${args.url}\nView in PageAlert: ${APP_URL}/dashboard/monitors/${args.monitorId}\nManage price alerts: ${manageUrl}`;
-
-    await send(ctx, {
-      to: args.to,
-      subject,
-      html,
-      text,
-      kind: `price-${args.variant}`,
       monitorId: args.monitorId,
     });
   },

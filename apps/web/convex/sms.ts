@@ -13,8 +13,8 @@ import { components, internal } from "./_generated/api";
 import { effectiveTier, SMS_LIMITS, spendSmsBudget } from "./tiers";
 import { requireLiveAccount } from "./account";
 import {
+  formatProductSms,
   formatMatchSms,
-  formatPriceSms,
   formatQuotaExhaustedSms,
   formatVerificationSms,
 } from "@prowl/shared";
@@ -27,7 +27,7 @@ import {
  * this file. Every send passes through tiers.reserveSmsSend first, and no
  * number becomes a destination until a code sent to it comes back.
  *
- * SMS deliberately carries match and price alerts only. Errors, parks and
+ * SMS deliberately carries match alerts only. Errors, parks and
  * inactivity pauses stay on email: they are not worth 160 characters and a
  * push notification at 3am, and a monitor that starts failing would otherwise
  * spend a user's whole allowance telling them so.
@@ -442,33 +442,21 @@ export const sendMatchAlert = internalAction({
   },
 });
 
-export const sendPriceAlert = internalAction({
+/** A stock or price change on a watched product */
+export const sendProductAlert = internalAction({
   args: {
     userId: v.string(),
     phone: v.string(),
-    monitorName: v.string(),
     monitorId: v.string(),
-    variant: v.union(v.literal("threshold"), v.literal("single_drop"), v.literal("multiple")),
-    changes: v.array(
-      v.object({
-        title: v.string(),
-        oldPrice: v.number(),
-        newPrice: v.number(),
-        changePercent: v.number(),
-      }),
-    ),
+    what: v.string(),
+    productTitle: v.string(),
   },
   handler: async (ctx, args) => {
     await sendAlert(
       ctx,
       args.userId,
       args.phone,
-      formatPriceSms({
-        monitorName: args.monitorName,
-        variant: args.variant,
-        changes: args.changes,
-        link: `${APP_URL}/m/${args.monitorId}`,
-      }),
+      formatProductSms({ what: args.what, productTitle: args.productTitle, link: `${APP_URL}/m/${args.monitorId}` }),
     );
   },
 });

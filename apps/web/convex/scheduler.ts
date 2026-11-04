@@ -1,8 +1,11 @@
-import { v } from "convex/values";
+import { v, type Infer } from "convex/values";
 import { effectiveTier } from "./tiers";
 import { claimActivation } from "./monitors";
-import { internalAction, internalMutation, internalQuery } from "./_generated/server";
+import { internalAction, internalMutation, internalQuery, type ActionCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
+import type { Doc } from "./_generated/dataModel";
+import { formatMinorUnits, formatSmsPrice, isProductMonitor } from "@prowl/shared";
+import { alertChannels, deliverAlert } from "./alerts";
 import {
   displayHost,
   isBlockedError,
@@ -100,6 +103,35 @@ function detectChanges(previousItems: Record<string, unknown>[], currentItems: R
 }
 
 const MAX_CONCURRENT_CHECKS = 10;
+
+/** How long after creating a product its owner may still be on the progress screen. */
+const PRODUCT_SCAN_WATCHED_MS = 15 * 60 * 1000;
+
+/** Reads that may try to confirm a held price before it is dropped. Each one is paid for. */
+const MAX_CONFIRM_ATTEMPTS = 3;
+
+/** A product monitor whose owner wants a stock or price alert. */
+function wantsProductRead(monitor: Pick<Doc<"monitors">, "alertOn" | "schema" | "groupId">): boolean {
+  const on = monitor.alertOn;
+  const wanted = on?.backInStock === true || on?.priceDrop === true || on?.priceBelow !== undefined;
+  return wanted && isProductMonitor(monitor);
+}
+
+/** The scraper rejects longer titles with a 400, which would fail every check until the monitor parks. */
+const MAX_PRODUCT_TITLE = 500;
+
+/**
+ * The product's name, for finding it on the page and naming it in alerts. A
+ * listing in a product uses its search result's title, because its page may
+ * hold several items and the first need not be the product. Otherwise it is
+ * the last full read's.
+ */
+function productTitle(monitor: Pick<Doc<"monitors">, "name" | "schema" | "productTitle">): string {
+  const title =
+    monitor.productTitle ?? (monitor.schema as { items?: { title?: unknown }[] } | undefined)?.items?.[0]?.title;
+  const name = typeof title === "string" && title.trim() ? title.trim() : monitor.name;
+  return name.slice(0, MAX_PRODUCT_TITLE);
+}
 
 // Web push payloads are capped around 4KB once encrypted, and going over makes
 // the send throw rather than truncate — the alert would vanish silently.
@@ -310,16 +342,21 @@ export const recordCheckResult = internalMutation({
     Object.assign(updates, hostStamp);
 
     // A successful first scan counts as a check, so a monitor reaching here
-    // with none has only ever failed: the first scan did not get in and a
-    // retry just has. Activation was never claimed for that user, and
-    // the person told "we'll keep trying" has heard nothing since.
+    // with none has either only ever failed (the first scan did not get in and
+    // a retry just has) or is a listing in a product, which is first-scanned
+    // here by design. Activation was never claimed for that user. The person
+    // told "we'll keep trying" has heard nothing since, so they get an email.
+    // A product's owner who could still be watching the scan in the app does
+    // not; one whose listing only got in after retries does.
     // Anonymous monitors are outside this: their owner is an anon_ id with no
     // account to activate and no dashboard to send them to.
     if (!monitor.checkCount && !monitor.isAnonymous) {
-      await claimActivation(ctx, monitor, args.matchCount, "got their first read after a failed first scan", false);
+      const watched = monitor.groupId !== undefined && now - monitor.createdAt < PRODUCT_SCAN_WATCHED_MS;
+      const how = watched ? "got their first product read" : "got their first read after a failed first scan";
+      await claimActivation(ctx, monitor, args.matchCount, how, false);
       // Same rule as the alerts: no list means every channel.
       const channels = monitor.notificationChannels;
-      if (monitor.userEmail && !monitor.muted && (!channels || channels.includes("email"))) {
+      if (!watched && monitor.userEmail && !monitor.muted && (!channels || channels.includes("email"))) {
         await ctx.scheduler.runAfter(0, internal.emails.sendFirstReadAlert, {
           to: monitor.userEmail,
           userId: monitor.userId,
@@ -517,25 +554,14 @@ export const runScheduledChecks = internalAction({
             if (!freshMonitor) console.log(`[scheduler] Monitor ${monitor._id} deleted during check, skipping notifications`);
             // Data already recorded above — just skip notifications
           } else {
-            // Per-monitor channel filtering using fresh data (shared by match + price notifications)
-            const monitorChannels = (freshMonitor as any).notificationChannels as string[] | undefined;
-            const shouldSend = (channel: string) => !monitorChannels || monitorChannels.includes(channel);
-            const hasAnyChannel = !monitorChannels || monitorChannels.length > 0;
-
-            // Texts are opt-in per monitor, never opt-out. An absent list means
-            // "every channel" above, which is right for the ones that cost
-            // nothing — but every monitor made before the field existed has no
-            // list, so the shared rule would start texting for all of them the
-            // moment a user verified a number.
-            const shouldSendSms = monitorChannels?.includes("sms") === true;
-
             // Both paths now name the entries the user has not been told
             // about, so an alert means a genuinely new listing rather than a
             // page that merely still says what it said last time.
-            const isNewMatch = (checkResult.newMatchKeys?.length ?? 0) > 0;
             const newCount = checkResult.newMatchKeys?.length ?? 0;
 
-            if (isNewMatch) {
+            // A listing in a product alerts only on its stock and price. Its
+            // page often shows related items, and each would read as a match.
+            if (newCount > 0 && freshMonitor.groupId === undefined) {
               // Only the items the user has not seen. On the quick-check path
               // there is nothing to narrow to, so this is the whole match set.
               const newKeys = new Set(checkResult.newMatchKeys ?? []);
@@ -547,308 +573,45 @@ export const runScheduledChecks = internalAction({
                 .filter(({ m }) => newKeys.has(matchKey(m)));
               const newMatches = newWithIndex.map(({ m }) => m);
               const plural = newCount !== 1 ? "es" : "";
+              const base = {
+                monitorName: freshMonitor.name,
+                monitorId: freshMonitor._id,
+                url: freshMonitor.url,
+                matchCount: newCount,
+                totalItems: displayTotalItems,
+              };
 
               await ctx.scheduler.runAfter(0, internal.admin.notify, {
                 text: `Match: ${freshMonitor.name} found ${newCount} new on ${displayHost(freshMonitor.url)} (${freshMonitor.userEmail ?? "no email"})`,
               });
 
-              // Create in-app notification (unless all channels explicitly disabled)
-              if (hasAnyChannel) await ctx.runMutation(internal.userNotifications.create, {
-                userId: freshMonitor.userId,
-                monitorId: freshMonitor._id,
-                channel: "in_app",
+              await deliverAlert(ctx, freshMonitor, {
+                type: "match",
                 title: `${freshMonitor.name} — ${newCount} new match${plural}`,
-                message: `Found ${newCount} new match${plural} out of ${displayTotalItems} items on ${freshMonitor.url}`,
-              }).catch(() => {});
-
-              // Push. No settings lookup — a user's devices are the target,
-              // and push.ts resolves them. Same wording as the in-app card.
-              if (shouldSend("push")) {
-                await ctx.runAction(internal.push.sendToUser, {
-                  userId: freshMonitor.userId,
-                  monitorId: freshMonitor._id,
-                  title: `${freshMonitor.name} — ${newCount} new match${plural}`,
-                  body: `${newCount} new match${plural} out of ${displayTotalItems} items on ${displayHost(freshMonitor.url)}`,
-                  kind: "match",
-                }).catch(() => {});
-              }
-
-              // Send email
-              if (shouldSend("email") && freshMonitor.userEmail) {
-                await ctx.runAction(internal.emails.sendMatchAlert, {
-                  to: freshMonitor.userEmail,
-                  monitorName: freshMonitor.name,
-                  monitorId: freshMonitor._id,
-                  url: freshMonitor.url,
-                  matchCount: newCount,
-                  matches: newMatches,
-                  totalItems: displayTotalItems,
-                  tracksPrices: !!(freshMonitor.schema as any)?.insights?.tracksPrices,
-                }).catch(() => {});
-              }
-
-              // Send to Telegram if configured and enabled for this monitor
-              if (shouldSend("telegram")) {
-                const telegramSetting = await ctx.runQuery(internal.scheduler.getNotificationSetting, {
-                  userId: freshMonitor.userId,
-                  channel: "telegram",
-                });
-                if (telegramSetting?.enabled && telegramSetting.target) {
-                  await ctx.runAction(internal.telegram.sendMatchAlert, {
-                    chatId: telegramSetting.target,
-                    monitorName: freshMonitor.name,
-                    monitorId: freshMonitor._id,
-                    url: freshMonitor.url,
-                    matchCount: newCount,
-                    totalItems: displayTotalItems,
+                inAppMessage: `Found ${newCount} new match${plural} out of ${displayTotalItems} items on ${freshMonitor.url}`,
+                pushBody: `${newCount} new match${plural} out of ${displayTotalItems} items on ${displayHost(freshMonitor.url)}`,
+                email: (to) => ctx.runAction(internal.emails.sendMatchAlert, { ...base, to, matches: newMatches }),
+                telegram: (chatId) =>
+                  ctx.runAction(internal.telegram.sendMatchAlert, {
+                    ...base,
+                    chatId,
                     matches: newWithIndex.slice(0, TELEGRAM_ALERT_ITEMS).map(({ m, index }) => ({
                       index,
                       title: String(m.title ?? m.name ?? "Item"),
                       matchScore: typeof m.matchScore === "number" ? m.matchScore : undefined,
                     })),
                     resultId: checkResult.resultId ?? undefined,
-                  }).catch(() => {});
-                }
-              }
-
-              // Send to Discord if configured and enabled for this monitor
-              if (shouldSend("discord")) {
-                const discordSetting = await ctx.runQuery(internal.scheduler.getNotificationSetting, {
-                  userId: freshMonitor.userId,
-                  channel: "discord",
-                });
-                if (discordSetting?.enabled && discordSetting.target) {
-                  await ctx.runAction(internal.discord.sendMatchAlert, {
-                    webhookUrl: discordSetting.target,
-                    monitorName: freshMonitor.name,
-                    monitorId: freshMonitor._id,
-                    url: freshMonitor.url,
-                    matchCount: newCount,
-                    totalItems: displayTotalItems,
-                  }).catch(() => {});
-                }
-              }
-
-              // Send to SMS if verified and enabled for this monitor. The
-              // allowance check lives inside sms.ts, so a refusal here is
-              // silent by design — the email alert has already gone.
-              if (shouldSendSms) {
-                const smsSetting = await ctx.runQuery(internal.scheduler.getNotificationSetting, {
-                  userId: freshMonitor.userId,
-                  channel: "sms",
-                });
-                if (smsSetting?.enabled && smsSetting.target) {
-                  await ctx.runAction(internal.sms.sendMatchAlert, {
+                  }),
+                discord: (webhookUrl) => ctx.runAction(internal.discord.sendMatchAlert, { ...base, webhookUrl }),
+                sms: (phone) =>
+                  ctx.runAction(internal.sms.sendMatchAlert, {
                     userId: freshMonitor.userId,
-                    phone: smsSetting.target,
+                    phone,
                     monitorName: freshMonitor.name,
                     monitorId: freshMonitor._id,
                     matchCount: newCount,
-                  }).catch(() => {});
-                }
-              }
-            }
-
-            // --- Price change notifications ---
-            const priceAlerts = (freshMonitor as any).priceAlerts as {
-              onPriceDrop: boolean;
-              onPriceIncrease: boolean;
-              belowThreshold?: number;
-              aboveThreshold?: number;
-              trackedItems: string[];
-              minChangePercent?: number;
-              lastNotifiedAt?: number;
-              cooldownMs?: number;
-            } | undefined;
-
-            if (priceAlerts && priceAlerts.trackedItems.length > 0) {
-              const latestResult = await ctx.runQuery(internal.scheduler.getLatestScrapeResult, { monitorId: freshMonitor._id });
-              const changes = latestResult?.changes as { priceChanges: { title: string; oldPrice: number; newPrice: number; change: number; changePercent: number }[] } | undefined;
-
-              if (changes?.priceChanges?.length) {
-                const schema = freshMonitor.schema as any;
-                const tracksPrices = schema?.insights?.tracksPrices
-                  ?? (Array.isArray(schema?.items) && schema.items.some((i: any) => typeof i.price === "number"));
-
-                if (tracksPrices) {
-                  // Filter to tracked items by title — title-price composite keys are unstable
-                  // across price changes, so we resolve tracked keys to titles and match on that
-                  const allItems = (schema?.items ?? []) as Record<string, unknown>[];
-                  const trackedTitles = new Set(
-                    priceAlerts.trackedItems.map((k) => {
-                      // Try to find the item by key to get its title
-                      const item = allItems.find((i) => {
-                        const iKey = i.url ? String(i.url) : `${String(i.title ?? "")}-${String(i.price ?? "")}`;
-                        return iKey === k;
-                      });
-                      if (item) return String(item.title ?? "").toLowerCase();
-                      // For URL keys, check if any item has this URL
-                      const byUrl = allItems.find((i) => String(i.url ?? "") === k);
-                      if (byUrl) return String(byUrl.title ?? "").toLowerCase();
-                      // Last resort: extract title portion from title-price key
-                      return k.split("-").slice(0, -1).join("-").toLowerCase() || k.toLowerCase();
-                    }).filter(Boolean)
-                  );
-                  const relevantChanges = changes.priceChanges.filter((pc) =>
-                    trackedTitles.has(pc.title.toLowerCase())
-                  );
-
-                  // Apply minimum change threshold
-                  const minPct = priceAlerts.minChangePercent ?? 2;
-                  const significantChanges = relevantChanges.filter((pc) => Math.abs(pc.changePercent) >= minPct);
-
-                  if (significantChanges.length > 0) {
-                    // Check cooldown
-                    const cooldownMs = priceAlerts.cooldownMs ?? 6 * 60 * 60 * 1000;
-                    const lastNotified = priceAlerts.lastNotifiedAt ?? 0;
-
-                    if (Date.now() - lastNotified >= cooldownMs) {
-                      const drops = significantChanges.filter((p) => p.change < 0);
-                      const increases = significantChanges.filter((p) => p.change > 0);
-                      const belowHits = priceAlerts.belowThreshold != null
-                        ? significantChanges.filter((p) => p.newPrice <= priceAlerts.belowThreshold!)
-                        : [];
-                      const aboveHits = priceAlerts.aboveThreshold != null
-                        ? significantChanges.filter((p) => p.newPrice >= priceAlerts.aboveThreshold!)
-                        : [];
-
-                      const shouldNotify =
-                        (priceAlerts.onPriceDrop && drops.length > 0) ||
-                        (priceAlerts.onPriceIncrease && increases.length > 0) ||
-                        belowHits.length > 0 ||
-                        aboveHits.length > 0;
-
-                      if (shouldNotify) {
-                        // Update cooldown
-                        await ctx.runMutation(internal.scheduler.updatePriceAlertTimestamp, {
-                          monitorId: freshMonitor._id,
-                          lastNotifiedAt: Date.now(),
-                        }).catch((e) => console.error(`[scheduler] Failed to update price alert cooldown for ${freshMonitor._id} — may cause duplicate alerts:`, e));
-
-                        // Determine template variant
-                        const hasThresholdCrossing = belowHits.length > 0 || aboveHits.length > 0;
-                        const variant: "threshold" | "single_drop" | "multiple" = hasThresholdCrossing ? "threshold" : (drops.length === 1 && increases.length === 0 ? "single_drop" : "multiple");
-
-                        const pricePayload = {
-                          monitorName: freshMonitor.name,
-                          monitorId: freshMonitor._id,
-                          url: freshMonitor.url,
-                          variant,
-                          priceChanges: significantChanges,
-                          belowThreshold: priceAlerts.belowThreshold,
-                          aboveThreshold: priceAlerts.aboveThreshold,
-                          belowHits,
-                          aboveHits,
-                          trackedItemCount: priceAlerts.trackedItems.length,
-                        };
-                        await ctx.scheduler.runAfter(0, internal.admin.notify, {
-                          text: `Price ${variant}: ${freshMonitor.name} on ${displayHost(freshMonitor.url)}, ${significantChanges.length} change(s) (${freshMonitor.userEmail ?? "no email"})`,
-                        });
-
-                        // Email
-                        if (shouldSend("email") && freshMonitor.userEmail) {
-                          await ctx.runAction(internal.emails.sendPriceAlert, {
-                            to: freshMonitor.userEmail,
-                            ...pricePayload,
-                          }).catch(() => {});
-                        }
-
-                        // Telegram
-                        if (shouldSend("telegram")) {
-                          const telegramSetting = await ctx.runQuery(internal.scheduler.getNotificationSetting, {
-                            userId: freshMonitor.userId,
-                            channel: "telegram",
-                          });
-                          if (telegramSetting?.enabled && telegramSetting.target) {
-                            await ctx.runAction(internal.telegram.sendPriceAlert, {
-                              chatId: telegramSetting.target,
-                              ...pricePayload,
-                            }).catch(() => {});
-                          }
-                        }
-
-                        // Discord
-                        if (shouldSend("discord")) {
-                          const discordSetting = await ctx.runQuery(internal.scheduler.getNotificationSetting, {
-                            userId: freshMonitor.userId,
-                            channel: "discord",
-                          });
-                          if (discordSetting?.enabled && discordSetting.target) {
-                            await ctx.runAction(internal.discord.sendPriceAlert, {
-                              webhookUrl: discordSetting.target,
-                              ...pricePayload,
-                            }).catch(() => {});
-                          }
-                        }
-
-                        // SMS. Only one item fits in 160 characters, so the
-                        // lead has to be the item the alert is actually about
-                        // — the threshold that was crossed, or the drop —
-                        // rather than whatever came first off the page.
-                        if (shouldSendSms) {
-                          const smsSetting = await ctx.runQuery(internal.scheduler.getNotificationSetting, {
-                            userId: freshMonitor.userId,
-                            channel: "sms",
-                          });
-                          if (smsSetting?.enabled && smsSetting.target) {
-                            const lead = hasThresholdCrossing
-                              ? [...belowHits, ...aboveHits]
-                              : variant === "single_drop" ? drops : significantChanges;
-                            await ctx.runAction(internal.sms.sendPriceAlert, {
-                              userId: freshMonitor.userId,
-                              phone: smsSetting.target,
-                              monitorName: freshMonitor.name,
-                              monitorId: freshMonitor._id,
-                              variant,
-                              changes: lead.map((pc) => ({
-                                title: pc.title,
-                                oldPrice: pc.oldPrice,
-                                newPrice: pc.newPrice,
-                                changePercent: pc.changePercent,
-                              })),
-                            }).catch(() => {});
-                          }
-                        }
-
-                        // In-app notification (unless all channels explicitly disabled)
-                        if (hasAnyChannel) {
-                          const dropCount = drops.length;
-                          const incCount = increases.length;
-                          const title = hasThresholdCrossing
-                            ? `${freshMonitor.name} — Price target hit!`
-                            : dropCount > 0 && incCount === 0
-                              ? `${freshMonitor.name} — ${dropCount} price drop${dropCount !== 1 ? "s" : ""}`
-                              : `${freshMonitor.name} — ${significantChanges.length} price change${significantChanges.length !== 1 ? "s" : ""}`;
-
-                          await ctx.runMutation(internal.userNotifications.create, {
-                            userId: freshMonitor.userId,
-                            monitorId: freshMonitor._id,
-                            channel: "in_app",
-                            title,
-                            message: significantChanges.map((pc) => `${pc.title}: $${pc.oldPrice} → $${pc.newPrice}`).join(", "),
-                          }).catch(() => {});
-
-                          if (shouldSend("push")) {
-                            await ctx.runAction(internal.push.sendToUser, {
-                              userId: freshMonitor.userId,
-                              monitorId: freshMonitor._id,
-                              title,
-                              body: truncateForPush(
-                                significantChanges
-                                  .map((pc) => `${pc.title}: $${pc.oldPrice} → $${pc.newPrice}`)
-                                  .join(", ")
-                              ),
-                              kind: "price",
-                            }).catch(() => {});
-                          }
-                        }
-
-                        console.log(`[scheduler] Price alert sent for ${freshMonitor._id}: ${significantChanges.length} changes, variant=${variant}`);
-                      }
-                    }
-                  }
-                }
-              }
+                  }),
+              });
             }
           }
         } catch (e) {
@@ -924,11 +687,9 @@ export const runScheduledChecks = internalAction({
           if (parked || willError) {
             const freshErrMonitor = await ctx.runQuery(internal.monitors.getInternal, { id: monitor._id });
             if (freshErrMonitor && !freshErrMonitor.muted) {
-              const monitorChannels = (freshErrMonitor as any).notificationChannels as string[] | undefined;
-              const quiet = !parked && errorAlertCoolingDown;
-              const shouldSend = (channel: string) =>
-                !quiet && (!monitorChannels || monitorChannels.includes(channel));
-              const hasAnyChannel = !monitorChannels || monitorChannels.length > 0;
+              const coolingDown = !parked && errorAlertCoolingDown;
+              const channels = alertChannels(freshErrMonitor.notificationChannels);
+              const hasAnyChannel = channels.hasAnyChannel;
 
               // Looked up before the sends so the email knows whether to nudge
               // the user towards Telegram. Not gated on shouldSend: a user who
@@ -938,6 +699,40 @@ export const runScheduledChecks = internalAction({
                 channel: "telegram",
               });
               const telegramConnected = !!(telegramSetting?.enabled && telegramSetting.target);
+
+              // A product's listings tend to fail together, when the fault is
+              // ours or the network's. The product sends one error alert for
+              // them, claimed only by a listing that can deliver it. A park is
+              // final, so each listing still sends its own. Both are named
+              // after the product and the listing's site.
+              const canDeliver = async () => {
+                if (channels.shouldSend("email") && freshErrMonitor.userEmail) return true;
+                if (channels.shouldSend("telegram") && telegramConnected) return true;
+                if (channels.shouldSend("push")) {
+                  const subs = await ctx.runQuery(internal.pushSubscriptions.listForUser, { userId: freshErrMonitor.userId });
+                  if (subs.length > 0) return true;
+                }
+                if (!channels.shouldSend("discord")) return false;
+                const discord = await ctx.runQuery(internal.scheduler.getNotificationSetting, {
+                  userId: freshErrMonitor.userId,
+                  channel: "discord",
+                });
+                return !!(discord?.enabled && discord.target);
+              };
+              const groupId = freshErrMonitor.groupId;
+              const productName =
+                groupId === undefined
+                  ? null
+                  : parked
+                    ? await ctx.runQuery(internal.monitorGroups.nameOf, { id: groupId })
+                    : !coolingDown && (await canDeliver())
+                      ? await ctx.runMutation(internal.monitorGroups.claimErrorAlert, { id: groupId })
+                      : null;
+              const quiet = coolingDown || (groupId !== undefined && !parked && productName === null);
+              const alertName = productName
+                ? `${productName} on ${displayHost(freshErrMonitor.url)}`
+                : freshErrMonitor.name;
+              const shouldSend = (channel: string) => !quiet && channels.shouldSend(channel);
 
               if (!parked && !quiet) {
                 await ctx.runMutation(internal.scheduler.markErrorAlertSent, {
@@ -961,7 +756,7 @@ export const runScheduledChecks = internalAction({
                 await ctx.runAction(internal.push.sendToUser, {
                   userId: freshErrMonitor.userId,
                   monitorId: freshErrMonitor._id,
-                  title: `${freshErrMonitor.name} — ${parked ? "Checks stopped" : "Error"}`,
+                  title: `${alertName} — ${parked ? "Checks stopped" : "Error"}`,
                   body: truncateForPush(parked ? (freshErrMonitor.lastError ?? msg) : msg),
                   kind: "error",
                 }).catch(() => {});
@@ -975,7 +770,7 @@ export const runScheduledChecks = internalAction({
                 if (parked) {
                   await ctx.runAction(internal.emails.sendMonitorStoppedAlert, {
                     to: freshErrMonitor.userEmail,
-                    monitorName: freshErrMonitor.name,
+                    monitorName: alertName,
                     monitorId: freshErrMonitor._id,
                     url: freshErrMonitor.url,
                     reason: parkReason ?? PARK_REASON_PROXY_BLOCKED,
@@ -984,7 +779,7 @@ export const runScheduledChecks = internalAction({
                 } else {
                   await ctx.runAction(internal.emails.sendErrorAlert, {
                     to: freshErrMonitor.userEmail,
-                    monitorName: freshErrMonitor.name,
+                    monitorName: alertName,
                     monitorId: freshErrMonitor._id,
                     url: freshErrMonitor.url,
                     error: msg,
@@ -997,7 +792,7 @@ export const runScheduledChecks = internalAction({
                 if (parked) {
                   await ctx.runAction(internal.telegram.sendMonitorStoppedAlert, {
                     chatId: telegramSetting.target,
-                    monitorName: freshErrMonitor.name,
+                    monitorName: alertName,
                     monitorId: freshErrMonitor._id,
                     url: freshErrMonitor.url,
                     reason: parkReason ?? PARK_REASON_PROXY_BLOCKED,
@@ -1005,7 +800,7 @@ export const runScheduledChecks = internalAction({
                 } else {
                   await ctx.runAction(internal.telegram.sendErrorAlert, {
                     chatId: telegramSetting.target,
-                    monitorName: freshErrMonitor.name,
+                    monitorName: alertName,
                     monitorId: freshErrMonitor._id,
                     url: freshErrMonitor.url,
                     error: msg,
@@ -1023,7 +818,7 @@ export const runScheduledChecks = internalAction({
                   if (parked) {
                     await ctx.runAction(internal.discord.sendMonitorStoppedAlert, {
                       webhookUrl: discordSetting.target,
-                      monitorName: freshErrMonitor.name,
+                      monitorName: alertName,
                       monitorId: freshErrMonitor._id,
                       url: freshErrMonitor.url,
                       reason: parkReason ?? PARK_REASON_PROXY_BLOCKED,
@@ -1031,7 +826,7 @@ export const runScheduledChecks = internalAction({
                   } else {
                     await ctx.runAction(internal.discord.sendErrorAlert, {
                       webhookUrl: discordSetting.target,
-                      monitorName: freshErrMonitor.name,
+                      monitorName: alertName,
                       monitorId: freshErrMonitor._id,
                       url: freshErrMonitor.url,
                       error: msg,
@@ -1065,6 +860,8 @@ type ScoredCandidate = QuickCheckCandidate & {
   /** Null means the judgement never came back — distinct from having scored badly. */
   matchScore: number | null;
   matchReason: string;
+  /** Only when stock was asked for. Price is in minor units. */
+  stock?: { inStock: boolean | null; price: number | null; currency: string | null };
 };
 
 /** Entries judged in one check. The rest keep their place in the seen set and wait their turn. */
@@ -1105,6 +902,10 @@ async function runQuickCheck(
     return runFullExtract(ctx, monitor, scraperUrl, scraperKey, retryAttempt, { useProxy, skipQuickCheck: true });
   }
 
+  // A stale schema may describe another page (the URL was edited), so its
+  // product title cannot be trusted until the drift refresh below re-reads it.
+  const readsProduct = wantsProductRead(monitor) && !shouldEscalateToAI(monitor);
+
   const matchConditions = monitor.schema?.matchConditions ?? {};
 
   const res = await fetch(`${scraperUrl}/api/quick-check`, {
@@ -1118,6 +919,7 @@ async function runQuickCheck(
       matchConditions,
       ...(retryAttempt > 0 ? { retryAttempt } : {}),
       ...(useProxy ? { useProxy: true } : {}),
+      ...(readsProduct ? { productTitle: productTitle(monitor) } : {}),
     }),
     signal: AbortSignal.timeout(90_000),
   });
@@ -1146,8 +948,20 @@ async function runQuickCheck(
 
   const contentHash: string | undefined = result.contentHash;
 
+  // The product's entry went into the seen set on the first check and is
+  // never judged again below, so a restock would go unseen. Re-read it
+  // whenever its own text changes. Placed before the unchanged short-circuit
+  // so a monitor that has just switched an alert on takes its baseline
+  // even on a page that has not moved.
+  if (readsProduct && result.product && result.product.hash !== monitor.productFingerprint) {
+    if (result.product.matched === false) {
+      console.warn(`[scheduler] Quick check ${monitor._id}: product title not on the page, reading on any page change`);
+    }
+    await readProduct(ctx, monitor, result.product, scraperUrl, scraperKey);
+  }
+
   // Cheap short-circuit: content identical to the last scan — record the
-  // check happened and stop. No AI, no result row, no notifications.
+  // check happened and stop. No result row, no match notifications.
   if (contentHash && monitor.contentFingerprint && contentHash === monitor.contentFingerprint) {
     await ctx.runMutation(internal.scheduler.recordCheckResult, {
       monitorId: monitor._id,
@@ -1279,14 +1093,21 @@ async function scoreQuickCheckCandidates(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   monitor: any,
   scraperUrl: string,
-  scraperKey: string
+  scraperKey: string,
+  readStock = false
 ): Promise<ScoredCandidate[]> {
   const unscored: ScoredCandidate[] = candidates.map((c) => ({ ...c, matchScore: null, matchReason: "" }));
   try {
     const res = await fetch(`${scraperUrl}/api/score`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-api-key": scraperKey },
-      body: JSON.stringify({ prompt: monitor.prompt, name: monitor.name, userId: monitor.userId, candidates }),
+      body: JSON.stringify({
+        prompt: monitor.prompt,
+        name: monitor.name,
+        userId: monitor.userId,
+        candidates,
+        ...(readStock ? { readStock: true } : {}),
+      }),
       signal: AbortSignal.timeout(60_000),
     });
     if (!res.ok) {
@@ -1301,6 +1122,39 @@ async function scoreQuickCheckCandidates(
     console.warn(`[scheduler] Scoring errored for ${monitor._id}: ${(e as Error).message} — alerting unscored`);
     return unscored;
   }
+}
+
+/**
+ * Read stock and price for a single-product monitor's one product.
+ *
+ * A failed read still stores the fingerprint, as an unknown reading, so the
+ * next attempt waits for the next change. Retrying on every check instead
+ * would bill a call per check for as long as the failure lasts. The cost is
+ * that a restock landing on a failed read is only seen on the next change.
+ */
+async function readProduct(
+  ctx: Pick<ActionCtx, "runMutation">,
+  monitor: Doc<"monitors">,
+  product: { excerpt: string; hash: string },
+  scraperUrl: string,
+  scraperKey: string
+): Promise<void> {
+  const [scored] = await scoreQuickCheckCandidates(
+    [{ title: productTitle(monitor), url: monitor.url, price: null, snippet: product.excerpt }],
+    monitor,
+    scraperUrl,
+    scraperKey,
+    true
+  );
+  if (!scored?.stock) {
+    console.warn(`[scheduler] Product read for ${monitor._id} came back without stock — retrying on the next change`);
+  }
+  await ctx.runMutation(internal.scheduler.recordProductRead, {
+    monitorId: monitor._id,
+    url: monitor.url,
+    productFingerprint: product.hash,
+    ...(scored?.stock ?? { inStock: null, price: null, currency: null }),
+  });
 }
 
 async function runFullExtract(
@@ -1484,15 +1338,200 @@ export const getNotificationSetting = internalQuery({
   },
 });
 
-/** Get the latest scrape result for a monitor (for price change notifications) */
-export const getLatestScrapeResult = internalQuery({
-  args: { monitorId: v.id("monitors") },
+const productAlertValidator = v.union(
+  v.object({ kind: v.literal("stock") }),
+  v.object({
+    kind: v.literal("price"),
+    reason: v.union(v.literal("drop"), v.literal("below")),
+    // Absent when a target is already met on the first read.
+    oldPrice: v.optional(v.number()),
+    newPrice: v.number(),
+    currency: v.string(),
+    target: v.optional(v.number()),
+  }),
+);
+type ProductAlert = Infer<typeof productAlertValidator>;
+
+/**
+ * Store a product read and decide whether it is news.
+ *
+ * Stock alerts only on a known out of stock followed by a known in stock.
+ * Price alerts compare against the last known price. A read in another
+ * currency is ignored, unless the next read agrees, which makes it the new
+ * baseline without an alert:
+ * "any drop" on any fall, "below a target" when the price is at or below
+ * the target and was not last time, so it does not repeat while it stays
+ * low. A target already met on the first read alerts once.
+ *
+ * Otherwise no baseline never alerts, so switching an option on cannot fire
+ * straight away. An unreadable value keeps the last known one. Scheduling the send
+ * here ties it to the write: a check that fails after this point cannot
+ * lose the alert.
+ */
+export const recordProductRead = internalMutation({
+  args: {
+    monitorId: v.id("monitors"),
+    // The URL the read was taken from. A read that finishes after the URL
+    // was edited describes the old page and is dropped.
+    url: v.string(),
+    productFingerprint: v.string(),
+    inStock: v.union(v.boolean(), v.null()),
+    price: v.union(v.number(), v.null()),
+    currency: v.union(v.string(), v.null()),
+  },
   handler: async (ctx, args) => {
-    return ctx.db
-      .query("scrapeResults")
-      .withIndex("by_monitorId_scrapedAt", (q) => q.eq("monitorId", args.monitorId))
-      .order("desc")
-      .first();
+    const monitor = await ctx.db.get(args.monitorId);
+    if (!monitor || monitor.url !== args.url) return { alerts: [] as ProductAlert[] };
+
+    const previous = monitor.lastSeen ?? {};
+    const on = monitor.alertOn ?? {};
+    const alerts: ProductAlert[] = [];
+
+    if (on.backInStock === true && previous.inStock === false && args.inStock === true) {
+      alerts.push({ kind: "stock" });
+    }
+
+    // A held price or currency whose confirming read did not settle it is
+    // read again, up to MAX_CONFIRM_ATTEMPTS times, then dropped.
+    const attempts = (previous.pendingAttempts ?? 0) + 1;
+    const { pendingPrice, pendingCurrency } = previous;
+    const stillHeld =
+      (pendingPrice !== undefined || pendingCurrency !== undefined) && attempts < MAX_CONFIRM_ATTEMPTS
+        ? {
+            ...(pendingPrice !== undefined ? { pendingPrice } : {}),
+            ...(pendingCurrency !== undefined ? { pendingCurrency } : {}),
+            pendingAttempts: attempts,
+          }
+        : {};
+    // Kept as they are unless this read has a usable price.
+    let priceFields: {
+      price?: number;
+      currency?: string;
+      pendingPrice?: number;
+      pendingAttempts?: number;
+      pendingCurrency?: string;
+    } =
+      previous.price !== undefined && previous.currency !== undefined
+        ? { price: previous.price, currency: previous.currency, ...stillHeld }
+        : {};
+    if (args.price !== null && args.currency !== null && previous.currency !== undefined && previous.currency !== args.currency) {
+      if (previous.pendingCurrency === args.currency) {
+        // Two reads in a row agree, so the site has switched currency. The
+        // new price is the baseline, with no alert: the two can't be compared.
+        priceFields = { price: args.price, currency: args.currency };
+      } else {
+        // One such read is usually a misread or a geo-priced page. Taken as
+        // the baseline, it would make the next read in the usual currency
+        // look like a first read, and repeat an alert the user already had.
+        console.warn(`[scheduler] ${monitor._id}: price read in ${args.currency}, not ${previous.currency}; keeping the last price`);
+        if (pendingCurrency === undefined) priceFields = { ...priceFields, pendingCurrency: args.currency };
+      }
+    } else if (args.price !== null && args.currency !== null) {
+      const newPrice = args.price;
+      const currency = args.currency;
+      const oldPrice = previous.price;
+      // A fall of more than half is more often a misread (a monthly payment,
+      // a deposit, an accessory's price) than a sale. It waits for the same
+      // price on the next read before it counts. A different price on that
+      // read drops the hold, and a second wild one is not held again.
+      const unconfirmed = oldPrice !== undefined && newPrice < oldPrice / 2 && previous.pendingPrice !== newPrice;
+      if (unconfirmed) {
+        priceFields = { price: oldPrice, currency, ...(previous.pendingPrice === undefined ? { pendingPrice: newPrice } : {}) };
+      } else {
+        priceFields = { price: newPrice, currency };
+        const price = { kind: "price" as const, oldPrice, newPrice, currency };
+        const target = on.priceBelow;
+        if (on.priceDrop === true && oldPrice !== undefined && newPrice < oldPrice) {
+          alerts.push({ ...price, reason: "drop" });
+        } else if (target && target.currency !== currency) {
+          console.warn(`[scheduler] ${monitor._id}: target is in ${target.currency} but the price read in ${currency}, not compared`);
+        } else if (target && newPrice <= target.amount && (oldPrice === undefined || oldPrice > target.amount)) {
+          alerts.push({ ...price, reason: "below", target: target.amount });
+        }
+      }
+    }
+
+    const inStock = args.inStock ?? previous.inStock;
+    await ctx.db.patch(args.monitorId, {
+      // A held price or currency needs a confirming read. Keeping the old
+      // fingerprint makes the next check read again, even if the page has not
+      // changed. Every other read advances it, so a failed confirmation is
+      // paid for a bounded number of times, not on every check.
+      productFingerprint:
+        priceFields.pendingPrice !== undefined || priceFields.pendingCurrency !== undefined
+          ? monitor.productFingerprint
+          : args.productFingerprint,
+      lastSeen: { ...(inStock !== undefined ? { inStock } : {}), ...priceFields },
+    });
+
+    for (const alert of alerts) {
+      await ctx.scheduler.runAfter(0, internal.scheduler.sendProductAlert, { monitorId: args.monitorId, alert });
+    }
+    return { alerts };
+  },
+});
+
+function money(minor: number, currency: string): string {
+  return formatMinorUnits(minor, currency) ?? `${minor} ${currency}`;
+}
+
+/** Long enough to recognise; short enough that the price and site always fit in a push or a Telegram line. */
+const MAX_TITLE_IN_MESSAGE = 120;
+
+/** The wording of one alert: a headline, one sentence, and the news for an SMS. */
+function productAlertText(alert: ProductAlert, fullTitle: string, host: string) {
+  const title = fullTitle.length > MAX_TITLE_IN_MESSAGE ? `${fullTitle.slice(0, MAX_TITLE_IN_MESSAGE - 1)}…` : fullTitle;
+  if (alert.kind === "stock") {
+    return { headline: "Back in stock", message: `${title} is back in stock on ${host}.`, what: "back in stock" };
+  }
+  const now = money(alert.newPrice, alert.currency);
+  const nowForSms = formatSmsPrice(alert.newPrice, alert.currency);
+  const was = alert.oldPrice !== undefined ? money(alert.oldPrice, alert.currency) : null;
+  if (alert.reason === "below" && alert.target !== undefined) {
+    return {
+      headline: "Below your target price",
+      message: `${title} is now ${now} on ${host}, below your ${money(alert.target, alert.currency)} target.${was ? ` It was ${was}.` : ""}`,
+      what: `now ${nowForSms}, below your target`,
+    };
+  }
+  return { headline: "Price drop", message: `${title} is now ${now} on ${host}, down from ${was}.`, what: `price drop to ${nowForSms}` };
+}
+
+/** Tell the owner about a stock or price change, on the same channels a match alert uses. */
+export const sendProductAlert = internalAction({
+  args: { monitorId: v.id("monitors"), alert: productAlertValidator },
+  handler: async (ctx, args) => {
+    const monitor = await ctx.runQuery(internal.monitors.getInternal, { id: args.monitorId });
+    if (!monitor || monitor.muted) return;
+
+    const title = productTitle(monitor);
+    const host = displayHost(monitor.url);
+    const { headline, message, what } = productAlertText(args.alert, title, host);
+    const kind = args.alert.kind;
+    const base = { monitorId: monitor._id, url: monitor.url, headline, message };
+
+    await ctx.scheduler.runAfter(0, internal.admin.notify, {
+      text: `${headline}: ${monitor.name} on ${host} (${monitor.userEmail ?? "no email"})`,
+    });
+
+    await deliverAlert(ctx, monitor, {
+      type: kind,
+      title: `${monitor.name} — ${headline.toLowerCase()}`,
+      inAppMessage: message,
+      pushBody: truncateForPush(message),
+      email: (to) =>
+        ctx.runAction(internal.emails.sendProductAlert, { ...base, to, kind, monitorName: monitor.name, productTitle: title }),
+      telegram: (chatId) => ctx.runAction(internal.telegram.sendProductAlert, { ...base, chatId }),
+      discord: (webhookUrl) => ctx.runAction(internal.discord.sendProductAlert, { ...base, webhookUrl }),
+      sms: (phone) =>
+        ctx.runAction(internal.sms.sendProductAlert, {
+          userId: monitor.userId,
+          phone,
+          monitorId: monitor._id,
+          what,
+          productTitle: title,
+        }),
+    });
   },
 });
 
@@ -1503,17 +1542,3 @@ export const markErrorAlertSent = internalMutation({
   },
 });
 
-/** Update the lastNotifiedAt timestamp inside priceAlerts (for cooldown tracking) */
-export const updatePriceAlertTimestamp = internalMutation({
-  args: { monitorId: v.id("monitors"), lastNotifiedAt: v.number() },
-  handler: async (ctx, args) => {
-    const monitor = await ctx.db.get(args.monitorId);
-    if (!monitor) return;
-    // as any: priceAlerts type not in generated types until npx convex dev runs
-    const existing = (monitor as any).priceAlerts;
-    if (!existing) return;
-    await ctx.db.patch(args.monitorId, {
-      priceAlerts: { ...existing, lastNotifiedAt: args.lastNotifiedAt },
-    } as any);
-  },
-});

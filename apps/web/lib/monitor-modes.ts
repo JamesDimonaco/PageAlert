@@ -42,7 +42,7 @@ export const MONITOR_MODES: MonitorMode[] = [
     icon: TrendingDown,
     label: "Track a price",
     description:
-      "Follow the price of specific items and get told when it moves. Small wobbles are filtered out so a 2% drop doesn't wake you at 3am.",
+      "Name the items and the price you'd pay. You hear about it when one is listed at or under that price.",
     placeholder: "e.g. MacBook Pro 14-inch M4, alert me under £1,500",
     hint: "Say which items to follow and the price that matters to you.",
   },

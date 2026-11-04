@@ -35,7 +35,7 @@ const smsAlerts: Announcement = {
   render: (unsubscribeLink) => {
     const settingsHref = `${APP_URL}/dashboard/settings?tab=notifications#sms`;
     const paragraphs = [
-      "PageAlert can now send you a text message the moment a monitor finds a match or a price drops.",
+      "PageAlert can now send you a text message the moment a monitor finds a match.",
       "A text reaches you faster than an email, which helps when stock sells out in minutes.",
       "Texts come with every paid plan.",
     ];

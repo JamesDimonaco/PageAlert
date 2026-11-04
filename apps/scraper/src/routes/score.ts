@@ -3,6 +3,7 @@ import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { scoreCandidates } from "../services/extractor.js";
 import { MAX_URL_LENGTH } from "../utils/url-validation.js";
+import { PRODUCT_EXCERPT_MAX } from "@prowl/shared";
 
 const MAX_CANDIDATES = 25;
 const MAX_SNIPPET_LENGTH = 600;
@@ -18,12 +19,20 @@ const scoreSchema = z.object({
         title: z.string().max(500),
         url: z.string().max(MAX_URL_LENGTH).nullable(),
         price: z.number().nullable(),
-        snippet: z.string().max(MAX_SNIPPET_LENGTH),
+        snippet: z.string().max(PRODUCT_EXCERPT_MAX),
       })
     )
     .min(1)
     .max(MAX_CANDIDATES),
-});
+  // Also read stock and price. For one product, whose snippet is the longer
+  // product excerpt rather than a listing card.
+  readStock: z.boolean().optional(),
+}).refine(
+  (body) => body.readStock
+    ? body.candidates.length === 1
+    : body.candidates.every((c) => c.snippet.length <= MAX_SNIPPET_LENGTH),
+  { message: "readStock takes one candidate; otherwise snippets are capped" }
+);
 
 export const scoreRoutes = new Hono();
 
@@ -32,13 +41,13 @@ export const scoreRoutes = new Hono();
  *
  * Separate from /extract because it never scrapes: the caller passes the
  * entries it wants judged, so this costs a fraction of reading a whole page
- * and runs only when there is something new to alert on.
+ * and runs only when there is something new to judge.
  */
 scoreRoutes.post("/", zValidator("json", scoreSchema), async (c) => {
-  const { prompt, name, userId, candidates } = c.req.valid("json");
+  const { prompt, name, userId, candidates, readStock } = c.req.valid("json");
 
   try {
-    const scored = await scoreCandidates(candidates, prompt, name, userId);
+    const scored = await scoreCandidates(candidates, prompt, name, userId, readStock);
     return c.json({ scored });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
