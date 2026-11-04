@@ -23,8 +23,8 @@ export class SearchFailure extends Error {
 
 export function searchFailureReason(error: unknown): SearchFailureReason {
   if (error instanceof SearchFailure) return error.reason;
-  if (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")) return "timeout";
-  if (error instanceof Anthropic.APIConnectionTimeoutError) return "timeout";
+  // The SDK turns our search-budget AbortSignal into APIUserAbortError.
+  if (error instanceof Anthropic.APIUserAbortError || error instanceof Anthropic.APIConnectionTimeoutError) return "timeout";
   if (error instanceof Anthropic.APIError) return "ai_error";
   return "unknown";
 }

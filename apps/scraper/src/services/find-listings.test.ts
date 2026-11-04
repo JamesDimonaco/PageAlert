@@ -102,7 +102,9 @@ describe("parseListings", () => {
 
 describe("searchFailureReason", () => {
   it("tells a timeout, an Anthropic error and an unknown crash apart", () => {
-    expect(searchFailureReason(new DOMException("The operation timed out.", "TimeoutError"))).toBe("timeout");
+    // What the SDK throws when the search budget's AbortSignal fires.
+    expect(searchFailureReason(new Anthropic.APIUserAbortError())).toBe("timeout");
+    expect(searchFailureReason(new Anthropic.APIConnectionTimeoutError())).toBe("timeout");
     expect(searchFailureReason(new Anthropic.APIError(529, undefined, "Overloaded", new Headers()))).toBe("ai_error");
     expect(searchFailureReason(new TypeError("x is undefined"))).toBe("unknown");
   });

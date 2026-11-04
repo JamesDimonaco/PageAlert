@@ -645,7 +645,9 @@ export const runScheduledChecks = internalAction({
             if (send) await ctx.scheduler.runAfter(0, internal.admin.notify, { text: `Anthropic is rejecting calls: ${msg.slice(0, 300)}` });
           }
           const failStrategy = `${strategyLabel}${useProxy ? "+proxy" : ""}`;
-          await ctx.scheduler.runAfter(0, internal.analytics.capture, {
+          // Only on the fast ladder: a monitor already in error retries every
+          // 6h for up to a week, and each repeat would say nothing new.
+          if (retryCount < MAX_RETRIES) await ctx.scheduler.runAfter(0, internal.analytics.capture, {
             distinctId: monitor.userId,
             event: "check_failed",
             properties: {

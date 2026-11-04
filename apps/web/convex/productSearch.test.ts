@@ -102,6 +102,18 @@ describe("productSearch.search", () => {
     expect(failed?.args[0]).toMatchObject({ distinctId: userId, properties: { reason: "no_json", region: "GB" } });
   });
 
+  // A bad key (401) or a proxy page (502) carries no scraper reason, and must not look like a scraper crash.
+  it("names a failure with no scraper reason by its status", async () => {
+    const t = harness();
+    const { as: user } = await signUp(t);
+    scraperReturns(() => new Response("<html>Bad gateway</html>", { status: 502 }));
+
+    await expect(user.action(api.productSearch.search, SEARCH)).rejects.toThrow("hasn't counted");
+    const scheduled = await t.run((ctx) => ctx.db.system.query("_scheduled_functions").collect());
+    const failed = scheduled.find((job) => (job.args[0] as { event?: string }).event === "product_search_failed");
+    expect(failed?.args[0]).toMatchObject({ properties: { reason: "http_502" } });
+  });
+
   it("does not count a search that found nothing", async () => {
     const t = harness();
     const { as: user } = await signUp(t);
