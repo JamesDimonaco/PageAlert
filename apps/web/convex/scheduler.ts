@@ -9,6 +9,7 @@ import { alertChannels, deliverAlert } from "./alerts";
 import {
   displayHost,
   isBlockedError,
+  checkFailureKind,
   matchKey,
   newMatchKeys,
   ERROR_RECOVERY_INTERVAL_MS,
@@ -624,7 +625,8 @@ export const runScheduledChecks = internalAction({
 
           // Log failed check
           const isBlocked = isBlockedError(msg);
-          const isFallbackProviderError = msg.startsWith("Fallback provider error");
+          const failureKind = checkFailureKind(msg, isTimeout);
+          const isFallbackProviderError = failureKind === "proxy_provider";
           // A block only counts against the monitor when Scrapfly itself
           // confirmed it (ERR::ASP::* via useProxy) — a Scrapfly outage or a
           // spent credit budget must never park a user's monitor.
@@ -638,11 +640,22 @@ export const runScheduledChecks = internalAction({
             const send = await ctx.runMutation(internal.admin.claimAlertSlot, { key: "admin:fallback-provider", minIntervalMs: 60 * 60 * 1000 });
             if (send) await ctx.scheduler.runAfter(0, internal.admin.notify, { text: `Scrapfly is failing: ${msg.slice(0, 300)}` });
           }
-          if (/AI service error 40[01]|authentication error|credit balance|billing/i.test(msg)) {
+          if (failureKind === "ai_billing") {
             const send = await ctx.runMutation(internal.admin.claimAlertSlot, { key: "admin:ai-credit", minIntervalMs: 60 * 60 * 1000 });
             if (send) await ctx.scheduler.runAfter(0, internal.admin.notify, { text: `Anthropic is rejecting calls: ${msg.slice(0, 300)}` });
           }
           const failStrategy = `${strategyLabel}${useProxy ? "+proxy" : ""}`;
+          await ctx.scheduler.runAfter(0, internal.analytics.capture, {
+            distinctId: monitor.userId,
+            event: "check_failed",
+            properties: {
+              kind: failureKind,
+              domain: displayHost(monitor.url),
+              strategy: failStrategy,
+              retry: String(retryCount),
+              error: msg.slice(0, 200),
+            },
+          });
           await ctx.runMutation(internal.logs.createInternal, {
             userId: monitor.userId,
             monitorId: monitor._id,

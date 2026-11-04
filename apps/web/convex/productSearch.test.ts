@@ -90,6 +90,18 @@ describe("productSearch.search", () => {
     expect((await user.query(api.productSearch.status, {}))?.used).toBe(0);
   });
 
+  // Today's prod failure only showed "HTTP 500" in the logs. The scraper's reason must reach PostHog.
+  it("reports why a search failed", async () => {
+    const t = harness();
+    const { as: user, userId } = await signUp(t);
+    scraperReturns(() => new Response(JSON.stringify({ error: "search_failed", reason: "no_json" }), { status: 500 }));
+
+    await expect(user.action(api.productSearch.search, SEARCH)).rejects.toThrow("hasn't counted");
+    const scheduled = await t.run((ctx) => ctx.db.system.query("_scheduled_functions").collect());
+    const failed = scheduled.find((job) => (job.args[0] as { event?: string }).event === "product_search_failed");
+    expect(failed?.args[0]).toMatchObject({ distinctId: userId, properties: { reason: "no_json", region: "GB" } });
+  });
+
   it("does not count a search that found nothing", async () => {
     const t = harness();
     const { as: user } = await signUp(t);

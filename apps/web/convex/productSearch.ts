@@ -153,10 +153,25 @@ async function findListings(
       // The scraper stops itself at 110s, so this only fires if it hangs.
       signal: AbortSignal.timeout(150_000),
     });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (!res.ok) {
+      const body: unknown = await res.json().catch(() => null);
+      const reason = body && typeof body === "object" && "reason" in body ? String(body.reason) : "unknown";
+      throw new Error(`HTTP ${res.status} (${reason})`, { cause: reason });
+    }
     listings = scraperResponse.parse(await res.json()).listings;
   } catch (error) {
-    console.error("[productSearch] Search failed:", error instanceof Error ? error.message : String(error));
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("[productSearch] Search failed:", message);
+    const reason =
+      error instanceof Error && typeof error.cause === "string" ? error.cause
+      : error instanceof Error && error.name === "TimeoutError" ? "timeout"
+      : error instanceof Error && error.name === "ZodError" ? "bad_response"
+      : "unreachable";
+    await ctx.scheduler.runAfter(0, internal.analytics.capture, {
+      distinctId: userId,
+      event: "product_search_failed",
+      properties: { reason, region, error: message.slice(0, 200) },
+    });
     await ctx.runMutation(internal.productSearch.refund, { userId, day });
     throw new ConvexError("The search didn't work. It hasn't counted toward today's limit.");
   }

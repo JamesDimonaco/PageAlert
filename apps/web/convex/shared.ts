@@ -103,6 +103,17 @@ export function isBlockedError(message: string): boolean {
   return /blocking automated access|anti-bot|CAPTCHA|Cloudflare|Access denied|blocked/i.test(message);
 }
 
+export type CheckFailureKind = "proxy_provider" | "ai_billing" | "timeout" | "blocked" | "other";
+
+/** What a failed check ran into, for the check_failed event. */
+export function checkFailureKind(message: string, isTimeout: boolean): CheckFailureKind {
+  if (message.startsWith("Fallback provider error")) return "proxy_provider";
+  if (/AI service error 40[01]|authentication error|credit balance|billing/i.test(message)) return "ai_billing";
+  if (isTimeout) return "timeout";
+  if (isBlockedError(message)) return "blocked";
+  return "other";
+}
+
 /**
  * Identity of a matched item, for deciding whether a match is new.
  *

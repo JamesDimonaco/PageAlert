@@ -14,6 +14,11 @@ if (posthog) {
   process.on("SIGINT", async () => { await posthog.shutdown(); process.exit(0); });
 }
 
+/** Send an error to PostHog error tracking. A no-op without POSTHOG_KEY. */
+export const captureError = (error: unknown, distinctId?: string, properties?: Record<string, string>) => {
+  posthog?.captureException(error, distinctId, { service: "scraper", ...properties });
+};
+
 const isTracked = () => Boolean(posthog && process.env.ANTHROPIC_API_KEY);
 
 /**
