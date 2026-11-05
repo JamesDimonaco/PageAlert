@@ -1,4 +1,4 @@
-import type Anthropic from "@anthropic-ai/sdk";
+import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import { SEARCH_REGIONS, toMinorUnits, type ProductListing, type SearchRegion } from "@prowl/shared";
 import { getClient, trackingParams } from "./extractor.js";
@@ -10,6 +10,24 @@ const MAX_RESUMES = 2;
 // Every call, resumes and SDK retries included, ends by then. Kept well under
 // the 150s Convex waits, so the caller always gets an answer it can refund on.
 const SEARCH_BUDGET_MS = 110_000;
+
+export type SearchFailureReason = "no_json" | "bad_shape" | "did_not_finish" | "token_limit" | "timeout" | "ai_error" | "unknown";
+
+/** A search that ran but whose answer we could not use, with why. */
+export class SearchFailure extends Error {
+  constructor(readonly reason: SearchFailureReason, message: string) {
+    super(message);
+    this.name = "SearchFailure";
+  }
+}
+
+export function searchFailureReason(error: unknown): SearchFailureReason {
+  if (error instanceof SearchFailure) return error.reason;
+  // The SDK turns our search-budget AbortSignal into APIUserAbortError.
+  if (error instanceof Anthropic.APIUserAbortError || error instanceof Anthropic.APIConnectionTimeoutError) return "timeout";
+  if (error instanceof Anthropic.APIError) return "ai_error";
+  return "unknown";
+}
 
 const FIND_PROMPT = `You find product pages in online shops.
 
@@ -70,7 +88,7 @@ function answerObject(text: string): unknown {
       // Narration, not the answer; try the next brace.
     }
   }
-  throw new Error("AI returned no extractable JSON");
+  throw new SearchFailure("no_json", "AI returned no extractable JSON");
 }
 
 /**
@@ -81,7 +99,9 @@ function answerObject(text: string): unknown {
  * URLs and the first page per site, and converts prices to minor units.
  */
 export function parseListings(text: string): ProductListing[] {
-  const parsed = rawResponse.parse(answerObject(text));
+  const response = rawResponse.safeParse(answerObject(text));
+  if (!response.success) throw new SearchFailure("bad_shape", "AI answer has no listings array");
+  const parsed = response.data;
 
   const seen = new Set<string>();
   const listings: ProductListing[] = [];
@@ -148,8 +168,8 @@ export async function findListings(query: string, region: SearchRegion, userId?:
     if (message.stop_reason !== "pause_turn") break;
     messages.push({ role: "assistant", content: message.content });
   }
-  if (!message || message.stop_reason === "pause_turn") throw new Error("Search did not finish");
-  if (message.stop_reason === "max_tokens") throw new Error("AI output hit the token limit");
+  if (!message || message.stop_reason === "pause_turn") throw new SearchFailure("did_not_finish", "Search did not finish");
+  if (message.stop_reason === "max_tokens") throw new SearchFailure("token_limit", "AI output hit the token limit");
 
   // The answer is the text after the last search result. It can arrive as
   // several cited blocks, which joined make the JSON; text before that is
@@ -160,5 +180,11 @@ export async function findListings(query: string, region: SearchRegion, userId?:
     .filter((block): block is Anthropic.TextBlock => block.type === "text")
     .map((block) => block.text)
     .join("");
-  return parseListings(text);
+  try {
+    return parseListings(text);
+  } catch (error) {
+    // The only record of what the model said: PostHog's LLM capture runs in privacy mode.
+    console.error("[find-listings] Unreadable answer:", JSON.stringify({ types, text: text.slice(0, 1500) }));
+    throw error;
+  }
 }

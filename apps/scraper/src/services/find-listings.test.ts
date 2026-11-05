@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { parseListings } from "./find-listings.js";
+import Anthropic from "@anthropic-ai/sdk";
+import { parseListings, SearchFailure, searchFailureReason } from "./find-listings.js";
 
 const listing = (overrides: Record<string, unknown> = {}) => ({
   site: "argos.co.uk",
@@ -80,7 +81,31 @@ describe("parseListings", () => {
   });
 
   it("fails when there is no answer to read, so the caller can refund the search", () => {
-    expect(() => parseListings("Sorry, I could not search right now.")).toThrow();
-    expect(() => parseListings('{"results": []}')).toThrow();
+    expect(() => parseListings("Sorry, I could not search right now.")).toThrow(SearchFailure);
+    expect(() => parseListings('{"results": []}')).toThrow(SearchFailure);
+  });
+
+  // The reason reaches PostHog, so a failed search says why without reading logs.
+  it("names why the answer could not be read", () => {
+    const reason = (text: string) => {
+      try {
+        parseListings(text);
+      } catch (error) {
+        return searchFailureReason(error);
+      }
+    };
+    expect(reason("Sorry, I could not search right now.")).toBe("no_json");
+    expect(reason('{"results": []}')).toBe("no_json");
+    expect(reason('{"listings": "none"}')).toBe("bad_shape");
+  });
+});
+
+describe("searchFailureReason", () => {
+  it("tells a timeout, an Anthropic error and an unknown crash apart", () => {
+    // What the SDK throws when the search budget's AbortSignal fires.
+    expect(searchFailureReason(new Anthropic.APIUserAbortError())).toBe("timeout");
+    expect(searchFailureReason(new Anthropic.APIConnectionTimeoutError())).toBe("timeout");
+    expect(searchFailureReason(new Anthropic.APIError(529, undefined, "Overloaded", new Headers()))).toBe("ai_error");
+    expect(searchFailureReason(new TypeError("x is undefined"))).toBe("unknown");
   });
 });

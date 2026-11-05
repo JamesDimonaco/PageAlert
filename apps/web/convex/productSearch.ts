@@ -145,6 +145,8 @@ async function findListings(
   });
 
   let listings: ProductListing[];
+  // Set before each throw we expect; what is left is a fetch that never got an answer.
+  let reason = "unreachable";
   try {
     const res = await fetch(`${scraperUrl}/api/find-listings`, {
       method: "POST",
@@ -153,11 +155,27 @@ async function findListings(
       // The scraper stops itself at 110s, so this only fires if it hangs.
       signal: AbortSignal.timeout(150_000),
     });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (!res.ok) {
+      const body: unknown = await res.json().catch(() => null);
+      reason = body && typeof body === "object" && "reason" in body ? String(body.reason) : `http_${res.status}`;
+      throw new Error(`HTTP ${res.status} (${reason})`);
+    }
+    reason = "bad_response";
     listings = scraperResponse.parse(await res.json()).listings;
   } catch (error) {
-    console.error("[productSearch] Search failed:", error instanceof Error ? error.message : String(error));
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("[productSearch] Search failed:", message);
+    // fetch rejects with a DOMException, which need not be an Error here.
+    if ((error as { name?: unknown } | null)?.name === "TimeoutError") reason = "timeout";
     await ctx.runMutation(internal.productSearch.refund, { userId, day });
+    // After the refund, so analytics can never cost the user a search.
+    await ctx.scheduler
+      .runAfter(0, internal.analytics.capture, {
+        distinctId: userId,
+        event: "product_search_failed",
+        properties: { reason, region, error: message.slice(0, 200) },
+      })
+      .catch((e) => console.warn("[productSearch] Could not record the failure:", e));
     throw new ConvexError("The search didn't work. It hasn't counted toward today's limit.");
   }
 

@@ -1,12 +1,14 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
+import { HTTPException } from "hono/http-exception";
 import { scrapeRoutes } from "./routes/scrape.js";
 import { extractRoutes } from "./routes/extract.js";
 import { quickCheckRoutes } from "./routes/quick-check.js";
 import { scoreRoutes } from "./routes/score.js";
 import { findListingsRoutes } from "./routes/find-listings.js";
 import { authMiddleware } from "./middleware/auth.js";
+import { captureError } from "./services/extractor.js";
 
 export const app = new Hono();
 
@@ -43,3 +45,11 @@ api.route("/score", scoreRoutes);
 api.route("/find-listings", findListingsRoutes);
 
 app.route("/api", api);
+
+// Routes catch the failures they expect; this is for the crashes they don't.
+app.onError((error, c) => {
+  if (error instanceof HTTPException) return error.getResponse();
+  console.error(`[app] Unhandled error on ${c.req.method} ${c.req.path}:`, error);
+  captureError(error, undefined, { route: c.req.path });
+  return c.json({ error: "internal_error", message: "Something went wrong." }, 500);
+});
