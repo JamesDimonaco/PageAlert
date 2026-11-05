@@ -108,4 +108,14 @@ describe("searchFailureReason", () => {
     expect(searchFailureReason(new Anthropic.APIError(529, undefined, "Overloaded", new Headers()))).toBe("ai_error");
     expect(searchFailureReason(new TypeError("x is undefined"))).toBe("unknown");
   });
+
+  // The PostHog wrapper bundles its own SDK copy, so its errors fail instanceof
+  // against ours. Seen in prod: a budget timeout reported as "unknown".
+  it("reads errors thrown by another copy of the SDK", () => {
+    class APIError extends Error {}
+    class APIUserAbortError extends APIError {}
+    class InternalServerError extends APIError {}
+    expect(searchFailureReason(new APIUserAbortError("Request was aborted."))).toBe("timeout");
+    expect(searchFailureReason(new InternalServerError("Overloaded"))).toBe("ai_error");
+  });
 });

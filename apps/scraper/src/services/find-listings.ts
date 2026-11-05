@@ -1,4 +1,4 @@
-import Anthropic from "@anthropic-ai/sdk";
+import type Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import { SEARCH_REGIONS, toMinorUnits, type ProductListing, type SearchRegion } from "@prowl/shared";
 import { getClient, trackingParams } from "./extractor.js";
@@ -21,11 +21,23 @@ export class SearchFailure extends Error {
   }
 }
 
+/** Class names up the prototype chain, e.g. ["APIUserAbortError", "APIError", "Error"]. */
+function classNames(error: object): string[] {
+  const names: string[] = [];
+  for (let proto = Object.getPrototypeOf(error); proto && proto !== Object.prototype; proto = Object.getPrototypeOf(proto)) {
+    names.push(proto.constructor.name);
+  }
+  return names;
+}
+
 export function searchFailureReason(error: unknown): SearchFailureReason {
   if (error instanceof SearchFailure) return error.reason;
-  // The SDK turns our search-budget AbortSignal into APIUserAbortError.
-  if (error instanceof Anthropic.APIUserAbortError || error instanceof Anthropic.APIConnectionTimeoutError) return "timeout";
-  if (error instanceof Anthropic.APIError) return "ai_error";
+  if (typeof error !== "object" || error === null) return "unknown";
+  // Matched by class name, not instanceof: the PostHog wrapper throws from its
+  // own bundled SDK copy. The SDK turns our search-budget abort into APIUserAbortError.
+  const names = classNames(error);
+  if (names.includes("APIUserAbortError") || names.includes("APIConnectionTimeoutError")) return "timeout";
+  if (names.includes("APIError")) return "ai_error";
   return "unknown";
 }
 
@@ -180,11 +192,16 @@ export async function findListings(query: string, region: SearchRegion, userId?:
     .filter((block): block is Anthropic.TextBlock => block.type === "text")
     .map((block) => block.text)
     .join("");
+  // The only record of what the model said: PostHog's LLM capture runs in privacy mode.
+  const logAnswer = (label: string) =>
+    console.error(`[find-listings] ${label}:`, JSON.stringify({ types, text: text.slice(0, 1500) }));
+  let listings: ProductListing[];
   try {
-    return parseListings(text);
+    listings = parseListings(text);
   } catch (error) {
-    // The only record of what the model said: PostHog's LLM capture runs in privacy mode.
-    console.error("[find-listings] Unreadable answer:", JSON.stringify({ types, text: text.slice(0, 1500) }));
+    logAnswer("Unreadable answer");
     throw error;
   }
+  if (listings.length === 0) logAnswer("No usable listings");
+  return listings;
 }
