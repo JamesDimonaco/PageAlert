@@ -1,6 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import Anthropic from "@anthropic-ai/sdk";
-import { parseListings, SearchFailure, searchFailureReason } from "./find-listings.js";
+import { findListings, parseListings, SearchFailure, searchFailureReason } from "./find-listings.js";
+
+const create = vi.fn();
+vi.mock("./extractor.js", () => ({
+  getClient: () => ({ messages: { create } }),
+  trackingParams: () => ({}),
+}));
 
 const listing = (overrides: Record<string, unknown> = {}) => ({
   site: "argos.co.uk",
@@ -117,5 +123,21 @@ describe("searchFailureReason", () => {
     class InternalServerError extends APIError {}
     expect(searchFailureReason(new APIUserAbortError("Request was aborted."))).toBe("timeout");
     expect(searchFailureReason(new InternalServerError("Overloaded"))).toBe("ai_error");
+  });
+});
+
+describe("findListings", () => {
+  // The dynamic-filtering tool (web_search_20260209) calls search from its code
+  // sandbox, burns max_uses on failed attempts, then answers "I've hit a hard
+  // limit". In prod that was 3 of 3 searches failed or empty; the basic tool
+  // found 5-7 shops in about 12s.
+  it("uses the basic web search tool", async () => {
+    create.mockResolvedValueOnce({
+      stop_reason: "end_turn",
+      content: [{ type: "web_search_tool_result" }, { type: "text", text: answer([listing()]) }],
+    });
+    const [result] = await findListings("Sony WH-1000XM5", "GB");
+    expect(result).toMatchObject({ site: "argos.co.uk", price: 27999 });
+    expect(create.mock.calls[0][0].tools).toEqual([expect.objectContaining({ type: "web_search_20250305" })]);
   });
 });
