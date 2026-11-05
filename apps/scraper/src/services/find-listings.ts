@@ -148,7 +148,20 @@ export function parseListings(text: string): ProductListing[] {
   return listings;
 }
 
-export async function findListings(query: string, region: SearchRegion, userId?: string): Promise<ProductListing[]> {
+/**
+ * Not web_search_20260209 by default: its dynamic filtering searches from a
+ * code sandbox, spends max_uses on failed attempts and gives up without an
+ * answer. The basic tool returned listings in about 12s where that failed.
+ * scripts/compare-web-search.ts runs both, to check whether that still holds.
+ */
+export type WebSearchTool = "web_search_20250305" | "web_search_20260209";
+
+export async function findListings(
+  query: string,
+  region: SearchRegion,
+  userId?: string,
+  tool: WebSearchTool = "web_search_20250305",
+): Promise<ProductListing[]> {
   const country = SEARCH_REGIONS.find((r) => r.code === region)?.name ?? region;
   const client = getClient();
   const messages: Anthropic.MessageParam[] = [
@@ -168,10 +181,7 @@ export async function findListings(query: string, region: SearchRegion, userId?:
       system: FIND_PROMPT,
       tools: [
         {
-          // Not web_search_20260209: its dynamic filtering searches from a code
-          // sandbox, spends max_uses on failed attempts and gives up without an
-          // answer. This one returned listings in about 12s where that failed.
-          type: "web_search_20250305",
+          type: tool,
           name: "web_search",
           max_uses: MAX_SEARCHES,
           user_location: { type: "approximate", country: region },
