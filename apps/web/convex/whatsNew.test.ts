@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { CHANGELOG, latestChangelogEntry } from "@prowl/shared";
 import { api, components } from "./_generated/api";
 import schema from "./schema";
@@ -8,9 +8,6 @@ import betterAuthSchema from "./betterAuth/schema";
 
 const modules = import.meta.glob("./**/*.*s");
 const betterAuthModules = import.meta.glob("./betterAuth/**/*.*s");
-
-beforeEach(() => vi.stubEnv("SMS_ENABLED", "true"));
-afterEach(() => vi.unstubAllEnvs());
 
 function harness() {
   const t = convexTest(schema, modules);
@@ -28,8 +25,6 @@ async function signUp(t: ReturnType<typeof harness>, createdAt: number): Promise
       data: { name: "A Person", email: `${createdAt}@example.test`, emailVerified: true, createdAt, updatedAt: createdAt },
     },
   })) as { _id: string };
-  // The newest entry is about texts, which only paid plans get.
-  await t.run((ctx) => ctx.db.insert("userTiers", { userId: user._id, tier: "pro", updatedAt: createdAt }));
   return user._id;
 }
 
@@ -42,7 +37,7 @@ describe("whatsNew.show: who gets the newest changelog entry as a popup", () => 
     expect(await t.withIdentity({ subject: userId }).query(api.whatsNew.show, {})).toEqual(latest);
   });
 
-  it("hides from an account created on or after its day", async () => {
+  it.runIf(!latest.enablesBeta)("hides from an account created on or after its day", async () => {
     const t = harness();
     const userId = await signUp(t, latestAt);
     expect(await t.withIdentity({ subject: userId }).query(api.whatsNew.show, {})).toBeNull();
@@ -103,48 +98,42 @@ describe("whatsNew.show: who gets the newest changelog entry as a popup", () => 
   });
 });
 
-// Remove once a newer entry is at the top: the texts entry is the only one these rules hold for.
-describe("whatsNew.show: while the texts entry is the newest", () => {
-  it.runIf(latest.id === "sms-alerts")("hides from someone who already has texts switched on", async () => {
-    const t = harness();
-    const userId = await existingUser(t);
-    await t.run((ctx) =>
-      ctx.db.insert("notificationSettings", { userId, channel: "sms", enabled: true, target: "+447911100000" })
-    );
-    expect(await t.withIdentity({ subject: userId }).query(api.whatsNew.show, {})).toBeNull();
+// Remove once a newer entry is at the top: the beta entry is the only one these rules hold for.
+describe("whatsNew.show: while the Find a product entry is the newest", () => {
+  const whileBetaIsNewest = it.runIf(latest.id === "find-a-product-beta");
+
+  whileBetaIsNewest("switches on Find a product", () => {
+    expect(latest.enablesBeta).toBe("find_a_product");
   });
 
-  it.runIf(latest.id === "sms-alerts")("still shows to someone with a disabled sms row", async () => {
+  whileBetaIsNewest("hides from someone who already has the beta on", async () => {
     const t = harness();
     const userId = await existingUser(t);
-    await t.run((ctx) =>
-      ctx.db.insert("notificationSettings", { userId, channel: "sms", enabled: false, target: "+447911100000" })
-    );
+    const asUser = t.withIdentity({ subject: userId });
+    await asUser.mutation(api.betaFeatures.set, { feature: "find_a_product", enabled: true });
+    expect(await asUser.query(api.whatsNew.show, {})).toBeNull();
+  });
+
+  whileBetaIsNewest("shows to someone who turned the beta back off and never dismissed it", async () => {
+    const t = harness();
+    const userId = await existingUser(t);
+    const asUser = t.withIdentity({ subject: userId });
+    await asUser.mutation(api.betaFeatures.set, { feature: "find_a_product", enabled: true });
+    await asUser.mutation(api.betaFeatures.set, { feature: "find_a_product", enabled: false });
+    expect(await asUser.query(api.whatsNew.show, {})).toEqual(latest);
+  });
+
+  whileBetaIsNewest("shows to a brand new signup with no monitor yet", async () => {
+    const t = harness();
+    const userId = await signUp(t, latestAt);
     expect(await t.withIdentity({ subject: userId }).query(api.whatsNew.show, {})).toEqual(latest);
   });
 
-  it.runIf(latest.id === "sms-alerts")("hides while the SMS kill switch is off, since the settings card is hidden too", async () => {
-    vi.stubEnv("SMS_ENABLED", "false");
+  whileBetaIsNewest("stays hidden for a new signup after they dismiss it", async () => {
     const t = harness();
-    const userId = await existingUser(t);
-    expect(await t.withIdentity({ subject: userId }).query(api.whatsNew.show, {})).toBeNull();
-  });
-});
-
-describe("the texts changelog entry", () => {
-  // Free has no texts, so "Set up texts" would lead to a paywall.
-  it("does not pop up for a free account", async () => {
-    const t = harness();
-    const userId = await existingUser(t);
-    await t.run(async (ctx) => {
-      const row = await ctx.db.query("userTiers").withIndex("by_userId", (q) => q.eq("userId", userId)).unique();
-      if (row) await ctx.db.patch(row._id, { tier: "free" });
-    });
-    expect(await t.withIdentity({ subject: userId }).query(api.whatsNew.show, {})).toBeNull();
-  });
-
-  // Keeps the id that the original texts popup stored, so nobody who dismissed it sees it twice.
-  it("keeps the texts entry on its original id and day", () => {
-    expect(CHANGELOG.find((e) => e.id === "sms-alerts")?.date).toBe("2026-10-06");
+    const userId = await signUp(t, latestAt);
+    const asUser = t.withIdentity({ subject: userId });
+    await asUser.mutation(api.whatsNew.dismiss, { id: latest.id });
+    expect(await asUser.query(api.whatsNew.show, {})).toBeNull();
   });
 });
