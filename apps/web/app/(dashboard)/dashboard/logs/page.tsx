@@ -302,7 +302,7 @@ export default function LogsPage() {
         </div>
       ) : filtered.length === 0 ? (
         <div className="flex flex-col items-center justify-center rounded-xl bg-card/30 py-20">
-          <Search className="h-7 w-7 text-muted-foreground/60 mb-4" />
+          <Search className="h-7 w-7 text-muted-foreground mb-4" />
           <p className="text-lg font-semibold mb-2">No logs found</p>
           <p className="text-sm text-muted-foreground">Try adjusting your search or filters.</p>
         </div>
@@ -489,7 +489,7 @@ function LogEntry({ log }: { log: Log }) {
                   </p>
                   <Badge
                     variant="outline"
-                    className={`text-[10px] ${
+                    className={`text-xs ${
                       log.status === "success"
                         ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
                         : log.status === "timeout"
@@ -499,16 +499,16 @@ function LogEntry({ log }: { log: Log }) {
                   >
                     {config.label}
                   </Badge>
-                  <Badge variant="outline" className={`text-[10px] ${strat.color}`}>
+                  <Badge variant="outline" className={`text-xs ${strat.color}`}>
                     {strat.label}
                   </Badge>
                   {log.blocked && (
-                    <Badge className="bg-red-500/10 text-red-400 border-red-500/20 text-[10px]">
+                    <Badge className="bg-red-500/10 text-red-400 border-red-500/20 text-xs">
                       Blocked
                     </Badge>
                   )}
                   {log.retryAttempt != null && log.retryAttempt > 0 && (
-                    <Badge variant="outline" className="text-[10px] bg-amber-500/10 text-amber-400 border-amber-500/20">
+                    <Badge variant="outline" className="text-xs bg-amber-500/10 text-amber-400 border-amber-500/20">
                       Retry {log.retryAttempt}/3
                     </Badge>
                   )}

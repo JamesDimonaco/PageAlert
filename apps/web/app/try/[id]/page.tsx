@@ -61,7 +61,7 @@ export default function TryResultPage({
       <div className="min-h-screen bg-background">
         <Header />
         <div className="mx-auto max-w-3xl px-4 py-20 text-center">
-          <AlertTriangle className="h-10 w-10 text-muted-foreground/40 mx-auto mb-4" />
+          <AlertTriangle className="h-10 w-10 text-muted-foreground mx-auto mb-4" />
           <h1 className="text-2xl font-bold mb-2">Scan not found</h1>
           <p className="text-muted-foreground mb-6">This scan may have expired or doesn&apos;t exist.</p>
           <Link href="/" className={buttonVariants()}>Try a new scan</Link>
@@ -116,7 +116,7 @@ export default function TryResultPage({
                 <div>
                   <p className="text-sm font-semibold text-red-400">Scan failed</p>
                   <p className="text-sm text-muted-foreground mt-1">{monitor.lastError ?? "Something went wrong"}</p>
-                  <Link href="/" className="text-xs text-primary hover:underline mt-2 inline-block">Try a different URL</Link>
+                  <Link href="/" className="text-xs text-primary underline underline-offset-2 mt-2 inline-block">Try a different URL</Link>
                 </div>
               </div>
             </CardContent>
@@ -220,7 +220,7 @@ export default function TryResultPage({
           <Card className="border-border/30 bg-card/30">
             <CardContent className="py-10 text-center">
               <p className="text-sm font-medium text-muted-foreground">No items found on this page</p>
-              <p className="text-xs text-muted-foreground/70 mt-1">The AI couldn&apos;t extract structured data. Try a different URL or prompt.</p>
+              <p className="text-xs text-muted-foreground mt-1">The AI couldn&apos;t extract structured data. Try a different URL or prompt.</p>
               <Link href="/" className={buttonVariants({ variant: "outline", className: "mt-4" })}>
                 Try again
               </Link>

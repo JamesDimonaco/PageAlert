@@ -31,6 +31,15 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
+const STATUS_FILTERS = [
+  { value: "all", label: "All statuses" },
+  { value: "active", label: "Active" },
+  { value: "scanning", label: "Scanning" },
+  { value: "paused", label: "Paused" },
+  { value: "error", label: "Error" },
+  { value: "muted", label: "Muted" },
+];
+
 export default function DashboardPage() {
   const { monitors, togglePause, deleteMonitor, updateMonitor, toggleMute } = useMonitors();
   const { open: openCreate, openWithDefaults } = useCreateMonitor();
@@ -300,17 +309,14 @@ export default function DashboardPage() {
             className="pl-9"
           />
         </div>
-        <Select value={statusFilter} onValueChange={(v) => v && setStatusFilter(v)}>
-          <SelectTrigger className="w-full sm:w-[150px]">
+        <Select items={STATUS_FILTERS} value={statusFilter} onValueChange={(v) => v && setStatusFilter(v)}>
+          <SelectTrigger aria-label="Filter by status" className="w-full sm:w-[150px]">
             <SelectValue placeholder="Status" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All statuses</SelectItem>
-            <SelectItem value="active">Active</SelectItem>
-            <SelectItem value="scanning">Scanning</SelectItem>
-            <SelectItem value="paused">Paused</SelectItem>
-            <SelectItem value="error">Error</SelectItem>
-            <SelectItem value="muted">Muted</SelectItem>
+            {STATUS_FILTERS.map(({ value, label }) => (
+              <SelectItem key={value} value={value}>{label}</SelectItem>
+            ))}
           </SelectContent>
         </Select>
       </div>
@@ -353,7 +359,7 @@ export default function DashboardPage() {
             </div>
           ) : (
             <div className="flex flex-col items-center justify-center rounded-xl bg-card/30 shadow-sm shadow-black/5 py-20 px-8">
-              <Search className="h-7 w-7 text-muted-foreground/60 mb-4" />
+              <Search className="h-7 w-7 text-muted-foreground mb-4" />
               <p className="text-lg font-semibold mb-2">No monitors found</p>
               <p className="text-sm text-muted-foreground max-w-sm text-center leading-relaxed">
                 Try adjusting your search or filters.

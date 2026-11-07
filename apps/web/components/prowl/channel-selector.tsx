@@ -202,6 +202,7 @@ export function ChannelSelector({ value, onChange, monitorId, groupId, disabled 
               type="button"
               onClick={() => handleToggle(channel)}
               disabled={disabled}
+              aria-pressed={isActive}
               className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
                 isLockedFree
                   ? "border-amber-500/30 bg-amber-500/5 text-amber-400 hover:bg-amber-500/10"
@@ -209,24 +210,24 @@ export function ChannelSelector({ value, onChange, monitorId, groupId, disabled 
                     ? "border-primary/30 bg-primary/10 text-primary"
                     : isConfigured && available
                       ? "border-border/50 bg-card hover:border-primary/30 hover:bg-primary/5 text-muted-foreground"
-                      : "border-border/30 bg-muted/30 text-muted-foreground/50 cursor-default"
+                      : "border-dashed border-border bg-transparent text-muted-foreground hover:bg-muted/50"
               }`}
             >
               <Icon className="h-3 w-3" />
               {config.label}
               {isActive && !isLockedFree && <Check className="h-3 w-3" />}
               {!isConfigured && (
-                <Settings className="h-3 w-3 text-muted-foreground/40" />
+                <Settings className="h-3 w-3" />
               )}
               {isLockedFree && (
-                <Badge variant="outline" className="text-[9px] px-1 py-0 ml-0.5 border-amber-500/30 text-amber-400">1 monitor</Badge>
+                <Badge variant="outline" className="text-xs px-1 py-0 ml-0.5 border-amber-500/30 text-amber-400">1 monitor</Badge>
               )}
             </button>
           );
         })}
       </div>
       {value.length === 0 && (
-        <p className="text-[10px] text-amber-400">No notifications enabled for this monitor</p>
+        <p className="text-xs text-amber-400">No notifications enabled for this monitor</p>
       )}
     </div>
   );

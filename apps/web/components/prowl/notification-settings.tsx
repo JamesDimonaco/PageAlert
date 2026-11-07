@@ -224,7 +224,7 @@ export function NotificationSettings() {
               </Button>
             </div>
           ))}
-          <div className="flex items-center gap-4 p-4 opacity-60">
+          <div className="flex items-center gap-4 p-4">
             <div className="text-muted-foreground shrink-0">
               <Hash className="h-5 w-5" />
             </div>
@@ -232,7 +232,7 @@ export function NotificationSettings() {
               <p className="text-sm font-medium">Slack</p>
               <p className="text-xs text-muted-foreground mt-0.5">Coming in a future update</p>
             </div>
-            <Badge variant="outline" className="text-[10px] px-1.5 py-0">Coming soon</Badge>
+            <Badge variant="outline" className="text-xs px-1.5 py-0">Coming soon</Badge>
           </div>
         </div>
       </section>
@@ -485,8 +485,8 @@ export function NotificationSettings() {
                     PageAlert about the pages I monitor. How many depends on the monitors I choose,
                     up to my plan&apos;s limit. Message and data rates may apply. Reply STOP to a text
                     to stop them, or turn them off here any time. See the{" "}
-                    <Link href="/terms" className="text-primary hover:underline">terms</Link> and{" "}
-                    <Link href="/privacy" className="text-primary hover:underline">privacy policy</Link>.
+                    <Link href="/terms" className="text-primary underline underline-offset-2">terms</Link> and{" "}
+                    <Link href="/privacy" className="text-primary underline underline-offset-2">privacy policy</Link>.
                   </span>
                 </label>
 

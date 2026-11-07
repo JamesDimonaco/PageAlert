@@ -23,7 +23,7 @@ export default function TermsPage() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-4xl px-6 py-16">
+      <main id="main" className="mx-auto max-w-4xl px-6 py-16">
         <h1 className="text-3xl font-bold tracking-tight mb-2">Terms of Service</h1>
         <p className="text-sm text-muted-foreground mb-12">Last updated: September 2026</p>
 
@@ -76,7 +76,7 @@ export default function TermsPage() {
           <ul className="list-disc pl-6 space-y-2">
             <li>Texts are off until you add a mobile number in Settings, tick the box agreeing to receive them, and confirm the code we send. Only the monitors you pick send texts</li>
             <li>Your mobile carrier may charge you to receive texts — check your plan. We do not charge for them beyond your plan price</li>
-            <li>How many you get depends on your monitors, up to a monthly and daily allowance per plan. The current numbers are on the <Link href="/pricing" className="text-primary hover:underline">pricing page</Link> and in Settings</li>
+            <li>How many you get depends on your monitors, up to a monthly and daily allowance per plan. The current numbers are on the <Link href="/pricing" className="text-primary underline underline-offset-2">pricing page</Link> and in Settings</li>
             <li>When the allowance runs out we send one text saying so, then stop. Alerts keep coming by email and any other channel you have on, and texts resume when it resets</li>
             <li>We can text UK, EU, US and Canadian numbers</li>
             <li>Reply <strong>STOP</strong> to any text to stop them, or turn them off in Settings. Reply <strong>HELP</strong> for help. Stopping texts does not stop your monitors — alerts continue on your other channels</li>
@@ -84,7 +84,7 @@ export default function TermsPage() {
             <li>Texts are only available on paid plans</li>
             <li>We only ever text you about your own monitors, or to send a verification code. We never send marketing by text</li>
           </ul>
-          <p>How we collect that consent, in full, is set out in our <Link href="/sms-policy" className="text-primary hover:underline">SMS opt-in and messaging policy</Link>.</p>
+          <p>How we collect that consent, in full, is set out in our <Link href="/sms-policy" className="text-primary underline underline-offset-2">SMS opt-in and messaging policy</Link>.</p>
 
           <h2>Inactive accounts</h2>
           <p>If you are on the free plan and stop using the app, we pause your monitors — after 30 days if an alert has gone unread, or after 90 days otherwise. We email you a link that restarts them, and signing in works too. Paid plans are not paused this way.</p>
@@ -96,7 +96,7 @@ export default function TermsPage() {
           <p>We aim for high availability but do not guarantee 100% uptime. We may perform maintenance, update features, or experience outages. We will notify users of planned downtime where possible.</p>
 
           <h2>Suspension and termination</h2>
-          <p>We may suspend or terminate accounts that violate these terms. A suspended account cannot be deleted from Settings — email us and we will delete it. Otherwise you can delete your account at any time from Settings, which permanently removes your data as described in the <Link href="/privacy" className="text-primary hover:underline">privacy policy</Link>.</p>
+          <p>We may suspend or terminate accounts that violate these terms. A suspended account cannot be deleted from Settings — email us and we will delete it. Otherwise you can delete your account at any time from Settings, which permanently removes your data as described in the <Link href="/privacy" className="text-primary underline underline-offset-2">privacy policy</Link>.</p>
 
           <h2>Limitation of liability</h2>
           <p>PageAlert is provided &ldquo;as is&rdquo; without warranty. We are not liable for missed or delayed notifications, inaccurate data extraction, a website blocking our access, a messaging service failing to deliver, or any losses resulting from use of the Service. Our maximum liability is limited to the amount you have paid for the Service in the past 12 months.</p>
@@ -108,11 +108,11 @@ export default function TermsPage() {
           <p>These terms are governed by the laws of England and Wales, and any dispute will be dealt with by the courts of England and Wales.</p>
 
           <h2>Contact</h2>
-          <p>Questions about these terms? Email <a href="mailto:dimonaco.james@gmail.com" className="text-primary hover:underline">dimonaco.james@gmail.com</a>.</p>
+          <p>Questions about these terms? Email <a href="mailto:dimonaco.james@gmail.com" className="text-primary underline underline-offset-2">dimonaco.james@gmail.com</a>.</p>
         </div>
 
         <div className="mt-12 pt-8 border-t border-border/20">
-          <Link href="/" className="text-sm text-primary hover:underline">&larr; Back to PageAlert</Link>
+          <Link href="/" className="text-sm text-primary underline underline-offset-2">&larr; Back to PageAlert</Link>
         </div>
       </main>
     </div>

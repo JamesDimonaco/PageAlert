@@ -47,6 +47,10 @@
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
+html {
+  color-scheme: dark;
+}
+
 :root {
   /* Background - rich dark blue-grey, not flat black */
   --background: oklch(0.14 0.008 260);
@@ -62,7 +66,7 @@
 
   /* Primary - vibrant but balanced blue-purple */
   --primary: oklch(0.65 0.2 265);
-  --primary-foreground: oklch(1 0 0);
+  --primary-foreground: oklch(0.16 0.03 265);
 
   /* Secondary - subtle blue-grey tint */
   --secondary: oklch(0.23 0.012 258);
@@ -70,18 +74,18 @@
 
   /* Muted - blue-grey neutral for backgrounds */
   --muted: oklch(0.22 0.012 258);
-  --muted-foreground: oklch(0.60 0.01 260);
+  --muted-foreground: oklch(0.72 0.01 260);
 
   /* Accent - slightly warmer blue-grey */
   --accent: oklch(0.24 0.016 258);
   --accent-foreground: oklch(0.88 0.005 260);
 
   /* Destructive */
-  --destructive: oklch(0.65 0.2 25);
+  --destructive: oklch(0.72 0.17 25);
 
   /* Borders - subtle blue-grey tinted, not pure white */
-  --border: oklch(0.90 0.01 260 / 8%);
-  --input: oklch(0.90 0.01 260 / 12%);
+  --border: oklch(0.90 0.01 260 / 14%);
+  --input: oklch(0.90 0.01 260 / 32%);
 
   /* Ring */
   --ring: oklch(0.65 0.2 265);
@@ -99,7 +103,7 @@
   --sidebar: oklch(0.16 0.008 260);
   --sidebar-foreground: oklch(0.95 0.005 260);
   --sidebar-primary: oklch(0.65 0.2 265);
-  --sidebar-primary-foreground: oklch(1 0 0);
+  --sidebar-primary-foreground: oklch(0.16 0.03 265);
   --sidebar-accent: oklch(0.24 0.016 258);
   --sidebar-accent-foreground: oklch(0.88 0.005 260);
   --sidebar-border: oklch(0.90 0.01 260 / 8%);
@@ -115,5 +119,21 @@
   }
   html {
     @apply font-sans;
+  }
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+}
+
+/* Spinners stay: they are the only sign that work is still running. */
+@media (prefers-reduced-motion: reduce) {
+  *:not(.animate-spin),
+  *:not(.animate-spin)::before,
+  *:not(.animate-spin)::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

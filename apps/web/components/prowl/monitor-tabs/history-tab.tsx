@@ -51,9 +51,9 @@ export function HistoryTab({ results }: HistoryTabProps) {
   if (results.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-16 text-center">
-        <History className="h-8 w-8 text-muted-foreground/40 mb-4" />
+        <History className="h-8 w-8 text-muted-foreground mb-4" />
         <p className="text-sm text-muted-foreground">No history yet</p>
-        <p className="text-xs text-muted-foreground/70 mt-1">Check results will appear here as the scheduler runs</p>
+        <p className="text-xs text-muted-foreground mt-1">Check results will appear here as the scheduler runs</p>
       </div>
     );
   }

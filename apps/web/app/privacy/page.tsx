@@ -24,20 +24,20 @@ export default function PrivacyPage() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-4xl px-6 py-16">
+      <main id="main" className="mx-auto max-w-4xl px-6 py-16">
         <h1 className="text-3xl font-bold tracking-tight mb-2">Privacy Policy</h1>
         <p className="text-sm text-muted-foreground mb-12">Last updated: September 2026</p>
 
         <div className="prose prose-invert prose-sm max-w-none space-y-8 text-muted-foreground [&_h2]:text-foreground [&_h2]:text-lg [&_h2]:font-semibold [&_h2]:mt-10 [&_h2]:mb-4 [&_strong]:text-foreground">
           <h2>Who we are</h2>
-          <p>PageAlert is run by <strong>J M Dimonaco LTD</strong>, a company registered in England and Wales (company number 14260548, registered office 34 Llanberis Close, Tonteg, Cardiff, CF38 1HR). We are the data controller for everything described here. Questions about your data go to <a href="mailto:dimonaco.james@gmail.com" className="text-primary hover:underline">dimonaco.james@gmail.com</a>.</p>
+          <p>PageAlert is run by <strong>J M Dimonaco LTD</strong>, a company registered in England and Wales (company number 14260548, registered office 34 Llanberis Close, Tonteg, Cardiff, CF38 1HR). We are the data controller for everything described here. Questions about your data go to <a href="mailto:dimonaco.james@gmail.com" className="text-primary underline underline-offset-2">dimonaco.james@gmail.com</a>.</p>
 
           <h2>What we collect</h2>
           <p><strong>Your account.</strong> Your <strong>email address</strong> and <strong>name</strong> — from Google or GitHub if you sign in that way, or as you typed them if you signed up with a password. A password is stored hashed; we cannot read it. We use these to sign you in and to email you.</p>
           <p><strong>Your monitors.</strong> The <strong>URLs</strong> you give us, your <strong>search prompts</strong>, and what we find on each check. Every check is logged — when it ran, what we read from the page, and whether it matched. That log is the check history you see in the dashboard.</p>
           <p><strong>Trying it before you sign up.</strong> A scan run without an account stores the URL and prompt for 7 days. If you leave an email address so we can tell you about matches, we keep the address with the scan for 30 days. Sign up with that address and the monitor moves into your account.</p>
           <p><strong>Notification channels.</strong> If you connect one, we store your <strong>Telegram chat ID</strong> or <strong>Discord webhook URL</strong>. For browser push we store a subscription address and keys for each device you allow it on, along with that browser&apos;s user agent string.</p>
-          <p><strong>Your mobile number.</strong> If you turn on text alerts we store your <strong>mobile number</strong>. We send a code to it first, and only a number that answers the code ever receives an alert. A code you do not finish with is deleted when it expires. We use the number for nothing but the texts you asked for, and never for marketing. Full detail is in our <Link href="/sms-policy" className="text-primary hover:underline">SMS opt-in and messaging policy</Link>.</p>
+          <p><strong>Your mobile number.</strong> If you turn on text alerts we store your <strong>mobile number</strong>. We send a code to it first, and only a number that answers the code ever receives an alert. A code you do not finish with is deleted when it expires. We use the number for nothing but the texts you asked for, and never for marketing. Full detail is in our <Link href="/sms-policy" className="text-primary underline underline-offset-2">SMS opt-in and messaging policy</Link>.</p>
           <p><strong>Feedback and reviews.</strong> A thumbs up or down on an alert is stored with the entry it was about and the prompt you had at the time. If you leave a review, the display name and words you give us are shown on our homepage. A message you send with <strong>Send feedback</strong> reaches us on Telegram, with your email address, your plan and the page you were on. We do not store it in PageAlert, so deleting your account does not remove it. Email us and we will delete it.</p>
           <p><strong>Emails we send you.</strong> One record per email: the address, what kind of email it was, and whether it was delivered, bounced, or marked as spam.</p>
           <p><strong>Activity.</strong> When you were last in the app, and when you created each monitor.</p>
@@ -91,7 +91,7 @@ export default function PrivacyPage() {
             <li><strong>Delete</strong> it — delete individual monitors or your whole account from Settings.</li>
             <li><strong>Export</strong> it — email us and we will send you a copy.</li>
             <li><strong>Object</strong> to analytics — use the switch above, or the one in Settings.</li>
-            <li><strong>Complain</strong> to the Information Commissioner&apos;s Office at <a href="https://ico.org.uk" className="text-primary hover:underline" target="_blank" rel="noopener noreferrer">ico.org.uk</a> if you think we have handled your data badly. We would rather hear from you first.</li>
+            <li><strong>Complain</strong> to the Information Commissioner&apos;s Office at <a href="https://ico.org.uk" className="text-primary underline underline-offset-2" target="_blank" rel="noopener noreferrer">ico.org.uk</a> if you think we have handled your data badly. We would rather hear from you first.</li>
           </ul>
 
           <h2>Security</h2>
@@ -101,11 +101,11 @@ export default function PrivacyPage() {
           <p>If we make a significant change, we will email you or show a notice in the app.</p>
 
           <h2>Contact</h2>
-          <p>Email <a href="mailto:dimonaco.james@gmail.com" className="text-primary hover:underline">dimonaco.james@gmail.com</a>.</p>
+          <p>Email <a href="mailto:dimonaco.james@gmail.com" className="text-primary underline underline-offset-2">dimonaco.james@gmail.com</a>.</p>
         </div>
 
         <div className="mt-12 pt-8 border-t border-border/20">
-          <Link href="/" className="text-sm text-primary hover:underline">&larr; Back to PageAlert</Link>
+          <Link href="/" className="text-sm text-primary underline underline-offset-2">&larr; Back to PageAlert</Link>
         </div>
       </main>
     </div>

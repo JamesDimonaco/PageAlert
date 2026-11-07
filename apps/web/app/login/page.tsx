@@ -29,6 +29,7 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
   const [loading, setLoading] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
   const router = useRouter();
   const searchParams = useSearchParams();
   const nextUrl = safeNext(searchParams.get("next"));
@@ -36,26 +37,29 @@ export default function LoginPage() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    setFormError(null);
     setLoading(true);
 
     try {
-      if (isSignUp) {
-        await authClient.signUp.email({
-          email,
-          password,
-          name,
-        });
-        trackSignUp({ method: "email" });
-      } else {
-        await authClient.signIn.email({
-          email,
-          password,
-        });
-        trackSignIn({ method: "email" });
+      // Better Auth returns a refused request as `error`; it only throws when the network fails.
+      const { error } = isSignUp
+        ? await authClient.signUp.email({ email, password, name })
+        : await authClient.signIn.email({ email, password });
+      if (error) {
+        setFormError(
+          !isSignUp
+            ? "That email or password isn't right."
+            : error.code === "USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL" || error.code === "USER_ALREADY_EXISTS"
+              ? "That email already has an account. Sign in instead."
+              : "We couldn't create your account. Try again."
+        );
+        return;
       }
+      if (isSignUp) trackSignUp({ method: "email" });
+      else trackSignIn({ method: "email" });
       router.push(nextUrl);
     } catch {
-      toast.error(isSignUp ? "Failed to create account" : "Invalid credentials");
+      setFormError("We couldn't reach the server. Check your connection and try again.");
     } finally {
       setLoading(false);
     }
@@ -80,7 +84,7 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center px-4">
+    <main id="main" className="flex min-h-screen overflow-hidden items-center justify-center px-4">
       <div className="absolute inset-0 -z-10">
         <div className="absolute left-1/2 top-1/3 -translate-x-1/2 -translate-y-1/2 h-[600px] w-[600px] rounded-full bg-primary/5 blur-3xl" />
       </div>
@@ -97,7 +101,7 @@ export default function LoginPage() {
 
         <Card className="border-border/30 bg-card/80 shadow-xl shadow-black/10 backdrop-blur">
           <CardHeader className="text-center pb-2 px-8 pt-8">
-            <CardTitle className="text-xl font-bold tracking-tight">{isSignUp ? "Create account" : "Welcome back"}</CardTitle>
+            <h1 className="text-xl font-bold tracking-tight">{isSignUp ? "Create account" : "Welcome back"}</h1>
             <CardDescription className="mt-1.5 text-sm">
               {isSignUp ? "Sign up to start monitoring" : "Sign in to your account"}
             </CardDescription>
@@ -154,6 +158,7 @@ export default function LoginPage() {
                 <Input
                   id="email"
                   type="email"
+                  autoComplete="email"
                   placeholder="you@example.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
@@ -165,12 +170,14 @@ export default function LoginPage() {
                 <Input
                   id="password"
                   type="password"
+                  autoComplete={isSignUp ? "new-password" : "current-password"}
                   placeholder="Enter your password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required
                 />
               </div>
+              {formError && <p role="alert" className="text-sm text-destructive">{formError}</p>}
               <Button type="submit" className="w-full gap-2 mt-2" disabled={loading}>
                 {loading ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
@@ -184,7 +191,11 @@ export default function LoginPage() {
             <p className="text-center text-sm text-muted-foreground pt-1">
               {isSignUp ? "Already have an account?" : "Don't have an account?"}{" "}
               <button
-                onClick={() => setIsSignUp(!isSignUp)}
+                type="button"
+                onClick={() => {
+                  setIsSignUp(!isSignUp);
+                  setFormError(null);
+                }}
                 className="text-primary hover:underline font-medium"
               >
                 {isSignUp ? "Sign in" : "Sign up"}
@@ -193,6 +204,6 @@ export default function LoginPage() {
           </CardContent>
         </Card>
       </div>
-    </div>
+    </main>
   );
 }

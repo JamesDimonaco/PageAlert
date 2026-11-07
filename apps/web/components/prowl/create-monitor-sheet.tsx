@@ -284,7 +284,7 @@ export function CreateMonitorSheet({
               <span className="flex items-center gap-2">
                 <CheckCircle2 className="h-4 w-4" /> Scan complete
               </span>
-              <span className="flex items-center gap-1 text-[11px] font-normal opacity-80">
+              <span className="flex items-center gap-1 text-xs font-normal opacity-80">
                 View monitor <ArrowRight className="h-3 w-3" />
               </span>
             </>
@@ -295,7 +295,7 @@ export function CreateMonitorSheet({
                 {isInRetry ? `Retry ${retryAttempt} of 3` : `Scanning... ${elapsed}s`}
               </span>
               {isInRetry && (
-                <span className="text-[11px] font-normal opacity-80">
+                <span className="text-xs font-normal opacity-80">
                   The site blocked us — trying again with a proxy
                 </span>
               )}

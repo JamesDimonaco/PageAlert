@@ -304,7 +304,7 @@ export function OverviewTab({ monitorId, monitor, matches, totalItems, results, 
                   Retrying automatically ({monitor.retryCount} of 3)
                 </p>
                 <p className="text-sm text-muted-foreground break-words">{monitor.lastError}</p>
-                <p className="text-xs text-muted-foreground/60 mt-2">
+                <p className="text-xs text-muted-foreground mt-2">
                   Trying different strategies — proxy, mobile browser.
                   {monitor.retryCount === 1 && " Next: retry with residential proxy."}
                   {monitor.retryCount === 2 && " Next: retry with mobile browser + skip anti-bot checks."}
@@ -334,7 +334,7 @@ export function OverviewTab({ monitorId, monitor, matches, totalItems, results, 
                   {isParked ? "Checks stopped" : isBlocked ? "This site blocked us" : "Monitor failed"}
                 </p>
                 <p className="text-sm text-muted-foreground break-words">{monitor.lastError}</p>
-                <p className="text-xs text-muted-foreground/60 mt-2">
+                <p className="text-xs text-muted-foreground mt-2">
                   {isParked
                     ? "We've stopped checking this one automatically. Hit Retry to give it another go."
                     : isBlocked
@@ -401,13 +401,13 @@ export function OverviewTab({ monitorId, monitor, matches, totalItems, results, 
       <div>
         <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 mb-3">
           <div className="flex items-baseline gap-2">
-            <h3 className="text-sm font-semibold flex items-center gap-2">
+            <h2 className="text-sm font-semibold flex items-center gap-2">
               <CheckCircle2 className="h-4 w-4 text-emerald-400" />
               Matches
               <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-xs">
                 {matches.length}
               </Badge>
-            </h3>
+            </h2>
             <span className="text-xs text-muted-foreground">of {totalItems} items</span>
           </div>
           {monitor.lastMatchAt !== undefined && (

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Radar, LogOut, Settings, ShieldCheck, Plus, MessageSquare } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { NotificationBell } from "@/components/prowl/notification-bell";
 import { FeedbackDialog } from "@/components/prowl/feedback-dialog";
 import {
@@ -21,6 +21,12 @@ import { useRouter, usePathname } from "next/navigation";
 import { useCreateMonitor } from "@/hooks/use-create-monitor";
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
+
+const NAV_LINKS = [
+  { href: "/dashboard", label: "Dashboard" },
+  { href: "/dashboard/logs", label: "Logs" },
+  { href: "/dashboard/settings", label: "Settings" },
+];
 
 export function Navbar() {
   const router = useRouter();
@@ -45,28 +51,29 @@ export function Navbar() {
             </div>
             <span className="text-xl font-bold tracking-tight">PageAlert</span>
           </Link>
-          <nav className="hidden md:flex items-center gap-1">
-            <Link href="/dashboard">
-              <Button variant="ghost" size="sm">Dashboard</Button>
-            </Link>
-            <Link href="/dashboard/logs">
-              <Button variant="ghost" size="sm">Logs</Button>
-            </Link>
-            <Link href="/dashboard/settings">
-              <Button variant="ghost" size="sm">Settings</Button>
-            </Link>
+          <nav aria-label="Main" className="hidden md:flex items-center gap-1">
+            {NAV_LINKS.map(({ href, label }) => (
+              <Link
+                key={href}
+                href={href}
+                aria-current={pathname === href ? "page" : undefined}
+                className={buttonVariants({ variant: "ghost", size: "sm", className: "aria-[current=page]:bg-muted" })}
+              >
+                {label}
+              </Link>
+            ))}
           </nav>
         </div>
 
         <div className="flex items-center gap-3">
           {showCreate && (
-            <Button size="sm" onClick={openCreate} className="gap-1.5 shadow-sm shadow-primary/15">
+            <Button size="sm" onClick={openCreate} aria-label="New Monitor" className="gap-1.5 shadow-sm shadow-primary/15">
               <Plus className="h-4 w-4" />
               <span className="hidden sm:inline">New Monitor</span>
             </Button>
           )}
 
-          <Badge className={`text-[10px] px-1.5 py-0 hidden sm:inline-flex ${
+          <Badge className={`text-xs px-1.5 py-0 hidden sm:inline-flex ${
             tier === "max"
               ? "bg-amber-500/10 text-amber-400 border-amber-500/20"
               : tier === "pro"
@@ -79,7 +86,7 @@ export function Navbar() {
           <NotificationBell />
 
           <DropdownMenu>
-            <DropdownMenuTrigger className="relative h-9 w-9 rounded-full hover:opacity-80 transition-opacity outline-none focus-visible:ring-2 focus-visible:ring-ring">
+            <DropdownMenuTrigger aria-label="Account menu" className="relative h-9 w-9 rounded-full hover:opacity-80 transition-opacity outline-none focus-visible:ring-2 focus-visible:ring-ring">
               <Avatar className="h-9 w-9">
                 {user?.image && <AvatarImage src={user.image} alt={user.name ?? "Profile"} />}
                 <AvatarFallback className="bg-primary/10 text-primary text-sm font-semibold">
@@ -93,7 +100,7 @@ export function Navbar() {
                   <div className="flex items-center gap-2">
                     <p className="text-sm font-medium">{user?.name ?? "User"}</p>
                     {tier !== "free" && (
-                      <Badge className={`text-[10px] px-1.5 py-0 ${
+                      <Badge className={`text-xs px-1.5 py-0 ${
                         tier === "max"
                           ? "bg-amber-500/10 text-amber-400 border-amber-500/20"
                           : "bg-primary/10 text-primary border-primary/20"

@@ -9,7 +9,7 @@ import { toast } from "sonner";
 import { SEARCH_REGIONS, formatMinorUnits } from "@prowl/shared";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
   DropdownMenu,
@@ -75,9 +75,7 @@ export default function ProductPage({ params }: { params: Promise<{ id: string }
     return (
       <div className="flex flex-col items-center justify-center py-32">
         <p className="text-lg font-semibold mb-2">Product not found</p>
-        <Link href="/dashboard">
-          <Button variant="outline">Back to dashboard</Button>
-        </Link>
+        <Link href="/dashboard" className={buttonVariants({ variant: "outline" })}>Back to dashboard</Link>
       </div>
     );
   }
@@ -147,10 +145,8 @@ export default function ProductPage({ params }: { params: Promise<{ id: string }
       <UpgradeBanner tier={tier} tierResolved={tierResolved} atLimit={full} />
 
       <div className="flex items-center gap-3 overflow-hidden">
-        <Link href="/dashboard" className="shrink-0">
-          <Button variant="ghost" size="icon">
-            <ArrowLeft className="h-5 w-5" />
-          </Button>
+        <Link href="/dashboard" aria-label="Back to dashboard" className={buttonVariants({ variant: "ghost", size: "icon", className: "shrink-0" })}>
+          <ArrowLeft className="h-5 w-5" />
         </Link>
         <div className="flex-1 min-w-0">
           <h1 className="text-xl sm:text-2xl font-bold tracking-tight truncate">{product.name}</h1>
@@ -160,7 +156,7 @@ export default function ProductPage({ params }: { params: Promise<{ id: string }
         </div>
         <div className="shrink-0">
           <DropdownMenu>
-            <DropdownMenuTrigger className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-border/50 hover:bg-muted transition-colors">
+            <DropdownMenuTrigger aria-label="Product actions" className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-border/50 hover:bg-muted transition-colors">
               <MoreVertical className="h-4 w-4" />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">

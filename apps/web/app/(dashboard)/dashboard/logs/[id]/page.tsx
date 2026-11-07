@@ -322,7 +322,7 @@ export default function LogDetailPage({
       {log.monitorId && (
         <Link
           href={`/dashboard/monitors/${log.monitorId}`}
-          className="inline-flex items-center gap-2 text-sm text-primary hover:underline"
+          className="inline-flex items-center gap-2 text-sm text-primary underline underline-offset-2"
         >
           View associated monitor →
         </Link>

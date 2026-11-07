@@ -191,7 +191,7 @@ export default function SettingsPage() {
               </CardHeader>
               <CardContent className="space-y-3">
                 <AnalyticsToggle />
-                <Link href="/privacy" className="text-xs text-primary hover:underline">
+                <Link href="/privacy" className="text-xs text-primary underline underline-offset-2">
                   Privacy policy
                 </Link>
               </CardContent>
@@ -338,7 +338,7 @@ export default function SettingsPage() {
                         ? `You have access until ${new Date(periodEnd!).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })} (${daysRemaining} day${daysRemaining !== 1 ? "s" : ""} remaining).`
                         : "Your access has expired."}
                     </p>
-                    <p className="text-xs text-muted-foreground/70 mt-1">
+                    <p className="text-xs text-muted-foreground mt-1">
                       Your monitors will continue running until then. After that, you&apos;ll be on the free plan.
                     </p>
                   </div>

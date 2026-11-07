@@ -121,7 +121,7 @@ export function OnboardingChecklist() {
           </div>
           <button
             onClick={handleDismiss}
-            className="text-muted-foreground/50 hover:text-muted-foreground transition-colors p-1 -m-1"
+            className="text-muted-foreground hover:text-muted-foreground transition-colors p-1 -m-1"
             aria-label="Dismiss checklist"
           >
             <X className="h-4 w-4" />

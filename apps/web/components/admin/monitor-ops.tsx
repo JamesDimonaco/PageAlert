@@ -100,7 +100,7 @@ export function AdminMonitorOps() {
                             href={m.url}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="text-primary hover:underline"
+                            className="text-primary underline underline-offset-2"
                           >
                             {displayHost(m.url)}
                           </a>

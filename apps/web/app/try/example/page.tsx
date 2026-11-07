@@ -38,7 +38,7 @@ export default function ExamplePage() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-4xl px-4 sm:px-6 py-8 sm:py-12 space-y-8">
+      <main id="main" className="mx-auto max-w-4xl px-4 sm:px-6 py-8 sm:py-12 space-y-8">
         {/* Monitor header */}
         <div>
           <div className="flex items-center gap-3 mb-2">
@@ -104,7 +104,7 @@ export default function ExamplePage() {
                       )}
                       <span className="text-sm font-bold">${item.price.toLocaleString()}</span>
                       {item.oldPrice && (
-                        <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-[10px] gap-0.5">
+                        <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-xs gap-0.5">
                           <TrendingDown className="h-3 w-3" />
                           {Math.round(((item.oldPrice - item.price) / item.oldPrice) * 100)}% off
                         </Badge>
@@ -132,7 +132,7 @@ export default function ExamplePage() {
                       )}
                       <span className="text-sm font-medium">${item.price.toLocaleString()}</span>
                       {item.oldPrice && (
-                        <Badge variant="outline" className="text-[10px] gap-0.5">
+                        <Badge variant="outline" className="text-xs gap-0.5">
                           <TrendingDown className="h-3 w-3" />
                           {Math.round(((item.oldPrice - item.price) / item.oldPrice) * 100)}%
                         </Badge>

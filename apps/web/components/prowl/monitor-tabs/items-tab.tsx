@@ -234,9 +234,9 @@ export function ItemsTab({ monitorId, allItems, schema, blacklist, scores, showF
   if (allItems.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-16 text-center">
-        <Search className="h-8 w-8 text-muted-foreground/40 mb-4" />
+        <Search className="h-8 w-8 text-muted-foreground mb-4" />
         <p className="text-sm text-muted-foreground">No items extracted yet</p>
-        <p className="text-xs text-muted-foreground/70 mt-1">Items will appear after the first successful scan</p>
+        <p className="text-xs text-muted-foreground mt-1">Items will appear after the first successful scan</p>
       </div>
     );
   }
@@ -396,13 +396,13 @@ export function ItemsTab({ monitorId, allItems, schema, blacklist, scores, showF
               <div className="flex-1 min-w-0 flex items-center gap-2">
                 {isMatch && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400 shrink-0" />}
                 {score != null && (
-                  <Badge variant="outline" className={`text-[10px] shrink-0 ${confidenceStyle(score)}`}>
+                  <Badge variant="outline" className={`text-xs shrink-0 ${confidenceStyle(score)}`}>
                     {MATCH_CONFIDENCE_LABEL[matchConfidence(score)]}
                   </Badge>
                 )}
                 {safeUrl ? (
                   <a href={safeUrl} target="_blank" rel="noopener noreferrer"
-                    className="font-medium hover:text-primary hover:underline transition-colors break-words sm:truncate">
+                    className="font-medium hover:text-primary underline underline-offset-2 transition-colors break-words sm:truncate">
                     {title}
                   </a>
                 ) : (
