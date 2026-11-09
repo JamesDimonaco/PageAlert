@@ -36,6 +36,13 @@ function formatDate(timestamp: number): string {
 
 type FilterType = "all" | "matches" | "changes" | "errors";
 
+const FILTERS: { value: FilterType; label: string }[] = [
+  { value: "all", label: "All events" },
+  { value: "matches", label: "Matches only" },
+  { value: "changes", label: "Changes only" },
+  { value: "errors", label: "Errors only" },
+];
+
 export function HistoryTab({ results }: HistoryTabProps) {
   const [filter, setFilter] = useState<FilterType>("all");
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -63,15 +70,14 @@ export function HistoryTab({ results }: HistoryTabProps) {
       {/* Filter bar */}
       <div className="flex items-center justify-between">
         <p className="text-sm text-muted-foreground">{filtered.length} of {results.length} events</p>
-        <Select value={filter} onValueChange={(v) => v && setFilter(v as FilterType)}>
-          <SelectTrigger size="sm" className="w-[150px] text-sm">
+        <Select items={FILTERS} value={filter} onValueChange={(v) => v && setFilter(v as FilterType)}>
+          <SelectTrigger size="sm" aria-label="Filter events" className="w-[150px] text-sm">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All events</SelectItem>
-            <SelectItem value="matches">Matches only</SelectItem>
-            <SelectItem value="changes">Changes only</SelectItem>
-            <SelectItem value="errors">Errors only</SelectItem>
+            {FILTERS.map(({ value, label }) => (
+              <SelectItem key={value} value={value}>{label}</SelectItem>
+            ))}
           </SelectContent>
         </Select>
       </div>

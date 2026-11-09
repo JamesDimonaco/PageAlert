@@ -167,7 +167,7 @@ export default function TryResultPage({
 
             {/* Items list */}
             <div>
-              <h2 className="text-sm font-semibold mb-3 flex items-center gap-2">
+              <h2 className="section-title mb-3 flex items-center gap-2">
                 <CheckCircle2 className="h-4 w-4 text-emerald-400" />
                 Extracted Items
                 <Badge variant="outline" className="text-xs">{items.length}</Badge>

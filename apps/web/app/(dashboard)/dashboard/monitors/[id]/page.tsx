@@ -208,7 +208,7 @@ export default function MonitorDetailPage({
       <div className="flex items-start gap-3 overflow-hidden">
         <div className="flex-1 min-w-0">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-            <h1 className="page-title line-clamp-2">{monitor.name}</h1>
+            <h1 className="page-title line-clamp-3">{monitor.name}</h1>
             <StatusBadge status={monitor.status} />
             {m.muted && (
               <Badge variant="outline" className="gap-1 bg-amber-500/10 text-amber-400 border-amber-500/20">
@@ -285,7 +285,7 @@ export default function MonitorDetailPage({
         </div>
         <div className="shrink-0">
           <DropdownMenu>
-            <DropdownMenuTrigger aria-label="Monitor actions" className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-border hover:bg-muted transition-colors">
+            <DropdownMenuTrigger aria-label="Monitor actions" className="inline-flex h-9 w-9 max-sm:h-11 max-sm:w-11 items-center justify-center rounded-lg border border-border hover:bg-muted transition-colors">
               <MoreVertical className="h-4 w-4" />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">

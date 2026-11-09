@@ -70,7 +70,7 @@ export function ProductCard({ product, monitors }: ProductCardProps) {
             <button
               type="button"
               aria-expanded={open}
-              className="relative z-10 ml-auto flex items-center gap-1 rounded-md px-2 py-1 hover:bg-muted hover:text-foreground"
+              className="relative z-10 ml-auto flex h-8 max-sm:h-11 items-center gap-1 rounded-md px-2 hover:bg-muted hover:text-foreground"
               onClick={() => setOpen((o) => !o)}
             >
               {open ? "Hide listings" : "Show listings"}

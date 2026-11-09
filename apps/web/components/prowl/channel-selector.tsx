@@ -203,7 +203,7 @@ export function ChannelSelector({ value, onChange, monitorId, groupId, disabled 
               onClick={() => handleToggle(channel)}
               disabled={disabled}
               aria-pressed={isActive}
-              className={`inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition-colors ${
+              className={`inline-flex h-8 max-sm:h-11 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition-colors ${
                 isLockedFree
                   ? "border-amber-500/30 bg-amber-500/5 text-amber-400 hover:bg-amber-500/10"
                   : isActive

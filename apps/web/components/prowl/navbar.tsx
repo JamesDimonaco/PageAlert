@@ -86,7 +86,7 @@ export function Navbar() {
           <NotificationBell />
 
           <DropdownMenu>
-            <DropdownMenuTrigger aria-label="Account menu" className="relative h-9 w-9 rounded-full hover:opacity-80 transition-opacity outline-none focus-visible:ring-2 focus-visible:ring-ring">
+            <DropdownMenuTrigger aria-label="Account menu" className="relative flex h-9 w-9 max-sm:h-11 max-sm:w-11 items-center justify-center rounded-full hover:opacity-80 transition-opacity outline-none focus-visible:ring-2 focus-visible:ring-ring">
               <Avatar className="h-9 w-9">
                 {user?.image && <AvatarImage src={user.image} alt={user.name ?? "Profile"} />}
                 <AvatarFallback className="bg-primary/10 text-primary text-sm font-semibold">

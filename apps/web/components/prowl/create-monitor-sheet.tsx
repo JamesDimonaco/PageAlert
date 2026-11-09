@@ -436,7 +436,7 @@ export function CreateMonitorSheet({
                         type="button"
                         aria-pressed={mode === m.id}
                         onClick={() => setMode(mode === m.id ? null : m.id)}
-                        className={`flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition-colors ${
+                        className={`flex h-8 max-sm:h-11 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition-colors ${
                           mode === m.id
                             ? "border-primary/40 bg-primary/10 text-primary"
                             : "border-border bg-card text-muted-foreground hover:text-foreground hover:border-primary/20"
@@ -467,7 +467,7 @@ export function CreateMonitorSheet({
                   <IntervalSelector value={checkInterval} onValueChange={setCheckInterval} />
                 </div>
                 <ChannelSelector value={channels} onChange={setChannels} monitorId={null} />
-                <div className="flex justify-end gap-3 pt-4">
+                <div className="sticky -bottom-4 -mx-4 -mb-4 flex justify-end gap-3 border-t border-border bg-background px-4 py-3 sm:-bottom-6 sm:-mx-6 sm:-mb-6 sm:px-6">
                   <Button
                     type="button"
                     variant="ghost"

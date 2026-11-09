@@ -287,15 +287,16 @@ export default function DashboardPage() {
         )}
       </div>
 
-      <StatsCards monitors={monitors} />
+      <div className="space-y-3">
+        <StatsCards monitors={monitors} />
+        {scanBudget && (
+          <p className="text-xs text-muted-foreground">
+            {scanBudget.remaining}/{scanBudget.limit} scans remaining today
+          </p>
+        )}
+      </div>
 
       <OnboardingChecklist />
-
-      {scanBudget && (
-        <p className="text-xs text-muted-foreground">
-          {scanBudget.remaining}/{scanBudget.limit} scans remaining today
-        </p>
-      )}
 
       <div className="flex flex-col sm:flex-row sm:items-end gap-3">
         <div className="flex-1 sm:max-w-sm">

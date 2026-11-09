@@ -196,14 +196,14 @@ export default function ProductPage({ params }: { params: Promise<{ id: string }
       <BackLink href="/dashboard">Back to dashboard</BackLink>
       <div className="flex items-start gap-3">
         <div className="flex-1 min-w-0">
-          <h1 className="page-title line-clamp-2">{product.name}</h1>
+          <h1 className="page-title line-clamp-3">{product.name}</h1>
           <p className="text-muted-foreground mt-1 text-sm">
             {region} · watching {watched.length} listing{watched.length === 1 ? "" : "s"}
           </p>
         </div>
         <div className="shrink-0">
           <DropdownMenu>
-            <DropdownMenuTrigger aria-label="Product actions" className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-border hover:bg-muted transition-colors">
+            <DropdownMenuTrigger aria-label="Product actions" className="inline-flex h-9 w-9 max-sm:h-11 max-sm:w-11 items-center justify-center rounded-lg border border-border hover:bg-muted transition-colors">
               <MoreVertical className="h-4 w-4" />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
@@ -256,7 +256,7 @@ export default function ProductPage({ params }: { params: Promise<{ id: string }
           <button
             type="button"
             onClick={() => setShowDismissed(!showDismissed)}
-            className="text-xs text-muted-foreground underline hover:text-foreground"
+            className="text-xs text-muted-foreground underline hover:text-foreground max-sm:-m-3 max-sm:p-3"
           >
             {showDismissed ? "Hide dismissed" : `Show dismissed (${dismissedCount})`}
           </button>
@@ -353,7 +353,7 @@ function ListingRow({
               href={href}
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-center gap-1 underline hover:text-foreground sm:hidden"
+              className="flex items-center gap-1 underline hover:text-foreground sm:hidden max-sm:-m-3 max-sm:p-3"
               aria-label={`View ${listing.title} at ${listing.site}, opens in a new tab`}
             >
               View <ExternalLink className="h-3.5 w-3.5" />

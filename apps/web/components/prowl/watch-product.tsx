@@ -26,8 +26,8 @@ interface WatchProductFormProps {
   /** Criteria guessed from a cloned monitor's prompt. */
   guess: GuessedAlertOn | null;
   onCreated: (groupId: Id<"monitorGroups">) => void;
-  /** The listing picker, so the Watch bar stays on screen while the user picks. */
-  children: ReactNode;
+  /** The listing picker, so the Watch bar stays on screen while the user picks. `missingShops` is set once Watch was pressed with nothing ticked. */
+  children: (missingShops: boolean) => ReactNode;
 }
 
 /** The criteria step, then one monitor per ticked listing. Mount it per search, so the defaults follow the results. */
@@ -68,8 +68,9 @@ export function WatchProductForm({ name, region, listings, ticked, guess, onCrea
   const watching = listings.filter((l) => ticked.has(l.url));
 
   const fields = alertOnFromFields({ backInStock, priceChoice, target, currency });
+  const noShops = watching.length === 0;
   const problem =
-    watching.length === 0
+    noShops
       ? "Tick at least one shop in step 1."
       : !backInStock && priceChoice === "off"
         ? "Pick what to be alerted about."
@@ -79,6 +80,7 @@ export function WatchProductForm({ name, region, listings, ticked, guess, onCrea
   async function submit() {
     setAttempted(true);
     setSaveError(null);
+    if (noShops) document.getElementById("pick-shops")?.scrollIntoView({ block: "start" });
     if (problem !== null || fields.error !== undefined) return;
     setSaving(true);
     try {
@@ -111,9 +113,9 @@ export function WatchProductForm({ name, region, listings, ticked, guess, onCrea
 
   return (
     <div className="space-y-6">
-      {children}
+      {children(attempted && noShops)}
       <section className="space-y-4" aria-labelledby="pick-alerts">
-        <h3 id="pick-alerts" className="text-sm font-medium">2. Choose your alerts</h3>
+        <h3 id="pick-alerts" className="section-title">2. Choose your alerts</h3>
         <AlertOnFields
           backInStock={backInStock}
           onBackInStockChange={setBackInStock}

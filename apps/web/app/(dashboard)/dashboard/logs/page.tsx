@@ -53,6 +53,19 @@ const FETCH_LIMIT = 500;
 
 type StatusFilter = "all" | "success" | "error" | "timeout" | "blocked";
 
+const STATUS_FILTERS: { value: StatusFilter; label: string }[] = [
+  { value: "all", label: "All statuses" },
+  { value: "success", label: "Success" },
+  { value: "error", label: "Error" },
+  { value: "timeout", label: "Timeout" },
+  { value: "blocked", label: "Blocked" },
+];
+
+const GROUP_BY = [
+  { value: "none", label: "No grouping" },
+  { value: "monitor", label: "By monitor" },
+];
+
 export default function LogsPage() {
   const data = useQuery(api.logs.list, { limit: FETCH_LIMIT });
   const logs = data?.logs;
@@ -168,7 +181,7 @@ export default function LogsPage() {
   return (
     <div className="space-y-8">
       <div>
-        <h1 className="page-title">Scrape Logs</h1>
+        <h1 className="page-title">Logs</h1>
         <p className="text-muted-foreground mt-2 text-sm leading-relaxed">
           Every check we ran for you, with what the AI made of the page.
           {windowDays != null && ` Your plan shows the last ${windowDays} days.`}
@@ -235,23 +248,21 @@ export default function LogsPage() {
         </div>
         <div>
           <label htmlFor="log-status" className="text-xs text-muted-foreground mb-1 block">Status</label>
-          <Select value={statusFilter} onValueChange={(v) => { if (v) { setStatusFilter(v as StatusFilter); resetPaging(); } }}>
-            <SelectTrigger id="log-status" className="w-full sm:w-[140px]">
+          <Select items={STATUS_FILTERS} value={statusFilter} onValueChange={(v) => { if (v) { setStatusFilter(v as StatusFilter); resetPaging(); } }}>
+            <SelectTrigger id="log-status" className="w-full sm:w-[150px]">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">All statuses</SelectItem>
-              <SelectItem value="success">Success</SelectItem>
-              <SelectItem value="error">Error</SelectItem>
-              <SelectItem value="timeout">Timeout</SelectItem>
-              <SelectItem value="blocked">Blocked</SelectItem>
+              {STATUS_FILTERS.map(({ value, label }) => (
+                <SelectItem key={value} value={value}>{label}</SelectItem>
+              ))}
             </SelectContent>
           </Select>
         </div>
         {monitors.length > 1 && (
           <div>
             <label htmlFor="log-monitor" className="text-xs text-muted-foreground mb-1 block">Monitor</label>
-            <Select value={monitorFilter} onValueChange={(v) => { if (v) { setMonitorFilter(v); resetPaging(); } }}>
+            <Select items={[{ value: "all", label: "All monitors" }, ...monitors.map(([value, label]) => ({ value, label }))]} value={monitorFilter} onValueChange={(v) => { if (v) { setMonitorFilter(v); resetPaging(); } }}>
               <SelectTrigger id="log-monitor" className="w-full sm:w-[180px]">
                 <SelectValue />
               </SelectTrigger>
@@ -269,13 +280,14 @@ export default function LogsPage() {
         {monitors.length > 1 && (
           <div>
             <label htmlFor="log-groupby" className="text-xs text-muted-foreground mb-1 block">Group by</label>
-            <Select value={groupBy} onValueChange={(v) => { setGroupBy(v as "none" | "monitor"); resetPaging(); }}>
+            <Select items={GROUP_BY} value={groupBy} onValueChange={(v) => { setGroupBy(v as "none" | "monitor"); resetPaging(); }}>
               <SelectTrigger id="log-groupby" className="w-full sm:w-[150px]">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="none">No grouping</SelectItem>
-                <SelectItem value="monitor">By monitor</SelectItem>
+                {GROUP_BY.map(({ value, label }) => (
+                  <SelectItem key={value} value={value}>{label}</SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>
@@ -378,7 +390,7 @@ function StatChip({
     <button
       onClick={onClick}
       aria-pressed={active}
-      className={`inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs transition-colors ${
+      className={`inline-flex h-8 max-sm:h-11 items-center gap-1.5 rounded-full border px-3 text-xs transition-colors ${
         active
           ? "border-primary/40 bg-primary/10 text-foreground"
           : "border-border bg-card text-muted-foreground hover:bg-muted"
@@ -411,7 +423,7 @@ function MonitorGroup({
     <div className="rounded-xl border border-border bg-card overflow-hidden">
       <button
         onClick={onToggle}
-        className="w-full flex items-center justify-between p-4 hover:bg-card transition-colors text-left"
+        className="w-full flex items-center justify-between p-4 hover:bg-muted/40 transition-colors text-left"
       >
         <div className="flex items-center gap-3 min-w-0">
           {collapsed ? (

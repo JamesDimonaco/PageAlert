@@ -390,7 +390,7 @@ export function ItemsTab({ monitorId, allItems, schema, blacklist, scores, showF
                   ? "bg-card/10 opacity-30"
                   : isMatch
                     ? "bg-emerald-500/5 border border-emerald-500/20"
-                    : "bg-card hover:bg-card"
+                    : "bg-card hover:bg-muted/40"
               }`}
             >
               <div className="flex-1 min-w-0 flex items-center gap-2">

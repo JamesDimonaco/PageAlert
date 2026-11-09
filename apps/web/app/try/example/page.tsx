@@ -84,7 +84,7 @@ export default function ExamplePage() {
 
         {/* Matched items */}
         <div>
-          <h2 className="text-sm font-semibold mb-3 flex items-center gap-2">
+          <h2 className="section-title mb-3 flex items-center gap-2">
             <CheckCircle2 className="h-4 w-4 text-emerald-400" />
             Matched Items
             <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-xs">{EXAMPLE_MATCHES}</Badge>
@@ -119,7 +119,7 @@ export default function ExamplePage() {
 
         {/* All items */}
         <div>
-          <h2 className="text-sm font-semibold mb-3">Other Items ({ITEMS.filter((i) => !i.matched).length})</h2>
+          <h2 className="section-title mb-3">Other Items ({ITEMS.filter((i) => !i.matched).length})</h2>
           <div className="space-y-2">
             {ITEMS.filter((i) => !i.matched).map((item, i) => (
               <Card key={i}>
@@ -147,7 +147,7 @@ export default function ExamplePage() {
 
         {/* History timeline */}
         <div>
-          <h2 className="text-sm font-semibold mb-3 flex items-center gap-2">
+          <h2 className="section-title mb-3 flex items-center gap-2">
             <History className="h-4 w-4 text-muted-foreground" />
             Recent Activity
           </h2>

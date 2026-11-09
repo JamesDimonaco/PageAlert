@@ -45,14 +45,14 @@ export function StatsCards({ monitors }: { monitors: Doc<"monitors">[] }) {
     <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
       {stats.map((stat) => (
         <Card key={stat.label}>
-          <CardContent>
-            <div className="flex items-start justify-between mb-2 sm:mb-3">
-              <div className={`flex h-8 w-8 sm:h-10 sm:w-10 items-center justify-center rounded-lg ${stat.bg}`}>
-                <stat.icon className={`h-4 w-4 sm:h-5 sm:w-5 ${stat.color}`} />
-              </div>
+          <CardContent className="flex items-center gap-3">
+            <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${stat.bg}`}>
+              <stat.icon className={`h-5 w-5 ${stat.color}`} />
             </div>
-            <p className="text-2xl sm:text-3xl font-bold tracking-tight tabular-nums">{stat.value}</p>
-            <p className="text-xs text-muted-foreground mt-1 font-medium">{stat.label}</p>
+            <div className="min-w-0">
+              <p className="text-2xl font-bold leading-none tracking-tight tabular-nums">{stat.value}</p>
+              <p className="mt-1 text-xs font-medium text-muted-foreground">{stat.label}</p>
+            </div>
           </CardContent>
         </Card>
       ))}

@@ -493,7 +493,7 @@ export function OverviewTab({ monitorId, monitor, matches, totalItems, results, 
       <div>
         <button
           onClick={() => onSettingsOpenChange(!settingsOpen)}
-          className="flex w-full items-center gap-2 text-sm font-semibold text-muted-foreground hover:text-foreground transition-colors"
+          className="section-title flex w-full items-center gap-2 text-muted-foreground hover:text-foreground transition-colors"
         >
           <Settings2 className="h-4 w-4" />
           Monitor settings
@@ -513,7 +513,7 @@ export function OverviewTab({ monitorId, monitor, matches, totalItems, results, 
         <div>
           <button
             onClick={() => setInsightsOpen(!insightsOpen)}
-            className="flex items-center gap-2 text-sm font-semibold text-muted-foreground hover:text-foreground transition-colors w-full"
+            className="section-title flex w-full items-center gap-2 text-muted-foreground hover:text-foreground transition-colors"
           >
             {insightsOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
             How the AI read this page

@@ -435,7 +435,7 @@ export default function SettingsPage() {
               {!isPass && (
                 <Card>
                   <CardContent>
-                    <h3 className="text-lg font-bold mb-3">Sprint pass</h3>
+                    <h2 className="section-title mb-3">Sprint pass</h2>
                     <p className="text-3xl font-bold">
                       $4<span className="text-sm font-normal text-muted-foreground"> once</span>
                     </p>
@@ -458,7 +458,7 @@ export default function SettingsPage() {
               <Card className="ring-primary/30 bg-primary/5">
                 <CardContent>
                   <div className="flex items-center gap-2 mb-3">
-                    <h3 className="text-lg font-bold">Pro</h3>
+                    <h2 className="section-title">Pro</h2>
                     <Badge className="bg-primary/10 text-primary border-primary/20 text-xs">Popular</Badge>
                   </div>
                   <p className="text-3xl font-bold">$9<span className="text-sm font-normal text-muted-foreground">/mo</span></p>
@@ -478,7 +478,7 @@ export default function SettingsPage() {
               </Card>
               <Card>
                 <CardContent>
-                  <h3 className="text-lg font-bold mb-3">Max</h3>
+                  <h2 className="section-title mb-3">Max</h2>
                   <p className="text-3xl font-bold">$29<span className="text-sm font-normal text-muted-foreground">/mo</span></p>
                   <ul className="mt-4 space-y-2 text-sm text-muted-foreground">
                     <li>Unlimited monitors</li>
@@ -503,7 +503,7 @@ export default function SettingsPage() {
               <CardContent>
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                   <div>
-                    <h3 className="text-lg font-bold">Need more?</h3>
+                    <h2 className="section-title">Need more?</h2>
                     <p className="text-sm text-muted-foreground mt-1">
                       Max gives you unlimited monitors, 5 minute checks, and everything coming soon.
                     </p>

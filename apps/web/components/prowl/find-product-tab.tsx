@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useAction, useQuery } from "convex/react";
 import { errorText } from "@/lib/utils";
 import { ExternalLink, Loader2, Search } from "lucide-react";
@@ -111,8 +111,19 @@ export function FindProductTab({ clone, onPasteUrl, onDone }: FindProductTabProp
     : undefined;
   const outOfSearches = remaining === 0;
 
+  // A ref, not the state: two presses in one tick would both read the old state and spend two searches.
+  const inFlight = useRef(false);
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    if (!searching) return;
+    const timer = setInterval(() => setElapsed((s) => s + 1), 1000);
+    return () => clearInterval(timer);
+  }, [searching]);
+
   async function runSearch() {
-    if (searching || !region || query.trim().length < 2) return;
+    if (inFlight.current || !region || query.trim().length < 2) return;
+    inFlight.current = true;
+    setElapsed(0);
     setSearching(true);
     setError(null);
     setResults(null);
@@ -134,6 +145,7 @@ export function FindProductTab({ clone, onPasteUrl, onDone }: FindProductTabProp
       setError(errorText(err, "The search didn't work. Try again."));
       trackProductSearchCompleted({ region, resultCount: 0, durationMs: Date.now() - started, failed: true });
     } finally {
+      inFlight.current = false;
       setSearching(false);
     }
   }
@@ -181,6 +193,7 @@ export function FindProductTab({ clone, onPasteUrl, onDone }: FindProductTabProp
           <Button
             type="submit"
             className="gap-2 shrink-0"
+            aria-busy={searching}
             // Left enabled while searching: a dimmed button is too faint to read. runSearch ignores the extra press.
             disabled={!region || outOfSearches || query.trim().length < 2}
           >
@@ -227,9 +240,17 @@ export function FindProductTab({ clone, onPasteUrl, onDone }: FindProductTabProp
       </form>
 
       {searching && (
-        <div role="status" className="flex flex-col items-center gap-2 py-10 text-sm text-muted-foreground">
-          <Loader2 className="h-6 w-6 animate-spin text-primary" />
-          Searching shops. This can take up to a minute.
+        <div className="space-y-3">
+          <p role="status" className="flex items-center gap-2 text-sm">
+            <Loader2 className="h-4 w-4 animate-spin text-primary" />
+            {elapsed < 8 ? "Searching shops…" : elapsed < 25 ? "Reading the listings we found…" : "Still working. This can take up to a minute."}
+            <span aria-hidden className="ml-auto tabular-nums text-muted-foreground">{elapsed}s</span>
+          </p>
+          <div aria-hidden className="space-y-2">
+            {[0, 1, 2].map((i) => (
+              <div key={i} className="h-20 animate-pulse rounded-lg border border-border bg-card" />
+            ))}
+          </div>
         </div>
       )}
 
@@ -252,9 +273,11 @@ export function FindProductTab({ clone, onPasteUrl, onDone }: FindProductTabProp
           guess={clone?.guess ?? null}
           onCreated={setCreatedId}
         >
+          {(missingShops) => (
           <section className="space-y-3" aria-labelledby="pick-shops">
             <div>
-              <h3 id="pick-shops" className="text-sm font-medium">1. Choose the shops to watch</h3>
+              <h3 id="pick-shops" className="section-title scroll-mt-4">1. Choose the shops to watch</h3>
+              {missingShops && <p className="mt-1 text-sm text-destructive">Tick at least one shop.</p>}
               {slotsLoading ? (
                 <p className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
                   <Loader2 className="h-3 w-3 animate-spin" /> Checking your free monitors…
@@ -294,12 +317,13 @@ export function FindProductTab({ clone, onPasteUrl, onDone }: FindProductTabProp
               <button
                 type="button"
                 onClick={toggleAccessories}
-                className="text-xs text-muted-foreground underline hover:text-foreground"
+                className="text-xs text-muted-foreground underline hover:text-foreground max-sm:-m-3 max-sm:p-3"
               >
                 {showAccessories ? "Hide accessories" : `Show accessories (${accessories.length})`}
               </button>
             )}
           </section>
+          )}
         </WatchProductForm>
       )}
     </div>
@@ -348,7 +372,7 @@ function ListingRow({
             href={href}
             target="_blank"
             rel="noopener noreferrer"
-            className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground underline hover:text-foreground"
+            className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground underline hover:text-foreground max-sm:-m-3 max-sm:p-3"
             aria-label={`View ${listing.title} at ${listing.site}, opens in a new tab`}
           >
             View <ExternalLink className="h-3.5 w-3.5" />
