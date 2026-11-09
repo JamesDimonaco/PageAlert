@@ -27,3 +27,32 @@ overrides:
   "esbuild@>=0.27.3 <0.28.1": ">=0.28.1"
   # GHSA (pnpm audit 2026-09-05) — @opentelemetry/core; pulled via exporter-logs-otlp-http@0.214.
   "@opentelemetry/core@<2.8.0": ">=2.8.0"
+  # Not a security fix — compat pin added 2026-11-09. @opentelemetry/api has
+  # no fixed dependent in this repo (only peer deps), so `pnpm update -r`
+  # happily floats it to the latest 1.x. Web's 0.214-line otel packages and
+  # scraper's 0.222-line otel packages both peer-require <1.10.0; 1.10.0
+  # breaks both. Remove once both lines move past 1.10 support.
+  "@opentelemetry/api": ">=1.9.0 <1.10.0"
+  # pnpm audit 2026-11-09 — @modelcontextprotocol/sdk advisories (pulled via
+  # mcp-handler / @modelcontextprotocol/server / posthog's MCP tooling).
+  "@modelcontextprotocol/sdk@<1.32.0": ">=1.32.0"
+  "@modelcontextprotocol/sdk@>=1.3.0 <1.32.0": ">=1.32.0"
+  "@modelcontextprotocol/sdk@>=1.6.0 <1.32.0": ">=1.32.0"
+  "@modelcontextprotocol/sdk@>=1.10.0 <1.30.1": ">=1.30.1"
+  "@modelcontextprotocol/sdk@>=1.12.0 <1.31.0": ">=1.31.0"
+  "@modelcontextprotocol/sdk@>=1.24.0 <1.32.0": ">=1.32.0"
+  # pnpm audit 2026-11-09 — @vitest/mocker prototype pollution (dev-only, via vitest).
+  "@vitest/mocker@>=5.0.0-beta.1 <5.0.3": ">=5.0.3"
+  "@vitest/mocker@>=5.0.0-rc.2 <5.0.3": ">=5.0.3"
+  # pnpm audit 2026-11-09 — zod advisory below 4.6.6 (pulled transitively; our
+  # direct zod deps are already >=4.6.6 / ^3.25.76).
+  "zod@<4.6.6": ">=4.6.6"
+  # pnpm audit 2026-11-09 flagged more than this: deliberately NOT applied —
+  # - better-auth@* / @better-auth/kysely-adapter / @better-auth/drizzle-adapter
+  #   overrides forcing >=1.7.0: violates the hard pin (better-auth must stay
+  #   ~1.6.x for @convex-dev/better-auth, which needs <1.7). Low severity.
+  # - @hono/node-server@>=1.19.10 <2.1.3 -> >=2.1.3: major version bump, not
+  #   taking it per the no-major-bumps rule.
+  # - minimatch@>=7.0.0 <11.0.1 -> >=11.0.1: minimatch@3.1.5 is still in the
+  #   tree (same CJS-only-caller risk as the brace-expansion pin above); a
+  #   blanket jump to 11.x is untested here and held back.
