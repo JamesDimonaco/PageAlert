@@ -1,8 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { Radar, LogOut, Settings, ShieldCheck, Plus, MessageSquare } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Radar, LogOut, Settings, ShieldCheck, Plus, MessageSquare, ScrollText } from "lucide-react";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { NotificationBell } from "@/components/prowl/notification-bell";
 import { FeedbackDialog } from "@/components/prowl/feedback-dialog";
 import {
@@ -22,6 +22,12 @@ import { useCreateMonitor } from "@/hooks/use-create-monitor";
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 
+const NAV_LINKS = [
+  { href: "/dashboard", label: "Dashboard" },
+  { href: "/dashboard/logs", label: "Logs" },
+  { href: "/dashboard/settings", label: "Settings" },
+];
+
 export function Navbar() {
   const router = useRouter();
   const pathname = usePathname();
@@ -32,7 +38,7 @@ export function Navbar() {
   const [feedbackOpen, setFeedbackOpen] = useState(false);
 
   const initials = user?.name?.charAt(0)?.toUpperCase() ?? user?.email?.charAt(0)?.toUpperCase() ?? "?";
-  // The dashboard index already leads with its own New Monitor CTA
+  // The dashboard index already leads with its own New monitor CTA
   const showCreate = pathname !== "/dashboard";
 
   return (
@@ -45,28 +51,33 @@ export function Navbar() {
             </div>
             <span className="text-xl font-bold tracking-tight">PageAlert</span>
           </Link>
-          <nav className="hidden md:flex items-center gap-1">
-            <Link href="/dashboard">
-              <Button variant="ghost" size="sm">Dashboard</Button>
-            </Link>
-            <Link href="/dashboard/logs">
-              <Button variant="ghost" size="sm">Logs</Button>
-            </Link>
-            <Link href="/dashboard/settings">
-              <Button variant="ghost" size="sm">Settings</Button>
-            </Link>
+          <nav aria-label="Main" className="hidden md:flex items-center gap-1">
+            {NAV_LINKS.map(({ href, label }) => (
+              <Link
+                key={href}
+                href={href}
+                aria-current={
+                  (href === "/dashboard" ? /^\/dashboard(\/(monitors|products)\/.*)?$/.test(pathname) : pathname.startsWith(href))
+                    ? "page"
+                    : undefined
+                }
+                className={buttonVariants({ variant: "ghost", size: "sm", className: "aria-[current=page]:bg-muted" })}
+              >
+                {label}
+              </Link>
+            ))}
           </nav>
         </div>
 
         <div className="flex items-center gap-3">
           {showCreate && (
-            <Button size="sm" onClick={openCreate} className="gap-1.5 shadow-sm shadow-primary/15">
+            <Button size="sm" onClick={openCreate} aria-label="New monitor" className="gap-1.5 shadow-sm shadow-primary/15 max-sm:min-w-11">
               <Plus className="h-4 w-4" />
-              <span className="hidden sm:inline">New Monitor</span>
+              <span className="hidden sm:inline">New monitor</span>
             </Button>
           )}
 
-          <Badge className={`text-[10px] px-1.5 py-0 hidden sm:inline-flex ${
+          <Badge className={`text-xs px-1.5 py-0 hidden sm:inline-flex ${
             tier === "max"
               ? "bg-amber-500/10 text-amber-400 border-amber-500/20"
               : tier === "pro"
@@ -79,7 +90,7 @@ export function Navbar() {
           <NotificationBell />
 
           <DropdownMenu>
-            <DropdownMenuTrigger className="relative h-9 w-9 rounded-full hover:opacity-80 transition-opacity outline-none focus-visible:ring-2 focus-visible:ring-ring">
+            <DropdownMenuTrigger aria-label="Account menu" className="relative flex h-9 w-9 max-sm:h-11 max-sm:w-11 items-center justify-center rounded-full hover:opacity-80 transition-opacity outline-none focus-visible:ring-2 focus-visible:ring-ring">
               <Avatar className="h-9 w-9">
                 {user?.image && <AvatarImage src={user.image} alt={user.name ?? "Profile"} />}
                 <AvatarFallback className="bg-primary/10 text-primary text-sm font-semibold">
@@ -93,7 +104,7 @@ export function Navbar() {
                   <div className="flex items-center gap-2">
                     <p className="text-sm font-medium">{user?.name ?? "User"}</p>
                     {tier !== "free" && (
-                      <Badge className={`text-[10px] px-1.5 py-0 ${
+                      <Badge className={`text-xs px-1.5 py-0 ${
                         tier === "max"
                           ? "bg-amber-500/10 text-amber-400 border-amber-500/20"
                           : "bg-primary/10 text-primary border-primary/20"
@@ -106,6 +117,10 @@ export function Navbar() {
                 </div>
               </div>
               <DropdownMenuSeparator />
+              <DropdownMenuItem className="md:hidden" onClick={() => router.push("/dashboard/logs")}>
+                <ScrollText className="mr-2 h-4 w-4" />
+                Logs
+              </DropdownMenuItem>
               <DropdownMenuItem onClick={() => router.push("/dashboard/settings")}>
                 <Settings className="mr-2 h-4 w-4" />
                 Settings

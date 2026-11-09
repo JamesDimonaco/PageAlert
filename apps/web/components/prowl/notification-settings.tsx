@@ -194,13 +194,13 @@ export function NotificationSettings() {
     <div className="space-y-10">
       <section className="space-y-4">
         <div>
-          <h2 className="text-lg font-semibold">Where alerts go</h2>
+          <h2 className="section-title">Where alerts go</h2>
           <p className="text-sm text-muted-foreground mt-1 leading-relaxed">
             Set each one up once. Then each monitor picks which of these it uses.
             {tier === "free" && " On free, one monitor can use Telegram or Discord. Upgrade for all of them, and for texts."}
           </p>
         </div>
-        <div className="divide-y divide-border/30 rounded-xl border border-border/30 bg-card/50 shadow-sm shadow-black/5">
+        <div className="divide-y divide-border/30 rounded-xl border border-border bg-card">
           {channels.map((c) => (
             <div key={c.id} className="flex items-center gap-4 p-4">
               <div className="text-muted-foreground shrink-0">{c.icon}</div>
@@ -211,10 +211,10 @@ export function NotificationSettings() {
                     <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-xs">Ready</Badge>
                   ) : null}
                 </div>
-                <p className="text-xs text-muted-foreground mt-0.5 truncate">{c.status ?? c.blurb}</p>
+                <p className="text-sm text-muted-foreground mt-0.5 [overflow-wrap:anywhere]">{c.status ?? c.blurb}</p>
               </div>
               <Button
-                variant={c.ready ? "ghost" : "outline"}
+                variant="outline"
                 size="sm"
                 className="shrink-0"
                 disabled={c.id === "push" && push.state === "loading"}
@@ -224,31 +224,31 @@ export function NotificationSettings() {
               </Button>
             </div>
           ))}
-          <div className="flex items-center gap-4 p-4 opacity-60">
+          <div className="flex items-center gap-4 p-4">
             <div className="text-muted-foreground shrink-0">
               <Hash className="h-5 w-5" />
             </div>
             <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium">Slack</p>
-              <p className="text-xs text-muted-foreground mt-0.5">Coming in a future update</p>
+              <p className="text-sm font-medium text-muted-foreground">Slack</p>
+              <p className="text-sm text-muted-foreground mt-0.5">Coming in a future update</p>
             </div>
-            <Badge variant="outline" className="text-[10px] px-1.5 py-0">Coming soon</Badge>
+            <Badge variant="outline" className="text-xs px-1.5 py-0">Coming soon</Badge>
           </div>
         </div>
       </section>
 
       <section className="space-y-4">
         <div>
-          <h2 className="text-lg font-semibold">Emails from us</h2>
+          <h2 className="section-title">Emails from us</h2>
           <p className="text-sm text-muted-foreground mt-1 leading-relaxed">
             These are separate from your alerts. Turning them off never stops an alert.
           </p>
         </div>
-        <div className="divide-y divide-border/30 rounded-xl border border-border/30 bg-card/50 shadow-sm shadow-black/5">
+        <div className="divide-y divide-border/30 rounded-xl border border-border bg-card">
           <div className="flex items-center gap-4 p-4">
             <div className="min-w-0 flex-1">
               <p className="text-sm font-medium">Essential</p>
-              <p className="text-xs text-muted-foreground mt-0.5">Account, billing and security emails. These can&apos;t be turned off.</p>
+              <p className="text-sm text-muted-foreground mt-0.5">Account, billing and security emails. These can&apos;t be turned off.</p>
             </div>
             <Lock className="h-4 w-4 text-muted-foreground shrink-0" aria-label="Always on" />
           </div>
@@ -258,7 +258,7 @@ export function NotificationSettings() {
               <div key={t.id} className="flex items-center gap-4 p-4">
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium">{t.name}</p>
-                  <p className="text-xs text-muted-foreground mt-0.5">{t.blurb}</p>
+                  <p className="text-sm text-muted-foreground mt-0.5">{t.blurb}</p>
                 </div>
                 <Button
                   variant="outline"
@@ -301,7 +301,7 @@ export function NotificationSettings() {
             <p className="text-sm break-all">Alerts go to <strong>{email}</strong>.</p>
             <div>
               <p className="text-sm font-medium mb-1">Verify your email</p>
-              <p className="text-xs text-muted-foreground mb-3 leading-relaxed">
+              <p className="text-sm text-muted-foreground mb-3 leading-relaxed">
                 Send a test email to make sure notifications reach your inbox.
                 If it lands in spam, mark it as &ldquo;Not Spam&rdquo; and add <strong>alerts@pagealert.io</strong> to your contacts.
               </p>
@@ -339,7 +339,7 @@ export function NotificationSettings() {
                   ) : (
                     <Send className="h-4 w-4" />
                   )}
-                  Send Test Email
+                  Send test email
                 </Button>
               )}
             </div>
@@ -485,8 +485,8 @@ export function NotificationSettings() {
                     PageAlert about the pages I monitor. How many depends on the monitors I choose,
                     up to my plan&apos;s limit. Message and data rates may apply. Reply STOP to a text
                     to stop them, or turn them off here any time. See the{" "}
-                    <Link href="/terms" className="text-primary hover:underline">terms</Link> and{" "}
-                    <Link href="/privacy" className="text-primary hover:underline">privacy policy</Link>.
+                    <Link href="/terms" className="text-primary underline underline-offset-2">terms</Link> and{" "}
+                    <Link href="/privacy" className="text-primary underline underline-offset-2">privacy policy</Link>.
                   </span>
                 </label>
 
@@ -621,7 +621,7 @@ export function NotificationSettings() {
                   }}
                 >
                   {telegramTesting ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : null}
-                  Send Test
+                  Send test
                 </Button>
                 <Button
                   variant="ghost"
@@ -863,7 +863,7 @@ export function NotificationSettings() {
                 )}
 
                 {pushTest === "asking" && (
-                  <div className="rounded-lg border border-border/40 bg-muted/20 p-4 space-y-3">
+                  <div className="rounded-lg border border-border bg-muted/20 p-4 space-y-3">
                     <p className="text-sm">
                       The test reached this browser. Did a notification pop up?
                     </p>
@@ -885,7 +885,7 @@ export function NotificationSettings() {
                 )}
 
                 {pushTest === "not-seen" && push.device && (
-                  <div className="rounded-lg border border-border/40 bg-muted/20 p-4 space-y-3">
+                  <div className="rounded-lg border border-border bg-muted/20 p-4 space-y-3">
                     <p className="text-sm leading-relaxed">
                       The alert got through, so your device is hiding it. Your system
                       settings can block notifications even when the browser allows them:
@@ -903,7 +903,7 @@ export function NotificationSettings() {
                 )}
 
                 {pushTest === "lost" && (
-                  <div className="rounded-lg border border-border/40 bg-muted/20 p-4 space-y-3">
+                  <div className="rounded-lg border border-border bg-muted/20 p-4 space-y-3">
                     <p className="text-sm leading-relaxed">
                       The test hasn&apos;t reached this browser, so its connection has
                       probably gone stale. Click <strong>Turn off</strong>, then{" "}
@@ -1008,7 +1008,7 @@ export function NotificationSettings() {
                     onChange={(e) => setDiscordWebhook(e.target.value)}
                   />
                   <p className="text-xs text-muted-foreground leading-relaxed">
-                    Discord → Server Settings → Integrations → Webhooks → New Webhook → Copy Webhook URL
+                    Discord → Server Settings → Integrations → Webhooks → New webhook → Copy webhook URL
                   </p>
                 </div>
                 <Button

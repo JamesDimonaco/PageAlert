@@ -17,7 +17,7 @@ export function ExampleResults() {
         </p>
       </div>
 
-      <div className="rounded-xl border border-border/30 bg-card/50 shadow-lg shadow-black/5 overflow-hidden">
+      <div className="rounded-xl border border-border bg-card shadow-lg shadow-black/5 overflow-hidden">
         {/* Header */}
         <div className="border-b border-border/20 px-4 sm:px-6 py-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
@@ -47,17 +47,17 @@ export function ExampleResults() {
         <div className="grid grid-cols-3 border-b border-border/20 text-center">
           <div className="py-3 border-r border-border/20">
             <p className="text-lg font-bold">{teaser.length}</p>
-            <p className="text-[10px] text-muted-foreground">Items</p>
+            <p className="text-xs text-muted-foreground">Items</p>
           </div>
           <div className="py-3 border-r border-border/20">
             <p className="text-lg font-bold text-primary">{teaser.filter((i) => i.matched).length}</p>
-            <p className="text-[10px] text-muted-foreground">Matches</p>
+            <p className="text-xs text-muted-foreground">Matches</p>
           </div>
           <div className="py-3">
             <p className="text-lg font-bold flex items-center justify-center gap-1">
               <TrendingDown className="h-4 w-4 text-emerald-400" />{EXAMPLE_PRICE_DROPS}
             </p>
-            <p className="text-[10px] text-muted-foreground">Price drops</p>
+            <p className="text-xs text-muted-foreground">Price drops</p>
           </div>
         </div>
 

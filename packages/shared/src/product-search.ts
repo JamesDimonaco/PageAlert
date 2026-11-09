@@ -1,15 +1,15 @@
-/** Countries Find a product can search. `sites` fills "Searching UK sites". `currency` is what its shops price in. */
+/** Countries Find a product can search. `currency` is what its shops price in. */
 export const SEARCH_REGIONS = [
-  { code: "GB", name: "United Kingdom", sites: "UK", currency: "GBP" },
-  { code: "US", name: "United States", sites: "US", currency: "USD" },
-  { code: "CA", name: "Canada", sites: "Canadian", currency: "CAD" },
-  { code: "AU", name: "Australia", sites: "Australian", currency: "AUD" },
-  { code: "IE", name: "Ireland", sites: "Irish", currency: "EUR" },
-  { code: "DE", name: "Germany", sites: "German", currency: "EUR" },
-  { code: "FR", name: "France", sites: "French", currency: "EUR" },
-  { code: "ES", name: "Spain", sites: "Spanish", currency: "EUR" },
-  { code: "IT", name: "Italy", sites: "Italian", currency: "EUR" },
-  { code: "NL", name: "Netherlands", sites: "Dutch", currency: "EUR" },
+  { code: "GB", name: "United Kingdom", currency: "GBP" },
+  { code: "US", name: "United States", currency: "USD" },
+  { code: "CA", name: "Canada", currency: "CAD" },
+  { code: "AU", name: "Australia", currency: "AUD" },
+  { code: "IE", name: "Ireland", currency: "EUR" },
+  { code: "DE", name: "Germany", currency: "EUR" },
+  { code: "FR", name: "France", currency: "EUR" },
+  { code: "ES", name: "Spain", currency: "EUR" },
+  { code: "IT", name: "Italy", currency: "EUR" },
+  { code: "NL", name: "Netherlands", currency: "EUR" },
 ] as const;
 
 export type SearchRegion = (typeof SEARCH_REGIONS)[number]["code"];

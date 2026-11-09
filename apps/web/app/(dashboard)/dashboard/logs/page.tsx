@@ -17,7 +17,6 @@ import {
 import {
   CheckCircle2,
   XCircle,
-  Clock,
   Loader2,
   ExternalLink,
   AlertTriangle,
@@ -28,6 +27,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { timeAgo } from "@/lib/time";
+import { EmptyState } from "@/components/prowl/empty-state";
 import { formatStrategy } from "@/lib/strategy";
 
 function formatDuration(ms: number): string {
@@ -52,6 +52,19 @@ const PAGE_SIZE = 25;
 const FETCH_LIMIT = 500;
 
 type StatusFilter = "all" | "success" | "error" | "timeout" | "blocked";
+
+const STATUS_FILTERS: { value: StatusFilter; label: string }[] = [
+  { value: "all", label: "All statuses" },
+  { value: "success", label: "Success" },
+  { value: "error", label: "Error" },
+  { value: "timeout", label: "Timeout" },
+  { value: "blocked", label: "Blocked" },
+];
+
+const GROUP_BY = [
+  { value: "none", label: "No grouping" },
+  { value: "monitor", label: "By monitor" },
+];
 
 export default function LogsPage() {
   const data = useQuery(api.logs.list, { limit: FETCH_LIMIT });
@@ -168,7 +181,7 @@ export default function LogsPage() {
   return (
     <div className="space-y-8">
       <div>
-        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Scrape Logs</h1>
+        <h1 className="page-title">Logs</h1>
         <p className="text-muted-foreground mt-2 text-sm leading-relaxed">
           Every check we ran for you, with what the AI made of the page.
           {windowDays != null && ` Your plan shows the last ${windowDays} days.`}
@@ -220,7 +233,7 @@ export default function LogsPage() {
 
       {/* Filters */}
       <div className="flex flex-col sm:flex-row sm:items-end gap-3">
-        <div className="relative flex-1 sm:max-w-sm">
+        <div className="flex-1 sm:max-w-sm">
           <label htmlFor="log-search" className="text-xs text-muted-foreground mb-1 block">Search</label>
           <div className="relative">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -235,23 +248,21 @@ export default function LogsPage() {
         </div>
         <div>
           <label htmlFor="log-status" className="text-xs text-muted-foreground mb-1 block">Status</label>
-          <Select value={statusFilter} onValueChange={(v) => { if (v) { setStatusFilter(v as StatusFilter); resetPaging(); } }}>
-            <SelectTrigger id="log-status" className="w-full sm:w-[140px]">
+          <Select items={STATUS_FILTERS} value={statusFilter} onValueChange={(v) => { if (v) { setStatusFilter(v as StatusFilter); resetPaging(); } }}>
+            <SelectTrigger id="log-status" className="w-full sm:w-[150px]">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">All statuses</SelectItem>
-              <SelectItem value="success">Success</SelectItem>
-              <SelectItem value="error">Error</SelectItem>
-              <SelectItem value="timeout">Timeout</SelectItem>
-              <SelectItem value="blocked">Blocked</SelectItem>
+              {STATUS_FILTERS.map(({ value, label }) => (
+                <SelectItem key={value} value={value}>{label}</SelectItem>
+              ))}
             </SelectContent>
           </Select>
         </div>
         {monitors.length > 1 && (
           <div>
             <label htmlFor="log-monitor" className="text-xs text-muted-foreground mb-1 block">Monitor</label>
-            <Select value={monitorFilter} onValueChange={(v) => { if (v) { setMonitorFilter(v); resetPaging(); } }}>
+            <Select items={[{ value: "all", label: "All monitors" }, ...monitors.map(([value, label]) => ({ value, label }))]} value={monitorFilter} onValueChange={(v) => { if (v) { setMonitorFilter(v); resetPaging(); } }}>
               <SelectTrigger id="log-monitor" className="w-full sm:w-[180px]">
                 <SelectValue />
               </SelectTrigger>
@@ -269,13 +280,14 @@ export default function LogsPage() {
         {monitors.length > 1 && (
           <div>
             <label htmlFor="log-groupby" className="text-xs text-muted-foreground mb-1 block">Group by</label>
-            <Select value={groupBy} onValueChange={(v) => { setGroupBy(v as "none" | "monitor"); resetPaging(); }}>
+            <Select items={GROUP_BY} value={groupBy} onValueChange={(v) => { setGroupBy(v as "none" | "monitor"); resetPaging(); }}>
               <SelectTrigger id="log-groupby" className="w-full sm:w-[150px]">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="none">No grouping</SelectItem>
-                <SelectItem value="monitor">By monitor</SelectItem>
+                {GROUP_BY.map(({ value, label }) => (
+                  <SelectItem key={value} value={value}>{label}</SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>
@@ -289,23 +301,13 @@ export default function LogsPage() {
           <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
         </div>
       ) : logs.length === 0 ? (
-        <div className="flex flex-col items-center justify-center rounded-xl bg-card/30 py-20 px-6 text-center">
-          <Clock className="h-8 w-8 text-muted-foreground mb-4" />
-          <p className="text-sm font-medium mb-1">No checks to show</p>
+        <EmptyState title="No checks to show.">
           {/* Says what the page covers without claiming there is anything
               behind it — a new account and a downgraded one both land here. */}
-          {windowDays != null && (
-            <p className="text-xs text-muted-foreground">
-              This page shows your last {windowDays} days.
-            </p>
-          )}
-        </div>
+          {windowDays != null && `This page shows your last ${windowDays} days.`}
+        </EmptyState>
       ) : filtered.length === 0 ? (
-        <div className="flex flex-col items-center justify-center rounded-xl bg-card/30 py-20">
-          <Search className="h-7 w-7 text-muted-foreground/60 mb-4" />
-          <p className="text-lg font-semibold mb-2">No logs found</p>
-          <p className="text-sm text-muted-foreground">Try adjusting your search or filters.</p>
-        </div>
+        <EmptyState title="No logs found.">Try a different search or status.</EmptyState>
       ) : grouped ? (
         // Grouped view. Each group pages independently — one busy monitor used
         // to render every one of its logs the moment the group opened.
@@ -378,10 +380,10 @@ function StatChip({
     <button
       onClick={onClick}
       aria-pressed={active}
-      className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs transition-colors ${
+      className={`inline-flex h-8 max-sm:h-11 items-center gap-1.5 rounded-full border px-3 text-xs transition-colors ${
         active
           ? "border-primary/40 bg-primary/10 text-foreground"
-          : "border-border/30 bg-card/30 text-muted-foreground hover:bg-card/60"
+          : "border-border bg-card text-muted-foreground hover:bg-muted"
       }`}
     >
       {Icon && <Icon className="h-3 w-3" />}
@@ -408,10 +410,10 @@ function MonitorGroup({
   const errorCount = logs.length - successCount;
 
   return (
-    <div className="rounded-xl border border-border/30 bg-card/30 overflow-hidden">
+    <div className="rounded-xl border border-border bg-card overflow-hidden">
       <button
         onClick={onToggle}
-        className="w-full flex items-center justify-between p-4 hover:bg-card/50 transition-colors text-left"
+        className="w-full flex items-center justify-between p-4 hover:bg-muted/40 transition-colors text-left"
       >
         <div className="flex items-center gap-3 min-w-0">
           {collapsed ? (
@@ -472,8 +474,8 @@ function LogEntry({ log }: { log: Log }) {
 
   return (
     <Link href={`/dashboard/logs/${log._id}`}>
-      <Card className="border-border/30 bg-card/50 shadow-sm shadow-black/5 hover:bg-card/80 transition-colors cursor-pointer">
-        <CardContent className="p-4 sm:p-5">
+      <Card className="transition-colors hover:bg-muted/40 cursor-pointer">
+        <CardContent>
           <div className="flex items-start sm:items-center justify-between gap-3">
             <div className="flex items-start sm:items-center gap-3 sm:gap-4 min-w-0">
               <div className={`flex h-9 w-9 items-center justify-center rounded-full ${config.bg} shrink-0`}>
@@ -489,7 +491,7 @@ function LogEntry({ log }: { log: Log }) {
                   </p>
                   <Badge
                     variant="outline"
-                    className={`text-[10px] ${
+                    className={`text-xs ${
                       log.status === "success"
                         ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
                         : log.status === "timeout"
@@ -499,16 +501,16 @@ function LogEntry({ log }: { log: Log }) {
                   >
                     {config.label}
                   </Badge>
-                  <Badge variant="outline" className={`text-[10px] ${strat.color}`}>
+                  <Badge variant="outline" className={`text-xs ${strat.color}`}>
                     {strat.label}
                   </Badge>
                   {log.blocked && (
-                    <Badge className="bg-red-500/10 text-red-400 border-red-500/20 text-[10px]">
+                    <Badge className="bg-red-500/10 text-red-400 border-red-500/20 text-xs">
                       Blocked
                     </Badge>
                   )}
                   {log.retryAttempt != null && log.retryAttempt > 0 && (
-                    <Badge variant="outline" className="text-[10px] bg-amber-500/10 text-amber-400 border-amber-500/20">
+                    <Badge variant="outline" className="text-xs bg-amber-500/10 text-amber-400 border-amber-500/20">
                       Retry {log.retryAttempt}/3
                     </Badge>
                   )}

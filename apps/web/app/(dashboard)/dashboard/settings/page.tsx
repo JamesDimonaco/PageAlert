@@ -120,7 +120,7 @@ export default function SettingsPage() {
   return (
     <div className="space-y-10">
       <div>
-        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Settings</h1>
+        <h1 className="page-title">Settings</h1>
         <p className="text-muted-foreground mt-2 text-sm leading-relaxed">Manage your account and preferences</p>
       </div>
 
@@ -130,7 +130,9 @@ export default function SettingsPage() {
             <Bell className="hidden sm:block" />
             Notifications
             {notifSettings && notifSettings.filter((s) => s.enabled).length === 0 && (
-              <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-amber-400" />
+              <span className="h-2 w-2 rounded-full bg-amber-400" title="Set up your alert channels">
+                <span className="sr-only">Set up your alert channels</span>
+              </span>
             )}
           </TabsTrigger>
           <TabsTrigger value="profile">
@@ -152,8 +154,8 @@ export default function SettingsPage() {
         </TabsContent>
 
         <TabsContent value="profile" className="mt-8 space-y-8">
-          <Card className="border-border/30 bg-card/50 shadow-sm shadow-black/5">
-            <CardHeader className="pb-4">
+          <Card>
+            <CardHeader>
               <CardTitle className="text-lg font-semibold">Profile</CardTitle>
               <CardDescription className="text-sm">Your account information</CardDescription>
             </CardHeader>
@@ -184,22 +186,22 @@ export default function SettingsPage() {
           </Card>
 
           {POSTHOG_KEY && (
-            <Card className="border-border/30 bg-card/50 shadow-sm shadow-black/5">
-              <CardHeader className="pb-4">
+            <Card>
+              <CardHeader>
                 <CardTitle className="text-lg font-semibold">Analytics</CardTitle>
                 <CardDescription className="text-sm">How we see what the app is used for</CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
                 <AnalyticsToggle />
-                <Link href="/privacy" className="text-xs text-primary hover:underline">
+                <Link href="/privacy" className="text-xs text-primary underline underline-offset-2">
                   Privacy policy
                 </Link>
               </CardContent>
             </Card>
           )}
 
-          <Card className="border-border/30 bg-card/50 shadow-sm shadow-black/5">
-            <CardHeader className="pb-4">
+          <Card>
+            <CardHeader>
               <CardTitle className="text-lg font-semibold">Beta features</CardTitle>
               <CardDescription className="text-sm">Try things before everyone else gets them</CardDescription>
             </CardHeader>
@@ -236,9 +238,9 @@ export default function SettingsPage() {
             </CardContent>
           </Card>
 
-          <Card className="border-destructive/20 bg-card/50 shadow-sm shadow-black/5">
-            <CardHeader className="pb-4">
-              <CardTitle className="text-lg font-semibold text-destructive">Danger Zone</CardTitle>
+          <Card className="ring-destructive/20">
+            <CardHeader>
+              <CardTitle className="text-lg font-semibold text-destructive">Danger zone</CardTitle>
               <CardDescription className="text-sm">
                 Permanently delete your account, your sign-in, and all data including monitors, scrape history, and notification settings.
               </CardDescription>
@@ -252,7 +254,7 @@ export default function SettingsPage() {
                       <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-destructive/10">
                         <Trash2 className="h-4 w-4 text-destructive" />
                       </div>
-                      Delete Account
+                      Delete account
                     </DialogTitle>
                     <DialogDescription>
                       This will permanently delete your sign-in and everything attached to it —
@@ -301,8 +303,8 @@ export default function SettingsPage() {
             </div>
           ) : (<>
           {grantUntil && tier !== "free" && (
-            <Card className="border-primary/30 bg-primary/5 shadow-sm">
-              <CardContent className="p-4 sm:p-5">
+            <Card className="ring-primary/30 bg-primary/5">
+              <CardContent>
                 <p className="text-sm font-semibold text-primary">
                   {isPass
                     ? "Your Sprint pass is running"
@@ -326,8 +328,8 @@ export default function SettingsPage() {
           )}
           {/* Cancellation banner */}
           {isCancelled && tier !== "free" && (
-            <Card className="border-amber-500/30 bg-amber-500/5 shadow-sm">
-              <CardContent className="p-4 sm:p-5">
+            <Card className="ring-amber-500/30 bg-amber-500/5">
+              <CardContent>
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                   <div>
                     <p className="text-sm font-semibold text-amber-400">
@@ -338,7 +340,7 @@ export default function SettingsPage() {
                         ? `You have access until ${new Date(periodEnd!).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })} (${daysRemaining} day${daysRemaining !== 1 ? "s" : ""} remaining).`
                         : "Your access has expired."}
                     </p>
-                    <p className="text-xs text-muted-foreground/70 mt-1">
+                    <p className="text-sm text-muted-foreground mt-1">
                       Your monitors will continue running until then. After that, you&apos;ll be on the free plan.
                     </p>
                   </div>
@@ -361,20 +363,18 @@ export default function SettingsPage() {
             </Card>
           )}
 
-          {/* Current Plan */}
-          <Card className="border-border/30 bg-card/50 shadow-sm shadow-black/5">
-            <CardHeader className="pb-4">
-              <CardTitle className="text-lg font-semibold">Current Plan</CardTitle>
+          {/* Current plan */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg font-semibold">Current plan</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
                   <div className="flex items-center gap-3">
                     <p className="text-xl font-bold capitalize">{tier}</p>
-                    {isCancelled ? (
+                    {isCancelled && (
                       <Badge variant="outline" className="text-xs bg-amber-500/10 text-amber-400 border-amber-500/20">Cancelling</Badge>
-                    ) : (
-                      <Badge variant="outline" className="text-xs">Current plan</Badge>
                     )}
                   </div>
                   <p className="text-sm text-muted-foreground mt-2 leading-relaxed">
@@ -414,13 +414,13 @@ export default function SettingsPage() {
                       }}
                     >
                       <ExternalLink className="h-3.5 w-3.5" />
-                      Manage Subscription
+                      Manage subscription
                     </Button>
                   )}
                 </div>
               </div>
               {hasSubscription && (
-                <p className="text-xs text-muted-foreground mt-4">
+                <p className="text-sm text-muted-foreground mt-4">
                   Manage your billing, update payment method, or cancel your subscription from the Polar portal.
                   {" "}You&apos;ll be redirected to Polar — close the tab to return here.
                   {!isCancelled && " If you cancel, you'll keep access until the end of your billing period."}
@@ -429,13 +429,13 @@ export default function SettingsPage() {
             </CardContent>
           </Card>
 
-          {/* Upgrade Options */}
+          {/* Upgrade options */}
           {offerPro && (
             <div className="grid gap-4 md:grid-cols-3">
               {!isPass && (
-                <Card className="border-border/30 bg-card/50 shadow-sm">
-                  <CardContent className="p-6">
-                    <h3 className="text-lg font-bold mb-3">Sprint pass</h3>
+                <Card>
+                  <CardContent>
+                    <h2 className="section-title mb-3">Sprint pass</h2>
                     <p className="text-3xl font-bold">
                       $4<span className="text-sm font-normal text-muted-foreground"> once</span>
                     </p>
@@ -455,10 +455,10 @@ export default function SettingsPage() {
                   </CardContent>
                 </Card>
               )}
-              <Card className="border-primary/30 bg-primary/5 shadow-sm">
-                <CardContent className="p-6">
+              <Card className="ring-primary/30 bg-primary/5">
+                <CardContent>
                   <div className="flex items-center gap-2 mb-3">
-                    <h3 className="text-lg font-bold">Pro</h3>
+                    <h2 className="section-title">Pro</h2>
                     <Badge className="bg-primary/10 text-primary border-primary/20 text-xs">Popular</Badge>
                   </div>
                   <p className="text-3xl font-bold">$9<span className="text-sm font-normal text-muted-foreground">/mo</span></p>
@@ -476,9 +476,9 @@ export default function SettingsPage() {
                   </Button>
                 </CardContent>
               </Card>
-              <Card className="border-border/30 bg-card/50 shadow-sm">
-                <CardContent className="p-6">
-                  <h3 className="text-lg font-bold mb-3">Max</h3>
+              <Card>
+                <CardContent>
+                  <h2 className="section-title mb-3">Max</h2>
                   <p className="text-3xl font-bold">$29<span className="text-sm font-normal text-muted-foreground">/mo</span></p>
                   <ul className="mt-4 space-y-2 text-sm text-muted-foreground">
                     <li>Unlimited monitors</li>
@@ -499,11 +499,11 @@ export default function SettingsPage() {
 
           {/* Pro → Max upgrade */}
           {offerMax && (
-            <Card className="border-border/30 bg-card/50 shadow-sm">
-              <CardContent className="p-6">
+            <Card>
+              <CardContent>
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                   <div>
-                    <h3 className="text-lg font-bold">Need more?</h3>
+                    <h2 className="section-title">Need more?</h2>
                     <p className="text-sm text-muted-foreground mt-1">
                       Max gives you unlimited monitors, 5 minute checks, and everything coming soon.
                     </p>
@@ -522,8 +522,8 @@ export default function SettingsPage() {
           )}
 
           {/* Usage */}
-          <Card className="border-border/30 bg-card/50 shadow-sm shadow-black/5">
-            <CardHeader className="pb-4">
+          <Card>
+            <CardHeader>
               <CardTitle className="text-lg font-semibold">Usage</CardTitle>
             </CardHeader>
             <CardContent>

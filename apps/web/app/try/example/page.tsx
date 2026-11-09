@@ -38,7 +38,7 @@ export default function ExamplePage() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-4xl px-4 sm:px-6 py-8 sm:py-12 space-y-8">
+      <main id="main" className="mx-auto max-w-4xl px-4 sm:px-6 py-8 sm:py-12 space-y-8">
         {/* Monitor header */}
         <div>
           <div className="flex items-center gap-3 mb-2">
@@ -56,27 +56,27 @@ export default function ExamplePage() {
 
         {/* Stats */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <Card className="border-border/30 bg-card/50">
-            <CardContent className="p-4">
+          <Card>
+            <CardContent>
               <p className="text-xs text-muted-foreground mb-1">Items</p>
               <p className="text-2xl font-bold">7</p>
             </CardContent>
           </Card>
-          <Card className="border-emerald-500/20 bg-emerald-500/5">
-            <CardContent className="p-4">
+          <Card className="ring-emerald-500/20 bg-emerald-500/5">
+            <CardContent>
               <p className="text-xs text-muted-foreground mb-1">Matches</p>
               <p className="text-2xl font-bold text-emerald-400">{EXAMPLE_MATCHES}</p>
             </CardContent>
           </Card>
-          <Card className="border-border/30 bg-card/50">
-            <CardContent className="p-4">
+          <Card>
+            <CardContent>
               <p className="text-xs text-muted-foreground mb-1">Checks</p>
               <p className="text-2xl font-bold">47</p>
             </CardContent>
           </Card>
-          <Card className="border-border/30 bg-card/50">
-            <CardContent className="p-4">
-              <p className="text-xs text-muted-foreground mb-1">AI Confidence</p>
+          <Card>
+            <CardContent>
+              <p className="text-xs text-muted-foreground mb-1">AI confidence</p>
               <p className="text-2xl font-bold text-emerald-400">92%</p>
             </CardContent>
           </Card>
@@ -84,15 +84,15 @@ export default function ExamplePage() {
 
         {/* Matched items */}
         <div>
-          <h2 className="text-sm font-semibold mb-3 flex items-center gap-2">
+          <h2 className="section-title mb-3 flex items-center gap-2">
             <CheckCircle2 className="h-4 w-4 text-emerald-400" />
-            Matched Items
+            Matched items
             <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-xs">{EXAMPLE_MATCHES}</Badge>
           </h2>
           <div className="space-y-2">
             {ITEMS.filter((i) => i.matched).map((item, i) => (
-              <Card key={i} className="border-emerald-500/20 bg-emerald-500/5">
-                <CardContent className="p-4">
+              <Card key={i} className="ring-emerald-500/20 bg-emerald-500/5">
+                <CardContent>
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                     <div className="flex items-center gap-2 min-w-0">
                       <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
@@ -104,7 +104,7 @@ export default function ExamplePage() {
                       )}
                       <span className="text-sm font-bold">${item.price.toLocaleString()}</span>
                       {item.oldPrice && (
-                        <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-[10px] gap-0.5">
+                        <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-xs gap-0.5">
                           <TrendingDown className="h-3 w-3" />
                           {Math.round(((item.oldPrice - item.price) / item.oldPrice) * 100)}% off
                         </Badge>
@@ -119,11 +119,11 @@ export default function ExamplePage() {
 
         {/* All items */}
         <div>
-          <h2 className="text-sm font-semibold mb-3">Other Items ({ITEMS.filter((i) => !i.matched).length})</h2>
+          <h2 className="section-title mb-3">Other items ({ITEMS.filter((i) => !i.matched).length})</h2>
           <div className="space-y-2">
             {ITEMS.filter((i) => !i.matched).map((item, i) => (
-              <Card key={i} className="border-border/30 bg-card/30">
-                <CardContent className="p-4">
+              <Card key={i}>
+                <CardContent>
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                     <span className="text-sm text-muted-foreground truncate">{item.title}</span>
                     <div className="flex items-center gap-2 shrink-0">
@@ -132,7 +132,7 @@ export default function ExamplePage() {
                       )}
                       <span className="text-sm font-medium">${item.price.toLocaleString()}</span>
                       {item.oldPrice && (
-                        <Badge variant="outline" className="text-[10px] gap-0.5">
+                        <Badge variant="outline" className="text-xs gap-0.5">
                           <TrendingDown className="h-3 w-3" />
                           {Math.round(((item.oldPrice - item.price) / item.oldPrice) * 100)}%
                         </Badge>
@@ -147,9 +147,9 @@ export default function ExamplePage() {
 
         {/* History timeline */}
         <div>
-          <h2 className="text-sm font-semibold mb-3 flex items-center gap-2">
+          <h2 className="section-title mb-3 flex items-center gap-2">
             <History className="h-4 w-4 text-muted-foreground" />
-            Recent Activity
+            Recent activity
           </h2>
           <div className="space-y-3">
             {HISTORY.map((h, i) => (
@@ -170,8 +170,8 @@ export default function ExamplePage() {
         </div>
 
         {/* CTA */}
-        <Card className="border-primary/30 bg-primary/5 shadow-md">
-          <CardContent className="p-6 text-center">
+        <Card className="ring-primary/30 bg-primary/5">
+          <CardContent className="text-center">
             <Zap className="h-8 w-8 text-primary mx-auto mb-3" />
             <h3 className="text-lg font-bold mb-1">This is what your monitors look like</h3>
             <p className="text-sm text-muted-foreground mb-4">

@@ -149,7 +149,7 @@ export function AdminEmailComposer({
                         {h.failedRecipients.length > 5 ? "…" : ""}
                       </p>
                     )}
-                    <p className="text-xs text-muted-foreground/70 truncate">{h.recipientsPreview.join(", ")}{h.recipientCount > 5 ? ", …" : ""}</p>
+                    <p className="text-xs text-muted-foreground truncate">{h.recipientsPreview.join(", ")}{h.recipientCount > 5 ? ", …" : ""}</p>
                   </button>
                 </li>
               ))}

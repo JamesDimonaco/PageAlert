@@ -160,7 +160,7 @@ function OnboardingQueue() {
           </div>
         )}
         {data?.some((row) => row.truncated) && (
-          <p className="text-xs text-muted-foreground/70">* counts are capped at 500 rows per status — the true number is at least this high.</p>
+          <p className="text-xs text-muted-foreground">* counts are capped at 500 rows per status — the true number is at least this high.</p>
         )}
       </CardContent>
     </Card>

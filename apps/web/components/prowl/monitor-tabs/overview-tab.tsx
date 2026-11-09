@@ -211,7 +211,7 @@ export function OverviewTab({ monitorId, monitor, matches, totalItems, results, 
       return (
         <div className="px-4 py-8 text-center">
           <p className="text-sm font-medium">No matches yet.</p>
-          <p className="mt-1 text-xs text-muted-foreground">
+          <p className="mt-1 text-sm text-muted-foreground">
             Watching {totalItems} items, checking every {displayInterval}.
             {next && ` Next check ${next}.`}
           </p>
@@ -242,14 +242,14 @@ export function OverviewTab({ monitorId, monitor, matches, totalItems, results, 
       return (
         <div className="px-4 py-8 text-center">
           <p className="text-sm font-medium">First scan running.</p>
-          <p className="mt-1 text-xs text-muted-foreground">Matches show here in about a minute.</p>
+          <p className="mt-1 text-sm text-muted-foreground">Matches show here in about a minute.</p>
         </div>
       );
     }
     return (
       <div className="px-4 py-8 text-center">
         <p className="text-sm font-medium">Nothing extracted yet.</p>
-        <p className="mt-1 text-xs text-muted-foreground">
+        <p className="mt-1 text-sm text-muted-foreground">
           We loaded the page but found no items to compare. Check the URL points at the listing, or run the scan again.
         </p>
         <Button
@@ -269,14 +269,14 @@ export function OverviewTab({ monitorId, monitor, matches, totalItems, results, 
   return (
     <div className="space-y-6">
       {(monitor as any).muted && (
-        <Card className="border-amber-500/30 bg-amber-500/5 shadow-sm">
-          <CardContent className="p-4 sm:p-5">
+        <Card className="ring-amber-500/30 bg-amber-500/5">
+          <CardContent>
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-3">
                 <BellOff className="h-5 w-5 text-amber-400 shrink-0" />
                 <div>
                   <p className="text-sm font-semibold text-amber-400">Notifications muted</p>
-                  <p className="text-xs text-muted-foreground">This monitor is still scanning but won't send any alerts.</p>
+                  <p className="text-sm text-muted-foreground">This monitor is still scanning but won't send any alerts.</p>
                 </div>
               </div>
               <Button
@@ -295,8 +295,8 @@ export function OverviewTab({ monitorId, monitor, matches, totalItems, results, 
 
       {/* Retry in progress banner — monitor is active but has failed checks being retried */}
       {monitor.status === "active" && (monitor.retryCount ?? 0) > 0 && monitor.lastError && (
-        <Card className="border-amber-500/30 bg-amber-500/5 shadow-sm">
-          <CardContent className="p-4 sm:p-5">
+        <Card className="ring-amber-500/30 bg-amber-500/5">
+          <CardContent>
             <div className="flex items-start gap-3">
               <RotateCw className="h-5 w-5 text-amber-400 shrink-0 mt-0.5 animate-spin" />
               <div className="flex-1 min-w-0">
@@ -304,7 +304,7 @@ export function OverviewTab({ monitorId, monitor, matches, totalItems, results, 
                   Retrying automatically ({monitor.retryCount} of 3)
                 </p>
                 <p className="text-sm text-muted-foreground break-words">{monitor.lastError}</p>
-                <p className="text-xs text-muted-foreground/60 mt-2">
+                <p className="text-sm text-muted-foreground mt-2">
                   Trying different strategies — proxy, mobile browser.
                   {monitor.retryCount === 1 && " Next: retry with residential proxy."}
                   {monitor.retryCount === 2 && " Next: retry with mobile browser + skip anti-bot checks."}
@@ -325,8 +325,8 @@ export function OverviewTab({ monitorId, monitor, matches, totalItems, results, 
         // nothing else clears it. lastError carries which park it was.
         const isParked = monitor.nextCheckAt === undefined;
         return (
-        <Card className="border-red-500/30 bg-red-500/5 shadow-sm">
-          <CardContent className="p-4 sm:p-5">
+        <Card className="ring-red-500/30 bg-red-500/5">
+          <CardContent>
             <div className="flex items-start gap-3">
               <AlertTriangle className="h-5 w-5 text-red-400 shrink-0 mt-0.5" />
               <div className="flex-1 min-w-0">
@@ -334,7 +334,7 @@ export function OverviewTab({ monitorId, monitor, matches, totalItems, results, 
                   {isParked ? "Checks stopped" : isBlocked ? "This site blocked us" : "Monitor failed"}
                 </p>
                 <p className="text-sm text-muted-foreground break-words">{monitor.lastError}</p>
-                <p className="text-xs text-muted-foreground/60 mt-2">
+                <p className="text-sm text-muted-foreground mt-2">
                   {isParked
                     ? "We've stopped checking this one automatically. Hit Retry to give it another go."
                     : isBlocked
@@ -366,8 +366,8 @@ export function OverviewTab({ monitorId, monitor, matches, totalItems, results, 
 
       {/* Low AI confidence — only the ones the AI itself flagged as unsure */}
       {insights && insights.confidence < 50 && monitor.status !== "error" && !lowConfDismissed && (
-        <Card className="border-amber-500/30 bg-amber-500/5 shadow-sm">
-          <CardContent className="p-4 sm:p-5">
+        <Card className="ring-amber-500/30 bg-amber-500/5">
+          <CardContent>
             <div className="flex items-start gap-3 flex-wrap">
               <AlertTriangle className="h-5 w-5 text-amber-400 shrink-0 mt-0.5" />
               <div className="flex-1 min-w-0">
@@ -388,7 +388,7 @@ export function OverviewTab({ monitorId, monitor, matches, totalItems, results, 
                   <SlidersHorizontal className="h-3.5 w-3.5" />
                   Check filters
                 </Button>
-                <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Dismiss" onClick={dismissLowConfidence}>
+                <Button variant="ghost" size="icon-sm" aria-label="Dismiss" onClick={dismissLowConfidence}>
                   <X className="h-4 w-4" />
                 </Button>
               </div>
@@ -401,13 +401,13 @@ export function OverviewTab({ monitorId, monitor, matches, totalItems, results, 
       <div>
         <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 mb-3">
           <div className="flex items-baseline gap-2">
-            <h3 className="text-sm font-semibold flex items-center gap-2">
+            <h2 className="section-title flex items-center gap-2">
               <CheckCircle2 className="h-4 w-4 text-emerald-400" />
               Matches
               <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-xs">
                 {matches.length}
               </Badge>
-            </h3>
+            </h2>
             <span className="text-xs text-muted-foreground">of {totalItems} items</span>
           </div>
           {monitor.lastMatchAt !== undefined && (
@@ -419,7 +419,7 @@ export function OverviewTab({ monitorId, monitor, matches, totalItems, results, 
           <p className="mb-2 text-xs text-emerald-400">First scan — all of these are new to you.</p>
         )}
 
-        <div className="rounded-xl border border-border/40 bg-card/40 divide-y divide-border/40 overflow-hidden">
+        <div className="rounded-xl border border-border bg-card divide-y divide-border overflow-hidden">
           {visibleMatches.length > 0 ? (
             visibleMatches.map((item, i) => {
               const key = getItemKey(item);
@@ -493,7 +493,7 @@ export function OverviewTab({ monitorId, monitor, matches, totalItems, results, 
       <div>
         <button
           onClick={() => onSettingsOpenChange(!settingsOpen)}
-          className="flex w-full items-center gap-2 text-sm font-semibold text-muted-foreground hover:text-foreground transition-colors"
+          className="section-title flex w-full items-center gap-2 hover:text-primary transition-colors"
         >
           <Settings2 className="h-4 w-4" />
           Monitor settings
@@ -508,12 +508,12 @@ export function OverviewTab({ monitorId, monitor, matches, totalItems, results, 
         )}
       </div>
 
-      {/* AI Insights - collapsible */}
+      {/* AI insights - collapsible */}
       {schema?.insights && (
         <div>
           <button
             onClick={() => setInsightsOpen(!insightsOpen)}
-            className="flex items-center gap-2 text-sm font-semibold text-muted-foreground hover:text-foreground transition-colors w-full"
+            className="section-title flex w-full items-center gap-2 hover:text-primary transition-colors"
           >
             {insightsOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
             How the AI read this page
@@ -609,8 +609,8 @@ function MonitorSettingsForm({
   }
 
   return (
-    <Card className="mt-4 border-border/30 bg-card/50 shadow-sm shadow-black/5">
-      <CardContent className="p-4 sm:p-6">
+    <Card className="mt-4">
+      <CardContent>
         <div className="space-y-4">
           <div className="space-y-2">
             <Label className="text-sm font-medium">Name</Label>

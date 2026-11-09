@@ -25,7 +25,7 @@ export function ExampleResultsCta() {
         Explore the full live example
         <ArrowRight className="h-4 w-4 group-hover:translate-x-0.5 transition-transform" />
       </Link>
-      <p className="text-[11px] text-muted-foreground/80 text-center mt-2">
+      <p className="text-xs text-muted-foreground text-center mt-2">
         Real scan, real data &mdash; no signup needed
       </p>
     </div>

@@ -14,7 +14,7 @@ function Tile({ label, value, hint }: { label: string; value: string | number; h
       <CardContent className="p-4 sm:p-5">
         <p className="text-2xl sm:text-3xl font-bold tracking-tight tabular-nums">{value}</p>
         <p className="text-xs text-muted-foreground mt-1 font-medium">{label}</p>
-        {hint && <p className="text-xs text-muted-foreground/70 mt-0.5">{hint}</p>}
+        {hint && <p className="text-xs text-muted-foreground mt-0.5">{hint}</p>}
       </CardContent>
     </Card>
   );
@@ -78,7 +78,7 @@ export function AdminOverview() {
                 />
               ))}
             </div>
-            <div className="flex justify-between text-[10px] text-muted-foreground mt-1">
+            <div className="flex justify-between text-xs text-muted-foreground mt-1">
               <span>{users.signupsByDay[0] && formatDay(users.signupsByDay[0].day)}</span>
               <span>{users.new30d} total</span>
               <span>

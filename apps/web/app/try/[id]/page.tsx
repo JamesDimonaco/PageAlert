@@ -60,12 +60,12 @@ export default function TryResultPage({
     return (
       <div className="min-h-screen bg-background">
         <Header />
-        <div className="mx-auto max-w-3xl px-4 py-20 text-center">
-          <AlertTriangle className="h-10 w-10 text-muted-foreground/40 mx-auto mb-4" />
+        <main id="main" className="mx-auto max-w-3xl px-4 py-20 text-center">
+          <AlertTriangle className="h-10 w-10 text-muted-foreground mx-auto mb-4" />
           <h1 className="text-2xl font-bold mb-2">Scan not found</h1>
           <p className="text-muted-foreground mb-6">This scan may have expired or doesn&apos;t exist.</p>
           <Link href="/" className={buttonVariants()}>Try a new scan</Link>
-        </div>
+        </main>
       </div>
     );
   }
@@ -94,11 +94,11 @@ export default function TryResultPage({
     <div className="min-h-screen bg-background">
       <Header />
 
-      <main className="mx-auto max-w-3xl px-4 sm:px-6 py-10 sm:py-16 space-y-8">
+      <main id="main" className="mx-auto max-w-3xl px-4 sm:px-6 py-10 sm:py-16 space-y-8">
         {/* Status banner */}
         {monitor.status === "scanning" && (
-          <Card className="border-primary/30 bg-primary/5">
-            <CardContent className="p-5 flex items-center gap-3">
+          <Card className="ring-primary/30 bg-primary/5">
+            <CardContent className="flex items-center gap-3">
               <Loader2 className="h-5 w-5 animate-spin text-primary" />
               <div>
                 <p className="text-sm font-semibold">Scanning in progress...</p>
@@ -109,14 +109,14 @@ export default function TryResultPage({
         )}
 
         {monitor.status === "error" && (
-          <Card className="border-red-500/30 bg-red-500/5">
-            <CardContent className="p-5">
+          <Card className="ring-red-500/30 bg-red-500/5">
+            <CardContent>
               <div className="flex items-start gap-3">
                 <AlertTriangle className="h-5 w-5 text-red-400 shrink-0 mt-0.5" />
                 <div>
                   <p className="text-sm font-semibold text-red-400">Scan failed</p>
                   <p className="text-sm text-muted-foreground mt-1">{monitor.lastError ?? "Something went wrong"}</p>
-                  <Link href="/" className="text-xs text-primary hover:underline mt-2 inline-block">Try a different URL</Link>
+                  <Link href="/" className="text-xs text-primary underline underline-offset-2 mt-2 inline-block">Try a different URL</Link>
                 </div>
               </div>
             </CardContent>
@@ -141,22 +141,22 @@ export default function TryResultPage({
           <>
             {/* Stats */}
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-              <Card className="border-border/30 bg-card/50">
-                <CardContent className="p-4">
+              <Card>
+                <CardContent>
                   <p className="text-xs text-muted-foreground mb-1">Items Found</p>
                   <p className="text-2xl font-bold">{items.length}</p>
                 </CardContent>
               </Card>
-              <Card className="border-border/30 bg-card/50">
-                <CardContent className="p-4">
+              <Card>
+                <CardContent>
                   <p className="text-xs text-muted-foreground mb-1">Matches</p>
                   <p className="text-2xl font-bold text-primary">{monitor.matchCount}</p>
                 </CardContent>
               </Card>
               {confidence > 0 && (
-                <Card className="border-border/30 bg-card/50">
-                  <CardContent className="p-4">
-                    <p className="text-xs text-muted-foreground mb-1">AI Confidence</p>
+                <Card>
+                  <CardContent>
+                    <p className="text-xs text-muted-foreground mb-1">AI confidence</p>
                     <p className={`text-2xl font-bold ${confidence >= 80 ? "text-emerald-400" : confidence >= 50 ? "text-amber-400" : "text-red-400"}`}>
                       {confidence}%
                     </p>
@@ -167,7 +167,7 @@ export default function TryResultPage({
 
             {/* Items list */}
             <div>
-              <h2 className="text-sm font-semibold mb-3 flex items-center gap-2">
+              <h2 className="section-title mb-3 flex items-center gap-2">
                 <CheckCircle2 className="h-4 w-4 text-emerald-400" />
                 Extracted Items
                 <Badge variant="outline" className="text-xs">{items.length}</Badge>
@@ -188,8 +188,8 @@ export default function TryResultPage({
                   }
 
                   return (
-                    <Card key={i} className="border-border/30 bg-card/50">
-                      <CardContent className="p-3 sm:p-4">
+                    <Card key={i}>
+                      <CardContent>
                         <div className="flex items-center justify-between gap-2">
                           <div className="min-w-0 flex-1">
                             {safeUrl ? (
@@ -217,10 +217,10 @@ export default function TryResultPage({
         )}
 
         {monitor.status === "active" && items.length === 0 && (
-          <Card className="border-border/30 bg-card/30">
+          <Card>
             <CardContent className="py-10 text-center">
               <p className="text-sm font-medium text-muted-foreground">No items found on this page</p>
-              <p className="text-xs text-muted-foreground/70 mt-1">The AI couldn&apos;t extract structured data. Try a different URL or prompt.</p>
+              <p className="text-xs text-muted-foreground mt-1">The AI couldn&apos;t extract structured data. Try a different URL or prompt.</p>
               <Link href="/" className={buttonVariants({ variant: "outline", className: "mt-4" })}>
                 Try again
               </Link>
@@ -230,8 +230,8 @@ export default function TryResultPage({
 
         {/* Email capture */}
         {monitor.status === "active" && !hasClaimed && anonId && (
-          <Card className="border-primary/30 bg-primary/5 shadow-md">
-            <CardContent className="p-5 sm:p-6">
+          <Card className="ring-primary/30 bg-primary/5">
+            <CardContent>
               <div className="flex items-start gap-3 mb-4">
                 <Mail className="h-5 w-5 text-primary shrink-0 mt-0.5" />
                 <div>
@@ -260,8 +260,8 @@ export default function TryResultPage({
         )}
 
         {hasClaimed && (
-          <Card className="border-emerald-500/30 bg-emerald-500/5">
-            <CardContent className="p-5 flex items-center gap-3">
+          <Card className="ring-emerald-500/30 bg-emerald-500/5">
+            <CardContent className="flex items-center gap-3">
               <CheckCircle2 className="h-5 w-5 text-emerald-400" />
               <div>
                 <p className="text-sm font-semibold text-emerald-400">You&apos;ll be notified!</p>
@@ -272,8 +272,8 @@ export default function TryResultPage({
         )}
 
         {/* CTA to sign up */}
-        <Card className="border-border/30 bg-card/50">
-          <CardContent className="p-5 sm:p-6 text-center">
+        <Card>
+          <CardContent className="text-center">
             <Zap className="h-8 w-8 text-primary mx-auto mb-3" />
             <h3 className="text-lg font-bold mb-1">Want more?</h3>
             <p className="text-sm text-muted-foreground mb-4">

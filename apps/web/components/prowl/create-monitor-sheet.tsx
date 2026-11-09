@@ -284,7 +284,7 @@ export function CreateMonitorSheet({
               <span className="flex items-center gap-2">
                 <CheckCircle2 className="h-4 w-4" /> Scan complete
               </span>
-              <span className="flex items-center gap-1 text-[11px] font-normal opacity-80">
+              <span className="flex items-center gap-1 text-xs font-normal opacity-80">
                 View monitor <ArrowRight className="h-3 w-3" />
               </span>
             </>
@@ -295,7 +295,7 @@ export function CreateMonitorSheet({
                 {isInRetry ? `Retry ${retryAttempt} of 3` : `Scanning... ${elapsed}s`}
               </span>
               {isInRetry && (
-                <span className="text-[11px] font-normal opacity-80">
+                <span className="text-xs font-normal opacity-80">
                   The site blocked us — trying again with a proxy
                 </span>
               )}
@@ -306,12 +306,12 @@ export function CreateMonitorSheet({
 
       <Sheet open={open} onOpenChange={onOpenChange}>
         <SheetContent className="w-full sm:max-w-2xl overflow-y-auto p-4 sm:p-6">
-          <SheetHeader>
+          <SheetHeader className="p-0 pr-8">
             <SheetTitle className="flex items-center gap-2">
               <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10">
                 <Radar className="h-4 w-4 text-primary" />
               </div>
-              {step === "form" && "New Monitor"}
+              {step === "form" && "New monitor"}
               {step === "scanning" && (isInRetry ? "Retrying..." : "Scanning...")}
             </SheetTitle>
             <SheetDescription>
@@ -324,10 +324,10 @@ export function CreateMonitorSheet({
             </SheetDescription>
           </SheetHeader>
 
-          <div className="mt-6">
+          <div>
             {step === "form" && findAProduct && (
               <>
-                <Tabs value={tab} onValueChange={(v) => setTab(v as FormTab)} className="mb-6">
+                <Tabs value={tab} onValueChange={(v) => setTab(v as FormTab)} className="mb-4">
                   <TabsList className="w-full">
                     <TabsTrigger value="find">Find a product</TabsTrigger>
                     <TabsTrigger value="url">Paste a URL</TabsTrigger>
@@ -436,10 +436,10 @@ export function CreateMonitorSheet({
                         type="button"
                         aria-pressed={mode === m.id}
                         onClick={() => setMode(mode === m.id ? null : m.id)}
-                        className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
+                        className={`flex h-8 max-sm:h-11 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition-colors ${
                           mode === m.id
                             ? "border-primary/40 bg-primary/10 text-primary"
-                            : "border-border/40 bg-card/50 text-muted-foreground hover:text-foreground hover:border-primary/20"
+                            : "border-border bg-card text-muted-foreground hover:text-foreground hover:border-primary/20"
                         }`}
                       >
                         <m.icon className="h-3.5 w-3.5" />
@@ -458,7 +458,7 @@ export function CreateMonitorSheet({
                     rows={3}
                     required
                   />
-                  <p className="text-xs text-muted-foreground leading-relaxed">
+                  <p className="text-sm text-muted-foreground leading-relaxed">
                     {selectedMode?.hint ?? "Describe in plain English. Be as specific as you want."}
                   </p>
                 </div>
@@ -467,7 +467,7 @@ export function CreateMonitorSheet({
                   <IntervalSelector value={checkInterval} onValueChange={setCheckInterval} />
                 </div>
                 <ChannelSelector value={channels} onChange={setChannels} monitorId={null} />
-                <div className="flex justify-end gap-3 pt-4">
+                <div className="sticky -bottom-4 -mx-4 -mb-4 flex justify-end gap-3 border-t border-border bg-background px-4 py-3 sm:-bottom-6 sm:-mx-6 sm:-mb-6 sm:px-6">
                   <Button
                     type="button"
                     variant="ghost"
@@ -483,7 +483,7 @@ export function CreateMonitorSheet({
                   </Button>
                   <Button type="submit" className="gap-2 shadow-sm shadow-primary/15" disabled={!channelsReady}>
                     {channelsReady ? <Radar className="h-4 w-4" /> : <Loader2 className="h-4 w-4 animate-spin" />}
-                    Scan Page
+                    Scan page
                   </Button>
                 </div>
               </form>
@@ -567,7 +567,7 @@ export function CreateMonitorSheet({
                               onOpenChange(false);
                               router.push("/dashboard/settings?tab=notifications");
                             }}
-                            className="w-full flex items-center gap-3 rounded-lg border border-border/30 bg-card/50 px-3 py-2.5 text-left text-xs hover:bg-muted/50 transition-colors"
+                            className="w-full flex items-center gap-3 rounded-lg border border-border bg-card px-3 py-2.5 text-left text-xs hover:bg-muted/50 transition-colors"
                           >
                             <MessageCircle className="h-4 w-4 text-muted-foreground shrink-0" />
                             <span>
@@ -582,7 +582,7 @@ export function CreateMonitorSheet({
                             onOpenChange(false);
                             router.push("/dashboard/settings?tab=notifications");
                           }}
-                          className="w-full flex items-center gap-3 rounded-lg border border-border/30 bg-card/50 px-3 py-2.5 text-left text-xs hover:bg-muted/50 transition-colors"
+                          className="w-full flex items-center gap-3 rounded-lg border border-border bg-card px-3 py-2.5 text-left text-xs hover:bg-muted/50 transition-colors"
                         >
                           <Mail className="h-4 w-4 text-muted-foreground shrink-0" />
                           <span>

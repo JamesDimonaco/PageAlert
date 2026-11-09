@@ -36,6 +36,13 @@ function formatDate(timestamp: number): string {
 
 type FilterType = "all" | "matches" | "changes" | "errors";
 
+const FILTERS: { value: FilterType; label: string }[] = [
+  { value: "all", label: "All events" },
+  { value: "matches", label: "Matches only" },
+  { value: "changes", label: "Changes only" },
+  { value: "errors", label: "Errors only" },
+];
+
 export function HistoryTab({ results }: HistoryTabProps) {
   const [filter, setFilter] = useState<FilterType>("all");
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -51,9 +58,9 @@ export function HistoryTab({ results }: HistoryTabProps) {
   if (results.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-16 text-center">
-        <History className="h-8 w-8 text-muted-foreground/40 mb-4" />
+        <History className="h-8 w-8 text-muted-foreground mb-4" />
         <p className="text-sm text-muted-foreground">No history yet</p>
-        <p className="text-xs text-muted-foreground/70 mt-1">Check results will appear here as the scheduler runs</p>
+        <p className="text-xs text-muted-foreground mt-1">Check results will appear here as the scheduler runs</p>
       </div>
     );
   }
@@ -63,15 +70,14 @@ export function HistoryTab({ results }: HistoryTabProps) {
       {/* Filter bar */}
       <div className="flex items-center justify-between">
         <p className="text-sm text-muted-foreground">{filtered.length} of {results.length} events</p>
-        <Select value={filter} onValueChange={(v) => v && setFilter(v as FilterType)}>
-          <SelectTrigger className="w-[150px] h-8 text-sm">
+        <Select items={FILTERS} value={filter} onValueChange={(v) => v && setFilter(v as FilterType)}>
+          <SelectTrigger size="sm" aria-label="Filter events" className="w-[150px] text-sm">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All events</SelectItem>
-            <SelectItem value="matches">Matches only</SelectItem>
-            <SelectItem value="changes">Changes only</SelectItem>
-            <SelectItem value="errors">Errors only</SelectItem>
+            {FILTERS.map(({ value, label }) => (
+              <SelectItem key={value} value={value}>{label}</SelectItem>
+            ))}
           </SelectContent>
         </Select>
       </div>
@@ -111,8 +117,8 @@ export function HistoryTab({ results }: HistoryTabProps) {
                   </div>
                 </div>
 
-                <Card className="border-border/30 bg-card/50 shadow-sm shadow-black/5">
-                  <CardContent className="p-4">
+                <Card>
+                  <CardContent>
                     {/* Header */}
                     <button
                       className="w-full text-left"
@@ -256,7 +262,7 @@ export function HistoryTab({ results }: HistoryTabProps) {
                                 </div>
                                 <div className="space-y-1">
                                   {result.changes.priceChanges.map((pc, i) => (
-                                    <div key={i} className="rounded bg-background/50 border border-border/30 px-3 py-2 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-1 sm:gap-2">
+                                    <div key={i} className="rounded bg-background/50 border border-border px-3 py-2 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-1 sm:gap-2">
                                       <span className="font-medium break-words sm:truncate sm:max-w-xs">{pc.title}</span>
                                       <div className="flex items-center gap-2 shrink-0">
                                         <span className="text-muted-foreground line-through">${pc.oldPrice.toLocaleString()}</span>

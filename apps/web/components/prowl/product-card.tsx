@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { ChevronDown, Package, Tag, Zap } from "lucide-react";
 import { formatMinorUnits } from "@prowl/shared";
 import { Card, CardContent } from "@/components/ui/card";
@@ -18,25 +17,21 @@ interface ProductCardProps {
 }
 
 export function ProductCard({ product, monitors }: ProductCardProps) {
-  const router = useRouter();
   const [open, setOpen] = useState(false);
   const detailHref = `/dashboard/products/${product._id}`;
   const { cheapest } = product;
   const cheapestPrice = cheapest && formatMinorUnits(cheapest.price, cheapest.currency);
 
   return (
-    <Card
-      role="link"
-      tabIndex={0}
-      aria-label={`View ${product.name}`}
-      className="group relative overflow-hidden border-border/30 border-l-2 border-l-transparent bg-card/50 shadow-sm shadow-black/5 backdrop-blur transition-all hover:shadow-md hover:shadow-black/10 hover:bg-card/80 cursor-pointer group-hover:border-l-primary/50"
-      onClick={() => router.push(detailHref)}
-      onKeyDown={(e) => { if (e.key === "Enter" && e.target === e.currentTarget) router.push(detailHref); }}
-    >
-      <CardContent className="p-4 sm:p-6">
+    <Card className="group relative border-l-2 border-l-transparent transition-colors hover:bg-muted/40 hover:border-l-primary/50 focus-within:border-l-primary/50">
+      <CardContent>
         <div className="flex flex-wrap items-center gap-3 mb-2.5">
           <Package className="h-4 w-4 text-muted-foreground" />
-          <span className="text-base font-semibold truncate">{product.name}</span>
+          <h2 className="min-w-0 text-base font-semibold line-clamp-2">
+            <Link href={detailHref} className="outline-none after:absolute after:inset-0 focus-visible:after:rounded-xl focus-visible:after:outline-2 focus-visible:after:-outline-offset-2 focus-visible:after:outline-ring">
+              {product.name}
+            </Link>
+          </h2>
           {product.inStock !== null && (
             <Badge
               variant="outline"
@@ -59,7 +54,7 @@ export function ProductCard({ product, monitors }: ProductCardProps) {
           )}
         </div>
 
-        <div className="flex flex-wrap items-center gap-5 text-xs text-muted-foreground">
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-muted-foreground">
           <span>Watching {product.watching} listing{product.watching !== 1 && "s"}</span>
           {cheapest && cheapestPrice && (
             <span className="flex items-center gap-1.5">
@@ -75,8 +70,8 @@ export function ProductCard({ product, monitors }: ProductCardProps) {
             <button
               type="button"
               aria-expanded={open}
-              className="ml-auto flex items-center gap-1 rounded-md px-2 py-1 hover:bg-muted hover:text-foreground"
-              onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }}
+              className="relative z-10 ml-auto flex h-8 max-sm:h-11 items-center gap-1 rounded-md px-2 hover:bg-muted hover:text-foreground"
+              onClick={() => setOpen((o) => !o)}
             >
               {open ? "Hide listings" : "Show listings"}
               <ChevronDown className={`h-3.5 w-3.5 transition-transform ${open ? "rotate-180" : ""}`} />
@@ -85,12 +80,11 @@ export function ProductCard({ product, monitors }: ProductCardProps) {
         </div>
 
         {open && (
-          <ul className="mt-4 divide-y divide-border/30 border-t border-border/30">
+          <ul className="relative z-10 mt-4 divide-y divide-border/30 border-t border-border/30">
             {monitors.map((m) => (
               <li key={m._id}>
                 <Link
                   href={`/dashboard/monitors/${m._id}`}
-                  onClick={(e) => e.stopPropagation()}
                   className="flex items-center gap-3 py-2.5 text-sm hover:text-primary"
                 >
                   <span className="flex-1 min-w-0 truncate">{new URL(m.url).hostname}</span>

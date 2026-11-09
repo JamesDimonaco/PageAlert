@@ -62,8 +62,8 @@ export function OnboardingChecklist() {
   // Auto-dismiss when all items complete — show a brief "all set" then hide
   if (allDone) {
     return (
-      <Card className="border-border/30 bg-emerald-500/5 border-emerald-500/20 shadow-sm">
-        <CardContent className="px-5 py-4 flex items-center gap-3">
+      <Card className="bg-emerald-500/5 ring-emerald-500/20">
+        <CardContent className="flex items-center gap-3">
           <div className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-500/10 shrink-0">
             <Check className="h-4 w-4 text-emerald-400" />
           </div>
@@ -107,8 +107,8 @@ export function OnboardingChecklist() {
   }
 
   return (
-    <Card className="border-border/30 bg-card/50 shadow-sm shadow-black/5">
-      <CardContent className="px-5 py-4">
+    <Card>
+      <CardContent>
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
             <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary/10">
@@ -121,7 +121,7 @@ export function OnboardingChecklist() {
           </div>
           <button
             onClick={handleDismiss}
-            className="text-muted-foreground/50 hover:text-muted-foreground transition-colors p-1 -m-1"
+            className="text-muted-foreground hover:text-foreground transition-colors p-1 -m-1"
             aria-label="Dismiss checklist"
           >
             <X className="h-4 w-4" />
@@ -149,7 +149,7 @@ export function OnboardingChecklist() {
                 className={`flex h-5 w-5 items-center justify-center rounded-full shrink-0 ${
                   item.checked
                     ? "bg-emerald-500/10"
-                    : "border border-border/50"
+                    : "border border-border"
                 }`}
               >
                 {item.checked ? (
