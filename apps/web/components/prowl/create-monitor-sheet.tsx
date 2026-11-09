@@ -311,7 +311,7 @@ export function CreateMonitorSheet({
               <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10">
                 <Radar className="h-4 w-4 text-primary" />
               </div>
-              {step === "form" && "New Monitor"}
+              {step === "form" && "New monitor"}
               {step === "scanning" && (isInRetry ? "Retrying..." : "Scanning...")}
             </SheetTitle>
             <SheetDescription>
@@ -483,7 +483,7 @@ export function CreateMonitorSheet({
                   </Button>
                   <Button type="submit" className="gap-2 shadow-sm shadow-primary/15" disabled={!channelsReady}>
                     {channelsReady ? <Radar className="h-4 w-4" /> : <Loader2 className="h-4 w-4 animate-spin" />}
-                    Scan Page
+                    Scan page
                   </Button>
                 </div>
               </form>

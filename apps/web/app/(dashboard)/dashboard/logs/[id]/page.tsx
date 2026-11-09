@@ -124,7 +124,7 @@ export default function LogDetailPage({
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2 sm:gap-3">
             <h1 className="page-title">
-              {log.monitorName ? log.monitorName : "Scrape Log"}
+              {log.monitorName ? log.monitorName : "Log"}
             </h1>
             <Badge
               variant="outline"
@@ -192,7 +192,7 @@ export default function LogDetailPage({
         </Card>
       </div>
 
-      {/* Prompt & Monitor Name */}
+      {/* Prompt & Monitor name */}
       <div className="grid gap-4 md:grid-cols-2">
         <div>
           <h2 className="section-title mb-3">Prompt</h2>
@@ -204,7 +204,7 @@ export default function LogDetailPage({
         </div>
         {log.monitorName && (
           <div>
-            <h2 className="section-title mb-3">Monitor Name</h2>
+            <h2 className="section-title mb-3">Monitor name</h2>
             <Card>
               <CardContent>
                 <p className="text-sm font-medium">{log.monitorName}</p>
@@ -214,10 +214,10 @@ export default function LogDetailPage({
         )}
       </div>
 
-      {/* AI Insights */}
+      {/* AI insights */}
       {log.aiUnderstanding && (
         <div>
-          <h2 className="section-title mb-3">AI Insights</h2>
+          <h2 className="section-title mb-3">AI insights</h2>
           <div className="space-y-3">
             <Card>
               <CardContent className="space-y-4">
@@ -272,10 +272,10 @@ export default function LogDetailPage({
         </div>
       )}
 
-      {/* Match Conditions */}
+      {/* Match conditions */}
       {log.matchConditions && (
         <div>
-          <h2 className="section-title mb-3">Generated Match Conditions</h2>
+          <h2 className="section-title mb-3">Generated match conditions</h2>
           <Card>
             <CardContent>
               <pre className="text-xs font-mono overflow-x-auto whitespace-pre-wrap">
@@ -303,7 +303,7 @@ export default function LogDetailPage({
               }}
             >
               <RotateCcw className="h-3.5 w-3.5" />
-              {log.monitorId ? "View Monitor" : "Retry"}
+              {log.monitorId ? "View monitor" : "Retry"}
             </Button>
           </div>
           <Card className="ring-red-500/20 bg-red-500/5">
@@ -324,11 +324,11 @@ export default function LogDetailPage({
         </Link>
       )}
 
-      {/* Raw Response */}
+      {/* Raw response */}
       {log.rawResponse && (
         <div>
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
-            <h2 className="section-title">Raw AI Response</h2>
+            <h2 className="section-title">Raw AI response</h2>
             <div className="flex gap-2">
               <Button
                 variant={showRaw ? "outline" : "default"}

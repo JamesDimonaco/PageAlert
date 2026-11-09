@@ -130,7 +130,9 @@ export default function SettingsPage() {
             <Bell className="hidden sm:block" />
             Notifications
             {notifSettings && notifSettings.filter((s) => s.enabled).length === 0 && (
-              <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-amber-400" />
+              <span className="h-2 w-2 rounded-full bg-amber-400" title="No alert channels are on">
+                <span className="sr-only">No alert channels are on</span>
+              </span>
             )}
           </TabsTrigger>
           <TabsTrigger value="profile">
@@ -238,7 +240,7 @@ export default function SettingsPage() {
 
           <Card className="ring-destructive/20">
             <CardHeader className="pb-4">
-              <CardTitle className="text-lg font-semibold text-destructive">Danger Zone</CardTitle>
+              <CardTitle className="text-lg font-semibold text-destructive">Danger zone</CardTitle>
               <CardDescription className="text-sm">
                 Permanently delete your account, your sign-in, and all data including monitors, scrape history, and notification settings.
               </CardDescription>
@@ -252,7 +254,7 @@ export default function SettingsPage() {
                       <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-destructive/10">
                         <Trash2 className="h-4 w-4 text-destructive" />
                       </div>
-                      Delete Account
+                      Delete account
                     </DialogTitle>
                     <DialogDescription>
                       This will permanently delete your sign-in and everything attached to it —
@@ -361,10 +363,10 @@ export default function SettingsPage() {
             </Card>
           )}
 
-          {/* Current Plan */}
+          {/* Current plan */}
           <Card>
             <CardHeader className="pb-4">
-              <CardTitle className="text-lg font-semibold">Current Plan</CardTitle>
+              <CardTitle className="text-lg font-semibold">Current plan</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -414,7 +416,7 @@ export default function SettingsPage() {
                       }}
                     >
                       <ExternalLink className="h-3.5 w-3.5" />
-                      Manage Subscription
+                      Manage subscription
                     </Button>
                   )}
                 </div>
@@ -429,7 +431,7 @@ export default function SettingsPage() {
             </CardContent>
           </Card>
 
-          {/* Upgrade Options */}
+          {/* Upgrade options */}
           {offerPro && (
             <div className="grid gap-4 md:grid-cols-3">
               {!isPass && (

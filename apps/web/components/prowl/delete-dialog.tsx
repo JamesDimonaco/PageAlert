@@ -27,7 +27,7 @@ export function DeleteDialog({
   onOpenChange,
   onConfirm,
   monitorName,
-  title = "Delete Monitor",
+  title = "Delete monitor",
   detail = "This will remove all scrape history and cannot be undone.",
 }: DeleteDialogProps) {
   const [isDeleting, setIsDeleting] = useState(false);

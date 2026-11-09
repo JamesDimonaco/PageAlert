@@ -54,7 +54,7 @@ export function ProductCard({ product, monitors }: ProductCardProps) {
           )}
         </div>
 
-        <div className="flex flex-wrap items-center gap-5 text-xs text-muted-foreground">
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-muted-foreground">
           <span>Watching {product.watching} listing{product.watching !== 1 && "s"}</span>
           {cheapest && cheapestPrice && (
             <span className="flex items-center gap-1.5">

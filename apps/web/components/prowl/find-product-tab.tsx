@@ -248,7 +248,7 @@ export function FindProductTab({ clone, onPasteUrl, onDone }: FindProductTabProp
           </p>
           <div aria-hidden className="space-y-2">
             {[0, 1, 2].map((i) => (
-              <div key={i} className="h-20 animate-pulse rounded-lg border border-border bg-card" />
+              <div key={i} className="h-20 animate-pulse rounded-lg bg-muted" />
             ))}
           </div>
         </div>
@@ -276,8 +276,8 @@ export function FindProductTab({ clone, onPasteUrl, onDone }: FindProductTabProp
           {(missingShops) => (
           <section className="space-y-3" aria-labelledby="pick-shops">
             <div>
-              <h3 id="pick-shops" className="section-title scroll-mt-4">1. Choose the shops to watch</h3>
-              {missingShops && <p className="mt-1 text-sm text-destructive">Tick at least one shop.</p>}
+              <h3 id="pick-shops" className="section-title">1. Choose the shops to watch</h3>
+              {missingShops && <p role="alert" className="mt-1 text-sm text-destructive">Tick at least one shop.</p>}
               {slotsLoading ? (
                 <p className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
                   <Loader2 className="h-3 w-3 animate-spin" /> Checking your free monitors…

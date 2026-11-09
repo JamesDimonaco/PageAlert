@@ -177,7 +177,7 @@ export function ReviewPrompt() {
             </div>
             <button
               onClick={handleDismissPermanent}
-              className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+              className="text-xs text-muted-foreground hover:text-foreground transition-colors max-sm:-m-3 max-sm:p-3"
             >
               Not interested
             </button>

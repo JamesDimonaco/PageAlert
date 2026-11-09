@@ -282,7 +282,7 @@ export default function DashboardPage() {
         ) : (
           <Button onClick={openCreate} className="gap-2 shadow-md shadow-primary/15 w-full sm:w-auto">
             <Plus className="h-5 w-5" />
-            New Monitor
+            New monitor
           </Button>
         )}
       </div>
@@ -342,7 +342,7 @@ export default function DashboardPage() {
 
                 <Button onClick={openCreate} className="gap-2 shadow-md shadow-primary/15 mb-10">
                   <Plus className="h-5 w-5" />
-                  Create Your First Monitor
+                  Create your first monitor
                 </Button>
 
                 <div className="text-left space-y-4">

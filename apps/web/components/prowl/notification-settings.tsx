@@ -339,7 +339,7 @@ export function NotificationSettings() {
                   ) : (
                     <Send className="h-4 w-4" />
                   )}
-                  Send Test Email
+                  Send test email
                 </Button>
               )}
             </div>
@@ -621,7 +621,7 @@ export function NotificationSettings() {
                   }}
                 >
                   {telegramTesting ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : null}
-                  Send Test
+                  Send test
                 </Button>
                 <Button
                   variant="ghost"
@@ -1008,7 +1008,7 @@ export function NotificationSettings() {
                     onChange={(e) => setDiscordWebhook(e.target.value)}
                   />
                   <p className="text-xs text-muted-foreground leading-relaxed">
-                    Discord → Server Settings → Integrations → Webhooks → New Webhook → Copy Webhook URL
+                    Discord → Server Settings → Integrations → Webhooks → New webhook → Copy webhook URL
                   </p>
                 </div>
                 <Button

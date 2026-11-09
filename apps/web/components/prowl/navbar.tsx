@@ -38,7 +38,7 @@ export function Navbar() {
   const [feedbackOpen, setFeedbackOpen] = useState(false);
 
   const initials = user?.name?.charAt(0)?.toUpperCase() ?? user?.email?.charAt(0)?.toUpperCase() ?? "?";
-  // The dashboard index already leads with its own New Monitor CTA
+  // The dashboard index already leads with its own New monitor CTA
   const showCreate = pathname !== "/dashboard";
 
   return (
@@ -67,9 +67,9 @@ export function Navbar() {
 
         <div className="flex items-center gap-3">
           {showCreate && (
-            <Button size="sm" onClick={openCreate} aria-label="New Monitor" className="gap-1.5 shadow-sm shadow-primary/15">
+            <Button size="sm" onClick={openCreate} aria-label="New monitor" className="gap-1.5 shadow-sm shadow-primary/15 max-sm:min-w-11">
               <Plus className="h-4 w-4" />
-              <span className="hidden sm:inline">New Monitor</span>
+              <span className="hidden sm:inline">New monitor</span>
             </Button>
           )}
 

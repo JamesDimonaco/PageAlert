@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
-import { Radar, Github, Mail, Loader2 } from "lucide-react";
+import { AlertCircle, Radar, Github, Mail, Loader2 } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
@@ -30,6 +30,8 @@ export default function LoginPage() {
   const [name, setName] = useState("");
   const [loading, setLoading] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  // Set when the server refused what was typed, so the fields are marked. A network failure is not their fault.
+  const [refused, setRefused] = useState(false);
   const router = useRouter();
   const searchParams = useSearchParams();
   const nextUrl = safeNext(searchParams.get("next"));
@@ -38,6 +40,7 @@ export default function LoginPage() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setFormError(null);
+    setRefused(false);
     setLoading(true);
 
     try {
@@ -46,6 +49,7 @@ export default function LoginPage() {
         ? await authClient.signUp.email({ email, password, name })
         : await authClient.signIn.email({ email, password });
       if (error) {
+        setRefused(true);
         setFormError(
           !isSignUp
             ? "That email or password isn't right."
@@ -161,7 +165,11 @@ export default function LoginPage() {
                   autoComplete="email"
                   placeholder="you@example.com"
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  onChange={(e) => {
+                    setEmail(e.target.value);
+                    setRefused(false);
+                  }}
+                  aria-invalid={refused || undefined}
                   required
                 />
               </div>
@@ -173,11 +181,20 @@ export default function LoginPage() {
                   autoComplete={isSignUp ? "new-password" : "current-password"}
                   placeholder="Enter your password"
                   value={password}
-                  onChange={(e) => setPassword(e.target.value)}
+                  onChange={(e) => {
+                    setPassword(e.target.value);
+                    setRefused(false);
+                  }}
+                  aria-invalid={refused || undefined}
                   required
                 />
               </div>
-              {formError && <p role="alert" className="text-sm text-destructive">{formError}</p>}
+              {formError && (
+                <p role="alert" className="flex items-center gap-1.5 text-sm text-destructive">
+                  <AlertCircle className="h-4 w-4 shrink-0" />
+                  {formError}
+                </p>
+              )}
               <Button type="submit" className="w-full gap-2 mt-2" disabled={loading}>
                 {loading ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
@@ -195,6 +212,7 @@ export default function LoginPage() {
                 onClick={() => {
                   setIsSignUp(!isSignUp);
                   setFormError(null);
+                  setRefused(false);
                 }}
                 className="text-primary underline underline-offset-2 font-medium"
               >

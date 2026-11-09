@@ -69,18 +69,19 @@ export function WatchProductForm({ name, region, listings, ticked, guess, onCrea
 
   const fields = alertOnFromFields({ backInStock, priceChoice, target, currency });
   const noShops = watching.length === 0;
-  const problem =
-    noShops
-      ? "Tick at least one shop in step 1."
-      : !backInStock && priceChoice === "off"
-        ? "Pick what to be alerted about."
-        : (fields.error ?? null);
-  const error = attempted ? (problem ?? saveError) : null;
+  const problem = !backInStock && priceChoice === "off" ? "Pick what to be alerted about." : (fields.error ?? null);
+  // The picker shows its own message for no shops, next to the checkboxes.
+  const error = attempted && !noShops ? (problem ?? saveError) : null;
+  const picker = useRef<HTMLDivElement>(null);
 
   async function submit() {
     setAttempted(true);
     setSaveError(null);
-    if (noShops) document.getElementById("pick-shops")?.scrollIntoView({ block: "start" });
+    if (noShops) {
+      picker.current?.scrollIntoView({ block: "start" });
+      picker.current?.querySelector<HTMLInputElement>("input[type=checkbox]:enabled")?.focus({ preventScroll: true });
+      return;
+    }
     if (problem !== null || fields.error !== undefined) return;
     setSaving(true);
     try {
@@ -113,7 +114,7 @@ export function WatchProductForm({ name, region, listings, ticked, guess, onCrea
 
   return (
     <div className="space-y-6">
-      {children(attempted && noShops)}
+      <div ref={picker} className="scroll-mt-4">{children(attempted && noShops)}</div>
       <section className="space-y-4" aria-labelledby="pick-alerts">
         <h3 id="pick-alerts" className="section-title">2. Choose your alerts</h3>
         <AlertOnFields

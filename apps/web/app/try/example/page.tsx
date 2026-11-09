@@ -86,7 +86,7 @@ export default function ExamplePage() {
         <div>
           <h2 className="section-title mb-3 flex items-center gap-2">
             <CheckCircle2 className="h-4 w-4 text-emerald-400" />
-            Matched Items
+            Matched items
             <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-xs">{EXAMPLE_MATCHES}</Badge>
           </h2>
           <div className="space-y-2">
@@ -119,7 +119,7 @@ export default function ExamplePage() {
 
         {/* All items */}
         <div>
-          <h2 className="section-title mb-3">Other Items ({ITEMS.filter((i) => !i.matched).length})</h2>
+          <h2 className="section-title mb-3">Other items ({ITEMS.filter((i) => !i.matched).length})</h2>
           <div className="space-y-2">
             {ITEMS.filter((i) => !i.matched).map((item, i) => (
               <Card key={i}>
@@ -149,7 +149,7 @@ export default function ExamplePage() {
         <div>
           <h2 className="section-title mb-3 flex items-center gap-2">
             <History className="h-4 w-4 text-muted-foreground" />
-            Recent Activity
+            Recent activity
           </h2>
           <div className="space-y-3">
             {HISTORY.map((h, i) => (

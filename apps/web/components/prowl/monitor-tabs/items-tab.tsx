@@ -233,10 +233,9 @@ export function ItemsTab({ monitorId, allItems, schema, blacklist, scores, showF
 
   if (allItems.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center py-16 text-center">
-        <Search className="h-8 w-8 text-muted-foreground mb-4" />
-        <p className="text-sm text-muted-foreground">No items extracted yet</p>
-        <p className="text-xs text-muted-foreground mt-1">Items will appear after the first successful scan</p>
+      <div className="rounded-xl border border-border bg-card px-4 py-8 text-center">
+        <p className="text-sm font-medium">No items extracted yet.</p>
+        <p className="mt-1 text-xs text-muted-foreground">Items show here after the first successful scan.</p>
       </div>
     );
   }

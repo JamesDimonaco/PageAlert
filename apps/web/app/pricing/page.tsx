@@ -34,7 +34,7 @@ export default function PricingPage() {
               Sign in
             </Link>
             <Link href="/login" className={buttonVariants({ size: "sm", className: "gap-2" })}>
-              Get Started
+              Get started
               <ArrowRight className="h-4 w-4 hidden sm:inline" />
             </Link>
           </div>

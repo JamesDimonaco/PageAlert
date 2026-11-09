@@ -12,21 +12,21 @@ export function StatsCards({ monitors }: { monitors: Doc<"monitors">[] }) {
 
   const stats = [
     {
-      label: "Active Monitors",
+      label: "Active",
       value: active,
       icon: Activity,
       color: "text-emerald-400",
       bg: "bg-emerald-500/10",
     },
     {
-      label: "Total Matches",
+      label: "Matches",
       value: totalMatches,
       icon: Zap,
       color: "text-primary",
       bg: "bg-primary/10",
     },
     {
-      label: "Total Checks",
+      label: "Checks",
       value: totalChecks,
       icon: Clock,
       color: "text-blue-400",

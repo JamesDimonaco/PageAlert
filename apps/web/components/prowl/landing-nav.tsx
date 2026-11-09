@@ -21,7 +21,7 @@ export function LandingNav() {
         <div className="flex items-center gap-2 sm:gap-3">
           {isLoggedIn ? (
             <Link href="/dashboard" className={buttonVariants({ size: "sm", className: "gap-2" })}>
-              Go to Dashboard
+              Go to dashboard
               <ArrowRight className="h-4 w-4" />
             </Link>
           ) : (
@@ -30,7 +30,7 @@ export function LandingNav() {
                 Sign in
               </Link>
               <Link href="/login" className={buttonVariants({ size: "sm", className: "gap-2" })}>
-                Get Started
+                Get started
                 <ArrowRight className="h-4 w-4 hidden sm:inline" />
               </Link>
             </>
