@@ -187,7 +187,9 @@ export function FindProductTab({ clone, onPasteUrl, onDone }: FindProductTabProp
             placeholder="e.g. Sony WH-1000XM5"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            minLength={2}
+            // Two real characters, so a name of spaces is caught here and not dropped silently by runSearch.
+            pattern=".*\S.*\S.*"
+            title="Type at least 2 characters"
             maxLength={200}
             required
           />

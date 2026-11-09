@@ -211,7 +211,7 @@ export function NotificationSettings() {
                     <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-xs">Ready</Badge>
                   ) : null}
                 </div>
-                <p className="text-xs text-muted-foreground mt-0.5 truncate">{c.status ?? c.blurb}</p>
+                <p className="text-sm text-muted-foreground mt-0.5">{c.status ?? c.blurb}</p>
               </div>
               <Button
                 variant="outline"
@@ -230,7 +230,7 @@ export function NotificationSettings() {
             </div>
             <div className="min-w-0 flex-1">
               <p className="text-sm font-medium text-muted-foreground">Slack</p>
-              <p className="text-xs text-muted-foreground mt-0.5">Coming in a future update</p>
+              <p className="text-sm text-muted-foreground mt-0.5">Coming in a future update</p>
             </div>
             <Badge variant="outline" className="text-xs px-1.5 py-0">Coming soon</Badge>
           </div>
@@ -248,7 +248,7 @@ export function NotificationSettings() {
           <div className="flex items-center gap-4 p-4">
             <div className="min-w-0 flex-1">
               <p className="text-sm font-medium">Essential</p>
-              <p className="text-xs text-muted-foreground mt-0.5">Account, billing and security emails. These can&apos;t be turned off.</p>
+              <p className="text-sm text-muted-foreground mt-0.5">Account, billing and security emails. These can&apos;t be turned off.</p>
             </div>
             <Lock className="h-4 w-4 text-muted-foreground shrink-0" aria-label="Always on" />
           </div>
@@ -258,7 +258,7 @@ export function NotificationSettings() {
               <div key={t.id} className="flex items-center gap-4 p-4">
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium">{t.name}</p>
-                  <p className="text-xs text-muted-foreground mt-0.5">{t.blurb}</p>
+                  <p className="text-sm text-muted-foreground mt-0.5">{t.blurb}</p>
                 </div>
                 <Button
                   variant="outline"
@@ -301,7 +301,7 @@ export function NotificationSettings() {
             <p className="text-sm break-all">Alerts go to <strong>{email}</strong>.</p>
             <div>
               <p className="text-sm font-medium mb-1">Verify your email</p>
-              <p className="text-xs text-muted-foreground mb-3 leading-relaxed">
+              <p className="text-sm text-muted-foreground mb-3 leading-relaxed">
                 Send a test email to make sure notifications reach your inbox.
                 If it lands in spam, mark it as &ldquo;Not Spam&rdquo; and add <strong>alerts@pagealert.io</strong> to your contacts.
               </p>

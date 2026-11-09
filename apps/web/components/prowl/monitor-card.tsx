@@ -78,7 +78,7 @@ export function MonitorCard({ monitor, onTogglePause, onDelete, onRescan, onClon
               )}
             </div>
 
-            <p className="text-sm text-muted-foreground line-clamp-1 mb-4">
+            <p className="text-sm text-muted-foreground line-clamp-2 mb-4">
               &ldquo;{monitor.prompt}&rdquo;
             </p>
 

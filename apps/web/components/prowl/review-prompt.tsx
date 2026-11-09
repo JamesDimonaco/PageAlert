@@ -157,7 +157,7 @@ export function ReviewPrompt() {
               <p className="text-sm font-semibold">
                 Enjoying PageAlert? Share your experience!
               </p>
-              <p className="text-xs text-muted-foreground mt-0.5">
+              <p className="text-sm text-muted-foreground mt-0.5">
                 Your review helps others discover PageAlert.
               </p>
             </div>

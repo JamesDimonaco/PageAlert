@@ -458,7 +458,7 @@ export function CreateMonitorSheet({
                     rows={3}
                     required
                   />
-                  <p className="text-xs text-muted-foreground leading-relaxed">
+                  <p className="text-sm text-muted-foreground leading-relaxed">
                     {selectedMode?.hint ?? "Describe in plain English. Be as specific as you want."}
                   </p>
                 </div>
