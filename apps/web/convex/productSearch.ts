@@ -2,16 +2,9 @@ import { ConvexError, v } from "convex/values";
 import { z } from "zod";
 import { action, internalMutation, query, type ActionCtx, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
-import { requireLiveAccount } from "./account";
+import { activityRow, requireLiveAccount } from "./account";
 import { effectiveTier, type Tier } from "./tiers";
 import { isSearchRegion, type ProductListing } from "@prowl/shared";
-
-function activityRow(ctx: QueryCtx | MutationCtx, userId: string) {
-  return ctx.db
-    .query("userActivity")
-    .withIndex("by_userId", (q) => q.eq("userId", userId))
-    .unique();
-}
 
 const DAILY_SEARCH_LIMITS: Record<Tier, number> = { free: 5, sprint: 15, pro: 30, max: 100 };
 

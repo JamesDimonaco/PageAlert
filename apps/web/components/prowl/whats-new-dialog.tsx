@@ -14,14 +14,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { useCreateMonitor } from "@/hooks/use-create-monitor";
 import { trackWhatsNew } from "@/lib/posthog";
 
 export function WhatsNewDialog() {
   const router = useRouter();
   const entry = useQuery(api.whatsNew.show);
   const dismiss = useMutation(api.whatsNew.dismiss);
-  const { open: openCreateMonitor } = useCreateMonitor();
   const [closedId, setClosedId] = useState<string | null>(null);
   const shownRef = useRef<string | null>(null);
 
@@ -65,8 +63,7 @@ export function WhatsNewDialog() {
             <Button
               onClick={() => {
                 close("clicked_cta");
-                if (entry.opensNewMonitor) openCreateMonitor();
-                else router.push(entry.cta!.href);
+                router.push(entry.cta!.href);
               }}
             >
               {entry.cta.label}

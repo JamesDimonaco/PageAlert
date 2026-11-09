@@ -3,13 +3,13 @@ import { HISTORY_WINDOW_DAYS as days } from "./retention";
 export interface ChangelogEntry {
   /** What a dismissed popup records. Never reuse or change one, or the entry pops up again. */
   id: string;
-  /** YYYY-MM-DD, UTC. Accounts created on or after this day never get the popup for it, unless it has enablesBeta. */
+  /** YYYY-MM-DD, UTC: the day it ships. Accounts created on or after this day never get the popup for it. */
   date: string;
   title: string;
   body: string;
   cta?: { label: string; href: string };
-  /** The popup's button opens the new-monitor sheet, not `cta.href`. */
-  opensNewMonitor?: true;
+  /** No popup for users who had already switched this beta on: they know the feature. */
+  skipIfBetaOn?: "find_a_product";
 }
 
 /**
@@ -22,8 +22,8 @@ export const CHANGELOG: readonly ChangelogEntry[] = [
     date: "2026-11-09",
     title: "New feature available: Find a product",
     body: "Type a product name and we'll find the shops that sell it. Pick the ones to watch, with no link to paste. It's still in beta, so tell us if anything looks off.",
-    cta: { label: "Try it now", href: "/dashboard" },
-    opensNewMonitor: true,
+    cta: { label: "Try it now", href: "/dashboard?new=1" },
+    skipIfBetaOn: "find_a_product",
   },
   {
     id: "find-a-product-beta",

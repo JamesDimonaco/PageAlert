@@ -23,7 +23,7 @@ export interface CloneDefaults {
   name: string;
   url: string;
   prompt: string;
-  /** Set by Clone. Beta users start on "Find a product" with this search. */
+  /** Set by Clone. The sheet opens on "Find a product" with this search. */
   searchTerm?: string;
 }
 

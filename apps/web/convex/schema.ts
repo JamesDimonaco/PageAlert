@@ -484,8 +484,8 @@ export default defineSchema({
     // Ids of the changelog entries this user has dismissed as a popup. See
     // whatsNew.ts.
     announcementsSeen: v.optional(v.array(v.string())),
-    // No longer read: Find a product is on for everyone. Kept because old rows
-    // still carry it; drop it once it has been cleared from them.
+    // Who switched Find a product on while it was opt-in. It is on for everyone
+    // now; this only keeps its launch popup from those users. See whatsNew.ts.
     betaFeatures: v.optional(v.array(v.literal("find_a_product"))),
     // The country Find a product last searched, offered first next time.
     searchRegion: v.optional(v.string()),

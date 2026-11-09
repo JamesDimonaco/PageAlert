@@ -99,18 +99,24 @@ describe("whatsNew.show: who gets the newest changelog entry as a popup", () => 
 });
 
 // The launch popup. Without it, users who never opened Settings never hear the feature is on.
-describe("the Find a product launch entry", () => {
-  it("is the newest entry, so it pops up", () => {
-    expect(latest.id).toBe("find-a-product");
+// Remove once a newer entry is at the top.
+describe("whatsNew.show: while the Find a product launch entry is the newest", () => {
+  const whileLaunchIsNewest = it.runIf(latest.id === "find-a-product");
+
+  whileLaunchIsNewest("opens the new-monitor sheet from its button", () => {
+    expect(latest.cta?.href).toBe("/dashboard?new=1");
   });
 
-  it("opens the new-monitor sheet from its button", () => {
-    expect(latest.opensNewMonitor).toBe(true);
-  });
-
-  it("shows to an existing user who never turned the old beta on", async () => {
+  whileLaunchIsNewest("shows to an existing user who never turned the old beta on", async () => {
     const t = harness();
     const userId = await existingUser(t);
     expect(await t.withIdentity({ subject: userId }).query(api.whatsNew.show, {})).toEqual(latest);
+  });
+
+  whileLaunchIsNewest("hides from someone who already turned the old beta on", async () => {
+    const t = harness();
+    const userId = await existingUser(t);
+    await t.run((ctx) => ctx.db.insert("userActivity", { userId, lastSeenAt: 0, betaFeatures: ["find_a_product"] }));
+    expect(await t.withIdentity({ subject: userId }).query(api.whatsNew.show, {})).toBeNull();
   });
 });

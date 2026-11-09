@@ -106,8 +106,7 @@ const findAProduct: Announcement = {
       "It's still in beta, so reply to this email if anything looks off.",
     ],
     button: "Try it now",
-    buttonHint: "Dashboard, then New monitor.",
-    href: `${APP_URL}/dashboard`,
+    href: `${APP_URL}/dashboard?new=1`,
   }),
 };
 
