@@ -27,7 +27,7 @@ export function ProductCard({ product, monitors }: ProductCardProps) {
       <CardContent className="p-4 sm:p-6">
         <div className="flex flex-wrap items-center gap-3 mb-2.5">
           <Package className="h-4 w-4 text-muted-foreground" />
-          <h2 className="min-w-0 text-base font-semibold truncate">
+          <h2 className="min-w-0 text-base font-semibold line-clamp-2">
             <Link href={detailHref} className="outline-none after:absolute after:inset-0 focus-visible:after:rounded-xl focus-visible:after:outline-2 focus-visible:after:outline-ring">
               {product.name}
             </Link>

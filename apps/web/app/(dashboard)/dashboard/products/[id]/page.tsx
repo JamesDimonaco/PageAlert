@@ -83,6 +83,8 @@ export default function ProductPage({ params }: { params: Promise<{ id: string }
   const watched = product.listings.filter((l) => l.monitor !== null);
   const dismissedCount = product.listings.filter((l) => l.state === "dismissed").length;
   const shown = product.listings.filter((l) => showDismissed || l.state !== "dismissed");
+  const watchedRows = shown.filter((l) => l.state === "watching");
+  const otherRows = shown.filter((l) => l.state !== "watching");
   const region = SEARCH_REGIONS.find((r) => r.code === product.region)?.name ?? product.region;
   // Every monitor counts toward the plan, paused ones included.
   const full = monitors !== undefined && !tierLoading && monitors.length >= maxMonitors;
@@ -140,16 +142,62 @@ export default function ProductPage({ params }: { params: Promise<{ id: string }
     }
   }
 
+  const row = (listing: Listing) => (
+    <ListingRow
+      key={listing.url}
+      listing={listing}
+      isNew={newUrls.has(listing.url)}
+      busy={busyUrls.has(listing.url)}
+      canWatch={!full}
+      onWatch={() =>
+        act(
+          listing.url,
+          async () => {
+            const got = await watchListing({ id: groupId, url: listing.url });
+            trackListingReviewed(true, { site: listing.site, label: listing.label });
+            return planNotes(
+              product.notificationChannels ?? got.notificationChannels ?? [],
+              got.notificationChannels ?? [],
+              product.checkInterval,
+              got.checkInterval
+            );
+          },
+          `Watching ${listing.site}`
+        )
+      }
+      onUnwatch={() => setUnwatching(listing)}
+      onDismiss={() =>
+        act(
+          listing.url,
+          async () => {
+            await setListingDismissed({ id: groupId, url: listing.url, dismissed: true });
+            trackListingReviewed(false, { site: listing.site, label: listing.label });
+          },
+          `Dismissed ${listing.site}`
+        )
+      }
+      onRestore={() =>
+        act(
+          listing.url,
+          async () => {
+            await setListingDismissed({ id: groupId, url: listing.url, dismissed: false });
+          },
+          `Restored ${listing.site}`
+        )
+      }
+    />
+  );
+
   return (
     <div className="space-y-6">
       <UpgradeBanner tier={tier} tierResolved={tierResolved} atLimit={full} />
 
-      <div className="flex items-center gap-3 overflow-hidden">
+      <div className="flex items-center gap-3">
         <Link href="/dashboard" aria-label="Back to dashboard" className={buttonVariants({ variant: "ghost", size: "icon", className: "shrink-0" })}>
           <ArrowLeft className="h-5 w-5" />
         </Link>
         <div className="flex-1 min-w-0">
-          <h1 className="text-xl sm:text-2xl font-bold tracking-tight truncate">{product.name}</h1>
+          <h1 className="text-xl sm:text-2xl font-bold tracking-tight line-clamp-2">{product.name}</h1>
           <p className="text-muted-foreground mt-1 text-sm">
             {region} · watching {watched.length} listing{watched.length === 1 ? "" : "s"}
           </p>
@@ -179,76 +227,41 @@ export default function ProductPage({ params }: { params: Promise<{ id: string }
         </div>
       </div>
 
-      <div className="space-y-2">
-        {full && hasSuggestions && (
-          <p className="text-xs text-muted-foreground">
-            You&apos;re using all {maxMonitors} of your monitors. Paused ones still count, so delete one to free a
-            slot, or{" "}
-            <Link href="/dashboard/settings?tab=billing" className="underline hover:text-foreground">upgrade</Link>.
-          </p>
-        )}
-        <ul className="space-y-2">
-          {shown.map((listing) => (
-            <ListingRow
-              key={listing.url}
-              listing={listing}
-              isNew={newUrls.has(listing.url)}
-              busy={busyUrls.has(listing.url)}
-              canWatch={!full}
-              onWatch={() =>
-                act(
-                  listing.url,
-                  async () => {
-                    const got = await watchListing({ id: groupId, url: listing.url });
-                    trackListingReviewed(true, { site: listing.site, label: listing.label });
-                    return planNotes(
-                      product.notificationChannels ?? got.notificationChannels ?? [],
-                      got.notificationChannels ?? [],
-                      product.checkInterval,
-                      got.checkInterval
-                    );
-                  },
-                  `Watching ${listing.site}`
-                )
-              }
-              onUnwatch={() => setUnwatching(listing)}
-              onDismiss={() =>
-                act(
-                  listing.url,
-                  async () => {
-                    await setListingDismissed({ id: groupId, url: listing.url, dismissed: true });
-                    trackListingReviewed(false, { site: listing.site, label: listing.label });
-                  },
-                  `Dismissed ${listing.site}`
-                )
-              }
-              onRestore={() =>
-                act(
-                  listing.url,
-                  async () => {
-                    await setListingDismissed({ id: groupId, url: listing.url, dismissed: false });
-                  },
-                  `Restored ${listing.site}`
-                )
-              }
-            />
-          ))}
-        </ul>
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <Button size="sm" variant="outline" className="gap-2" onClick={() => void findMoreListings()} disabled={finding}>
-            {finding ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
-            {finding ? "Searching…" : "Find more listings"}
-          </Button>
-          {dismissedCount > 0 && (
-            <button
-              type="button"
-              onClick={() => setShowDismissed(!showDismissed)}
-              className="text-xs text-muted-foreground underline hover:text-foreground"
-            >
-              {showDismissed ? "Hide dismissed" : `Show dismissed (${dismissedCount})`}
-            </button>
+      {watchedRows.length > 0 && (
+        <section className="space-y-2">
+          <h2 className="text-sm font-medium">Watching</h2>
+          <ul className="space-y-2">{watchedRows.map(row)}</ul>
+        </section>
+      )}
+
+      {otherRows.length > 0 && (
+        <section className="space-y-2">
+          <h2 className="text-sm font-medium">More shops we found</h2>
+          {full && hasSuggestions && (
+            <p className="text-xs text-muted-foreground">
+              You&apos;re using all {maxMonitors} of your monitors. Paused ones still count, so delete one to free a
+              slot, or{" "}
+              <Link href="/dashboard/settings?tab=billing" className="underline hover:text-foreground">upgrade</Link>.
+            </p>
           )}
-        </div>
+          <ul className="space-y-2">{otherRows.map(row)}</ul>
+        </section>
+      )}
+
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <Button size="sm" variant="outline" className="gap-2" onClick={() => void findMoreListings()} disabled={finding}>
+          {finding ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+          {finding ? "Searching…" : "Find more listings"}
+        </Button>
+        {dismissedCount > 0 && (
+          <button
+            type="button"
+            onClick={() => setShowDismissed(!showDismissed)}
+            className="text-xs text-muted-foreground underline hover:text-foreground"
+          >
+            {showDismissed ? "Hide dismissed" : `Show dismissed (${dismissedCount})`}
+          </button>
+        )}
       </div>
 
       <ProductCriteriaForm
@@ -332,13 +345,19 @@ function ListingRow({
   const href = toSafeUrl(listing.url);
 
   return (
-    <li className="flex flex-col gap-3 rounded-lg border border-border/40 bg-card/50 p-3 sm:flex-row sm:items-center">
+    <li className="flex flex-col gap-3 rounded-lg border border-border bg-card p-3 sm:flex-row sm:items-center">
       <div className="min-w-0 flex-1 space-y-1">
-        <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+        <p className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
           {listing.site}
           {href && (
-            <a href={href} target="_blank" rel="noopener noreferrer" className="hover:text-foreground" aria-label={`Open ${listing.site}`}>
-              <ExternalLink className="h-3 w-3" />
+            <a
+              href={href}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-1 underline hover:text-foreground sm:hidden"
+              aria-label={`View ${listing.title} at ${listing.site}, opens in a new tab`}
+            >
+              View <ExternalLink className="h-3.5 w-3.5" />
             </a>
           )}
         </p>
@@ -361,11 +380,28 @@ function ListingRow({
               <span className="text-muted-foreground">checked {timeAgo(monitor.lastCheckedAt)}</span>
             </>
           ) : (
-            <Badge variant="outline">{listing.state === "dismissed" ? "Dismissed" : "Suggested"}</Badge>
+            listing.state === "dismissed" && <Badge variant="outline">Dismissed</Badge>
           )}
         </div>
+        {monitor?.status === "error" && (
+          <p className="text-xs text-destructive">
+            {monitor.lastError ?? "We couldn't read this page."}{" "}
+            <Link href={`/dashboard/monitors/${listing.monitorId}`} className="underline">See what to do</Link>
+          </p>
+        )}
       </div>
-      <div className="flex shrink-0 gap-2">
+      <div className="flex shrink-0 items-center gap-2">
+        {href && (
+          <a
+            href={href}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="hidden items-center gap-1 px-2 text-xs text-muted-foreground underline hover:text-foreground sm:flex"
+            aria-label={`View ${listing.title} at ${listing.site}, opens in a new tab`}
+          >
+            View <ExternalLink className="h-3.5 w-3.5" />
+          </a>
+        )}
         {busy ? (
           <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
         ) : listing.state === "watching" ? (

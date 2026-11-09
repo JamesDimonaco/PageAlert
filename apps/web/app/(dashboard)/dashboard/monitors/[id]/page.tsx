@@ -210,7 +210,7 @@ export default function MonitorDetailPage({
         </Link>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-3">
-            <h1 className="text-xl sm:text-2xl font-bold tracking-tight truncate">{monitor.name}</h1>
+            <h1 className="text-xl sm:text-2xl font-bold tracking-tight line-clamp-2">{monitor.name}</h1>
             <StatusBadge status={monitor.status} />
             {m.muted && (
               <Badge variant="outline" className="gap-1 bg-amber-500/10 text-amber-400 border-amber-500/20">

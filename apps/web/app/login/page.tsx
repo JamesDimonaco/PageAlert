@@ -84,7 +84,7 @@ export default function LoginPage() {
   }
 
   return (
-    <main id="main" className="flex min-h-screen overflow-hidden items-center justify-center px-4">
+    <main id="main" className="relative flex min-h-screen overflow-hidden items-center justify-center px-4">
       <div className="absolute inset-0 -z-10">
         <div className="absolute left-1/2 top-1/3 -translate-x-1/2 -translate-y-1/2 h-[600px] w-[600px] rounded-full bg-primary/5 blur-3xl" />
       </div>
@@ -196,7 +196,7 @@ export default function LoginPage() {
                   setIsSignUp(!isSignUp);
                   setFormError(null);
                 }}
-                className="text-primary hover:underline font-medium"
+                className="text-primary underline underline-offset-2 font-medium"
               >
                 {isSignUp ? "Sign in" : "Sign up"}
               </button>

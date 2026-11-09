@@ -214,7 +214,7 @@ export function NotificationSettings() {
                 <p className="text-xs text-muted-foreground mt-0.5 truncate">{c.status ?? c.blurb}</p>
               </div>
               <Button
-                variant={c.ready ? "ghost" : "outline"}
+                variant="outline"
                 size="sm"
                 className="shrink-0"
                 disabled={c.id === "push" && push.state === "loading"}
@@ -229,7 +229,7 @@ export function NotificationSettings() {
               <Hash className="h-5 w-5" />
             </div>
             <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium">Slack</p>
+              <p className="text-sm font-medium text-muted-foreground">Slack</p>
               <p className="text-xs text-muted-foreground mt-0.5">Coming in a future update</p>
             </div>
             <Badge variant="outline" className="text-xs px-1.5 py-0">Coming soon</Badge>

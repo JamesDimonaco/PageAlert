@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { errorText } from "@/lib/utils";
 import { AlertTriangle, CheckCircle2, Eye, Loader2 } from "lucide-react";
@@ -26,18 +26,20 @@ interface WatchProductFormProps {
   /** Criteria guessed from a cloned monitor's prompt. */
   guess: GuessedAlertOn | null;
   onCreated: (groupId: Id<"monitorGroups">) => void;
+  /** The listing picker, so the Watch bar stays on screen while the user picks. */
+  children: ReactNode;
 }
 
 /** The criteria step, then one monitor per ticked listing. Mount it per search, so the defaults follow the results. */
-export function WatchProductForm({ name, region, listings, ticked, guess, onCreated }: WatchProductFormProps) {
+export function WatchProductForm({ name, region, listings, ticked, guess, onCreated, children }: WatchProductFormProps) {
   const create = useMutation(api.monitorGroups.create);
-  // A cloned prompt says what they wanted. Without one, out of stock somewhere
-  // means a restock is what they are waiting for.
+  // A cloned prompt says what they wanted. Without one, they get price drops,
+  // plus restocks if a shop is out of stock.
   const guessed = guess && (guess.backInStock || guess.priceDrop || guess.priceBelow) ? guess : null;
   const outOfStock = listings.some((l) => l.inStock === false);
   const [backInStock, setBackInStock] = useState(guessed ? guessed.backInStock : outOfStock);
   const [priceChoice, setPriceChoice] = useState<PriceChoice>(
-    guessed ? (guessed.priceBelow ? "below" : guessed.priceDrop ? "drop" : "off") : outOfStock ? "off" : "drop"
+    guessed ? (guessed.priceBelow ? "below" : guessed.priceDrop ? "drop" : "off") : "drop"
   );
   const resultsCurrency = listings.find((l) => l.currency)?.currency ?? null;
   const oldTarget = guessed?.priceBelow ?? null;
@@ -65,6 +67,10 @@ export function WatchProductForm({ name, region, listings, ticked, guess, onCrea
 
   async function submit() {
     setError(null);
+    if (watching.length === 0) {
+      setError("Tick at least one shop in step 1.");
+      return;
+    }
     if (!backInStock && priceChoice === "off") {
       setError("Pick what to be alerted about.");
       return;
@@ -104,41 +110,48 @@ export function WatchProductForm({ name, region, listings, ticked, guess, onCrea
   }
 
   return (
-    <div className="space-y-4 rounded-lg border border-border/40 bg-card/50 p-4">
-      <AlertOnFields
-        backInStock={backInStock}
-        onBackInStockChange={setBackInStock}
-        priceChoice={priceChoice}
-        onPriceChoiceChange={setPriceChoice}
-        target={target}
-        onTargetChange={setTarget}
-        currency={currency}
-        onCurrencyChange={setCurrency}
-      />
-      {oldTarget && !targetFits && priceChoice === "below" && (
-        <p className="pl-6 text-xs text-muted-foreground">
-          Your old alert was under {oldTarget.written}.{" "}
-          {resultsCurrency ? `Set a target in ${resultsCurrency}.` : "Set a target and pick its currency."}
-        </p>
-      )}
-      <div className="space-y-2">
-        <Label className="text-sm font-medium">Check frequency</Label>
-        <IntervalSelector value={shownInterval} onValueChange={setCheckInterval} />
-      </div>
-      <ChannelSelector value={shownChannels} onChange={setChannels} monitorId={null} />
-      {error && <p className="text-sm text-destructive">{error}</p>}
-      <div className="flex justify-end">
-        <Button
-          type="button"
-          className="gap-2"
-          onClick={() => void submit()}
-          disabled={saving || watching.length === 0 || tierLoading || configuredChannels === undefined}
-        >
-          {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Eye className="h-4 w-4" />}
-          {watching.length === 0
-            ? "Tick a listing to watch"
-            : `Watch ${watching.length} listing${watching.length === 1 ? "" : "s"}`}
-        </Button>
+    <div className="space-y-6">
+      {children}
+      <section className="space-y-4" aria-labelledby="pick-alerts">
+        <h3 id="pick-alerts" className="text-sm font-medium">2. Choose your alerts</h3>
+        <AlertOnFields
+          backInStock={backInStock}
+          onBackInStockChange={setBackInStock}
+          priceChoice={priceChoice}
+          onPriceChoiceChange={setPriceChoice}
+          target={target}
+          onTargetChange={setTarget}
+          currency={currency}
+          onCurrencyChange={setCurrency}
+        />
+        {oldTarget && !targetFits && priceChoice === "below" && (
+          <p className="pl-6 text-xs text-muted-foreground">
+            Your old alert was under {oldTarget.written}.{" "}
+            {resultsCurrency ? `Set a target in ${resultsCurrency}.` : "Set a target and pick its currency."}
+          </p>
+        )}
+        <div className="space-y-2">
+          <Label className="text-sm font-medium">Check frequency</Label>
+          <IntervalSelector value={shownInterval} onValueChange={setCheckInterval} />
+        </div>
+        <ChannelSelector value={shownChannels} onChange={setChannels} monitorId={null} />
+      </section>
+      <div className="sticky bottom-0 -mx-4 -mb-4 space-y-2 border-t border-border bg-background px-4 py-3 sm:-mx-6 sm:-mb-6 sm:px-6">
+        {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+        <div className="flex items-center justify-between gap-3">
+          <p aria-live="polite" className="text-sm text-muted-foreground">
+            {watching.length} shop{watching.length === 1 ? "" : "s"} selected
+          </p>
+          <Button
+            type="button"
+            className="gap-2"
+            onClick={() => void submit()}
+            disabled={saving || tierLoading || configuredChannels === undefined}
+          >
+            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Eye className="h-4 w-4" />}
+            {watching.length > 1 ? `Watch ${watching.length} shops` : watching.length === 1 ? "Watch 1 shop" : "Watch shops"}
+          </Button>
+        </div>
       </div>
     </div>
   );
@@ -168,7 +181,7 @@ export function ProductProgress({ groupId, onDone }: { groupId: Id<"monitorGroup
         Watching <span className="font-medium">{group.name}</span>. We&apos;re reading each page now. You can
         leave, and it will carry on.
       </p>
-      <ul className="space-y-2">
+      <ul aria-live="polite" className="space-y-2">
         {watched.map((listing) => {
           const m = listing.monitor;
           const ready = (m?.checkCount ?? 0) > 0;

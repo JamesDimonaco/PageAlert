@@ -180,7 +180,7 @@ export function ChannelSelector({ value, onChange, monitorId, groupId, disabled 
 
   return (
     <div className="space-y-2">
-      <p className="text-xs font-medium text-muted-foreground">Notification channels</p>
+      <p className="text-sm font-medium">Notification channels</p>
       <div className="flex flex-wrap gap-2">
         {(["email", "sms", "push", "telegram", "discord"] as Channel[])
           // While text alerts are off there is no settings card to send anyone

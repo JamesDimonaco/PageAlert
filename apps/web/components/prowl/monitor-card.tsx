@@ -64,7 +64,7 @@ export function MonitorCard({ monitor, onTogglePause, onDelete, onRescan, onClon
         <div className="flex items-start justify-between gap-4">
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-3 mb-2.5">
-              <h2 className="min-w-0 text-base font-semibold truncate">
+              <h2 className="min-w-0 text-base font-semibold line-clamp-2">
                 <Link href={detailHref} className="outline-none after:absolute after:inset-0 focus-visible:after:rounded-xl focus-visible:after:outline-2 focus-visible:after:outline-ring">
                   {monitor.name}
                 </Link>
@@ -81,6 +81,10 @@ export function MonitorCard({ monitor, onTogglePause, onDelete, onRescan, onClon
             <p className="text-sm text-muted-foreground line-clamp-1 mb-4">
               &ldquo;{monitor.prompt}&rdquo;
             </p>
+
+            {monitor.status === "error" && monitor.lastError && (
+              <p className="text-sm text-destructive line-clamp-2 mb-4">{monitor.lastError}</p>
+            )}
 
             {monitor.autoPausedAt !== undefined && (
               <div className="mb-4">

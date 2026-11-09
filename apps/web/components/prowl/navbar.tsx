@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Radar, LogOut, Settings, ShieldCheck, Plus, MessageSquare } from "lucide-react";
+import { Radar, LogOut, Settings, ShieldCheck, Plus, MessageSquare, ScrollText } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { NotificationBell } from "@/components/prowl/notification-bell";
 import { FeedbackDialog } from "@/components/prowl/feedback-dialog";
@@ -113,6 +113,10 @@ export function Navbar() {
                 </div>
               </div>
               <DropdownMenuSeparator />
+              <DropdownMenuItem className="md:hidden" onClick={() => router.push("/dashboard/logs")}>
+                <ScrollText className="mr-2 h-4 w-4" />
+                Logs
+              </DropdownMenuItem>
               <DropdownMenuItem onClick={() => router.push("/dashboard/settings")}>
                 <Settings className="mr-2 h-4 w-4" />
                 Settings
