@@ -30,15 +30,21 @@ type Announcement = {
   render: (unsubscribeLink: string) => { html: string; text: string };
 };
 
-const smsAlerts: Announcement = {
-  subject: "PageAlert can now text you",
-  render: (unsubscribeLink) => {
-    const settingsHref = `${APP_URL}/dashboard/settings?tab=notifications#sms`;
-    const paragraphs = [
-      "PageAlert can now send you a text message the moment a monitor finds a match.",
-      "A text reaches you faster than an email, which helps when stock sells out in minutes.",
-      "Texts come with every paid plan.",
-    ];
+/** The shared look of every announcement: a heading, a few paragraphs and one button. */
+function announcementEmail({
+  heading,
+  paragraphs,
+  button,
+  buttonHint,
+  href,
+}: {
+  heading: string;
+  paragraphs: string[];
+  button: string;
+  buttonHint?: string;
+  href: string;
+}): Announcement["render"] {
+  return (unsubscribeLink) => {
     const html = `<!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
@@ -46,14 +52,13 @@ const smsAlerts: Announcement = {
   <div style="max-width:560px;margin:0 auto;padding:40px 20px">
     <div style="background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.1)">
       <div style="background:#3b82f6;padding:24px 32px">
-        <h1 style="margin:0;color:#fff;font-size:20px;font-weight:600">Text message alerts</h1>
+        <h1 style="margin:0;color:#fff;font-size:20px;font-weight:600">${esc(heading)}</h1>
       </div>
       <div style="padding:32px;line-height:1.55">
         ${paragraphs.map((p) => `<p style="margin:0 0 16px;color:#444;font-size:15px">${esc(p)}</p>`).join("\n        ")}
-        <a href="${esc(settingsHref)}" style="display:inline-block;background:#3b82f6;color:#fff;padding:14px 28px;border-radius:8px;text-decoration:none;font-weight:600;font-size:15px;margin-top:8px">
-          Turn on text alerts
-        </a>
-        <p style="margin:12px 0 0;color:#888;font-size:12px">Settings, then Notifications, then SMS.</p>
+        <a href="${esc(href)}" style="display:inline-block;background:#3b82f6;color:#fff;padding:14px 28px;border-radius:8px;text-decoration:none;font-weight:600;font-size:15px;margin-top:8px">
+          ${esc(button)}
+        </a>${buttonHint ? `\n        <p style="margin:12px 0 0;color:#888;font-size:12px">${esc(buttonHint)}</p>` : ""}
       </div>
       <div style="padding:16px 32px;background:#f9fafb;border-top:1px solid #eee">
         <p style="margin:0;color:#999;font-size:12px">
@@ -67,17 +72,48 @@ const smsAlerts: Announcement = {
 </html>`;
     const text = `${paragraphs.join("\n\n")}
 
-Turn on text alerts (Settings, then Notifications, then SMS):
-${settingsHref}
+${button}${buttonHint ? ` (${buttonHint.replace(/\.$/, "")})` : ""}:
+${href}
 
 You are getting this because you have a PageAlert account.
 Unsubscribe from product updates: ${unsubscribeLink}`;
     return { html, text };
-  },
+  };
+}
+
+const smsAlerts: Announcement = {
+  subject: "PageAlert can now text you",
+  render: announcementEmail({
+    heading: "Text message alerts",
+    paragraphs: [
+      "PageAlert can now send you a text message the moment a monitor finds a match.",
+      "A text reaches you faster than an email, which helps when stock sells out in minutes.",
+      "Texts come with every paid plan.",
+    ],
+    button: "Turn on text alerts",
+    buttonHint: "Settings, then Notifications, then SMS.",
+    href: `${APP_URL}/dashboard/settings?tab=notifications#sms`,
+  }),
+};
+
+const findAProduct: Announcement = {
+  subject: "New in PageAlert: find a product by name",
+  render: announcementEmail({
+    heading: "Find a product",
+    paragraphs: [
+      "You no longer need a link to watch a product. Type its name, and PageAlert finds the shops that sell it.",
+      "Tick the shops you want to watch. We tell you when the price drops or it comes back in stock.",
+      "It's still in beta, so reply to this email if anything looks off.",
+    ],
+    button: "Try it now",
+    buttonHint: "Dashboard, then New monitor.",
+    href: `${APP_URL}/dashboard`,
+  }),
 };
 
 const ANNOUNCEMENTS: Record<string, Announcement> = {
   "sms-alerts-2026-10": smsAlerts,
+  "find-a-product-2026-11": findAProduct,
 };
 
 const recipientValidator = v.object({ userId: v.string(), email: v.string() });

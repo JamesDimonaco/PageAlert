@@ -8,8 +8,8 @@ export interface ChangelogEntry {
   title: string;
   body: string;
   cta?: { label: string; href: string };
-  /** The popup's button switches this beta on, then opens the new-monitor sheet. */
-  enablesBeta?: "find_a_product";
+  /** The popup's button opens the new-monitor sheet, not `cta.href`. */
+  opensNewMonitor?: true;
 }
 
 /**
@@ -18,12 +18,18 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: readonly ChangelogEntry[] = [
   {
+    id: "find-a-product",
+    date: "2026-11-09",
+    title: "New feature available: Find a product",
+    body: "Type a product name and we'll find the shops that sell it. Pick the ones to watch, with no link to paste. It's still in beta, so tell us if anything looks off.",
+    cta: { label: "Try it now", href: "/dashboard" },
+    opensNewMonitor: true,
+  },
+  {
     id: "find-a-product-beta",
     date: "2026-11-06",
     title: "New beta: Find a product",
     body: "Type a product name and pick the shops to watch, with no link to paste. It's an early version, so expect rough edges.",
-    cta: { label: "Turn it on", href: "/dashboard/settings?tab=profile" },
-    enablesBeta: "find_a_product",
   },
   {
     id: "sms-alerts",

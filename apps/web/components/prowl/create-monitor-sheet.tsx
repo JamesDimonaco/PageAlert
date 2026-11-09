@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ChannelSelector, defaultChannels, useConfiguredChannels, type Channel } from "@/components/prowl/channel-selector";
 import { IntervalSelector } from "@/components/prowl/interval-selector";
@@ -25,8 +26,6 @@ import {
   MessageCircle,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useQuery } from "convex/react";
-import { api } from "@/convex/_generated/api";
 import { useMonitor } from "@/hooks/use-monitors";
 import type { Id } from "@/convex/_generated/dataModel";
 import { toast } from "sonner";
@@ -90,17 +89,11 @@ export function CreateMonitorSheet({
   // interacts with the form for the first time after hydration, or when
   // they hit "Start over". See PROWL-038 Phase 3.
   const [hydratedFromDraft, setHydratedFromDraft] = useState(false);
-  const betaFeatures = useQuery(api.betaFeatures.list);
-  const findAProduct = betaFeatures?.includes("find_a_product") ?? false;
   const [tab, setTab] = useState<FormTab>("find");
-  const urlTab = !findAProduct || tab === "url";
-  // Nothing renders until the flag is known, or the URL form flashes up and
-  // then vanishes for beta users.
-  const showUrlForm = betaFeatures !== undefined && urlTab;
-  // Mounted on the first visit to the tab, then kept, so URL-only users never
-  // run its queries and results survive a look at the other tab.
+  const urlTab = tab === "url";
+  // Mounted on the first visit to the tab, then kept, so results survive a look at the other tab.
   const [findVisited, setFindVisited] = useState(false);
-  if (findAProduct && tab === "find" && !findVisited) setFindVisited(true);
+  if (tab === "find" && !findVisited) setFindVisited(true);
   // What Clone hands the Find tab. Cleared on close so a later open starts empty.
   const [cloneSeed, setCloneSeed] = useState<{ query: string; guess: GuessedAlertOn } | null>(null);
 
@@ -214,7 +207,6 @@ export function CreateMonitorSheet({
       setPrompt(cloneDefaults.prompt);
       const { searchTerm } = cloneDefaults;
       setCloneSeed(searchTerm ? { query: searchTerm, guess: guessAlertOn(cloneDefaults.prompt) } : null);
-      // Without the beta, "find" still shows the URL form.
       setTab(searchTerm ? "find" : "url");
       onCloneDefaultsConsumed?.();
     }
@@ -325,11 +317,14 @@ export function CreateMonitorSheet({
           </SheetHeader>
 
           <div>
-            {step === "form" && findAProduct && (
+            {step === "form" && (
               <>
                 <Tabs value={tab} onValueChange={(v) => setTab(v as FormTab)} className="mb-4">
                   <TabsList className="w-full">
-                    <TabsTrigger value="find">Find a product</TabsTrigger>
+                    <TabsTrigger value="find">
+                      Find a product
+                      <Badge variant="outline" className="text-[10px] font-normal">Beta</Badge>
+                    </TabsTrigger>
                     <TabsTrigger value="url">Paste a URL</TabsTrigger>
                   </TabsList>
                 </Tabs>
@@ -354,7 +349,7 @@ export function CreateMonitorSheet({
             )}
 
             {/* ---- STEP 1: FORM ---- */}
-            {step === "form" && showUrlForm && (
+            {step === "form" && urlTab && (
               <form
                 onSubmit={(e) => {
                   e.preventDefault();

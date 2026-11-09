@@ -15,7 +15,8 @@ function harness() {
   return t;
 }
 
-async function signUp(t: ReturnType<typeof harness>, email: string, betaOn = true) {
+// No beta opt-in: Find a product is on for everyone, so every test here runs as a user who never touched Settings.
+async function signUp(t: ReturnType<typeof harness>, email: string) {
   const user = (await t.mutation(components.betterAuth.adapter.create, {
     input: {
       model: "user",
@@ -23,7 +24,6 @@ async function signUp(t: ReturnType<typeof harness>, email: string, betaOn = tru
     },
   })) as { _id: string };
   const as = t.withIdentity({ subject: user._id, email });
-  if (betaOn) await as.mutation(api.betaFeatures.set, { feature: "find_a_product", enabled: true });
   return { as, userId: user._id };
 }
 
@@ -115,14 +115,6 @@ describe("monitorGroups.create", () => {
 
     const group = await as.query(api.monitorGroups.get, { id: groupId });
     expect(group?.listings.map((l) => l.price)).toEqual([27999, undefined, undefined]);
-  });
-
-  it("refuses a user with the beta off", async () => {
-    const t = harness();
-    const { as } = await signUp(t, "a@example.test", false);
-
-    await expect(as.mutation(api.monitorGroups.create, PRODUCT)).rejects.toThrow("beta feature");
-    expect(await as.query(api.monitors.list, {})).toHaveLength(0);
   });
 
   // The client caps ticks at free slots, but a second tab or a stale count

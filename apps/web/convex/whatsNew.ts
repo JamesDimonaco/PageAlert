@@ -22,9 +22,6 @@ export const show = query({
       .unique();
     if (activity?.announcementsSeen?.includes(entry.id)) return null;
 
-    // A beta stays hidden until switched on, so new signups need telling too.
-    if (entry.enablesBeta) return activity?.betaFeatures?.includes(entry.enablesBeta) ? null : entry;
-
     // Someone who signed up after it shipped found it already there.
     const user = await ctx.runQuery(components.betterAuth.adapter.findOne, {
       model: "user",
