@@ -211,7 +211,7 @@ export function NotificationSettings() {
                     <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-xs">Ready</Badge>
                   ) : null}
                 </div>
-                <p className="text-sm text-muted-foreground mt-0.5">{c.status ?? c.blurb}</p>
+                <p className="text-sm text-muted-foreground mt-0.5 [overflow-wrap:anywhere]">{c.status ?? c.blurb}</p>
               </div>
               <Button
                 variant="outline"
