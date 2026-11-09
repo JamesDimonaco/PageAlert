@@ -2,9 +2,10 @@
 
 import { use, useState } from "react";
 import Link from "next/link";
+import { BackLink } from "@/components/prowl/back-link";
 import { useRouter } from "next/navigation";
 import { useAction, useMutation, useQuery } from "convex/react";
-import { ArrowLeft, ExternalLink, Loader2, MoreVertical, Pause, Play, Search, Trash2 } from "lucide-react";
+import { ExternalLink, Loader2, MoreVertical, Pause, Play, Search, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { SEARCH_REGIONS, formatMinorUnits } from "@prowl/shared";
 import { api } from "@/convex/_generated/api";
@@ -192,19 +193,17 @@ export default function ProductPage({ params }: { params: Promise<{ id: string }
     <div className="space-y-6">
       <UpgradeBanner tier={tier} tierResolved={tierResolved} atLimit={full} />
 
-      <div className="flex items-center gap-3">
-        <Link href="/dashboard" aria-label="Back to dashboard" className={buttonVariants({ variant: "ghost", size: "icon", className: "shrink-0" })}>
-          <ArrowLeft className="h-5 w-5" />
-        </Link>
+      <BackLink href="/dashboard">Back to dashboard</BackLink>
+      <div className="flex items-start gap-3">
         <div className="flex-1 min-w-0">
-          <h1 className="text-xl sm:text-2xl font-bold tracking-tight line-clamp-2">{product.name}</h1>
+          <h1 className="page-title line-clamp-2">{product.name}</h1>
           <p className="text-muted-foreground mt-1 text-sm">
             {region} · watching {watched.length} listing{watched.length === 1 ? "" : "s"}
           </p>
         </div>
         <div className="shrink-0">
           <DropdownMenu>
-            <DropdownMenuTrigger aria-label="Product actions" className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-border/50 hover:bg-muted transition-colors">
+            <DropdownMenuTrigger aria-label="Product actions" className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-border hover:bg-muted transition-colors">
               <MoreVertical className="h-4 w-4" />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
@@ -229,14 +228,14 @@ export default function ProductPage({ params }: { params: Promise<{ id: string }
 
       {watchedRows.length > 0 && (
         <section className="space-y-2">
-          <h2 className="text-sm font-medium">Watching</h2>
+          <h2 className="section-title">Watching</h2>
           <ul className="space-y-2">{watchedRows.map(row)}</ul>
         </section>
       )}
 
       {otherRows.length > 0 && (
         <section className="space-y-2">
-          <h2 className="text-sm font-medium">More shops we found</h2>
+          <h2 className="section-title">More shops we found</h2>
           {full && hasSuggestions && (
             <p className="text-xs text-muted-foreground">
               You&apos;re using all {maxMonitors} of your monitors. Paused ones still count, so delete one to free a
@@ -345,7 +344,7 @@ function ListingRow({
   const href = toSafeUrl(listing.url);
 
   return (
-    <li className="flex flex-col gap-3 rounded-lg border border-border bg-card p-3 sm:flex-row sm:items-center">
+    <li className="flex flex-col gap-3 rounded-lg border border-border bg-card p-4 sm:flex-row sm:items-center">
       <div className="min-w-0 flex-1 space-y-1">
         <p className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
           {listing.site}

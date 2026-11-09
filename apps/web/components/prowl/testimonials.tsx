@@ -20,8 +20,8 @@ export function Testimonials() {
         </div>
         <div className="grid gap-6 md:grid-cols-3 max-w-4xl mx-auto">
           {reviews.map((r) => (
-            <Card key={r.id} className="border-border/30 bg-card/50">
-              <CardContent className="p-6">
+            <Card key={r.id}>
+              <CardContent>
                 <MessageSquare className="h-5 w-5 text-primary/40 mb-3" />
                 <p className="text-sm leading-relaxed text-foreground/80 mb-4">
                   &ldquo;{r.quote}&rdquo;

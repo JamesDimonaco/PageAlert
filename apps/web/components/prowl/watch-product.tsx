@@ -58,28 +58,28 @@ export function WatchProductForm({ name, region, listings, ticked, guess, onCrea
   const { allowedIntervals, isLoading: tierLoading } = useTier();
   const [checkInterval, setCheckInterval] = useState<CheckInterval | null>(null);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // Shown from the first press of Watch, then kept current, so it clears as soon as it is fixed.
+  const [attempted, setAttempted] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const shownChannels = channels ?? defaultChannels(configuredChannels) ?? ["email"];
   // allowedIntervals is fastest first.
   const shownInterval = checkInterval ?? (allowedIntervals[0] as CheckInterval);
   const watching = listings.filter((l) => ticked.has(l.url));
 
+  const fields = alertOnFromFields({ backInStock, priceChoice, target, currency });
+  const problem =
+    watching.length === 0
+      ? "Tick at least one shop in step 1."
+      : !backInStock && priceChoice === "off"
+        ? "Pick what to be alerted about."
+        : (fields.error ?? null);
+  const error = attempted ? (problem ?? saveError) : null;
+
   async function submit() {
-    setError(null);
-    if (watching.length === 0) {
-      setError("Tick at least one shop in step 1.");
-      return;
-    }
-    if (!backInStock && priceChoice === "off") {
-      setError("Pick what to be alerted about.");
-      return;
-    }
-    const fields = alertOnFromFields({ backInStock, priceChoice, target, currency });
-    if (fields.error !== undefined) {
-      setError(fields.error);
-      return;
-    }
+    setAttempted(true);
+    setSaveError(null);
+    if (problem !== null || fields.error !== undefined) return;
     setSaving(true);
     try {
       const { groupId } = await create({
@@ -103,7 +103,7 @@ export function WatchProductForm({ name, region, listings, ticked, guess, onCrea
       for (const l of listings) trackListingReviewed(ticked.has(l.url), { site: l.site, label: l.label });
       onCreated(groupId);
     } catch (err) {
-      setError(errorText(err, "We couldn't watch those listings. Try again."));
+      setSaveError(errorText(err, "We couldn't watch those listings. Try again."));
     } finally {
       setSaving(false);
     }
@@ -136,7 +136,7 @@ export function WatchProductForm({ name, region, listings, ticked, guess, onCrea
         </div>
         <ChannelSelector value={shownChannels} onChange={setChannels} monitorId={null} />
       </section>
-      <div className="sticky bottom-0 -mx-4 -mb-4 space-y-2 border-t border-border bg-background px-4 py-3 sm:-mx-6 sm:-mb-6 sm:px-6">
+      <div className="sticky -bottom-4 -mx-4 -mb-4 space-y-2 border-t border-border bg-background px-4 py-3 sm:-bottom-6 sm:-mx-6 sm:-mb-6 sm:px-6">
         {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
         <div className="flex items-center justify-between gap-3">
           <p aria-live="polite" className="text-sm text-muted-foreground">
@@ -189,7 +189,7 @@ export function ProductProgress({ groupId, onDone }: { groupId: Id<"monitorGroup
           return (
             <li
               key={listing.url}
-              className="flex items-center justify-between gap-3 rounded-lg border border-border/40 bg-card/50 p-3 text-sm"
+              className="flex items-center justify-between gap-3 rounded-lg border border-border bg-card p-4 text-sm"
             >
               <div className="min-w-0">
                 <p className="text-xs text-muted-foreground">{listing.site}</p>

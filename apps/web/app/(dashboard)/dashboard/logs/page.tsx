@@ -168,7 +168,7 @@ export default function LogsPage() {
   return (
     <div className="space-y-8">
       <div>
-        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Scrape Logs</h1>
+        <h1 className="page-title">Scrape Logs</h1>
         <p className="text-muted-foreground mt-2 text-sm leading-relaxed">
           Every check we ran for you, with what the AI made of the page.
           {windowDays != null && ` Your plan shows the last ${windowDays} days.`}
@@ -220,7 +220,7 @@ export default function LogsPage() {
 
       {/* Filters */}
       <div className="flex flex-col sm:flex-row sm:items-end gap-3">
-        <div className="relative flex-1 sm:max-w-sm">
+        <div className="flex-1 sm:max-w-sm">
           <label htmlFor="log-search" className="text-xs text-muted-foreground mb-1 block">Search</label>
           <div className="relative">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -289,7 +289,7 @@ export default function LogsPage() {
           <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
         </div>
       ) : logs.length === 0 ? (
-        <div className="flex flex-col items-center justify-center rounded-xl bg-card/30 py-20 px-6 text-center">
+        <div className="flex flex-col items-center justify-center rounded-xl border border-border bg-card py-20 px-6 text-center">
           <Clock className="h-8 w-8 text-muted-foreground mb-4" />
           <p className="text-sm font-medium mb-1">No checks to show</p>
           {/* Says what the page covers without claiming there is anything
@@ -301,7 +301,7 @@ export default function LogsPage() {
           )}
         </div>
       ) : filtered.length === 0 ? (
-        <div className="flex flex-col items-center justify-center rounded-xl bg-card/30 py-20">
+        <div className="flex flex-col items-center justify-center rounded-xl border border-border bg-card py-20">
           <Search className="h-7 w-7 text-muted-foreground mb-4" />
           <p className="text-lg font-semibold mb-2">No logs found</p>
           <p className="text-sm text-muted-foreground">Try adjusting your search or filters.</p>
@@ -378,10 +378,10 @@ function StatChip({
     <button
       onClick={onClick}
       aria-pressed={active}
-      className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs transition-colors ${
+      className={`inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs transition-colors ${
         active
           ? "border-primary/40 bg-primary/10 text-foreground"
-          : "border-border/30 bg-card/30 text-muted-foreground hover:bg-card/60"
+          : "border-border bg-card text-muted-foreground hover:bg-muted"
       }`}
     >
       {Icon && <Icon className="h-3 w-3" />}
@@ -408,10 +408,10 @@ function MonitorGroup({
   const errorCount = logs.length - successCount;
 
   return (
-    <div className="rounded-xl border border-border/30 bg-card/30 overflow-hidden">
+    <div className="rounded-xl border border-border bg-card overflow-hidden">
       <button
         onClick={onToggle}
-        className="w-full flex items-center justify-between p-4 hover:bg-card/50 transition-colors text-left"
+        className="w-full flex items-center justify-between p-4 hover:bg-card transition-colors text-left"
       >
         <div className="flex items-center gap-3 min-w-0">
           {collapsed ? (
@@ -472,8 +472,8 @@ function LogEntry({ log }: { log: Log }) {
 
   return (
     <Link href={`/dashboard/logs/${log._id}`}>
-      <Card className="border-border/30 bg-card/50 shadow-sm shadow-black/5 hover:bg-card/80 transition-colors cursor-pointer">
-        <CardContent className="p-4 sm:p-5">
+      <Card className="transition-colors hover:bg-muted/40 cursor-pointer">
+        <CardContent>
           <div className="flex items-start sm:items-center justify-between gap-3">
             <div className="flex items-start sm:items-center gap-3 sm:gap-4 min-w-0">
               <div className={`flex h-9 w-9 items-center justify-center rounded-full ${config.bg} shrink-0`}>

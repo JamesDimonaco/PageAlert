@@ -203,13 +203,13 @@ export function ChannelSelector({ value, onChange, monitorId, groupId, disabled 
               onClick={() => handleToggle(channel)}
               disabled={disabled}
               aria-pressed={isActive}
-              className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
+              className={`inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition-colors ${
                 isLockedFree
                   ? "border-amber-500/30 bg-amber-500/5 text-amber-400 hover:bg-amber-500/10"
                   : isActive
                     ? "border-primary/30 bg-primary/10 text-primary"
                     : isConfigured && available
-                      ? "border-border/50 bg-card hover:border-primary/30 hover:bg-primary/5 text-muted-foreground"
+                      ? "border-border bg-card hover:border-primary/30 hover:bg-primary/5 text-muted-foreground"
                       : "border-dashed border-border bg-transparent text-muted-foreground hover:bg-muted/50"
               }`}
             >

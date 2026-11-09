@@ -120,7 +120,7 @@ export default function SettingsPage() {
   return (
     <div className="space-y-10">
       <div>
-        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Settings</h1>
+        <h1 className="page-title">Settings</h1>
         <p className="text-muted-foreground mt-2 text-sm leading-relaxed">Manage your account and preferences</p>
       </div>
 
@@ -152,7 +152,7 @@ export default function SettingsPage() {
         </TabsContent>
 
         <TabsContent value="profile" className="mt-8 space-y-8">
-          <Card className="border-border/30 bg-card/50 shadow-sm shadow-black/5">
+          <Card>
             <CardHeader className="pb-4">
               <CardTitle className="text-lg font-semibold">Profile</CardTitle>
               <CardDescription className="text-sm">Your account information</CardDescription>
@@ -184,7 +184,7 @@ export default function SettingsPage() {
           </Card>
 
           {POSTHOG_KEY && (
-            <Card className="border-border/30 bg-card/50 shadow-sm shadow-black/5">
+            <Card>
               <CardHeader className="pb-4">
                 <CardTitle className="text-lg font-semibold">Analytics</CardTitle>
                 <CardDescription className="text-sm">How we see what the app is used for</CardDescription>
@@ -198,7 +198,7 @@ export default function SettingsPage() {
             </Card>
           )}
 
-          <Card className="border-border/30 bg-card/50 shadow-sm shadow-black/5">
+          <Card>
             <CardHeader className="pb-4">
               <CardTitle className="text-lg font-semibold">Beta features</CardTitle>
               <CardDescription className="text-sm">Try things before everyone else gets them</CardDescription>
@@ -236,7 +236,7 @@ export default function SettingsPage() {
             </CardContent>
           </Card>
 
-          <Card className="border-destructive/20 bg-card/50 shadow-sm shadow-black/5">
+          <Card className="ring-destructive/20">
             <CardHeader className="pb-4">
               <CardTitle className="text-lg font-semibold text-destructive">Danger Zone</CardTitle>
               <CardDescription className="text-sm">
@@ -301,8 +301,8 @@ export default function SettingsPage() {
             </div>
           ) : (<>
           {grantUntil && tier !== "free" && (
-            <Card className="border-primary/30 bg-primary/5 shadow-sm">
-              <CardContent className="p-4 sm:p-5">
+            <Card className="ring-primary/30 bg-primary/5">
+              <CardContent>
                 <p className="text-sm font-semibold text-primary">
                   {isPass
                     ? "Your Sprint pass is running"
@@ -326,8 +326,8 @@ export default function SettingsPage() {
           )}
           {/* Cancellation banner */}
           {isCancelled && tier !== "free" && (
-            <Card className="border-amber-500/30 bg-amber-500/5 shadow-sm">
-              <CardContent className="p-4 sm:p-5">
+            <Card className="ring-amber-500/30 bg-amber-500/5">
+              <CardContent>
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                   <div>
                     <p className="text-sm font-semibold text-amber-400">
@@ -362,7 +362,7 @@ export default function SettingsPage() {
           )}
 
           {/* Current Plan */}
-          <Card className="border-border/30 bg-card/50 shadow-sm shadow-black/5">
+          <Card>
             <CardHeader className="pb-4">
               <CardTitle className="text-lg font-semibold">Current Plan</CardTitle>
             </CardHeader>
@@ -433,8 +433,8 @@ export default function SettingsPage() {
           {offerPro && (
             <div className="grid gap-4 md:grid-cols-3">
               {!isPass && (
-                <Card className="border-border/30 bg-card/50 shadow-sm">
-                  <CardContent className="p-6">
+                <Card>
+                  <CardContent>
                     <h3 className="text-lg font-bold mb-3">Sprint pass</h3>
                     <p className="text-3xl font-bold">
                       $4<span className="text-sm font-normal text-muted-foreground"> once</span>
@@ -455,8 +455,8 @@ export default function SettingsPage() {
                   </CardContent>
                 </Card>
               )}
-              <Card className="border-primary/30 bg-primary/5 shadow-sm">
-                <CardContent className="p-6">
+              <Card className="ring-primary/30 bg-primary/5">
+                <CardContent>
                   <div className="flex items-center gap-2 mb-3">
                     <h3 className="text-lg font-bold">Pro</h3>
                     <Badge className="bg-primary/10 text-primary border-primary/20 text-xs">Popular</Badge>
@@ -476,8 +476,8 @@ export default function SettingsPage() {
                   </Button>
                 </CardContent>
               </Card>
-              <Card className="border-border/30 bg-card/50 shadow-sm">
-                <CardContent className="p-6">
+              <Card>
+                <CardContent>
                   <h3 className="text-lg font-bold mb-3">Max</h3>
                   <p className="text-3xl font-bold">$29<span className="text-sm font-normal text-muted-foreground">/mo</span></p>
                   <ul className="mt-4 space-y-2 text-sm text-muted-foreground">
@@ -499,8 +499,8 @@ export default function SettingsPage() {
 
           {/* Pro → Max upgrade */}
           {offerMax && (
-            <Card className="border-border/30 bg-card/50 shadow-sm">
-              <CardContent className="p-6">
+            <Card>
+              <CardContent>
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                   <div>
                     <h3 className="text-lg font-bold">Need more?</h3>
@@ -522,7 +522,7 @@ export default function SettingsPage() {
           )}
 
           {/* Usage */}
-          <Card className="border-border/30 bg-card/50 shadow-sm shadow-black/5">
+          <Card>
             <CardHeader className="pb-4">
               <CardTitle className="text-lg font-semibold">Usage</CardTitle>
             </CardHeader>

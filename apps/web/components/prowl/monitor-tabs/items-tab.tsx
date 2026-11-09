@@ -264,7 +264,7 @@ export function ItemsTab({ monitorId, allItems, schema, blacklist, scores, showF
           <Button
             variant={showFilters ? "default" : "outline"}
             size="sm"
-            className="gap-1.5 h-8 shrink-0"
+            className="gap-1.5 shrink-0"
             onClick={() => onShowFiltersChange(!showFilters)}
           >
             <Filter className="h-3.5 w-3.5" />
@@ -276,7 +276,7 @@ export function ItemsTab({ monitorId, allItems, schema, blacklist, scores, showF
       {/* Quick filters */}
       <div className="flex flex-wrap items-center gap-2">
         <Select value={statusFilter} onValueChange={(v) => v && setStatusFilter(v as StatusFilter)}>
-          <SelectTrigger className="w-[140px] h-8 text-xs">
+          <SelectTrigger size="sm" className="w-[140px] text-xs">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -287,7 +287,7 @@ export function ItemsTab({ monitorId, allItems, schema, blacklist, scores, showF
           </SelectContent>
         </Select>
         <Select value={sortBy} onValueChange={(v) => v && setSortBy(v as SortOption)}>
-          <SelectTrigger className="w-[150px] h-8 text-xs">
+          <SelectTrigger size="sm" className="w-[150px] text-xs">
             <ArrowUpDown className="h-3 w-3 mr-1.5" />
             <SelectValue />
           </SelectTrigger>
@@ -311,7 +311,7 @@ export function ItemsTab({ monitorId, allItems, schema, blacklist, scores, showF
           </div>
         </div>
         {(statusFilter !== "all" || sortBy !== "default" || priceMin || priceMax) && (
-          <Button variant="ghost" size="sm" className="h-8 text-xs gap-1 text-muted-foreground" onClick={() => { setStatusFilter("all"); setSortBy("default"); setPriceMin(""); setPriceMax(""); }}>
+          <Button variant="ghost" size="sm" className="text-xs gap-1 text-muted-foreground" onClick={() => { setStatusFilter("all"); setSortBy("default"); setPriceMin(""); setPriceMax(""); }}>
             <X className="h-3 w-3" /> Clear
           </Button>
         )}
@@ -319,18 +319,18 @@ export function ItemsTab({ monitorId, allItems, schema, blacklist, scores, showF
 
       {/* Match condition editor */}
       {showFilters && schema && (
-        <Card className="border-border/30 bg-card/50 shadow-sm shadow-black/5">
-          <CardContent className="p-5 space-y-4">
+        <Card>
+          <CardContent className="space-y-4">
             <div className="flex items-center justify-between">
               <p className="text-xs text-muted-foreground">
                 Edit filters to change which items match. Changes apply instantly below.
               </p>
               {hasEdits && (
                 <div className="flex items-center gap-2">
-                  <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setEditedConditions(null)}>
+                  <Button variant="ghost" size="sm" className="text-xs" onClick={() => setEditedConditions(null)}>
                     <RotateCcw className="h-3 w-3 mr-1" /> Reset
                   </Button>
-                  <Button size="sm" className="h-7 text-xs gap-1" onClick={saveConditions} disabled={saving}>
+                  <Button size="sm" className="text-xs gap-1" onClick={saveConditions} disabled={saving}>
                     {saving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
                     Save
                   </Button>
@@ -390,7 +390,7 @@ export function ItemsTab({ monitorId, allItems, schema, blacklist, scores, showF
                   ? "bg-card/10 opacity-30"
                   : isMatch
                     ? "bg-emerald-500/5 border border-emerald-500/20"
-                    : "bg-card/30 hover:bg-card/50"
+                    : "bg-card hover:bg-card"
               }`}
             >
               <div className="flex-1 min-w-0 flex items-center gap-2">
@@ -443,11 +443,11 @@ export function ItemsTab({ monitorId, allItems, schema, blacklist, scores, showF
                   </div>
                 )}
                 {isBlacklisted ? (
-                  <Button variant="ghost" size="sm" className="h-6 text-xs px-2" onClick={() => unblacklistItem(identity)}>
+                  <Button variant="ghost" size="sm" className="text-xs px-2" onClick={() => unblacklistItem(identity)}>
                     Restore
                   </Button>
                 ) : isMatch ? (
-                  <Button variant="ghost" size="sm" className="h-6 text-xs px-2 text-muted-foreground" onClick={() => blacklistItem(item)}>
+                  <Button variant="ghost" size="sm" className="text-xs px-2 text-muted-foreground" onClick={() => blacklistItem(item)}>
                     Dismiss
                   </Button>
                 ) : null}

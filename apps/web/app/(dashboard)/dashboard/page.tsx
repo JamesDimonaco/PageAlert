@@ -262,7 +262,7 @@ export default function DashboardPage() {
 
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Dashboard</h1>
+          <h1 className="page-title">Dashboard</h1>
           <p className="text-muted-foreground mt-1 sm:mt-2 text-sm leading-relaxed">
             Monitor any website with natural language
           </p>
@@ -273,14 +273,14 @@ export default function DashboardPage() {
               {monitors.length}/{maxMonitors} monitors used
             </p>
             <Link href="/dashboard/settings?tab=billing">
-              <Button size="lg" className="gap-2 shadow-md shadow-primary/15 w-full sm:w-auto">
+              <Button className="gap-2 shadow-md shadow-primary/15 w-full sm:w-auto">
                 <Sparkles className="h-5 w-5" />
                 Upgrade to add more
               </Button>
             </Link>
           </div>
         ) : (
-          <Button onClick={openCreate} size="lg" className="gap-2 shadow-md shadow-primary/15 w-full sm:w-auto">
+          <Button onClick={openCreate} className="gap-2 shadow-md shadow-primary/15 w-full sm:w-auto">
             <Plus className="h-5 w-5" />
             New Monitor
           </Button>
@@ -297,44 +297,49 @@ export default function DashboardPage() {
         </p>
       )}
 
-      <ReviewPrompt />
-
-      <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-        <div className="relative flex-1 sm:max-w-sm">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            placeholder="Search monitors..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="pl-9"
-          />
+      <div className="flex flex-col sm:flex-row sm:items-end gap-3">
+        <div className="flex-1 sm:max-w-sm">
+          <label htmlFor="monitor-search" className="text-xs text-muted-foreground mb-1 block">Search</label>
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              id="monitor-search"
+              placeholder="Search monitors..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="pl-9"
+            />
+          </div>
         </div>
-        <Select items={STATUS_FILTERS} value={statusFilter} onValueChange={(v) => v && setStatusFilter(v)}>
-          <SelectTrigger aria-label="Filter by status" className="w-full sm:w-[150px]">
-            <SelectValue placeholder="Status" />
-          </SelectTrigger>
-          <SelectContent>
-            {STATUS_FILTERS.map(({ value, label }) => (
-              <SelectItem key={value} value={value}>{label}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <div>
+          <label htmlFor="monitor-status" className="text-xs text-muted-foreground mb-1 block">Status</label>
+          <Select items={STATUS_FILTERS} value={statusFilter} onValueChange={(v) => v && setStatusFilter(v)}>
+            <SelectTrigger id="monitor-status" className="w-full sm:w-[150px]">
+              <SelectValue placeholder="Status" />
+            </SelectTrigger>
+            <SelectContent>
+              {STATUS_FILTERS.map(({ value, label }) => (
+                <SelectItem key={value} value={value}>{label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
       </div>
 
       <div className="space-y-4">
         {filtered.length === 0 && products !== undefined ? (
           monitors.length === 0 ? (
-            <div className="rounded-xl bg-card/30 shadow-sm shadow-black/5 py-16 px-8">
+            <div className="rounded-xl border border-border bg-card py-16 px-8">
               <div className="max-w-lg mx-auto text-center">
                 <div className="flex h-16 w-16 items-center justify-center rounded-full bg-primary/5 mx-auto mb-6">
                   <Radar className="h-7 w-7 text-primary/60" />
                 </div>
-                <h2 className="text-xl font-bold mb-2">Welcome to PageAlert</h2>
+                <h2 className="section-title mb-2">Welcome to PageAlert</h2>
                 <p className="text-sm text-muted-foreground mb-8 leading-relaxed">
                   Monitor any website with AI. Just paste a URL and describe what you&apos;re looking for.
                 </p>
 
-                <Button onClick={openCreate} size="lg" className="gap-2 shadow-md shadow-primary/15 mb-10">
+                <Button onClick={openCreate} className="gap-2 shadow-md shadow-primary/15 mb-10">
                   <Plus className="h-5 w-5" />
                   Create Your First Monitor
                 </Button>
@@ -348,7 +353,7 @@ export default function DashboardPage() {
                       { title: "New listings", desc: "\"3 bed house under 400k in Bristol\"" },
                       { title: "Job monitoring", desc: "\"Senior React developer remote\"" },
                     ].map((example) => (
-                      <div key={example.title} className="rounded-lg bg-background/50 border border-border/20 p-3 text-left">
+                      <div key={example.title} className="rounded-lg bg-background/50 border border-border p-3 text-left">
                         <p className="text-sm font-medium">{example.title}</p>
                         <p className="text-xs text-muted-foreground mt-0.5 italic">{example.desc}</p>
                       </div>
@@ -358,7 +363,7 @@ export default function DashboardPage() {
               </div>
             </div>
           ) : (
-            <div className="flex flex-col items-center justify-center rounded-xl bg-card/30 shadow-sm shadow-black/5 py-20 px-8">
+            <div className="flex flex-col items-center justify-center rounded-xl border border-border bg-card py-20 px-8">
               <Search className="h-7 w-7 text-muted-foreground mb-4" />
               <p className="text-lg font-semibold mb-2">No monitors found</p>
               <p className="text-sm text-muted-foreground max-w-sm text-center leading-relaxed">
@@ -408,6 +413,8 @@ export default function DashboardPage() {
           ))
         )}
       </div>
+
+      <ReviewPrompt />
 
       <DeleteDialog
         open={!!deleteTarget}

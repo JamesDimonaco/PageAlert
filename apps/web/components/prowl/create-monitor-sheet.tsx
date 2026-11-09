@@ -306,7 +306,7 @@ export function CreateMonitorSheet({
 
       <Sheet open={open} onOpenChange={onOpenChange}>
         <SheetContent className="w-full sm:max-w-2xl overflow-y-auto p-4 sm:p-6">
-          <SheetHeader>
+          <SheetHeader className="p-0 pr-8">
             <SheetTitle className="flex items-center gap-2">
               <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10">
                 <Radar className="h-4 w-4 text-primary" />
@@ -324,10 +324,10 @@ export function CreateMonitorSheet({
             </SheetDescription>
           </SheetHeader>
 
-          <div className="mt-6">
+          <div>
             {step === "form" && findAProduct && (
               <>
-                <Tabs value={tab} onValueChange={(v) => setTab(v as FormTab)} className="mb-6">
+                <Tabs value={tab} onValueChange={(v) => setTab(v as FormTab)} className="mb-4">
                   <TabsList className="w-full">
                     <TabsTrigger value="find">Find a product</TabsTrigger>
                     <TabsTrigger value="url">Paste a URL</TabsTrigger>
@@ -436,10 +436,10 @@ export function CreateMonitorSheet({
                         type="button"
                         aria-pressed={mode === m.id}
                         onClick={() => setMode(mode === m.id ? null : m.id)}
-                        className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
+                        className={`flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition-colors ${
                           mode === m.id
                             ? "border-primary/40 bg-primary/10 text-primary"
-                            : "border-border/40 bg-card/50 text-muted-foreground hover:text-foreground hover:border-primary/20"
+                            : "border-border bg-card text-muted-foreground hover:text-foreground hover:border-primary/20"
                         }`}
                       >
                         <m.icon className="h-3.5 w-3.5" />
@@ -567,7 +567,7 @@ export function CreateMonitorSheet({
                               onOpenChange(false);
                               router.push("/dashboard/settings?tab=notifications");
                             }}
-                            className="w-full flex items-center gap-3 rounded-lg border border-border/30 bg-card/50 px-3 py-2.5 text-left text-xs hover:bg-muted/50 transition-colors"
+                            className="w-full flex items-center gap-3 rounded-lg border border-border bg-card px-3 py-2.5 text-left text-xs hover:bg-muted/50 transition-colors"
                           >
                             <MessageCircle className="h-4 w-4 text-muted-foreground shrink-0" />
                             <span>
@@ -582,7 +582,7 @@ export function CreateMonitorSheet({
                             onOpenChange(false);
                             router.push("/dashboard/settings?tab=notifications");
                           }}
-                          className="w-full flex items-center gap-3 rounded-lg border border-border/30 bg-card/50 px-3 py-2.5 text-left text-xs hover:bg-muted/50 transition-colors"
+                          className="w-full flex items-center gap-3 rounded-lg border border-border bg-card px-3 py-2.5 text-left text-xs hover:bg-muted/50 transition-colors"
                         >
                           <Mail className="h-4 w-4 text-muted-foreground shrink-0" />
                           <span>

@@ -58,9 +58,9 @@ export function MonitorCard({ monitor, onTogglePause, onDelete, onRescan, onClon
 
   return (
     <Card
-      className={`group relative overflow-hidden border-border/30 border-l-2 border-l-transparent bg-card/50 shadow-sm shadow-black/5 backdrop-blur transition-all hover:shadow-md hover:shadow-black/10 hover:bg-card/80 ${statusBorderColor}`}
+      className={`group relative border-l-2 border-l-transparent transition-colors hover:bg-muted/40 ${statusBorderColor}`}
     >
-      <CardContent className="p-4 sm:p-6">
+      <CardContent>
         <div className="flex items-start justify-between gap-4">
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-3 mb-2.5">

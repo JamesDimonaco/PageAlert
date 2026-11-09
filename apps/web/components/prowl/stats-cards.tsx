@@ -44,8 +44,8 @@ export function StatsCards({ monitors }: { monitors: Doc<"monitors">[] }) {
   return (
     <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
       {stats.map((stat) => (
-        <Card key={stat.label} className="border-border/30 bg-card/50 shadow-sm shadow-black/5 backdrop-blur">
-          <CardContent className="p-4 sm:p-6">
+        <Card key={stat.label}>
+          <CardContent>
             <div className="flex items-start justify-between mb-2 sm:mb-3">
               <div className={`flex h-8 w-8 sm:h-10 sm:w-10 items-center justify-center rounded-lg ${stat.bg}`}>
                 <stat.icon className={`h-4 w-4 sm:h-5 sm:w-5 ${stat.color}`} />

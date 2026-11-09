@@ -194,13 +194,13 @@ export function NotificationSettings() {
     <div className="space-y-10">
       <section className="space-y-4">
         <div>
-          <h2 className="text-lg font-semibold">Where alerts go</h2>
+          <h2 className="section-title">Where alerts go</h2>
           <p className="text-sm text-muted-foreground mt-1 leading-relaxed">
             Set each one up once. Then each monitor picks which of these it uses.
             {tier === "free" && " On free, one monitor can use Telegram or Discord. Upgrade for all of them, and for texts."}
           </p>
         </div>
-        <div className="divide-y divide-border/30 rounded-xl border border-border/30 bg-card/50 shadow-sm shadow-black/5">
+        <div className="divide-y divide-border/30 rounded-xl border border-border bg-card">
           {channels.map((c) => (
             <div key={c.id} className="flex items-center gap-4 p-4">
               <div className="text-muted-foreground shrink-0">{c.icon}</div>
@@ -239,12 +239,12 @@ export function NotificationSettings() {
 
       <section className="space-y-4">
         <div>
-          <h2 className="text-lg font-semibold">Emails from us</h2>
+          <h2 className="section-title">Emails from us</h2>
           <p className="text-sm text-muted-foreground mt-1 leading-relaxed">
             These are separate from your alerts. Turning them off never stops an alert.
           </p>
         </div>
-        <div className="divide-y divide-border/30 rounded-xl border border-border/30 bg-card/50 shadow-sm shadow-black/5">
+        <div className="divide-y divide-border/30 rounded-xl border border-border bg-card">
           <div className="flex items-center gap-4 p-4">
             <div className="min-w-0 flex-1">
               <p className="text-sm font-medium">Essential</p>
@@ -863,7 +863,7 @@ export function NotificationSettings() {
                 )}
 
                 {pushTest === "asking" && (
-                  <div className="rounded-lg border border-border/40 bg-muted/20 p-4 space-y-3">
+                  <div className="rounded-lg border border-border bg-muted/20 p-4 space-y-3">
                     <p className="text-sm">
                       The test reached this browser. Did a notification pop up?
                     </p>
@@ -885,7 +885,7 @@ export function NotificationSettings() {
                 )}
 
                 {pushTest === "not-seen" && push.device && (
-                  <div className="rounded-lg border border-border/40 bg-muted/20 p-4 space-y-3">
+                  <div className="rounded-lg border border-border bg-muted/20 p-4 space-y-3">
                     <p className="text-sm leading-relaxed">
                       The alert got through, so your device is hiding it. Your system
                       settings can block notifications even when the browser allows them:
@@ -903,7 +903,7 @@ export function NotificationSettings() {
                 )}
 
                 {pushTest === "lost" && (
-                  <div className="rounded-lg border border-border/40 bg-muted/20 p-4 space-y-3">
+                  <div className="rounded-lg border border-border bg-muted/20 p-4 space-y-3">
                     <p className="text-sm leading-relaxed">
                       The test hasn&apos;t reached this browser, so its connection has
                       probably gone stale. Click <strong>Turn off</strong>, then{" "}

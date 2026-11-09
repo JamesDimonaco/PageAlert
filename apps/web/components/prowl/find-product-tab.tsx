@@ -112,7 +112,7 @@ export function FindProductTab({ clone, onPasteUrl, onDone }: FindProductTabProp
   const outOfSearches = remaining === 0;
 
   async function runSearch() {
-    if (!region || query.trim().length < 2) return;
+    if (searching || !region || query.trim().length < 2) return;
     setSearching(true);
     setError(null);
     setResults(null);
@@ -181,10 +181,11 @@ export function FindProductTab({ clone, onPasteUrl, onDone }: FindProductTabProp
           <Button
             type="submit"
             className="gap-2 shrink-0"
-            disabled={searching || !region || outOfSearches || query.trim().length < 2}
+            // Left enabled while searching: a dimmed button is too faint to read. runSearch ignores the extra press.
+            disabled={!region || outOfSearches || query.trim().length < 2}
           >
             {searching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
-            Search
+            {searching ? "Searching…" : "Search"}
           </Button>
         </div>
         <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
@@ -233,7 +234,7 @@ export function FindProductTab({ clone, onPasteUrl, onDone }: FindProductTabProp
       )}
 
       {(error || results?.length === 0) && (
-        <div role="alert" className="space-y-3 rounded-lg border border-border/40 bg-card/50 p-4 text-sm">
+        <div role="alert" className="space-y-3 rounded-lg border border-border bg-card p-4 text-sm">
           <p>{error ?? "We couldn't find that product in any shop. It hasn't counted toward today's limit."}</p>
           <Button type="button" variant="outline" size="sm" onClick={() => onPasteUrl(query.trim())}>
             Paste a URL instead
@@ -320,7 +321,7 @@ function ListingRow({
   const href = toSafeUrl(listing.url);
   return (
     <li>
-      <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-border bg-card p-3 transition-colors hover:border-primary/50 has-checked:border-primary has-checked:bg-primary/10 has-disabled:cursor-not-allowed has-disabled:hover:border-border">
+      <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-border bg-card p-4 transition-colors hover:border-primary/50 has-checked:border-primary has-checked:bg-primary/10 has-disabled:cursor-not-allowed has-disabled:hover:border-border">
         <input
           type="checkbox"
           checked={checked}

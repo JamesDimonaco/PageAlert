@@ -17,7 +17,7 @@ export function ExampleResults() {
         </p>
       </div>
 
-      <div className="rounded-xl border border-border/30 bg-card/50 shadow-lg shadow-black/5 overflow-hidden">
+      <div className="rounded-xl border border-border bg-card shadow-lg shadow-black/5 overflow-hidden">
         {/* Header */}
         <div className="border-b border-border/20 px-4 sm:px-6 py-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">

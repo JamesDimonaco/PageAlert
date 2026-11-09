@@ -59,7 +59,7 @@ export function ApiKeysCard() {
   }
 
   return (
-    <Card className="border-border/30 bg-card/50 shadow-sm shadow-black/5">
+    <Card>
       <CardHeader className="pb-4">
         <CardTitle className="text-lg font-semibold">API keys</CardTitle>
         <CardDescription className="text-sm">
@@ -110,7 +110,7 @@ export function ApiKeysCard() {
         )}
 
         {keys && keys.length > 0 && (
-          <ul className="divide-y divide-border/40 rounded-lg border border-border/40">
+          <ul className="divide-y divide-border rounded-lg border border-border">
             {keys.map((key) => (
               <li key={key._id} className="flex items-center justify-between gap-3 px-3 py-2.5">
                 <div className="min-w-0">

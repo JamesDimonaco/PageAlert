@@ -65,8 +65,8 @@ export function ReviewPrompt() {
 
   if (showForm) {
     return (
-      <Card className="border-primary/20 bg-primary/5">
-        <CardContent className="p-4 sm:p-6">
+      <Card className="ring-primary/20 bg-primary/5">
+        <CardContent>
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
               <MessageSquare className="h-4 w-4 text-primary" />
@@ -148,8 +148,8 @@ export function ReviewPrompt() {
   }
 
   return (
-    <Card className="border-primary/20 bg-primary/5">
-      <CardContent className="p-4 sm:p-6">
+    <Card className="ring-primary/20 bg-primary/5">
+      <CardContent>
         <div className="flex flex-col sm:flex-row sm:items-center gap-3">
           <div className="flex items-start gap-3 flex-1">
             <MessageSquare className="h-5 w-5 text-primary mt-0.5 shrink-0" />

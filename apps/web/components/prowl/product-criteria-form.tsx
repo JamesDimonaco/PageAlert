@@ -89,9 +89,9 @@ export function ProductCriteriaForm({ group, listingCurrency, watchingCount }: P
   }
 
   return (
-    <div className="space-y-4 rounded-lg border border-border/40 bg-card/50 p-4">
+    <div className="space-y-4 rounded-lg border border-border bg-card p-4">
       <div>
-        <h2 className="text-sm font-medium">Alerts for every listing</h2>
+        <h2 className="section-title">Alerts for every listing</h2>
         <p className="text-xs text-muted-foreground">
           Saving copies these to every listing you watch. It replaces changes made on a listing&apos;s own page.
         </p>

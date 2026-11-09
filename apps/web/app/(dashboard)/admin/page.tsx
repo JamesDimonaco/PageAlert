@@ -23,7 +23,7 @@ export default function AdminPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Admin</h1>
+        <h1 className="page-title">Admin</h1>
         <p className="text-sm text-muted-foreground mt-1">Users, revenue, monitors, outbound email, and delivery.</p>
       </div>
 

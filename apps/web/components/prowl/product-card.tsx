@@ -23,8 +23,8 @@ export function ProductCard({ product, monitors }: ProductCardProps) {
   const cheapestPrice = cheapest && formatMinorUnits(cheapest.price, cheapest.currency);
 
   return (
-    <Card className="group relative overflow-hidden border-border/30 border-l-2 border-l-transparent bg-card/50 shadow-sm shadow-black/5 backdrop-blur transition-all hover:shadow-md hover:shadow-black/10 hover:bg-card/80 hover:border-l-primary/50 focus-within:border-l-primary/50">
-      <CardContent className="p-4 sm:p-6">
+    <Card className="group relative border-l-2 border-l-transparent transition-colors hover:bg-muted/40 hover:border-l-primary/50 focus-within:border-l-primary/50">
+      <CardContent>
         <div className="flex flex-wrap items-center gap-3 mb-2.5">
           <Package className="h-4 w-4 text-muted-foreground" />
           <h2 className="min-w-0 text-base font-semibold line-clamp-2">

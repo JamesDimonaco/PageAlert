@@ -56,26 +56,26 @@ export default function ExamplePage() {
 
         {/* Stats */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <Card className="border-border/30 bg-card/50">
-            <CardContent className="p-4">
+          <Card>
+            <CardContent>
               <p className="text-xs text-muted-foreground mb-1">Items</p>
               <p className="text-2xl font-bold">7</p>
             </CardContent>
           </Card>
-          <Card className="border-emerald-500/20 bg-emerald-500/5">
-            <CardContent className="p-4">
+          <Card className="ring-emerald-500/20 bg-emerald-500/5">
+            <CardContent>
               <p className="text-xs text-muted-foreground mb-1">Matches</p>
               <p className="text-2xl font-bold text-emerald-400">{EXAMPLE_MATCHES}</p>
             </CardContent>
           </Card>
-          <Card className="border-border/30 bg-card/50">
-            <CardContent className="p-4">
+          <Card>
+            <CardContent>
               <p className="text-xs text-muted-foreground mb-1">Checks</p>
               <p className="text-2xl font-bold">47</p>
             </CardContent>
           </Card>
-          <Card className="border-border/30 bg-card/50">
-            <CardContent className="p-4">
+          <Card>
+            <CardContent>
               <p className="text-xs text-muted-foreground mb-1">AI Confidence</p>
               <p className="text-2xl font-bold text-emerald-400">92%</p>
             </CardContent>
@@ -91,8 +91,8 @@ export default function ExamplePage() {
           </h2>
           <div className="space-y-2">
             {ITEMS.filter((i) => i.matched).map((item, i) => (
-              <Card key={i} className="border-emerald-500/20 bg-emerald-500/5">
-                <CardContent className="p-4">
+              <Card key={i} className="ring-emerald-500/20 bg-emerald-500/5">
+                <CardContent>
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                     <div className="flex items-center gap-2 min-w-0">
                       <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
@@ -122,8 +122,8 @@ export default function ExamplePage() {
           <h2 className="text-sm font-semibold mb-3">Other Items ({ITEMS.filter((i) => !i.matched).length})</h2>
           <div className="space-y-2">
             {ITEMS.filter((i) => !i.matched).map((item, i) => (
-              <Card key={i} className="border-border/30 bg-card/30">
-                <CardContent className="p-4">
+              <Card key={i}>
+                <CardContent>
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                     <span className="text-sm text-muted-foreground truncate">{item.title}</span>
                     <div className="flex items-center gap-2 shrink-0">
@@ -170,8 +170,8 @@ export default function ExamplePage() {
         </div>
 
         {/* CTA */}
-        <Card className="border-primary/30 bg-primary/5 shadow-md">
-          <CardContent className="p-6 text-center">
+        <Card className="ring-primary/30 bg-primary/5">
+          <CardContent className="text-center">
             <Zap className="h-8 w-8 text-primary mx-auto mb-3" />
             <h3 className="text-lg font-bold mb-1">This is what your monitors look like</h3>
             <p className="text-sm text-muted-foreground mb-4">

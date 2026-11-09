@@ -174,7 +174,7 @@ export function TryScanner() {
 
   return (
     <div className="mx-auto mt-16 sm:mt-24 max-w-4xl">
-      <div className="rounded-xl border-t-2 border-t-primary/40 border border-border/30 bg-card/60 p-4 sm:p-8 shadow-xl shadow-black/10 backdrop-blur">
+      <div className="rounded-xl border-t-2 border-t-primary/40 border border-border bg-card/60 p-4 sm:p-8 shadow-xl shadow-black/10 backdrop-blur">
         {/* Window chrome */}
         <div className="flex items-center gap-2 mb-6">
           <div className="h-3 w-3 rounded-full bg-red-500/50" />
