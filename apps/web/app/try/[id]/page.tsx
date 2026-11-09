@@ -60,12 +60,12 @@ export default function TryResultPage({
     return (
       <div className="min-h-screen bg-background">
         <Header />
-        <div className="mx-auto max-w-3xl px-4 py-20 text-center">
+        <main id="main" className="mx-auto max-w-3xl px-4 py-20 text-center">
           <AlertTriangle className="h-10 w-10 text-muted-foreground mx-auto mb-4" />
           <h1 className="text-2xl font-bold mb-2">Scan not found</h1>
           <p className="text-muted-foreground mb-6">This scan may have expired or doesn&apos;t exist.</p>
           <Link href="/" className={buttonVariants()}>Try a new scan</Link>
-        </div>
+        </main>
       </div>
     );
   }

@@ -56,7 +56,11 @@ export function Navbar() {
               <Link
                 key={href}
                 href={href}
-                aria-current={pathname === href ? "page" : undefined}
+                aria-current={
+                  (href === "/dashboard" ? /^\/dashboard(\/(monitors|products)\/.*)?$/.test(pathname) : pathname.startsWith(href))
+                    ? "page"
+                    : undefined
+                }
                 className={buttonVariants({ variant: "ghost", size: "sm", className: "aria-[current=page]:bg-muted" })}
               >
                 {label}

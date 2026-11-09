@@ -83,9 +83,10 @@ export function FindProductTab({ clone, onPasteUrl, onDone }: FindProductTabProp
   const slotsLoading = monitors === undefined || allowance === undefined || tierLoading;
   // Every monitor counts toward the plan, paused ones included.
   const freeSlots = slotsLoading ? 0 : Math.max(0, maxMonitors - monitors.length);
-  const creationsLeftAt = (at: number) =>
-    allowance ? Math.max(0, allowance.limit - allowance.recent.filter((t) => at - t < allowance.windowMs).length) : 0;
-  const creationsLeft = searched ? creationsLeftAt(searched.at) : 0;
+  const creationsLeft =
+    searched && allowance
+      ? Math.max(0, allowance.limit - allowance.recent.filter((t) => searched.at - t < allowance.windowMs).length)
+      : 0;
   // Done once the slot counts are in, not when the results land: those queries can still be loading then.
   if (preselectDue && results && !slotsLoading) {
     const best = results
@@ -225,6 +226,8 @@ export function FindProductTab({ clone, onPasteUrl, onDone }: FindProductTabProp
               <Select
                 items={REGION_ITEMS}
                 value={region}
+                // A search that lands after a switch would show one country's shops under another.
+                disabled={searching}
                 onValueChange={(v) => {
                   if (v && isSearchRegion(v) && v !== region) {
                     setPicked(v);
