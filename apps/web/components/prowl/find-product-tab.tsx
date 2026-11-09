@@ -73,6 +73,9 @@ export function FindProductTab({ clone, onPasteUrl, onDone }: FindProductTabProp
   const [searchCount, setSearchCount] = useState(0);
   // Always a subset of the listings on screen, so it is what gets watched.
   const [ticked, setTicked] = useState<Set<string>>(new Set());
+  // Results that still need their closest matches ticked, and whether any were.
+  const [preselectDue, setPreselectDue] = useState(false);
+  const [preticked, setPreticked] = useState(false);
   const [createdId, setCreatedId] = useState<Id<"monitorGroups"> | null>(null);
   const monitors = useQuery(api.monitors.list);
   const allowance = useQuery(api.monitors.creationAllowance);
@@ -83,6 +86,16 @@ export function FindProductTab({ clone, onPasteUrl, onDone }: FindProductTabProp
   const creationsLeftAt = (at: number) =>
     allowance ? Math.max(0, allowance.limit - allowance.recent.filter((t) => at - t < allowance.windowMs).length) : 0;
   const creationsLeft = searched ? creationsLeftAt(searched.at) : 0;
+  // Done once the slot counts are in, not when the results land: those queries can still be loading then.
+  if (preselectDue && results && !slotsLoading) {
+    const best = results
+      .filter((l) => l.label === "same")
+      .map((l) => l.url)
+      .slice(0, Math.min(PRESELECTED, freeSlots, creationsLeft));
+    setPreselectDue(false);
+    setTicked(new Set(best));
+    setPreticked(best.length > 0);
+  }
 
   const saved = status?.region && isSearchRegion(status.region) ? status.region : null;
   const region = picked ?? saved ?? guessed;
@@ -129,17 +142,17 @@ export function FindProductTab({ clone, onPasteUrl, onDone }: FindProductTabProp
     setResults(null);
     setShowAccessories(false);
     setTicked(new Set());
+    setPreselectDue(false);
+    setPreticked(false);
     setSearchCount((c) => c + 1);
     trackProductSearchStarted({ region });
     const started = Date.now();
     const typed = query.trim();
     try {
       const listings = await search({ query: typed, region });
-      const at = Date.now();
-      const best = listings.filter((l) => l.label === "same").map((l) => l.url);
       setResults(listings);
-      setSearched({ query: typed, region, at });
-      setTicked(new Set(best.slice(0, Math.min(PRESELECTED, freeSlots, creationsLeftAt(at)))));
+      setSearched({ query: typed, region, at: Date.now() });
+      setPreselectDue(true);
       trackProductSearchCompleted({ region, resultCount: listings.length, durationMs: Date.now() - started, failed: false });
     } catch (err) {
       setError(errorText(err, "The search didn't work. Try again."));
@@ -282,6 +295,7 @@ export function FindProductTab({ clone, onPasteUrl, onDone }: FindProductTabProp
           listings={shown}
           ticked={ticked}
           guess={clone?.guess ?? null}
+          canPick={Math.min(freeSlots, creationsLeft) > 0}
           onCreated={setCreatedId}
         >
           {(missingShops) => (
@@ -308,7 +322,7 @@ export function FindProductTab({ clone, onPasteUrl, onDone }: FindProductTabProp
                 </p>
               ) : (
                 <p className="mt-1 text-sm text-muted-foreground">
-                  {ticked.size > 0 ? "We've ticked the closest matches. Change them if you like. " : missingShops ? "" : "Tick the shops you want. "}
+                  {preticked && ticked.size > 0 ? "We've ticked the closest matches. Change them if you like. " : missingShops ? "" : "Tick the shops you want. "}
                   Each one uses a monitor, and you have {freeSlots} free.
                 </p>
               )}

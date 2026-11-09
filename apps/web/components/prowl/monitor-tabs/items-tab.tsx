@@ -62,6 +62,21 @@ function confidenceStyle(score: number): string {
 type StatusFilter = "all" | "matches" | "non-matches" | "dismissed";
 type SortOption = "default" | "price-asc" | "price-desc" | "name-asc" | "name-desc";
 
+const STATUS_FILTERS: { value: StatusFilter; label: string }[] = [
+  { value: "all", label: "All items" },
+  { value: "matches", label: "Matches only" },
+  { value: "non-matches", label: "Non-matches" },
+  { value: "dismissed", label: "Dismissed" },
+];
+
+const SORT_OPTIONS: { value: SortOption; label: string }[] = [
+  { value: "default", label: "Default" },
+  { value: "price-asc", label: "Price: low to high" },
+  { value: "price-desc", label: "Price: high to low" },
+  { value: "name-asc", label: "Name: A–Z" },
+  { value: "name-desc", label: "Name: Z–A" },
+];
+
 export function ItemsTab({ monitorId, allItems, schema, blacklist, scores, showFilters, onShowFiltersChange }: ItemsTabProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [editedConditions, setEditedConditions] = useState<MatchConditions | null>(null);
@@ -274,28 +289,25 @@ export function ItemsTab({ monitorId, allItems, schema, blacklist, scores, showF
 
       {/* Quick filters */}
       <div className="flex flex-wrap items-center gap-2">
-        <Select value={statusFilter} onValueChange={(v) => v && setStatusFilter(v as StatusFilter)}>
+        <Select items={STATUS_FILTERS} value={statusFilter} onValueChange={(v) => v && setStatusFilter(v as StatusFilter)}>
           <SelectTrigger size="sm" className="w-[140px] text-xs">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All items</SelectItem>
-            <SelectItem value="matches">Matches only</SelectItem>
-            <SelectItem value="non-matches">Non-matches</SelectItem>
-            <SelectItem value="dismissed">Dismissed</SelectItem>
+            {STATUS_FILTERS.map(({ value, label }) => (
+              <SelectItem key={value} value={value}>{label}</SelectItem>
+            ))}
           </SelectContent>
         </Select>
-        <Select value={sortBy} onValueChange={(v) => v && setSortBy(v as SortOption)}>
+        <Select items={SORT_OPTIONS} value={sortBy} onValueChange={(v) => v && setSortBy(v as SortOption)}>
           <SelectTrigger size="sm" className="w-[150px] text-xs">
             <ArrowUpDown className="h-3 w-3 mr-1.5" />
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="default">Default</SelectItem>
-            <SelectItem value="price-asc">Price: low to high</SelectItem>
-            <SelectItem value="price-desc">Price: high to low</SelectItem>
-            <SelectItem value="name-asc">Name: A–Z</SelectItem>
-            <SelectItem value="name-desc">Name: Z–A</SelectItem>
+            {SORT_OPTIONS.map(({ value, label }) => (
+              <SelectItem key={value} value={value}>{label}</SelectItem>
+            ))}
           </SelectContent>
         </Select>
         <div className="flex items-center gap-1.5">

@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardDescription } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { AlertCircle, Radar, Github, Mail, Loader2 } from "lucide-react";
 import Link from "next/link";
@@ -12,6 +12,9 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
 import { toast } from "sonner";
 import { trackSignUp, trackSignIn, SIGNED_UP_PARAM } from "@/lib/posthog";
+
+/** Better Auth's default minimum, which convex/betterAuth/auth.ts does not change. */
+const MIN_PASSWORD = 8;
 
 /**
  * Only honour `?next=` values that point to a same-origin path. Refuse
@@ -49,13 +52,21 @@ export default function LoginPage() {
         ? await authClient.signUp.email({ email, password, name })
         : await authClient.signIn.email({ email, password });
       if (error) {
-        setRefused(!isSignUp);
+        // A rate limit or an outage also comes back as `error`, and is not a wrong password.
+        const wrongLogin = !isSignUp && (error.code === "INVALID_EMAIL_OR_PASSWORD" || error.status === 401);
+        setRefused(wrongLogin);
         setFormError(
-          !isSignUp
+          wrongLogin
             ? "That email or password isn't right."
             : error.code === "USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL" || error.code === "USER_ALREADY_EXISTS"
               ? "That email already has an account. Sign in instead."
-              : "We couldn't create your account. Try again."
+              : error.code === "PASSWORD_TOO_SHORT"
+                ? `Use a password of at least ${MIN_PASSWORD} characters.`
+                : error.code === "INVALID_EMAIL"
+                  ? "That email address doesn't look right."
+                  : isSignUp
+                    ? "We couldn't create your account. Try again."
+                    : "We couldn't sign you in. Try again in a moment."
         );
         return;
       }
@@ -184,6 +195,7 @@ export default function LoginPage() {
                   id="password"
                   type="password"
                   autoComplete={isSignUp ? "new-password" : "current-password"}
+                  minLength={isSignUp ? MIN_PASSWORD : undefined}
                   placeholder="Enter your password"
                   value={password}
                   onChange={(e) => {

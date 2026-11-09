@@ -47,12 +47,12 @@ export function MonitorCard({ monitor, onTogglePause, onDelete, onRescan, onClon
 
   const statusBorderColor =
     monitor.status === "scanning"
-      ? "group-hover:border-l-blue-500/50"
+      ? "hover:border-l-blue-500/50"
       : monitor.status === "active"
-        ? "group-hover:border-l-emerald-500/50"
+        ? "hover:border-l-emerald-500/50"
         : monitor.status === "error"
-          ? "group-hover:border-l-red-500/50"
-          : "group-hover:border-l-amber-500/50";
+          ? "hover:border-l-red-500/50"
+          : "hover:border-l-amber-500/50";
 
   const detailHref = `/dashboard/monitors/${monitor._id}`;
 
@@ -65,7 +65,7 @@ export function MonitorCard({ monitor, onTogglePause, onDelete, onRescan, onClon
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-3 mb-2.5">
               <h2 className="min-w-0 text-base font-semibold line-clamp-2">
-                <Link href={detailHref} className="outline-none after:absolute after:inset-0 focus-visible:after:rounded-xl focus-visible:after:outline-2 focus-visible:after:outline-ring">
+                <Link href={detailHref} className="outline-none after:absolute after:inset-0 focus-visible:after:rounded-xl focus-visible:after:outline-2 focus-visible:after:-outline-offset-2 focus-visible:after:outline-ring">
                   {monitor.name}
                 </Link>
               </h2>

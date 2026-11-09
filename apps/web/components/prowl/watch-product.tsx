@@ -25,13 +25,15 @@ interface WatchProductFormProps {
   ticked: Set<string>;
   /** Criteria guessed from a cloned monitor's prompt. */
   guess: GuessedAlertOn | null;
+  /** False when the plan has no room for another monitor, so no listing can be ticked. */
+  canPick: boolean;
   onCreated: (groupId: Id<"monitorGroups">) => void;
   /** The listing picker, so the Watch bar stays on screen while the user picks. `missingShops` is set once Watch was pressed with nothing ticked. */
   children: (missingShops: boolean) => ReactNode;
 }
 
 /** The criteria step, then one monitor per ticked listing. Mount it per search, so the defaults follow the results. */
-export function WatchProductForm({ name, region, listings, ticked, guess, onCreated, children }: WatchProductFormProps) {
+export function WatchProductForm({ name, region, listings, ticked, guess, canPick, onCreated, children }: WatchProductFormProps) {
   const create = useMutation(api.monitorGroups.create);
   // A cloned prompt says what they wanted. Without one, they get price drops,
   // plus restocks if a shop is out of stock.
@@ -149,7 +151,7 @@ export function WatchProductForm({ name, region, listings, ticked, guess, onCrea
             type="button"
             className="gap-2"
             onClick={() => void submit()}
-            disabled={saving || tierLoading || configuredChannels === undefined}
+            disabled={saving || tierLoading || configuredChannels === undefined || (noShops && !canPick)}
           >
             {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Eye className="h-4 w-4" />}
             {watching.length > 1 ? `Watch ${watching.length} shops` : watching.length === 1 ? "Watch 1 shop" : "Watch shops"}

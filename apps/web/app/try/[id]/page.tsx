@@ -94,7 +94,7 @@ export default function TryResultPage({
     <div className="min-h-screen bg-background">
       <Header />
 
-      <main className="mx-auto max-w-3xl px-4 sm:px-6 py-10 sm:py-16 space-y-8">
+      <main id="main" className="mx-auto max-w-3xl px-4 sm:px-6 py-10 sm:py-16 space-y-8">
         {/* Status banner */}
         {monitor.status === "scanning" && (
           <Card className="ring-primary/30 bg-primary/5">
