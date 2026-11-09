@@ -130,8 +130,8 @@ export default function SettingsPage() {
             <Bell className="hidden sm:block" />
             Notifications
             {notifSettings && notifSettings.filter((s) => s.enabled).length === 0 && (
-              <span className="h-2 w-2 rounded-full bg-amber-400" title="No alert channels are on">
-                <span className="sr-only">No alert channels are on</span>
+              <span className="h-2 w-2 rounded-full bg-amber-400" title="Only email is set up">
+                <span className="sr-only">Only email is set up</span>
               </span>
             )}
           </TabsTrigger>
@@ -155,7 +155,7 @@ export default function SettingsPage() {
 
         <TabsContent value="profile" className="mt-8 space-y-8">
           <Card>
-            <CardHeader className="pb-4">
+            <CardHeader>
               <CardTitle className="text-lg font-semibold">Profile</CardTitle>
               <CardDescription className="text-sm">Your account information</CardDescription>
             </CardHeader>
@@ -187,7 +187,7 @@ export default function SettingsPage() {
 
           {POSTHOG_KEY && (
             <Card>
-              <CardHeader className="pb-4">
+              <CardHeader>
                 <CardTitle className="text-lg font-semibold">Analytics</CardTitle>
                 <CardDescription className="text-sm">How we see what the app is used for</CardDescription>
               </CardHeader>
@@ -201,7 +201,7 @@ export default function SettingsPage() {
           )}
 
           <Card>
-            <CardHeader className="pb-4">
+            <CardHeader>
               <CardTitle className="text-lg font-semibold">Beta features</CardTitle>
               <CardDescription className="text-sm">Try things before everyone else gets them</CardDescription>
             </CardHeader>
@@ -239,7 +239,7 @@ export default function SettingsPage() {
           </Card>
 
           <Card className="ring-destructive/20">
-            <CardHeader className="pb-4">
+            <CardHeader>
               <CardTitle className="text-lg font-semibold text-destructive">Danger zone</CardTitle>
               <CardDescription className="text-sm">
                 Permanently delete your account, your sign-in, and all data including monitors, scrape history, and notification settings.
@@ -365,7 +365,7 @@ export default function SettingsPage() {
 
           {/* Current plan */}
           <Card>
-            <CardHeader className="pb-4">
+            <CardHeader>
               <CardTitle className="text-lg font-semibold">Current plan</CardTitle>
             </CardHeader>
             <CardContent>
@@ -373,10 +373,8 @@ export default function SettingsPage() {
                 <div>
                   <div className="flex items-center gap-3">
                     <p className="text-xl font-bold capitalize">{tier}</p>
-                    {isCancelled ? (
+                    {isCancelled && (
                       <Badge variant="outline" className="text-xs bg-amber-500/10 text-amber-400 border-amber-500/20">Cancelling</Badge>
-                    ) : (
-                      <Badge variant="outline" className="text-xs">Current plan</Badge>
                     )}
                   </div>
                   <p className="text-sm text-muted-foreground mt-2 leading-relaxed">
@@ -525,7 +523,7 @@ export default function SettingsPage() {
 
           {/* Usage */}
           <Card>
-            <CardHeader className="pb-4">
+            <CardHeader>
               <CardTitle className="text-lg font-semibold">Usage</CardTitle>
             </CardHeader>
             <CardContent>

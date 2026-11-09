@@ -76,7 +76,7 @@ export default function ExamplePage() {
           </Card>
           <Card>
             <CardContent>
-              <p className="text-xs text-muted-foreground mb-1">AI Confidence</p>
+              <p className="text-xs text-muted-foreground mb-1">AI confidence</p>
               <p className="text-2xl font-bold text-emerald-400">92%</p>
             </CardContent>
           </Card>

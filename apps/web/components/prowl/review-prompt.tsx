@@ -162,25 +162,16 @@ export function ReviewPrompt() {
               </p>
             </div>
           </div>
-          <div className="flex flex-col items-start sm:items-end gap-1.5">
-            <div className="flex items-center gap-2">
-              <Button size="sm" onClick={() => setShowForm(true)}>
-                Write a quick review
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setDismissed(true)}
-              >
-                Maybe later
-              </Button>
-            </div>
-            <button
-              onClick={handleDismissPermanent}
-              className="text-xs text-muted-foreground hover:text-foreground transition-colors max-sm:-m-3 max-sm:p-3"
-            >
+          <div className="flex flex-wrap items-center gap-2">
+            <Button size="sm" onClick={() => setShowForm(true)}>
+              Write a quick review
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => setDismissed(true)}>
+              Maybe later
+            </Button>
+            <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={handleDismissPermanent}>
               Not interested
-            </button>
+            </Button>
           </div>
         </div>
       </CardContent>

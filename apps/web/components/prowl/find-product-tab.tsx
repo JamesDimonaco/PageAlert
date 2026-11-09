@@ -239,6 +239,13 @@ export function FindProductTab({ clone, onPasteUrl, onDone }: FindProductTabProp
         </div>
       </form>
 
+      {!searching && !error && results === null && (
+        <p className="text-sm text-muted-foreground">
+          We search shops in your country and list the ones that sell it. You then choose which to watch and when to
+          be alerted.
+        </p>
+      )}
+
       {searching && (
         <div className="space-y-3">
           <p role="status" className="flex items-center gap-2 text-sm">
@@ -248,7 +255,7 @@ export function FindProductTab({ clone, onPasteUrl, onDone }: FindProductTabProp
           </p>
           <div aria-hidden className="space-y-2">
             {[0, 1, 2].map((i) => (
-              <div key={i} className="h-20 animate-pulse rounded-lg bg-muted" />
+              <div key={i} className="h-20 animate-pulse rounded-lg bg-foreground/10" />
             ))}
           </div>
         </div>
@@ -302,7 +309,7 @@ export function FindProductTab({ clone, onPasteUrl, onDone }: FindProductTabProp
                 </p>
               )}
             </div>
-            <ul className="space-y-2">
+            <ul className={`space-y-2 ${missingShops ? "[&_label]:border-destructive" : ""}`}>
               {shown.map((listing) => (
                 <ListingRow
                   key={listing.url}

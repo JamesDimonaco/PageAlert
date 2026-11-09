@@ -38,6 +38,7 @@ import { api } from "@/convex/_generated/api";
 import { toast } from "sonner";
 import { trackFilterSaved, trackItemDismissed, trackItemRestored } from "@/lib/posthog";
 import { errorText } from "@/lib/utils";
+import { EmptyState } from "@/components/prowl/empty-state";
 import { formatPrice, toSafeUrl } from "@/lib/format";
 
 interface ItemsTabProps {
@@ -233,10 +234,9 @@ export function ItemsTab({ monitorId, allItems, schema, blacklist, scores, showF
 
   if (allItems.length === 0) {
     return (
-      <div className="rounded-xl border border-border bg-card px-4 py-8 text-center">
-        <p className="text-sm font-medium">No items extracted yet.</p>
-        <p className="mt-1 text-xs text-muted-foreground">Items show here after the first successful scan.</p>
-      </div>
+      <EmptyState title="No items extracted yet.">
+        Items show here after the first successful scan. You can rescan from the Overview tab.
+      </EmptyState>
     );
   }
 

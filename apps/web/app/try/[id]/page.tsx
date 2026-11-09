@@ -156,7 +156,7 @@ export default function TryResultPage({
               {confidence > 0 && (
                 <Card>
                   <CardContent>
-                    <p className="text-xs text-muted-foreground mb-1">AI Confidence</p>
+                    <p className="text-xs text-muted-foreground mb-1">AI confidence</p>
                     <p className={`text-2xl font-bold ${confidence >= 80 ? "text-emerald-400" : confidence >= 50 ? "text-amber-400" : "text-red-400"}`}>
                       {confidence}%
                     </p>

@@ -60,7 +60,7 @@ export function ApiKeysCard() {
 
   return (
     <Card>
-      <CardHeader className="pb-4">
+      <CardHeader>
         <CardTitle className="text-lg font-semibold">API keys</CardTitle>
         <CardDescription className="text-sm">
           Let an AI agent such as Claude create monitors and read matches for you, over MCP. Anyone with a key can

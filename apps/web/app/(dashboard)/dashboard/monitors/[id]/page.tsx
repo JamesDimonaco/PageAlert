@@ -347,18 +347,18 @@ export default function MonitorDetailPage({
       >
         <TabsList>
           <TabsTrigger value="overview">
-            <LayoutDashboard className="mr-2 h-4 w-4" />
+            <LayoutDashboard className="hidden sm:block" />
             Overview
           </TabsTrigger>
           <TabsTrigger value="items">
-            <List className="mr-2 h-4 w-4" />
+            <List className="hidden sm:block" />
             Items
             {allItems.length > 0 && (
               <span className="ml-1.5 text-xs text-muted-foreground">{allItems.length}</span>
             )}
           </TabsTrigger>
           <TabsTrigger value="history">
-            <History className="mr-2 h-4 w-4" />
+            <History className="hidden sm:block" />
             History
             {results.length > 0 && (
               <span className="ml-1.5 text-xs text-muted-foreground">{results.length}</span>

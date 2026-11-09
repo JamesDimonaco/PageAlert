@@ -9,6 +9,7 @@ import { ProductCard } from "@/components/prowl/product-card";
 import type { ProductSummary } from "@/convex/monitorGroups";
 import { StatsCards } from "@/components/prowl/stats-cards";
 import { DeleteDialog } from "@/components/prowl/delete-dialog";
+import { EmptyState } from "@/components/prowl/empty-state";
 import { ReviewPrompt } from "@/components/prowl/review-prompt";
 import { OnboardingChecklist } from "@/components/prowl/onboarding-checklist";
 import { UpgradeBanner } from "@/components/prowl/upgrade-banner";
@@ -364,13 +365,7 @@ export default function DashboardPage() {
               </div>
             </div>
           ) : (
-            <div className="flex flex-col items-center justify-center rounded-xl border border-border bg-card py-20 px-8">
-              <Search className="h-7 w-7 text-muted-foreground mb-4" />
-              <p className="text-lg font-semibold mb-2">No monitors found</p>
-              <p className="text-sm text-muted-foreground max-w-sm text-center leading-relaxed">
-                Try adjusting your search or filters.
-              </p>
-            </div>
+            <EmptyState title="No monitors found.">Try a different search or status.</EmptyState>
           )
         ) : (
           filtered.map((item) => "product" in item ? (

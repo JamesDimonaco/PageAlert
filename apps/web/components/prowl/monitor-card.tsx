@@ -130,7 +130,7 @@ export function MonitorCard({ monitor, onTogglePause, onDelete, onRescan, onClon
 
           <div className="relative z-10">
             <DropdownMenu>
-              <DropdownMenuTrigger aria-label="Monitor actions" className="inline-flex h-9 w-9 max-sm:h-11 max-sm:w-11 shrink-0 items-center justify-center rounded-lg transition-colors hover:bg-muted outline-none focus-visible:ring-2 focus-visible:ring-ring">
+              <DropdownMenuTrigger aria-label="Monitor actions" className="inline-flex h-9 w-9 max-sm:h-11 max-sm:w-11 shrink-0 items-center justify-center rounded-lg border border-border transition-colors hover:bg-muted outline-none focus-visible:ring-2 focus-visible:ring-ring">
                 <MoreVertical className="h-4 w-4" />
               </DropdownMenuTrigger>
             <DropdownMenuContent align="end">

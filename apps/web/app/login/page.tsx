@@ -49,7 +49,7 @@ export default function LoginPage() {
         ? await authClient.signUp.email({ email, password, name })
         : await authClient.signIn.email({ email, password });
       if (error) {
-        setRefused(true);
+        setRefused(!isSignUp);
         setFormError(
           !isSignUp
             ? "That email or password isn't right."
@@ -168,8 +168,10 @@ export default function LoginPage() {
                   onChange={(e) => {
                     setEmail(e.target.value);
                     setRefused(false);
+                    setFormError(null);
                   }}
                   aria-invalid={refused || undefined}
+                  aria-describedby={refused ? "login-error" : undefined}
                   required
                 />
               </div>
@@ -184,13 +186,15 @@ export default function LoginPage() {
                   onChange={(e) => {
                     setPassword(e.target.value);
                     setRefused(false);
+                    setFormError(null);
                   }}
                   aria-invalid={refused || undefined}
+                  aria-describedby={refused ? "login-error" : undefined}
                   required
                 />
               </div>
               {formError && (
-                <p role="alert" className="flex items-center gap-1.5 text-sm text-destructive">
+                <p id="login-error" role="alert" className="flex items-center gap-1.5 text-sm text-destructive">
                   <AlertCircle className="h-4 w-4 shrink-0" />
                   {formError}
                 </p>

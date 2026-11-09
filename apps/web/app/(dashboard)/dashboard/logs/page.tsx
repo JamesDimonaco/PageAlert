@@ -17,7 +17,6 @@ import {
 import {
   CheckCircle2,
   XCircle,
-  Clock,
   Loader2,
   ExternalLink,
   AlertTriangle,
@@ -28,6 +27,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { timeAgo } from "@/lib/time";
+import { EmptyState } from "@/components/prowl/empty-state";
 import { formatStrategy } from "@/lib/strategy";
 
 function formatDuration(ms: number): string {
@@ -301,23 +301,13 @@ export default function LogsPage() {
           <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
         </div>
       ) : logs.length === 0 ? (
-        <div className="flex flex-col items-center justify-center rounded-xl border border-border bg-card py-20 px-6 text-center">
-          <Clock className="h-8 w-8 text-muted-foreground mb-4" />
-          <p className="text-sm font-medium mb-1">No checks to show</p>
+        <EmptyState title="No checks to show.">
           {/* Says what the page covers without claiming there is anything
               behind it — a new account and a downgraded one both land here. */}
-          {windowDays != null && (
-            <p className="text-xs text-muted-foreground">
-              This page shows your last {windowDays} days.
-            </p>
-          )}
-        </div>
+          {windowDays != null && `This page shows your last ${windowDays} days.`}
+        </EmptyState>
       ) : filtered.length === 0 ? (
-        <div className="flex flex-col items-center justify-center rounded-xl border border-border bg-card py-20">
-          <Search className="h-7 w-7 text-muted-foreground mb-4" />
-          <p className="text-lg font-semibold mb-2">No logs found</p>
-          <p className="text-sm text-muted-foreground">Try adjusting your search or filters.</p>
-        </div>
+        <EmptyState title="No logs found.">Try a different search or status.</EmptyState>
       ) : grouped ? (
         // Grouped view. Each group pages independently — one busy monitor used
         // to render every one of its logs the moment the group opened.
