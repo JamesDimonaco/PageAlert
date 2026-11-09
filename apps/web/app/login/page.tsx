@@ -152,7 +152,10 @@ export default function LoginPage() {
                     id="name"
                     placeholder="Your name"
                     value={name}
-                    onChange={(e) => setName(e.target.value)}
+                    onChange={(e) => {
+                      setName(e.target.value);
+                      setFormError(null);
+                    }}
                     required={isSignUp}
                   />
                 </div>

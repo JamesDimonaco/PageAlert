@@ -162,7 +162,7 @@ export function ReviewPrompt() {
               </p>
             </div>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
             <Button size="sm" onClick={() => setShowForm(true)}>
               Write a quick review
             </Button>

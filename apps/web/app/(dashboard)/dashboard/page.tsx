@@ -292,7 +292,7 @@ export default function DashboardPage() {
         <StatsCards monitors={monitors} />
         {scanBudget && (
           <p className="text-xs text-muted-foreground">
-            {scanBudget.remaining}/{scanBudget.limit} scans remaining today
+            {scanBudget.remaining} of {scanBudget.limit} scans left today
           </p>
         )}
       </div>

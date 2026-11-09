@@ -237,7 +237,7 @@ export default function ProductPage({ params }: { params: Promise<{ id: string }
         <section className="space-y-2">
           <h2 className="section-title">More shops we found</h2>
           {full && hasSuggestions && (
-            <p className="text-xs text-muted-foreground">
+            <p className="text-sm text-muted-foreground">
               You&apos;re using all {maxMonitors} of your monitors. Paused ones still count, so delete one to free a
               slot, or{" "}
               <Link href="/dashboard/settings?tab=billing" className="underline hover:text-foreground">upgrade</Link>.

@@ -128,7 +128,7 @@ export function WatchProductForm({ name, region, listings, ticked, guess, onCrea
           onCurrencyChange={setCurrency}
         />
         {oldTarget && !targetFits && priceChoice === "below" && (
-          <p className="pl-6 text-xs text-muted-foreground">
+          <p className="pl-6 text-sm text-muted-foreground">
             Your old alert was under {oldTarget.written}.{" "}
             {resultsCurrency ? `Set a target in ${resultsCurrency}.` : "Set a target and pick its currency."}
           </p>

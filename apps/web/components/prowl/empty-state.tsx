@@ -5,7 +5,7 @@ export function EmptyState({ title, children }: { title: string; children?: Reac
   return (
     <div className="rounded-xl border border-border bg-card px-4 py-8 text-center">
       <p className="text-sm font-medium">{title}</p>
-      {children && <div className="mt-1 text-xs text-muted-foreground">{children}</div>}
+      {children && <div className="mt-1 text-sm text-muted-foreground">{children}</div>}
     </div>
   );
 }

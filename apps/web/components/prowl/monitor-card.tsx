@@ -92,7 +92,7 @@ export function MonitorCard({ monitor, onTogglePause, onDelete, onRescan, onClon
               </div>
             )}
 
-            <div className="flex flex-wrap items-center gap-5 text-xs text-muted-foreground">
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 text-xs text-muted-foreground">
               <span className="flex items-center gap-1.5">
                 <Globe className="h-3.5 w-3.5" />
                 <span className="truncate max-w-[200px]">{new URL(monitor.url).hostname}</span>

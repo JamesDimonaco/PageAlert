@@ -211,7 +211,7 @@ export function OverviewTab({ monitorId, monitor, matches, totalItems, results, 
       return (
         <div className="px-4 py-8 text-center">
           <p className="text-sm font-medium">No matches yet.</p>
-          <p className="mt-1 text-xs text-muted-foreground">
+          <p className="mt-1 text-sm text-muted-foreground">
             Watching {totalItems} items, checking every {displayInterval}.
             {next && ` Next check ${next}.`}
           </p>
@@ -242,14 +242,14 @@ export function OverviewTab({ monitorId, monitor, matches, totalItems, results, 
       return (
         <div className="px-4 py-8 text-center">
           <p className="text-sm font-medium">First scan running.</p>
-          <p className="mt-1 text-xs text-muted-foreground">Matches show here in about a minute.</p>
+          <p className="mt-1 text-sm text-muted-foreground">Matches show here in about a minute.</p>
         </div>
       );
     }
     return (
       <div className="px-4 py-8 text-center">
         <p className="text-sm font-medium">Nothing extracted yet.</p>
-        <p className="mt-1 text-xs text-muted-foreground">
+        <p className="mt-1 text-sm text-muted-foreground">
           We loaded the page but found no items to compare. Check the URL points at the listing, or run the scan again.
         </p>
         <Button
@@ -276,7 +276,7 @@ export function OverviewTab({ monitorId, monitor, matches, totalItems, results, 
                 <BellOff className="h-5 w-5 text-amber-400 shrink-0" />
                 <div>
                   <p className="text-sm font-semibold text-amber-400">Notifications muted</p>
-                  <p className="text-xs text-muted-foreground">This monitor is still scanning but won't send any alerts.</p>
+                  <p className="text-sm text-muted-foreground">This monitor is still scanning but won't send any alerts.</p>
                 </div>
               </div>
               <Button
@@ -304,7 +304,7 @@ export function OverviewTab({ monitorId, monitor, matches, totalItems, results, 
                   Retrying automatically ({monitor.retryCount} of 3)
                 </p>
                 <p className="text-sm text-muted-foreground break-words">{monitor.lastError}</p>
-                <p className="text-xs text-muted-foreground mt-2">
+                <p className="text-sm text-muted-foreground mt-2">
                   Trying different strategies — proxy, mobile browser.
                   {monitor.retryCount === 1 && " Next: retry with residential proxy."}
                   {monitor.retryCount === 2 && " Next: retry with mobile browser + skip anti-bot checks."}
@@ -334,7 +334,7 @@ export function OverviewTab({ monitorId, monitor, matches, totalItems, results, 
                   {isParked ? "Checks stopped" : isBlocked ? "This site blocked us" : "Monitor failed"}
                 </p>
                 <p className="text-sm text-muted-foreground break-words">{monitor.lastError}</p>
-                <p className="text-xs text-muted-foreground mt-2">
+                <p className="text-sm text-muted-foreground mt-2">
                   {isParked
                     ? "We've stopped checking this one automatically. Hit Retry to give it another go."
                     : isBlocked

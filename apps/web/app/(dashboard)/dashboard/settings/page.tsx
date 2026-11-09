@@ -130,8 +130,8 @@ export default function SettingsPage() {
             <Bell className="hidden sm:block" />
             Notifications
             {notifSettings && notifSettings.filter((s) => s.enabled).length === 0 && (
-              <span className="h-2 w-2 rounded-full bg-amber-400" title="Only email is set up">
-                <span className="sr-only">Only email is set up</span>
+              <span className="h-2 w-2 rounded-full bg-amber-400" title="Set up your alert channels">
+                <span className="sr-only">Set up your alert channels</span>
               </span>
             )}
           </TabsTrigger>
@@ -340,7 +340,7 @@ export default function SettingsPage() {
                         ? `You have access until ${new Date(periodEnd!).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })} (${daysRemaining} day${daysRemaining !== 1 ? "s" : ""} remaining).`
                         : "Your access has expired."}
                     </p>
-                    <p className="text-xs text-muted-foreground mt-1">
+                    <p className="text-sm text-muted-foreground mt-1">
                       Your monitors will continue running until then. After that, you&apos;ll be on the free plan.
                     </p>
                   </div>
@@ -420,7 +420,7 @@ export default function SettingsPage() {
                 </div>
               </div>
               {hasSubscription && (
-                <p className="text-xs text-muted-foreground mt-4">
+                <p className="text-sm text-muted-foreground mt-4">
                   Manage your billing, update payment method, or cancel your subscription from the Polar portal.
                   {" "}You&apos;ll be redirected to Polar — close the tab to return here.
                   {!isCancelled && " If you cancel, you'll keep access until the end of your billing period."}

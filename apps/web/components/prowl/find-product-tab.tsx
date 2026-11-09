@@ -187,6 +187,7 @@ export function FindProductTab({ clone, onPasteUrl, onDone }: FindProductTabProp
             placeholder="e.g. Sony WH-1000XM5"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
+            minLength={2}
             maxLength={200}
             required
           />
@@ -194,8 +195,9 @@ export function FindProductTab({ clone, onPasteUrl, onDone }: FindProductTabProp
             type="submit"
             className="gap-2 shrink-0"
             aria-busy={searching}
-            // Left enabled while searching: a dimmed button is too faint to read. runSearch ignores the extra press.
-            disabled={!region || outOfSearches || query.trim().length < 2}
+            // Left enabled while searching and while the box is empty: a dimmed button reads as broken.
+            // runSearch ignores the extra press, and the input's own rules catch a short name.
+            disabled={!region || outOfSearches}
           >
             {searching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
             {searching ? "Searching…" : "Search"}
@@ -255,7 +257,7 @@ export function FindProductTab({ clone, onPasteUrl, onDone }: FindProductTabProp
           </p>
           <div aria-hidden className="space-y-2">
             {[0, 1, 2].map((i) => (
-              <div key={i} className="h-20 animate-pulse rounded-lg bg-foreground/10" />
+              <div key={i} className="h-20 animate-pulse rounded-lg border border-border bg-foreground/15" />
             ))}
           </div>
         </div>
@@ -286,30 +288,30 @@ export function FindProductTab({ clone, onPasteUrl, onDone }: FindProductTabProp
               <h3 id="pick-shops" className="section-title">1. Choose the shops to watch</h3>
               {missingShops && <p role="alert" className="mt-1 text-sm text-destructive">Tick at least one shop.</p>}
               {slotsLoading ? (
-                <p className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+                <p className="mt-1 flex items-center gap-1.5 text-sm text-muted-foreground">
                   <Loader2 className="h-3 w-3 animate-spin" /> Checking your free monitors…
                 </p>
               ) : creationsLeft < freeSlots && allowance ? (
-                <p className="mt-1 text-xs text-muted-foreground">
+                <p className="mt-1 text-sm text-muted-foreground">
                   Your plan lets you add {allowance.limit} monitors every 5 hours.{" "}
                   {creationsLeft === 0
                     ? "You've added that many, so try again later."
                     : `You can pick ${creationsLeft} now.`}
                 </p>
               ) : freeSlots === 0 ? (
-                <p className="mt-1 text-xs text-muted-foreground">
+                <p className="mt-1 text-sm text-muted-foreground">
                   You&apos;re using all {maxMonitors} of your monitors. Paused ones still count, so delete one to free a
                   slot, or{" "}
                   <Link href="/dashboard/settings?tab=billing" className="underline hover:text-foreground">upgrade</Link>.
                 </p>
               ) : (
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {ticked.size > 0 ? "We've ticked the closest matches. Change them if you like." : "Tick the shops you want."}{" "}
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {ticked.size > 0 ? "We've ticked the closest matches. Change them if you like. " : missingShops ? "" : "Tick the shops you want. "}
                   Each one uses a monitor, and you have {freeSlots} free.
                 </p>
               )}
             </div>
-            <ul className={`space-y-2 ${missingShops ? "[&_label]:border-destructive" : ""}`}>
+            <ul className={`space-y-2 ${missingShops ? "[&>li>label]:border-destructive" : ""}`}>
               {shown.map((listing) => (
                 <ListingRow
                   key={listing.url}
