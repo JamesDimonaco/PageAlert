@@ -555,6 +555,8 @@ export async function fetchAllUsers(
  * Better Auth bumps it when a session is refreshed. Users who never
  * signed in again after their first session come back with no entry; so do
  * users who signed out, because Better Auth deletes the row on sign-out.
+ * An admin impersonating someone is not that person being active, and the
+ * inactivity reaper reads this, so impersonation sessions are skipped.
  */
 export async function fetchLastActiveByUser(
   ctx: QueryCtx | ActionCtx,
@@ -570,7 +572,7 @@ export async function fetchLastActiveByUser(
     for (const doc of result.page) {
       const userId = String(doc.userId ?? "");
       const updatedAt = Number(doc.updatedAt ?? 0);
-      if (!userId || !updatedAt) continue;
+      if (!userId || !updatedAt || doc.impersonatedBy) continue;
       const prev = byUser.get(userId);
       if (!prev || updatedAt > prev) byUser.set(userId, updatedAt);
     }
@@ -768,6 +770,84 @@ export const listUsers = query({
         };
       })
       .sort((a, b) => b.createdAt - a.createdAt);
+  },
+});
+
+/** How many of each recent-history list the user detail panel shows. */
+const DETAIL_RECENT = 20;
+/** Far above any tier's monitor cap; only bounds the read. */
+const DETAIL_MONITORS_MAX = 500;
+
+/** One user's account, monitors and recent history, for the admin user panel. */
+export const userDetail = query({
+  args: { userId: v.string() },
+  handler: async (ctx, { userId }) => {
+    await requireAdmin(ctx);
+    const user = await ctx.runQuery(components.betterAuth.adapter.findOne, {
+      model: "user",
+      where: [{ field: "_id", operator: "eq", value: userId }],
+    });
+    const email = user ? String(user.email ?? "") : "";
+
+    const [tier, ban, activity, channels, monitors, notifications, scans, emails] = await Promise.all([
+      ctx.db.query("userTiers").withIndex("by_userId", (q) => q.eq("userId", userId)).unique(),
+      ctx.db.query("bannedUsers").withIndex("by_userId", (q) => q.eq("userId", userId)).unique(),
+      ctx.db.query("userActivity").withIndex("by_userId", (q) => q.eq("userId", userId)).unique(),
+      ctx.db.query("notificationSettings").withIndex("by_userId", (q) => q.eq("userId", userId)).take(10),
+      ctx.db.query("monitors").withIndex("by_userId", (q) => q.eq("userId", userId)).take(DETAIL_MONITORS_MAX),
+      ctx.db.query("notifications").withIndex("by_userId", (q) => q.eq("userId", userId)).order("desc").take(DETAIL_RECENT),
+      ctx.db.query("scrapeLogs").withIndex("by_userId_createdAt", (q) => q.eq("userId", userId)).order("desc").take(DETAIL_RECENT),
+      // By address, not userId: most email kinds never record a userId.
+      email
+        ? ctx.db.query("emailSends").withIndex("by_to", (q) => q.eq("to", email)).order("desc").take(DETAIL_RECENT)
+        : Promise.resolve([]),
+    ]);
+
+    return {
+      user: user
+        ? { email, name: String(user.name ?? ""), emailVerified: user.emailVerified === true, createdAt: Number(user.createdAt) }
+        : null,
+      tier: tier
+        ? {
+            tier: tier.tier,
+            grantUntil: tier.grantUntil && tier.grantUntil > Date.now() ? tier.grantUntil : null,
+            grantSource: tier.grantSource ?? null,
+            cancelledAt: tier.cancelledAt ?? null,
+            periodEnd: tier.periodEnd ?? null,
+            polarCustomerId: tier.polarCustomerId ?? null,
+          }
+        : null,
+      ban: ban ? { reason: ban.reason ?? null, bannedBy: ban.bannedBy, bannedAt: ban.bannedAt } : null,
+      lastSeenAt: activity?.lastSeenAt ?? null,
+      activatedAt: activity?.activatedAt ?? null,
+      channels: channels.filter((c) => c.enabled).map((c) => c.channel),
+      monitors: monitors
+        .sort((a, b) => b.createdAt - a.createdAt)
+        .map((m) => ({
+          id: m._id,
+          name: m.name,
+          url: m.url,
+          status: m.status,
+          checkInterval: m.checkInterval,
+          lastCheckedAt: m.lastCheckedAt ?? null,
+          lastMatchAt: m.lastMatchAt ?? null,
+          lastError: m.lastError ?? null,
+          matchCount: m.matchCount,
+          isAnonymous: m.isAnonymous === true,
+        })),
+      notifications: notifications.map((n) => ({ id: n._id, channel: n.channel, title: n.title, sentAt: n.sentAt })),
+      scans: scans.map((l) => ({
+        id: l._id,
+        monitorName: l.monitorName ?? null,
+        url: l.url,
+        status: l.status,
+        error: l.error ?? null,
+        itemCount: l.itemCount ?? null,
+        durationMs: l.durationMs,
+        createdAt: l.createdAt,
+      })),
+      emails: emails.map((e) => ({ id: e._id, kind: e.kind, status: e.status, createdAt: e.createdAt })),
+    };
   },
 });
 

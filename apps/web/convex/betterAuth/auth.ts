@@ -4,6 +4,7 @@ import type { GenericCtx } from "@convex-dev/better-auth/utils";
 import type { ActionCtx } from "../_generated/server";
 import type { BetterAuthOptions } from "better-auth";
 import { betterAuth } from "better-auth";
+import { admin } from "better-auth/plugins";
 import { polar, checkout, portal, webhooks } from "@polar-sh/better-auth";
 import { grantsAccess, periodEndMs, productTier, TIER_RANK } from "@prowl/shared";
 
@@ -213,7 +214,15 @@ async function grantFromSubscription(ctx: GenericCtx<DataModel>, sub: Subscripti
 }
 
 export const createAuthOptions = (ctx: GenericCtx<DataModel>) => {
-  const plugins: BetterAuthOptions["plugins"] = [convex({ authConfig })];
+  const plugins: BetterAuthOptions["plugins"] = [
+    convex({ authConfig }),
+    // Here for impersonation (sessions last its default hour). The plugin
+    // checks admins by user id, so it keeps its own allow-list beside
+    // SUPER_ADMIN_EMAILS; unset means nobody.
+    admin({
+      adminUserIds: (process.env.SUPER_ADMIN_USER_IDS ?? "").split(",").map((id) => id.trim()).filter(Boolean),
+    }),
+  ];
 
   if (polarClient) {
     plugins.push(
@@ -390,6 +399,23 @@ export const createAuthOptions = (ctx: GenericCtx<DataModel>) => {
       },
     },
     plugins,
+    // The admin plugin is here only for impersonation. Its other routes would
+    // ban and delete around bannedUsers and deleteAllUserData, so they're off.
+    disabledPaths: [
+      "/admin/set-role",
+      "/admin/get-user",
+      "/admin/create-user",
+      "/admin/update-user",
+      "/admin/list-users",
+      "/admin/list-user-sessions",
+      "/admin/unban-user",
+      "/admin/ban-user",
+      "/admin/revoke-user-session",
+      "/admin/revoke-user-sessions",
+      "/admin/remove-user",
+      "/admin/set-user-password",
+      "/admin/has-permission",
+    ],
     databaseHooks: {
       user: {
         create: {
