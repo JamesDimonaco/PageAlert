@@ -2,7 +2,7 @@ import { v } from "convex/values";
 import { CHANGELOG, latestChangelogEntry, type ChangelogEntry } from "@prowl/shared";
 import { mutation, query } from "./_generated/server";
 import { components } from "./_generated/api";
-import { isLiveAccount } from "./account";
+import { activityRow, isLiveAccount } from "./account";
 
 /**
  * The newest changelog entry when the signed-in user should get it as a popup,
@@ -16,14 +16,9 @@ export const show = query({
     if (!identity) return null;
 
     const entry = latestChangelogEntry();
-    const activity = await ctx.db
-      .query("userActivity")
-      .withIndex("by_userId", (q) => q.eq("userId", identity.subject))
-      .unique();
+    const activity = await activityRow(ctx, identity.subject);
     if (activity?.announcementsSeen?.includes(entry.id)) return null;
-
-    // A beta stays hidden until switched on, so new signups need telling too.
-    if (entry.enablesBeta) return activity?.betaFeatures?.includes(entry.enablesBeta) ? null : entry;
+    if (entry.skipIfBetaOn && activity?.betaFeatures?.includes(entry.skipIfBetaOn)) return null;
 
     // Someone who signed up after it shipped found it already there.
     const user = await ctx.runQuery(components.betterAuth.adapter.findOne, {
@@ -42,10 +37,7 @@ export const dismiss = mutation({
     if (!identity) return;
     if (!CHANGELOG.some((e) => e.id === id)) return;
 
-    const row = await ctx.db
-      .query("userActivity")
-      .withIndex("by_userId", (q) => q.eq("userId", identity.subject))
-      .unique();
+    const row = await activityRow(ctx, identity.subject);
     if (row) {
       const seen = row.announcementsSeen ?? [];
       if (!seen.includes(id)) {

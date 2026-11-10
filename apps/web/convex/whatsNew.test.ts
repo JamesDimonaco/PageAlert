@@ -37,7 +37,7 @@ describe("whatsNew.show: who gets the newest changelog entry as a popup", () => 
     expect(await t.withIdentity({ subject: userId }).query(api.whatsNew.show, {})).toEqual(latest);
   });
 
-  it.runIf(!latest.enablesBeta)("hides from an account created on or after its day", async () => {
+  it("hides from an account created on or after its day", async () => {
     const t = harness();
     const userId = await signUp(t, latestAt);
     expect(await t.withIdentity({ subject: userId }).query(api.whatsNew.show, {})).toBeNull();
@@ -98,42 +98,25 @@ describe("whatsNew.show: who gets the newest changelog entry as a popup", () => 
   });
 });
 
-// Remove once a newer entry is at the top: the beta entry is the only one these rules hold for.
-describe("whatsNew.show: while the Find a product entry is the newest", () => {
-  const whileBetaIsNewest = it.runIf(latest.id === "find-a-product-beta");
+// The launch popup. Without it, users who never opened Settings never hear the feature is on.
+// Remove once a newer entry is at the top.
+describe("whatsNew.show: while the Find a product launch entry is the newest", () => {
+  const whileLaunchIsNewest = it.runIf(latest.id === "find-a-product");
 
-  whileBetaIsNewest("switches on Find a product", () => {
-    expect(latest.enablesBeta).toBe("find_a_product");
+  whileLaunchIsNewest("opens the new-monitor sheet from its button", () => {
+    expect(latest.cta?.href).toBe("/dashboard?new=1");
   });
 
-  whileBetaIsNewest("hides from someone who already has the beta on", async () => {
+  whileLaunchIsNewest("shows to an existing user who never turned the old beta on", async () => {
     const t = harness();
     const userId = await existingUser(t);
-    const asUser = t.withIdentity({ subject: userId });
-    await asUser.mutation(api.betaFeatures.set, { feature: "find_a_product", enabled: true });
-    expect(await asUser.query(api.whatsNew.show, {})).toBeNull();
-  });
-
-  whileBetaIsNewest("shows to someone who turned the beta back off and never dismissed it", async () => {
-    const t = harness();
-    const userId = await existingUser(t);
-    const asUser = t.withIdentity({ subject: userId });
-    await asUser.mutation(api.betaFeatures.set, { feature: "find_a_product", enabled: true });
-    await asUser.mutation(api.betaFeatures.set, { feature: "find_a_product", enabled: false });
-    expect(await asUser.query(api.whatsNew.show, {})).toEqual(latest);
-  });
-
-  whileBetaIsNewest("shows to a brand new signup with no monitor yet", async () => {
-    const t = harness();
-    const userId = await signUp(t, latestAt);
     expect(await t.withIdentity({ subject: userId }).query(api.whatsNew.show, {})).toEqual(latest);
   });
 
-  whileBetaIsNewest("stays hidden for a new signup after they dismiss it", async () => {
+  whileLaunchIsNewest("hides from someone who already turned the old beta on", async () => {
     const t = harness();
-    const userId = await signUp(t, latestAt);
-    const asUser = t.withIdentity({ subject: userId });
-    await asUser.mutation(api.whatsNew.dismiss, { id: latest.id });
-    expect(await asUser.query(api.whatsNew.show, {})).toBeNull();
+    const userId = await existingUser(t);
+    await t.run((ctx) => ctx.db.insert("userActivity", { userId, lastSeenAt: 0, betaFeatures: ["find_a_product"] }));
+    expect(await t.withIdentity({ subject: userId }).query(api.whatsNew.show, {})).toBeNull();
   });
 });

@@ -6,6 +6,14 @@ import { feedbackSlotKey } from "./shared";
 import type { Id, TableNames } from "./_generated/dataModel";
 
 /** Is this user currently banned? Shared by every mutation that gates on ban status. */
+/** The user's one userActivity row, or null if they have none yet. */
+export function activityRow(ctx: QueryCtx | MutationCtx, userId: string) {
+  return ctx.db
+    .query("userActivity")
+    .withIndex("by_userId", (q) => q.eq("userId", userId))
+    .unique();
+}
+
 export async function isBanned(ctx: QueryCtx | MutationCtx, userId: string): Promise<boolean> {
   const row = await ctx.db
     .query("bannedUsers")

@@ -18,10 +18,6 @@ export const alertOnValidator = v.object({
 });
 export type AlertOn = Infer<typeof alertOnValidator>;
 
-/** A feature a user can switch on under Settings → Beta features. */
-export const betaFeature = v.literal("find_a_product");
-export type BetaFeature = Infer<typeof betaFeature>;
-
 export const checkIntervalValidator = v.union(
   v.literal("5m"),
   v.literal("15m"),
@@ -488,8 +484,9 @@ export default defineSchema({
     // Ids of the changelog entries this user has dismissed as a popup. See
     // whatsNew.ts.
     announcementsSeen: v.optional(v.array(v.string())),
-    // Beta features this user has switched on in Settings. See betaFeatures.ts.
-    betaFeatures: v.optional(v.array(betaFeature)),
+    // Who switched Find a product on while it was opt-in. It is on for everyone
+    // now; this only keeps its launch popup from those users. See whatsNew.ts.
+    betaFeatures: v.optional(v.array(v.literal("find_a_product"))),
     // The country Find a product last searched, offered first next time.
     searchRegion: v.optional(v.string()),
   })

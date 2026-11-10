@@ -80,6 +80,13 @@ export default function DashboardPage() {
     router.replace("/dashboard", { scroll: false });
   }, [searchParams, monitors, openWithDefaults, router, atLimit]);
 
+  // ?new=1 opens the new-monitor sheet. The launch popup and email link here.
+  useEffect(() => {
+    if (searchParams.get("new") !== "1") return;
+    router.replace("/dashboard", { scroll: false });
+    openCreate();
+  }, [searchParams, router, openCreate]);
+
   // Handle ?try=<url>&prompt=<prompt> — opens the create-monitor sheet
   // pre-populated. Used by the day-0 onboarding email's "Try this monitor"
   // button. See PROWL-038 Phase 4e.

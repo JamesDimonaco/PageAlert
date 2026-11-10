@@ -56,7 +56,7 @@ export default function LogDetailPage({
   const { isLoading: convexAuthLoading } = useConvexAuth();
   const log = result?.log as (NonNullable<typeof result>["log"] & LogExtended) | null | undefined;
   const [showRaw, setShowRaw] = useState(false);
-  const { open: openCreate } = useCreateMonitor();
+  const { openWithDefaults } = useCreateMonitor();
   const router = useRouter();
 
   // A null window means the query saw no identity — worth waiting out while
@@ -298,7 +298,8 @@ export default function LogDetailPage({
                 if (log.monitorId) {
                   router.push(`/dashboard/monitors/${log.monitorId}`);
                 } else {
-                  openCreate();
+                  // The monitor is gone, so retry from its link, not a fresh search.
+                  openWithDefaults({ name: log.monitorName ?? "", url: log.url, prompt: log.prompt });
                 }
               }}
             >

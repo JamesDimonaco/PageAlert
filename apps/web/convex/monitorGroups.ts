@@ -2,7 +2,6 @@ import { ConvexError, v, type Infer } from "convex/values";
 import { internalMutation, internalQuery, mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { canonicalUrl, isSearchRegion, SEARCH_REGIONS } from "@prowl/shared";
-import { hasBetaFeature } from "./betaFeatures";
 import {
   allowedChannels,
   clampInterval,
@@ -134,9 +133,6 @@ export const create = mutation({
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new ConvexError("Sign in to watch a product.");
     const userId = identity.subject;
-    if (!(await hasBetaFeature(ctx, userId, "find_a_product"))) {
-      throw new ConvexError("Find a product is a beta feature. Turn it on in Settings.");
-    }
 
     const name = args.name.trim().slice(0, MAX_NAME_LENGTH);
     if (!name) throw new ConvexError("Give the product a name.");
