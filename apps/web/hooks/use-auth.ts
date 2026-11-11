@@ -1,17 +1,31 @@
 "use client";
 
 import { useEffect } from "react";
+import { toast } from "sonner";
 import { authClient } from "@/lib/auth-client";
-import { identifyUser, setUserProperties, resetUser, trackSignOut } from "@/lib/posthog";
+import {
+  identifyUser,
+  muteForImpersonation,
+  resetUser,
+  setUserProperties,
+  trackSignOut,
+  unmuteAfterImpersonation,
+} from "@/lib/posthog";
 import { clearMonitorDraft } from "@/lib/monitor-draft";
 
 export function useAuth() {
   const session = authClient.useSession();
   const user = session.data?.user ?? null;
+  // The admin's user id when an admin is viewing the app as this user.
+  const impersonatedBy = session.data?.session.impersonatedBy ?? null;
 
   // Identify user in PostHog and set properties
   useEffect(() => {
-    if (user) {
+    if (user && impersonatedBy) {
+      // Identifying here would merge the admin's browser into this user.
+      muteForImpersonation();
+    } else if (user) {
+      unmuteAfterImpersonation();
       identifyUser(user.id, {
         email: user.email,
         name: user.name,
@@ -23,14 +37,24 @@ export function useAuth() {
         has_image: !!user.image,
       });
     }
-  }, [user?.id]);
+  }, [user?.id, impersonatedBy]);
 
   return {
     user,
     session: session.data?.session ?? null,
+    impersonatedBy,
     isLoading: session.isPending,
     isAuthenticated: !!user,
     signOut: async () => {
+      // Signing out of an impersonation would strand the admin's own session,
+      // so this stops impersonating instead. A failed stop is reported, not
+      // papered over with a sign-out that leaves the admin session behind.
+      if (impersonatedBy) {
+        const stopped = await authClient.admin.stopImpersonating().then((r) => !r.error, () => false);
+        if (stopped) window.location.href = "/admin";
+        else toast.error("Could not stop impersonating. Try again from the banner.");
+        return;
+      }
       trackSignOut();
       try {
         await authClient.signOut();

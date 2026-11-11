@@ -1,5 +1,6 @@
 "use client";
 
+import { ImpersonationBanner } from "@/components/admin/impersonation";
 import { Navbar } from "@/components/prowl/navbar";
 import { WhatsNewDialog } from "@/components/prowl/whats-new-dialog";
 import { useAuth } from "@/hooks/use-auth";
@@ -18,7 +19,7 @@ export default function DashboardLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const { isAuthenticated, isLoading, signOut } = useAuth();
+  const { user, isAuthenticated, isLoading, signOut, impersonatedBy } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -27,6 +28,13 @@ export default function DashboardLayout({
   const claimedRef = useRef(false);
   const lastTouchRef = useRef(0);
   const banStatus = useQuery(api.account.myBanStatus, isAuthenticated ? {} : "skip");
+  // Latched for the life of the page. After Stop impersonating, the session
+  // turns back into the admin's before the reload lands, while Convex still
+  // holds the user's token, so the guards below must not lift with it.
+  const wasImpersonatingRef = useRef(false);
+  useEffect(() => {
+    if (impersonatedBy) wasImpersonatingRef.current = true;
+  }, [impersonatedBy]);
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
@@ -51,19 +59,22 @@ export default function DashboardLayout({
   // last month would otherwise carry a month-old stamp. Throttled to an hour
   // on this side too, so ordinary clicking around costs no round trips — the
   // mutation throttles again server-side for tabs this ref does not cover.
+  // Not while an admin is impersonating: that is not the user coming back.
   useEffect(() => {
-    if (!isAuthenticated) return;
+    if (!isAuthenticated || impersonatedBy || wasImpersonatingRef.current) return;
     const now = Date.now();
     if (now - lastTouchRef.current < 60 * 60 * 1000) return;
     lastTouchRef.current = now;
     void touchLastSeen({}).catch(() => {});
-  }, [isAuthenticated, pathname, touchLastSeen]);
+  }, [isAuthenticated, impersonatedBy, pathname, touchLastSeen]);
 
   // Transfer anonymous monitors on first dashboard load. Waits for banStatus
   // to resolve so a banned account never fires this — the mutation already
   // guards it server-side, but there's no reason to call it at all here.
+  // Skipped while impersonating, or the admin's own free scan in this browser
+  // would move into the user's account.
   useEffect(() => {
-    if (isAuthenticated && banStatus && !banStatus.banned && !claimedRef.current) {
+    if (isAuthenticated && !impersonatedBy && !wasImpersonatingRef.current && banStatus && !banStatus.banned && !claimedRef.current) {
       claimedRef.current = true; // Prevent concurrent runs
       let monitorId: string | undefined;
       let anonId: string | undefined;
@@ -88,7 +99,7 @@ export default function DashboardLayout({
         claimedRef.current = false; // Allow retry on next render
       });
     }
-  }, [isAuthenticated, banStatus, claimAnonymous]);
+  }, [isAuthenticated, impersonatedBy, banStatus, claimAnonymous]);
 
   if (isLoading) {
     return (
@@ -100,6 +111,8 @@ export default function DashboardLayout({
 
   if (!isAuthenticated) return null;
 
+  const banner = impersonatedBy && user ? <ImpersonationBanner email={user.email} /> : null;
+
   // Deliberately not gated on banStatus resolving: that was a second round
   // trip in front of every dashboard render, to catch a case that almost
   // never applies. A banned account sees the shell for the moment the query
@@ -109,6 +122,7 @@ export default function DashboardLayout({
   if (banStatus?.banned) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center gap-4 px-6 text-center">
+        {banner}
         <h1 className="text-xl font-semibold">This account has been suspended</h1>
         {banStatus.reason && <p className="text-sm text-muted-foreground max-w-md">{banStatus.reason}</p>}
         <p className="text-sm text-muted-foreground">Contact support if you believe this is a mistake.</p>
@@ -120,6 +134,7 @@ export default function DashboardLayout({
   return (
     <CreateMonitorProvider>
       <div className="flex min-h-screen flex-col">
+        {banner}
         <Navbar />
         <WhatsNewDialog />
         <main id="main" className="flex-1">

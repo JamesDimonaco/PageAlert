@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useMutation } from "convex/react";
-import { Loader2, RefreshCw, Search, Mail, Gift, X, MoreVertical, Ban, ShieldCheck, Trash2 } from "lucide-react";
+import { Loader2, RefreshCw, Search, Mail, Gift, X, MoreVertical, Ban, ShieldCheck, Trash2, PanelRight, UserRound } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/convex/_generated/api";
 import { Badge } from "@/components/ui/badge";
@@ -19,6 +19,8 @@ import { timeAgo } from "@/lib/time";
 import { GrantTrialDialog } from "./grant-trial-dialog";
 import { BanUserDialog } from "./ban-user-dialog";
 import { DeleteUserDialog } from "./delete-user-dialog";
+import { startImpersonating } from "./impersonation";
+import { UserDetailSheet } from "./user-detail-sheet";
 import { formatDate, formatUsd } from "./format";
 import { QueryError } from "./query-error";
 import { useOneShotQuery } from "./use-one-shot-query";
@@ -42,6 +44,7 @@ export function AdminUsersTable({
   const [trialTarget, setTrialTarget] = useState<string[] | null>(null);
   const [banTarget, setBanTarget] = useState<{ userId: string; email: string } | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{ userId: string; email: string } | null>(null);
+  const [detailUserId, setDetailUserId] = useState<string | null>(null);
 
   const filtered = useMemo(() => {
     if (!users) return [];
@@ -197,7 +200,13 @@ export function AdminUsersTable({
                   </td>
                   <td className="p-3">
                     <div className="flex items-center gap-1.5">
-                      <div className="font-medium truncate max-w-[260px]">{u.email}</div>
+                      <button
+                        type="button"
+                        onClick={() => setDetailUserId(u.userId)}
+                        className="font-medium truncate max-w-[260px] text-left hover:underline"
+                      >
+                        {u.email}
+                      </button>
                       {u.banned && <Badge variant="destructive" className="text-xs">Banned</Badge>}
                     </div>
                     {u.name && <div className="text-xs text-muted-foreground truncate max-w-[260px]">{u.name}</div>}
@@ -227,6 +236,12 @@ export function AdminUsersTable({
                         <MoreVertical className="h-4 w-4" />
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
+                        <DropdownMenuItem onClick={() => setDetailUserId(u.userId)}>
+                          <PanelRight className="mr-2 h-4 w-4" /> View details
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => startImpersonating(u.userId)}>
+                          <UserRound className="mr-2 h-4 w-4" /> Impersonate
+                        </DropdownMenuItem>
                         {u.banned ? (
                           <DropdownMenuItem onClick={() => handleUnban(u.userId, u.email)}>
                             <ShieldCheck className="mr-2 h-4 w-4" /> Unban
@@ -254,6 +269,7 @@ export function AdminUsersTable({
         </table>
       </div>
 
+      <UserDetailSheet userId={detailUserId} onOpenChange={(open) => { if (!open) setDetailUserId(null); }} />
       <GrantTrialDialog
         open={trialTarget !== null}
         onOpenChange={(open) => { if (!open) setTrialTarget(null); }}
