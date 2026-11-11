@@ -32,7 +32,7 @@ export default function ChangelogPage() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-3xl px-6 py-16">
+      <main id="main" className="mx-auto max-w-3xl px-6 py-16">
         <h1 className="text-3xl font-bold tracking-tight mb-2">Changelog</h1>
         <p className="text-sm text-muted-foreground mb-12">What&apos;s new in PageAlert, newest first.</p>
 
@@ -48,7 +48,7 @@ export default function ChangelogPage() {
               {entry.cta && (
                 <Link
                   href={entry.cta.href}
-                  className="mt-3 inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline"
+                  className="mt-3 inline-flex items-center gap-1 text-sm font-medium text-primary underline underline-offset-2"
                 >
                   {entry.cta.label}
                   <ArrowRight className="h-3.5 w-3.5" />

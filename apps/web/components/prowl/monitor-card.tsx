@@ -27,6 +27,7 @@ import {
   Copy,
 } from "lucide-react";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { timeAgo } from "@/lib/time";
 
@@ -46,31 +47,28 @@ export function MonitorCard({ monitor, onTogglePause, onDelete, onRescan, onClon
 
   const statusBorderColor =
     monitor.status === "scanning"
-      ? "group-hover:border-l-blue-500/50"
+      ? "hover:border-l-blue-500/50"
       : monitor.status === "active"
-        ? "group-hover:border-l-emerald-500/50"
+        ? "hover:border-l-emerald-500/50"
         : monitor.status === "error"
-          ? "group-hover:border-l-red-500/50"
-          : "group-hover:border-l-amber-500/50";
+          ? "hover:border-l-red-500/50"
+          : "hover:border-l-amber-500/50";
 
   const detailHref = `/dashboard/monitors/${monitor._id}`;
 
   return (
     <Card
-      role="link"
-      tabIndex={0}
-      aria-label={`View ${monitor.name} details`}
-      className={`group relative overflow-hidden border-border/30 border-l-2 border-l-transparent bg-card/50 shadow-sm shadow-black/5 backdrop-blur transition-all hover:shadow-md hover:shadow-black/10 hover:bg-card/80 cursor-pointer ${statusBorderColor}`}
-      onClick={() => router.push(detailHref)}
-      onKeyDown={(e) => { if (e.key === "Enter") router.push(detailHref); }}
+      className={`group relative border-l-2 border-l-transparent transition-colors hover:bg-muted/40 ${statusBorderColor}`}
     >
-      <CardContent className="p-4 sm:p-6">
+      <CardContent>
         <div className="flex items-start justify-between gap-4">
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-3 mb-2.5">
-              <span className="text-base font-semibold truncate">
-                {monitor.name}
-              </span>
+              <h2 className="min-w-0 text-base font-semibold line-clamp-2">
+                <Link href={detailHref} className="outline-none after:absolute after:inset-0 focus-visible:after:rounded-xl focus-visible:after:outline-2 focus-visible:after:-outline-offset-2 focus-visible:after:outline-ring">
+                  {monitor.name}
+                </Link>
+              </h2>
               <StatusBadge status={monitor.status} />
               {(monitor as any).muted && (
                 <Badge variant="outline" className="gap-1 bg-amber-500/10 text-amber-400 border-amber-500/20">
@@ -80,9 +78,13 @@ export function MonitorCard({ monitor, onTogglePause, onDelete, onRescan, onClon
               )}
             </div>
 
-            <p className="text-sm text-muted-foreground line-clamp-1 mb-4">
+            <p className="text-sm text-muted-foreground line-clamp-2 mb-4">
               &ldquo;{monitor.prompt}&rdquo;
             </p>
+
+            {monitor.status === "error" && monitor.lastError && (
+              <p className="text-sm text-destructive line-clamp-2 mb-4">{monitor.lastError}</p>
+            )}
 
             {monitor.autoPausedAt !== undefined && (
               <div className="mb-4">
@@ -90,7 +92,7 @@ export function MonitorCard({ monitor, onTogglePause, onDelete, onRescan, onClon
               </div>
             )}
 
-            <div className="flex flex-wrap items-center gap-5 text-xs text-muted-foreground">
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 text-xs text-muted-foreground">
               <span className="flex items-center gap-1.5">
                 <Globe className="h-3.5 w-3.5" />
                 <span className="truncate max-w-[200px]">{new URL(monitor.url).hostname}</span>
@@ -126,12 +128,9 @@ export function MonitorCard({ monitor, onTogglePause, onDelete, onRescan, onClon
             </div>
           </div>
 
-          {/* Stop click propagation on the menu so card click doesn't
-              fire when interacting with the dropdown. */}
-          {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions, jsx-a11y/click-events-have-key-events */}
-          <div onClick={(e) => e.stopPropagation()}>
+          <div className="relative z-10">
             <DropdownMenu>
-              <DropdownMenuTrigger aria-label="Monitor actions" className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg opacity-100 sm:opacity-0 sm:group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100 transition-all hover:bg-muted outline-none focus-visible:ring-2 focus-visible:ring-ring">
+              <DropdownMenuTrigger aria-label="Monitor actions" className="inline-flex h-9 w-9 max-sm:h-11 max-sm:w-11 shrink-0 items-center justify-center rounded-lg border border-border transition-colors hover:bg-muted outline-none focus-visible:ring-2 focus-visible:ring-ring">
                 <MoreVertical className="h-4 w-4" />
               </DropdownMenuTrigger>
             <DropdownMenuContent align="end">

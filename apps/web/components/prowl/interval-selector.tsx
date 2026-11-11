@@ -41,6 +41,7 @@ export function IntervalSelector({ value, onValueChange, disabled }: IntervalSel
 
   return (
     <Select
+      items={INTERVALS}
       value={value}
       onValueChange={(v) => {
         if (v && isAvailable(INTERVALS.find((i) => i.value === v)?.tier ?? "max", tier)) {
@@ -49,7 +50,7 @@ export function IntervalSelector({ value, onValueChange, disabled }: IntervalSel
       }}
       disabled={disabled || isLoading}
     >
-      <SelectTrigger>
+      <SelectTrigger aria-label="Check frequency">
         <SelectValue />
       </SelectTrigger>
       <SelectContent>
@@ -65,7 +66,7 @@ export function IntervalSelector({ value, onValueChange, disabled }: IntervalSel
               <span className="flex items-center gap-2">
                 {interval.label}
                 {!available && (
-                  <Badge variant="outline" className="text-[10px] gap-1 px-1.5 py-0">
+                  <Badge variant="outline" className="text-xs gap-1 px-1.5 py-0">
                     <Lock className="h-2.5 w-2.5" />
                     {TIER_LABELS[interval.tier]}
                   </Badge>

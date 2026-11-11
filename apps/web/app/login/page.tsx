@@ -4,14 +4,17 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardDescription } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
-import { Radar, Github, Mail, Loader2 } from "lucide-react";
+import { AlertCircle, Radar, Github, Mail, Loader2 } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
 import { toast } from "sonner";
 import { trackSignUp, trackSignIn, SIGNED_UP_PARAM } from "@/lib/posthog";
+
+/** Better Auth's default minimum, which convex/betterAuth/auth.ts does not change. */
+const MIN_PASSWORD = 8;
 
 /**
  * Only honour `?next=` values that point to a same-origin path. Refuse
@@ -29,6 +32,9 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
   const [loading, setLoading] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+  // Set when the server refused what was typed, so the fields are marked. A network failure is not their fault.
+  const [refused, setRefused] = useState(false);
   const router = useRouter();
   const searchParams = useSearchParams();
   const nextUrl = safeNext(searchParams.get("next"));
@@ -36,26 +42,39 @@ export default function LoginPage() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    setFormError(null);
+    setRefused(false);
     setLoading(true);
 
     try {
-      if (isSignUp) {
-        await authClient.signUp.email({
-          email,
-          password,
-          name,
-        });
-        trackSignUp({ method: "email" });
-      } else {
-        await authClient.signIn.email({
-          email,
-          password,
-        });
-        trackSignIn({ method: "email" });
+      // Better Auth returns a refused request as `error`; it only throws when the network fails.
+      const { error } = isSignUp
+        ? await authClient.signUp.email({ email, password, name })
+        : await authClient.signIn.email({ email, password });
+      if (error) {
+        // A rate limit or an outage also comes back as `error`, and is not a wrong password.
+        const wrongLogin = !isSignUp && (error.code === "INVALID_EMAIL_OR_PASSWORD" || error.status === 401);
+        setRefused(wrongLogin);
+        setFormError(
+          wrongLogin
+            ? "That email or password isn't right."
+            : error.code === "USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL" || error.code === "USER_ALREADY_EXISTS"
+              ? "That email already has an account. Sign in instead."
+              : error.code === "PASSWORD_TOO_SHORT"
+                ? `Use a password of at least ${MIN_PASSWORD} characters.`
+                : error.code === "INVALID_EMAIL"
+                  ? "That email address doesn't look right."
+                  : isSignUp
+                    ? "We couldn't create your account. Try again."
+                    : "We couldn't sign you in. Try again in a moment."
+        );
+        return;
       }
+      if (isSignUp) trackSignUp({ method: "email" });
+      else trackSignIn({ method: "email" });
       router.push(nextUrl);
     } catch {
-      toast.error(isSignUp ? "Failed to create account" : "Invalid credentials");
+      setFormError("We couldn't reach the server. Check your connection and try again.");
     } finally {
       setLoading(false);
     }
@@ -80,7 +99,7 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center px-4">
+    <main id="main" className="relative flex min-h-screen overflow-hidden items-center justify-center px-4">
       <div className="absolute inset-0 -z-10">
         <div className="absolute left-1/2 top-1/3 -translate-x-1/2 -translate-y-1/2 h-[600px] w-[600px] rounded-full bg-primary/5 blur-3xl" />
       </div>
@@ -97,7 +116,7 @@ export default function LoginPage() {
 
         <Card className="border-border/30 bg-card/80 shadow-xl shadow-black/10 backdrop-blur">
           <CardHeader className="text-center pb-2 px-8 pt-8">
-            <CardTitle className="text-xl font-bold tracking-tight">{isSignUp ? "Create account" : "Welcome back"}</CardTitle>
+            <h1 className="text-xl font-bold tracking-tight">{isSignUp ? "Create account" : "Welcome back"}</h1>
             <CardDescription className="mt-1.5 text-sm">
               {isSignUp ? "Sign up to start monitoring" : "Sign in to your account"}
             </CardDescription>
@@ -144,7 +163,10 @@ export default function LoginPage() {
                     id="name"
                     placeholder="Your name"
                     value={name}
-                    onChange={(e) => setName(e.target.value)}
+                    onChange={(e) => {
+                      setName(e.target.value);
+                      setFormError(null);
+                    }}
                     required={isSignUp}
                   />
                 </div>
@@ -154,9 +176,16 @@ export default function LoginPage() {
                 <Input
                   id="email"
                   type="email"
+                  autoComplete="email"
                   placeholder="you@example.com"
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  onChange={(e) => {
+                    setEmail(e.target.value);
+                    setRefused(false);
+                    setFormError(null);
+                  }}
+                  aria-invalid={refused || undefined}
+                  aria-describedby={refused ? "login-error" : undefined}
                   required
                 />
               </div>
@@ -165,12 +194,26 @@ export default function LoginPage() {
                 <Input
                   id="password"
                   type="password"
+                  autoComplete={isSignUp ? "new-password" : "current-password"}
+                  minLength={isSignUp ? MIN_PASSWORD : undefined}
                   placeholder="Enter your password"
                   value={password}
-                  onChange={(e) => setPassword(e.target.value)}
+                  onChange={(e) => {
+                    setPassword(e.target.value);
+                    setRefused(false);
+                    setFormError(null);
+                  }}
+                  aria-invalid={refused || undefined}
+                  aria-describedby={refused ? "login-error" : undefined}
                   required
                 />
               </div>
+              {formError && (
+                <p id="login-error" role="alert" className="flex items-center gap-1.5 text-sm text-destructive">
+                  <AlertCircle className="h-4 w-4 shrink-0" />
+                  {formError}
+                </p>
+              )}
               <Button type="submit" className="w-full gap-2 mt-2" disabled={loading}>
                 {loading ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
@@ -184,8 +227,13 @@ export default function LoginPage() {
             <p className="text-center text-sm text-muted-foreground pt-1">
               {isSignUp ? "Already have an account?" : "Don't have an account?"}{" "}
               <button
-                onClick={() => setIsSignUp(!isSignUp)}
-                className="text-primary hover:underline font-medium"
+                type="button"
+                onClick={() => {
+                  setIsSignUp(!isSignUp);
+                  setFormError(null);
+                  setRefused(false);
+                }}
+                className="text-primary underline underline-offset-2 font-medium"
               >
                 {isSignUp ? "Sign in" : "Sign up"}
               </button>
@@ -193,6 +241,6 @@ export default function LoginPage() {
           </CardContent>
         </Card>
       </div>
-    </div>
+    </main>
   );
 }

@@ -1,5 +1,4 @@
 import type { PostHog } from "posthog-js";
-import type { BetaFeature } from "@/convex/schema";
 
 export const POSTHOG_KEY = process.env.NEXT_PUBLIC_POSTHOG_KEY;
 export const POSTHOG_HOST = process.env.NEXT_PUBLIC_POSTHOG_HOST ?? "https://us.i.posthog.com";
@@ -376,10 +375,6 @@ export function trackNotificationChannelToggled(props: { channel: string; enable
     channel: props.channel,
     enabled: props.enabled,
   });
-}
-
-export function trackBetaFeatureToggled(props: { feature: BetaFeature; enabled: boolean }) {
-  trackEvent("beta_feature_toggled", props);
 }
 
 export function trackWhatsNew(props: { announcement: string; action: "shown" | "dismissed" | "clicked_cta" | "opened_changelog" }) {

@@ -47,7 +47,7 @@ export default function SmsPolicyPage() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-4xl px-6 py-16">
+      <main id="main" className="mx-auto max-w-4xl px-6 py-16">
         <h1 className="text-3xl font-bold tracking-tight mb-2">SMS opt-in and messaging policy</h1>
         <p className="text-sm text-muted-foreground mb-2">Prepared for carrier and aggregator review</p>
         <p className="text-sm text-muted-foreground mb-12">Version 1.1 — 26 September 2026</p>
@@ -59,10 +59,10 @@ export default function SmsPolicyPage() {
             <Row label="Registration">Companies House no. 14260548, England &amp; Wales</Row>
             <Row label="Registered address">34 Llanberis Close, Tonteg, Cardiff, CF38 1HR, United Kingdom</Row>
             <Row label="Trading name">PageAlert</Row>
-            <Row label="Website"><a href="https://pagealert.io" className="text-primary hover:underline">pagealert.io</a></Row>
-            <Row label="Privacy policy"><Link href="/privacy" className="text-primary hover:underline">pagealert.io/privacy</Link></Row>
-            <Row label="Terms of service"><Link href="/terms" className="text-primary hover:underline">pagealert.io/terms</Link></Row>
-            <Row label="Support contact"><a href="mailto:dimonaco.james@gmail.com" className="text-primary hover:underline">dimonaco.james@gmail.com</a></Row>
+            <Row label="Website"><a href="https://pagealert.io" className="text-primary underline underline-offset-2">pagealert.io</a></Row>
+            <Row label="Privacy policy"><Link href="/privacy" className="text-primary underline underline-offset-2">pagealert.io/privacy</Link></Row>
+            <Row label="Terms of service"><Link href="/terms" className="text-primary underline underline-offset-2">pagealert.io/terms</Link></Row>
+            <Row label="Support contact"><a href="mailto:dimonaco.james@gmail.com" className="text-primary underline underline-offset-2">dimonaco.james@gmail.com</a></Row>
             <Row label="Messaging provider">Twilio Inc.</Row>
           </dl>
 
@@ -96,7 +96,7 @@ export default function SmsPolicyPage() {
               <p className="text-xs text-muted-foreground">Start with your country code, not 0. UK, EU, US and Canada.</p>
             </div>
             <div className="flex items-start gap-2">
-              <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border border-border text-[10px] text-muted-foreground">☐</span>
+              <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border border-border text-xs text-muted-foreground">☐</span>
               <p className="text-xs text-muted-foreground leading-relaxed">
                 I agree to receive <strong className="text-foreground">text messages</strong> from PageAlert
                 about the pages I monitor. How many depends on the monitors I choose, up to my
@@ -198,7 +198,7 @@ export default function SmsPolicyPage() {
             <Row label="Retention">The number is held until the customer removes it or deletes their account, then deleted.</Row>
             <Row label="Access">The customer can see and remove their number at any time in Settings.</Row>
             <Row label="Processor">Twilio Inc. No other party receives the number.</Row>
-            <Row label="Governing policy"><Link href="/privacy" className="text-primary hover:underline">pagealert.io/privacy</Link></Row>
+            <Row label="Governing policy"><Link href="/privacy" className="text-primary underline underline-offset-2">pagealert.io/privacy</Link></Row>
           </dl>
 
           <h2>11. Eligibility and geography</h2>
@@ -211,7 +211,7 @@ export default function SmsPolicyPage() {
         </div>
 
         <div className="mt-12 pt-8 border-t border-border/20">
-          <Link href="/" className="text-sm text-primary hover:underline">&larr; Back to PageAlert</Link>
+          <Link href="/" className="text-sm text-primary underline underline-offset-2">&larr; Back to PageAlert</Link>
         </div>
       </main>
     </div>

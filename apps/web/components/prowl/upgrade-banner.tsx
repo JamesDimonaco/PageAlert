@@ -62,7 +62,7 @@ export function UpgradeBanner({ tier, tierResolved, atLimit }: {
   }
 
   return (
-    <div className="flex items-center gap-3 rounded-lg border border-border/40 bg-muted/30 px-4 py-2.5 text-sm">
+    <div className="flex items-center gap-3 rounded-lg border border-border bg-muted/30 px-4 py-2.5 text-sm">
       <Sparkles className="h-4 w-4 shrink-0 text-primary/70" />
       <p className="flex-1 text-muted-foreground">
         You&apos;ve reached your plan&apos;s limit of {TIER_LIMITS[tier].maxMonitors} monitors. {nextName} gives you {nextLimit}.{" "}
@@ -74,7 +74,7 @@ export function UpgradeBanner({ tier, tierResolved, atLimit }: {
           See plans
         </Link>
       </p>
-      <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0" onClick={dismiss} aria-label="Dismiss">
+      <Button variant="ghost" size="icon-sm" className="shrink-0" onClick={dismiss} aria-label="Dismiss">
         <X className="h-4 w-4" />
       </Button>
     </div>

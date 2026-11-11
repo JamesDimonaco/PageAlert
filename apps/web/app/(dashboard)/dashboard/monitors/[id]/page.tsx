@@ -18,7 +18,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
-  ArrowLeft,
   Play,
   Pause,
   Trash2,
@@ -35,6 +34,7 @@ import {
   Package,
 } from "lucide-react";
 import Link from "next/link";
+import { BackLink } from "@/components/prowl/back-link";
 import { useRouter } from "next/navigation";
 import { useMonitor, useMonitorResults, useMonitors } from "@/hooks/use-monitors";
 import { useTier } from "@/hooks/use-tier";
@@ -204,15 +204,11 @@ export default function MonitorDetailPage({
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center gap-3 overflow-hidden">
-        <Link href="/dashboard" className="shrink-0">
-          <Button variant="ghost" size="icon">
-            <ArrowLeft className="h-5 w-5" />
-          </Button>
-        </Link>
+      <BackLink href="/dashboard">Back to dashboard</BackLink>
+      <div className="flex items-start gap-3 overflow-hidden">
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-3">
-            <h1 className="text-xl sm:text-2xl font-bold tracking-tight truncate">{monitor.name}</h1>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <h1 className="page-title line-clamp-3">{monitor.name}</h1>
             <StatusBadge status={monitor.status} />
             {m.muted && (
               <Badge variant="outline" className="gap-1 bg-amber-500/10 text-amber-400 border-amber-500/20">
@@ -289,7 +285,7 @@ export default function MonitorDetailPage({
         </div>
         <div className="shrink-0">
           <DropdownMenu>
-            <DropdownMenuTrigger className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-border/50 hover:bg-muted transition-colors">
+            <DropdownMenuTrigger aria-label="Monitor actions" className="inline-flex h-9 w-9 max-sm:h-11 max-sm:w-11 items-center justify-center rounded-lg border border-border hover:bg-muted transition-colors">
               <MoreVertical className="h-4 w-4" />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
@@ -351,18 +347,18 @@ export default function MonitorDetailPage({
       >
         <TabsList>
           <TabsTrigger value="overview">
-            <LayoutDashboard className="mr-2 h-4 w-4" />
+            <LayoutDashboard className="hidden sm:block" />
             Overview
           </TabsTrigger>
           <TabsTrigger value="items">
-            <List className="mr-2 h-4 w-4" />
+            <List className="hidden sm:block" />
             Items
             {allItems.length > 0 && (
               <span className="ml-1.5 text-xs text-muted-foreground">{allItems.length}</span>
             )}
           </TabsTrigger>
           <TabsTrigger value="history">
-            <History className="mr-2 h-4 w-4" />
+            <History className="hidden sm:block" />
             History
             {results.length > 0 && (
               <span className="ml-1.5 text-xs text-muted-foreground">{results.length}</span>

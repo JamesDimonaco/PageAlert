@@ -203,5 +203,5 @@ function StatusBadge({ status }: { status: string }) {
       : status === "error" || status === "timeout"
         ? "bg-destructive/10 text-destructive border-destructive/20"
         : "bg-muted text-muted-foreground border-border";
-  return <Badge className={`shrink-0 text-[10px] ${colour}`}>{status}</Badge>;
+  return <Badge className={`shrink-0 text-xs ${colour}`}>{status}</Badge>;
 }

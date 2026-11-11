@@ -34,7 +34,7 @@ export default function PricingPage() {
               Sign in
             </Link>
             <Link href="/login" className={buttonVariants({ size: "sm", className: "gap-2" })}>
-              Get Started
+              Get started
               <ArrowRight className="h-4 w-4 hidden sm:inline" />
             </Link>
           </div>
@@ -46,7 +46,7 @@ export default function PricingPage() {
         dangerouslySetInnerHTML={{ __html: JSON.stringify(pricingJsonLd) }}
       />
 
-      <main className="mx-auto max-w-7xl px-4 sm:px-6 py-16 sm:py-28">
+      <main id="main" className="mx-auto max-w-7xl px-4 sm:px-6 py-16 sm:py-28">
         <div className="mx-auto max-w-2xl text-center mb-16">
           <h1 className="text-3xl sm:text-4xl font-bold tracking-tight leading-tight">
             Simple, transparent pricing
@@ -84,11 +84,11 @@ export default function PricingPage() {
               </p>
               <ul className="mt-8 space-y-3">
                 {plan.features.map((f) => (
-                  <li key={f.text} className={`flex items-center gap-2.5 text-sm ${f.comingSoon ? "text-muted-foreground/60" : "text-foreground/80"}`}>
-                    <Check className={`h-4 w-4 shrink-0 ${f.comingSoon ? "text-muted-foreground/40" : "text-primary/70"}`} />
+                  <li key={f.text} className={`flex items-center gap-2.5 text-sm ${f.comingSoon ? "text-muted-foreground" : "text-foreground/80"}`}>
+                    <Check className={`h-4 w-4 shrink-0 ${f.comingSoon ? "text-muted-foreground" : "text-primary/70"}`} />
                     {f.text}
                     {f.comingSoon && (
-                      <span className="text-[10px] font-medium text-muted-foreground bg-muted px-1.5 py-0.5 rounded-full">Soon</span>
+                      <span className="text-xs font-medium text-muted-foreground bg-muted px-1.5 py-0.5 rounded-full">Soon</span>
                     )}
                   </li>
                 ))}
@@ -111,7 +111,7 @@ export default function PricingPage() {
             All plans include AI-powered extraction, change detection, and email alerts.
             <br />
             Need something custom?{" "}
-            <a href="mailto:dimonaco.james@gmail.com" className="text-primary hover:underline">
+            <a href="mailto:dimonaco.james@gmail.com" className="text-primary underline underline-offset-2">
               Get in touch
             </a>
           </p>

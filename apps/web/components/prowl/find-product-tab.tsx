@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useAction, useQuery } from "convex/react";
 import { errorText } from "@/lib/utils";
 import { ExternalLink, Loader2, Search } from "lucide-react";
@@ -27,6 +27,9 @@ import { trackCloneAsProductOpened, trackProductSearchCompleted, trackProductSea
 import { useTier } from "@/hooks/use-tier";
 import { ProductProgress, WatchProductForm } from "./watch-product";
 
+/** Enough to be useful without quietly spending a free plan's whole allowance. */
+const PRESELECTED = 2;
+
 const LABELS: Record<ListingLabel, string> = {
   same: "Same product",
   similar: "Similar",
@@ -41,6 +44,8 @@ interface FindProductTabProps {
   /** Called once the new product's monitors are under way. */
   onDone: (groupId: Id<"monitorGroups">) => void;
 }
+
+const REGION_ITEMS = SEARCH_REGIONS.map((r) => ({ value: r.code, label: r.name }));
 
 export function FindProductTab({ clone, onPasteUrl, onDone }: FindProductTabProps) {
   const status = useQuery(api.productSearch.status);
@@ -59,7 +64,6 @@ export function FindProductTab({ clone, onPasteUrl, onDone }: FindProductTabProp
   }, [clone]);
   const [picked, setPicked] = useState<SearchRegion | null>(null);
   const [guessed, setGuessed] = useState<SearchRegion | null>(null);
-  const [changingRegion, setChangingRegion] = useState(false);
   const [searching, setSearching] = useState(false);
   const [results, setResults] = useState<ProductListing[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -69,6 +73,9 @@ export function FindProductTab({ clone, onPasteUrl, onDone }: FindProductTabProp
   const [searchCount, setSearchCount] = useState(0);
   // Always a subset of the listings on screen, so it is what gets watched.
   const [ticked, setTicked] = useState<Set<string>>(new Set());
+  // Results that still need their closest matches ticked, and whether any were.
+  const [preselectDue, setPreselectDue] = useState(false);
+  const [preticked, setPreticked] = useState(false);
   const [createdId, setCreatedId] = useState<Id<"monitorGroups"> | null>(null);
   const monitors = useQuery(api.monitors.list);
   const allowance = useQuery(api.monitors.creationAllowance);
@@ -77,9 +84,19 @@ export function FindProductTab({ clone, onPasteUrl, onDone }: FindProductTabProp
   // Every monitor counts toward the plan, paused ones included.
   const freeSlots = slotsLoading ? 0 : Math.max(0, maxMonitors - monitors.length);
   const creationsLeft =
-    allowance && searched
+    searched && allowance
       ? Math.max(0, allowance.limit - allowance.recent.filter((t) => searched.at - t < allowance.windowMs).length)
       : 0;
+  // Done once the slot counts are in, not when the results land: those queries can still be loading then.
+  if (preselectDue && results && !slotsLoading) {
+    const best = results
+      .filter((l) => l.label === "same")
+      .map((l) => l.url)
+      .slice(0, Math.min(PRESELECTED, freeSlots, creationsLeft));
+    setPreselectDue(false);
+    setTicked(new Set(best));
+    setPreticked(best.length > 0);
+  }
 
   const saved = status?.region && isSearchRegion(status.region) ? status.region : null;
   const region = picked ?? saved ?? guessed;
@@ -100,7 +117,6 @@ export function FindProductTab({ clone, onPasteUrl, onDone }: FindProductTabProp
     };
   }, [needsGuess]);
 
-  const regionInfo = SEARCH_REGIONS.find((r) => r.code === region);
   // The count resets at UTC midnight, the day the server counts on.
   const remaining = status
     ? status.day === new Date().toISOString().slice(0, 10)
@@ -109,13 +125,26 @@ export function FindProductTab({ clone, onPasteUrl, onDone }: FindProductTabProp
     : undefined;
   const outOfSearches = remaining === 0;
 
+  // A ref, not the state: two presses in one tick would both read the old state and spend two searches.
+  const inFlight = useRef(false);
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    if (!searching) return;
+    const timer = setInterval(() => setElapsed((s) => s + 1), 1000);
+    return () => clearInterval(timer);
+  }, [searching]);
+
   async function runSearch() {
-    if (!region || query.trim().length < 2) return;
+    if (inFlight.current || !region || query.trim().length < 2) return;
+    inFlight.current = true;
+    setElapsed(0);
     setSearching(true);
     setError(null);
     setResults(null);
     setShowAccessories(false);
     setTicked(new Set());
+    setPreselectDue(false);
+    setPreticked(false);
     setSearchCount((c) => c + 1);
     trackProductSearchStarted({ region });
     const started = Date.now();
@@ -124,11 +153,13 @@ export function FindProductTab({ clone, onPasteUrl, onDone }: FindProductTabProp
       const listings = await search({ query: typed, region });
       setResults(listings);
       setSearched({ query: typed, region, at: Date.now() });
+      setPreselectDue(true);
       trackProductSearchCompleted({ region, resultCount: listings.length, durationMs: Date.now() - started, failed: false });
     } catch (err) {
       setError(errorText(err, "The search didn't work. Try again."));
       trackProductSearchCompleted({ region, resultCount: 0, durationMs: Date.now() - started, failed: true });
     } finally {
+      inFlight.current = false;
       setSearching(false);
     }
   }
@@ -170,58 +201,55 @@ export function FindProductTab({ clone, onPasteUrl, onDone }: FindProductTabProp
             placeholder="e.g. Sony WH-1000XM5"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
+            // Two real characters, so a name of spaces is caught here and not dropped silently by runSearch.
+            pattern=".*\S.*\S.*"
+            title="Type at least 2 characters"
             maxLength={200}
             required
           />
           <Button
             type="submit"
             className="gap-2 shrink-0"
-            disabled={searching || !region || outOfSearches || query.trim().length < 2}
+            aria-busy={searching}
+            // Left enabled while searching and while the box is empty: a dimmed button reads as broken.
+            // runSearch ignores the extra press, and the input's own rules catch a short name.
+            disabled={!region || outOfSearches}
           >
             {searching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
-            Search
+            {searching ? "Searching…" : "Search"}
           </Button>
         </div>
         <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-          {changingRegion ? (
-            <Select
-              value={region ?? undefined}
-              onValueChange={(v) => {
-                if (v && isSearchRegion(v) && v !== region) {
-                  setPicked(v);
-                  // Results from another country's shops would be saved under this one.
-                  setResults(null);
-                  setError(null);
-                  setTicked(new Set());
-                }
-                setChangingRegion(false);
-              }}
-            >
-              <SelectTrigger className="h-7 w-[180px] text-xs" aria-label="Country to search">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {SEARCH_REGIONS.map((r) => (
-                  <SelectItem key={r.code} value={r.code}>{r.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          ) : (
-            <span>
-              {regionInfo ? `Searching ${regionInfo.sites} sites` : "Finding your country…"}
-              {regionInfo && (
-                <>
-                  {" · "}
-                  <button
-                    type="button"
-                    onClick={() => setChangingRegion(true)}
-                    className="underline hover:text-foreground"
-                  >
-                    change
-                  </button>
-                </>
-              )}
+          {region ? (
+            <span className="flex items-center gap-2">
+              Shops in
+              <Select
+                items={REGION_ITEMS}
+                value={region}
+                // A search that lands after a switch would show one country's shops under another.
+                disabled={searching}
+                onValueChange={(v) => {
+                  if (v && isSearchRegion(v) && v !== region) {
+                    setPicked(v);
+                    // Results from another country's shops would be saved under this one.
+                    setResults(null);
+                    setError(null);
+                    setTicked(new Set());
+                  }
+                }}
+              >
+                <SelectTrigger aria-label="Country to search" className="w-[180px] text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {SEARCH_REGIONS.map((r) => (
+                    <SelectItem key={r.code} value={r.code}>{r.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </span>
+          ) : (
+            <span>Finding your country…</span>
           )}
           {status && (
             <span>
@@ -231,15 +259,30 @@ export function FindProductTab({ clone, onPasteUrl, onDone }: FindProductTabProp
         </div>
       </form>
 
+      {!searching && !error && results === null && (
+        <p className="text-sm text-muted-foreground">
+          We search shops in your country and list the ones that sell it. You then choose which to watch and when to
+          be alerted.
+        </p>
+      )}
+
       {searching && (
-        <div className="flex flex-col items-center gap-2 py-10 text-sm text-muted-foreground">
-          <Loader2 className="h-6 w-6 animate-spin text-primary" />
-          Searching shops. This can take up to a minute.
+        <div className="space-y-3">
+          <p role="status" className="flex items-center gap-2 text-sm">
+            <Loader2 className="h-4 w-4 animate-spin text-primary" />
+            {elapsed < 8 ? "Searching shops…" : elapsed < 25 ? "Reading the listings we found…" : "Still working. This can take up to a minute."}
+            <span aria-hidden className="ml-auto tabular-nums text-muted-foreground">{elapsed}s</span>
+          </p>
+          <div aria-hidden className="space-y-2">
+            {[0, 1, 2].map((i) => (
+              <div key={i} className="h-20 animate-pulse rounded-lg border border-border bg-foreground/15" />
+            ))}
+          </div>
         </div>
       )}
 
       {(error || results?.length === 0) && (
-        <div className="space-y-3 rounded-lg border border-border/40 bg-card/50 p-4 text-sm">
+        <div role="alert" className="space-y-3 rounded-lg border border-border bg-card p-4 text-sm">
           <p>{error ?? "We couldn't find that product in any shop. It hasn't counted toward today's limit."}</p>
           <Button type="button" variant="outline" size="sm" onClick={() => onPasteUrl(query.trim())}>
             Paste a URL instead
@@ -247,62 +290,69 @@ export function FindProductTab({ clone, onPasteUrl, onDone }: FindProductTabProp
         </div>
       )}
 
-      {results && results.length > 0 && (
-        <div className="space-y-2">
-          {slotsLoading ? (
-            <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <Loader2 className="h-3 w-3 animate-spin" /> Checking your free monitors…
-            </p>
-          ) : creationsLeft < freeSlots && allowance ? (
-            <p className="text-xs text-muted-foreground">
-              Your plan lets you add {allowance.limit} monitors every 5 hours.{" "}
-              {creationsLeft === 0
-                ? "You've added that many, so try again later."
-                : `You can tick ${creationsLeft} now.`}
-            </p>
-          ) : freeSlots === 0 ? (
-            <p className="text-xs text-muted-foreground">
-              You&apos;re using all {maxMonitors} of your monitors. Paused ones still count, so delete one to free a
-              slot, or{" "}
-              <Link href="/dashboard/settings?tab=billing" className="underline hover:text-foreground">upgrade</Link>.
-            </p>
-          ) : (
-            <p className="text-xs text-muted-foreground">
-              Tick the listings to watch. You have {freeSlots} free monitor{freeSlots === 1 ? "" : "s"}.
-            </p>
+      {searched && results && results.length > 0 && (
+        <WatchProductForm
+          key={searchCount}
+          name={searched.query}
+          region={searched.region}
+          listings={shown}
+          ticked={ticked}
+          guess={clone?.guess ?? null}
+          canPick={Math.min(freeSlots, creationsLeft) > 0}
+          onCreated={setCreatedId}
+        >
+          {(missingShops) => (
+          <section className="space-y-3" aria-labelledby="pick-shops">
+            <div>
+              <h3 id="pick-shops" className="section-title">1. Choose the shops to watch</h3>
+              {missingShops && <p role="alert" className="mt-1 text-sm text-destructive">Tick at least one shop.</p>}
+              {slotsLoading ? (
+                <p className="mt-1 flex items-center gap-1.5 text-sm text-muted-foreground">
+                  <Loader2 className="h-3 w-3 animate-spin" /> Checking your free monitors…
+                </p>
+              ) : creationsLeft < freeSlots && allowance ? (
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Your plan lets you add {allowance.limit} monitors every 5 hours.{" "}
+                  {creationsLeft === 0
+                    ? "You've added that many, so try again later."
+                    : `You can pick ${creationsLeft} now.`}
+                </p>
+              ) : freeSlots === 0 ? (
+                <p className="mt-1 text-sm text-muted-foreground">
+                  You&apos;re using all {maxMonitors} of your monitors. Paused ones still count, so delete one to free a
+                  slot, or{" "}
+                  <Link href="/dashboard/settings?tab=billing" className="underline hover:text-foreground">upgrade</Link>.
+                </p>
+              ) : (
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {preticked && ticked.size > 0 ? "We've ticked the closest matches. Change them if you like. " : missingShops ? "" : "Tick the shops you want. "}
+                  Each one uses a monitor, and you have {freeSlots} free.
+                </p>
+              )}
+            </div>
+            <ul className={`space-y-2 ${missingShops ? "[&>li>label]:border-destructive" : ""}`}>
+              {shown.map((listing) => (
+                <ListingRow
+                  key={listing.url}
+                  listing={listing}
+                  checked={ticked.has(listing.url)}
+                  disabled={!ticked.has(listing.url) && ticked.size >= Math.min(freeSlots, creationsLeft)}
+                  onToggle={() => toggle(listing.url)}
+                />
+              ))}
+            </ul>
+            {accessories.length > 0 && (
+              <button
+                type="button"
+                onClick={toggleAccessories}
+                className="text-xs text-muted-foreground underline hover:text-foreground max-sm:-m-3 max-sm:p-3"
+              >
+                {showAccessories ? "Hide accessories" : `Show accessories (${accessories.length})`}
+              </button>
+            )}
+          </section>
           )}
-          <ul className="space-y-2">
-            {shown.map((listing) => (
-              <ListingRow
-                key={listing.url}
-                listing={listing}
-                checked={ticked.has(listing.url)}
-                disabled={!ticked.has(listing.url) && ticked.size >= Math.min(freeSlots, creationsLeft)}
-                onToggle={() => toggle(listing.url)}
-              />
-            ))}
-          </ul>
-          {accessories.length > 0 && (
-            <button
-              type="button"
-              onClick={toggleAccessories}
-              className="text-xs text-muted-foreground underline hover:text-foreground"
-            >
-              {showAccessories ? "Hide accessories" : `Show accessories (${accessories.length})`}
-            </button>
-          )}
-          {searched && (
-            <WatchProductForm
-              key={searchCount}
-              name={searched.query}
-              region={searched.region}
-              listings={shown}
-              ticked={ticked}
-              guess={clone?.guess ?? null}
-              onCreated={setCreatedId}
-            />
-          )}
-        </div>
+        </WatchProductForm>
       )}
     </div>
   );
@@ -322,39 +372,41 @@ function ListingRow({
   const price = listing.price !== null && listing.currency ? formatMinorUnits(listing.price, listing.currency) : null;
   const href = toSafeUrl(listing.url);
   return (
-    <li className="flex items-start justify-between gap-3 rounded-lg border border-border/40 bg-card/50 p-3">
-      <input
-        type="checkbox"
-        checked={checked}
-        disabled={disabled}
-        onChange={onToggle}
-        aria-label={`Watch ${listing.site}`}
-        className="mt-1 h-4 w-4 shrink-0 rounded border-border accent-primary"
-      />
-      <div className="min-w-0 flex-1 space-y-1">
-        <p className="text-xs text-muted-foreground">{listing.site}</p>
-        <p className="text-sm font-medium leading-snug">{listing.title}</p>
-        <div className="flex flex-wrap items-center gap-1.5 text-xs">
-          {price && <span className="font-semibold">{price}</span>}
-          {listing.inStock !== null && (
-            <Badge variant={listing.inStock ? "secondary" : "destructive"}>
-              {listing.inStock ? "In stock" : "Out of stock"}
-            </Badge>
-          )}
-          <Badge variant="outline">{LABELS[listing.label]}</Badge>
+    <li>
+      <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-border bg-card p-4 transition-colors hover:border-primary/50 has-checked:border-primary has-checked:bg-primary/10 has-disabled:cursor-not-allowed has-disabled:hover:border-border">
+        <input
+          type="checkbox"
+          checked={checked}
+          disabled={disabled}
+          onChange={onToggle}
+          aria-label={`Watch ${listing.title} at ${listing.site}`}
+          className="mt-0.5 h-5 w-5 shrink-0 accent-primary"
+        />
+        <div className="min-w-0 flex-1 space-y-1">
+          <p className="text-xs text-muted-foreground">{listing.site}</p>
+          <p className="text-sm font-medium leading-snug">{listing.title}</p>
+          <div className="flex flex-wrap items-center gap-1.5 text-xs">
+            {price && <span className="font-semibold">{price}</span>}
+            {listing.inStock !== null && (
+              <Badge variant={listing.inStock ? "secondary" : "destructive"}>
+                {listing.inStock ? "In stock" : "Out of stock"}
+              </Badge>
+            )}
+            <Badge variant="outline">{LABELS[listing.label]}</Badge>
+          </div>
         </div>
-      </div>
-      {href && (
-        <a
-          href={href}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="shrink-0 text-muted-foreground hover:text-foreground"
-          aria-label={`Open ${listing.site}`}
-        >
-          <ExternalLink className="h-4 w-4" />
-        </a>
-      )}
+        {href && (
+          <a
+            href={href}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground underline hover:text-foreground max-sm:-m-3 max-sm:p-3"
+            aria-label={`View ${listing.title} at ${listing.site}, opens in a new tab`}
+          >
+            View <ExternalLink className="h-3.5 w-3.5" />
+          </a>
+        )}
+      </label>
     </li>
   );
 }

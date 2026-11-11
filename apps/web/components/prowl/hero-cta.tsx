@@ -26,7 +26,7 @@ export function HeroCTA() {
           className: "gap-2 h-14 px-10 text-base font-semibold shadow-xl shadow-primary/25 w-full sm:w-auto",
         })}
       >
-        {isLoggedIn ? "Go to Dashboard" : "Start Monitoring"}
+        {isLoggedIn ? "Go to dashboard" : "Start monitoring"}
         <ArrowRight className="h-5 w-5" />
       </Link>
       <Link

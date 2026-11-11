@@ -65,8 +65,8 @@ export function ReviewPrompt() {
 
   if (showForm) {
     return (
-      <Card className="border-primary/20 bg-primary/5">
-        <CardContent className="p-4 sm:p-6">
+      <Card className="ring-primary/20 bg-primary/5">
+        <CardContent>
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
               <MessageSquare className="h-4 w-4 text-primary" />
@@ -76,6 +76,7 @@ export function ReviewPrompt() {
               variant="ghost"
               size="icon"
               className="h-7 w-7"
+              aria-label="Close review form"
               onClick={() => setShowForm(false)}
             >
               <X className="h-4 w-4" />
@@ -147,8 +148,8 @@ export function ReviewPrompt() {
   }
 
   return (
-    <Card className="border-primary/20 bg-primary/5">
-      <CardContent className="p-4 sm:p-6">
+    <Card className="ring-primary/20 bg-primary/5">
+      <CardContent>
         <div className="flex flex-col sm:flex-row sm:items-center gap-3">
           <div className="flex items-start gap-3 flex-1">
             <MessageSquare className="h-5 w-5 text-primary mt-0.5 shrink-0" />
@@ -156,30 +157,21 @@ export function ReviewPrompt() {
               <p className="text-sm font-semibold">
                 Enjoying PageAlert? Share your experience!
               </p>
-              <p className="text-xs text-muted-foreground mt-0.5">
+              <p className="text-sm text-muted-foreground mt-0.5">
                 Your review helps others discover PageAlert.
               </p>
             </div>
           </div>
-          <div className="flex flex-col items-start sm:items-end gap-1.5">
-            <div className="flex items-center gap-2">
-              <Button size="sm" onClick={() => setShowForm(true)}>
-                Write a quick review
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setDismissed(true)}
-              >
-                Maybe later
-              </Button>
-            </div>
-            <button
-              onClick={handleDismissPermanent}
-              className="text-xs text-muted-foreground hover:text-foreground transition-colors"
-            >
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <Button size="sm" onClick={() => setShowForm(true)}>
+              Write a quick review
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => setDismissed(true)}>
+              Maybe later
+            </Button>
+            <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={handleDismissPermanent}>
               Not interested
-            </button>
+            </Button>
           </div>
         </div>
       </CardContent>

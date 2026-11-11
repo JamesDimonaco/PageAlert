@@ -74,9 +74,9 @@ export function AlertOnFields({
       <fieldset className="space-y-2">
         <legend className="text-sm font-medium">Price alerts</legend>
         {([
-          ["off", "Off"],
           ["drop", "Tell me about any price drop"],
           ["below", "Only tell me when it's below a price"],
+          ["off", "No price alerts"],
         ] as const).map(([value, label]) => (
           <label key={value} className="flex items-center gap-2 cursor-pointer">
             <input

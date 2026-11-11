@@ -207,7 +207,7 @@ export function AdminUsersTable({
                       >
                         {u.email}
                       </button>
-                      {u.banned && <Badge variant="destructive" className="text-[10px]">Banned</Badge>}
+                      {u.banned && <Badge variant="destructive" className="text-xs">Banned</Badge>}
                     </div>
                     {u.name && <div className="text-xs text-muted-foreground truncate max-w-[260px]">{u.name}</div>}
                   </td>
@@ -305,7 +305,7 @@ function PlanBadge({
   cancelledAt: number | null;
   periodEnd: number | null;
 }) {
-  if (tier === "free") return <Badge variant="outline" className="text-[10px]">Free</Badge>;
+  if (tier === "free") return <Badge variant="outline" className="text-xs">Free</Badge>;
   const label = tier === "max" ? "Max" : tier === "sprint" ? "Sprint" : "Pro";
   const colour = tier === "max"
     ? "bg-amber-500/10 text-amber-400 border-amber-500/20"
@@ -314,10 +314,10 @@ function PlanBadge({
       : "bg-primary/10 text-primary border-primary/20";
   return (
     <div className="flex flex-col gap-0.5">
-      <Badge className={`text-[10px] w-fit ${colour}`}>{label}{grantUntil && tier !== "sprint" ? " trial" : ""}</Badge>
-      {grantUntil && <span className="text-[11px] text-muted-foreground">until {formatDate(grantUntil)}</span>}
+      <Badge className={`text-xs w-fit ${colour}`}>{label}{grantUntil && tier !== "sprint" ? " trial" : ""}</Badge>
+      {grantUntil && <span className="text-xs text-muted-foreground">until {formatDate(grantUntil)}</span>}
       {cancelledAt && !grantUntil && (
-        <span className="text-[11px] text-amber-400">cancelling{periodEnd ? `, ends ${formatDate(periodEnd)}` : ""}</span>
+        <span className="text-xs text-amber-400">cancelling{periodEnd ? `, ends ${formatDate(periodEnd)}` : ""}</span>
       )}
     </div>
   );

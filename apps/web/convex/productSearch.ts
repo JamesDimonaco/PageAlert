@@ -2,8 +2,7 @@ import { ConvexError, v } from "convex/values";
 import { z } from "zod";
 import { action, internalMutation, query, type ActionCtx, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
-import { requireLiveAccount } from "./account";
-import { activityRow } from "./betaFeatures";
+import { activityRow, requireLiveAccount } from "./account";
 import { effectiveTier, type Tier } from "./tiers";
 import { isSearchRegion, type ProductListing } from "@prowl/shared";
 
@@ -69,10 +68,6 @@ export const reserve = internalMutation({
   args: { userId: v.string(), saveRegion: v.optional(v.string()) },
   handler: async (ctx, { userId, saveRegion }): Promise<{ day: string }> => {
     await requireLiveAccount(ctx, userId);
-    const activity = await activityRow(ctx, userId);
-    if (!activity?.betaFeatures?.includes("find_a_product")) {
-      throw new ConvexError("Find a product is a beta feature. Turn it on in Settings.");
-    }
 
     const day = today();
     const record = await tierRow(ctx, userId);
@@ -94,8 +89,13 @@ export const reserve = internalMutation({
       await ctx.db.insert("userTiers", { userId, tier: "free", ...counts, updatedAt: Date.now() });
     }
 
-    if (saveRegion !== undefined && activity.searchRegion !== saveRegion) {
-      await ctx.db.patch(activity._id, { searchRegion: saveRegion });
+    if (saveRegion !== undefined) {
+      const activity = await activityRow(ctx, userId);
+      if (!activity) {
+        await ctx.db.insert("userActivity", { userId, lastSeenAt: Date.now(), searchRegion: saveRegion });
+      } else if (activity.searchRegion !== saveRegion) {
+        await ctx.db.patch(activity._id, { searchRegion: saveRegion });
+      }
     }
 
     return { day };

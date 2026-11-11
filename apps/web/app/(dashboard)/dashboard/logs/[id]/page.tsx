@@ -26,7 +26,6 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
-  ArrowLeft,
   Loader2,
   CheckCircle2,
   XCircle,
@@ -36,6 +35,7 @@ import {
   RotateCcw,
 } from "lucide-react";
 import Link from "next/link";
+import { BackLink } from "@/components/prowl/back-link";
 import { useRouter } from "next/navigation";
 import { useCreateMonitor } from "@/hooks/use-create-monitor";
 import type { Id } from "@/convex/_generated/dataModel";
@@ -56,7 +56,7 @@ export default function LogDetailPage({
   const { isLoading: convexAuthLoading } = useConvexAuth();
   const log = result?.log as (NonNullable<typeof result>["log"] & LogExtended) | null | undefined;
   const [showRaw, setShowRaw] = useState(false);
-  const { open: openCreate } = useCreateMonitor();
+  const { openWithDefaults } = useCreateMonitor();
   const router = useRouter();
 
   // A null window means the query saw no identity — worth waiting out while
@@ -119,16 +119,12 @@ export default function LogDetailPage({
 
   return (
     <div className="space-y-8">
-      <div className="flex items-start sm:items-center gap-3 sm:gap-4">
-        <Link href="/dashboard/logs">
-          <Button variant="ghost" size="icon" className="shrink-0">
-            <ArrowLeft className="h-5 w-5" />
-          </Button>
-        </Link>
-        <div className="flex-1 min-w-0">
+      <div>
+        <BackLink href="/dashboard/logs">Back to logs</BackLink>
+        <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-            <h1 className="text-xl sm:text-2xl font-bold tracking-tight">
-              {log.monitorName ? log.monitorName : "Scrape Log"}
+            <h1 className="page-title">
+              {log.monitorName ? log.monitorName : "Log"}
             </h1>
             <Badge
               variant="outline"
@@ -170,47 +166,47 @@ export default function LogDetailPage({
 
       {/* Summary */}
       <div className="grid gap-4 grid-cols-2 md:grid-cols-4">
-        <Card className="border-border/30 bg-card/50 shadow-sm shadow-black/5">
-          <CardContent className="p-5">
+        <Card>
+          <CardContent>
             <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-1.5">URL</p>
             <p className="text-sm font-medium break-all">{log.url}</p>
           </CardContent>
         </Card>
-        <Card className="border-border/30 bg-card/50 shadow-sm shadow-black/5">
-          <CardContent className="p-5">
+        <Card>
+          <CardContent>
             <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-1.5">Duration</p>
             <p className="text-sm font-semibold">{formatDuration(log.durationMs)}</p>
           </CardContent>
         </Card>
-        <Card className="border-border/30 bg-card/50 shadow-sm shadow-black/5">
-          <CardContent className="p-5">
+        <Card>
+          <CardContent>
             <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-1.5">Items</p>
             <p className="text-sm font-semibold">{log.itemCount ?? "—"}</p>
           </CardContent>
         </Card>
-        <Card className="border-border/30 bg-card/50 shadow-sm shadow-black/5">
-          <CardContent className="p-5">
+        <Card>
+          <CardContent>
             <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-1.5">Matches</p>
             <p className="text-sm font-semibold">{log.matchCount ?? "—"}</p>
           </CardContent>
         </Card>
       </div>
 
-      {/* Prompt & Monitor Name */}
+      {/* Prompt & Monitor name */}
       <div className="grid gap-4 md:grid-cols-2">
         <div>
-          <h2 className="text-lg font-bold tracking-tight mb-3">Prompt</h2>
-          <Card className="border-border/30 bg-card/50 shadow-sm shadow-black/5">
-            <CardContent className="p-5">
+          <h2 className="section-title mb-3">Prompt</h2>
+          <Card>
+            <CardContent>
               <p className="text-sm">&ldquo;{log.prompt}&rdquo;</p>
             </CardContent>
           </Card>
         </div>
         {log.monitorName && (
           <div>
-            <h2 className="text-lg font-bold tracking-tight mb-3">Monitor Name</h2>
-            <Card className="border-border/30 bg-card/50 shadow-sm shadow-black/5">
-              <CardContent className="p-5">
+            <h2 className="section-title mb-3">Monitor name</h2>
+            <Card>
+              <CardContent>
                 <p className="text-sm font-medium">{log.monitorName}</p>
               </CardContent>
             </Card>
@@ -218,13 +214,13 @@ export default function LogDetailPage({
         )}
       </div>
 
-      {/* AI Insights */}
+      {/* AI insights */}
       {log.aiUnderstanding && (
         <div>
-          <h2 className="text-lg font-bold tracking-tight mb-3">AI Insights</h2>
+          <h2 className="section-title mb-3">AI insights</h2>
           <div className="space-y-3">
-            <Card className="border-border/30 bg-card/50 shadow-sm shadow-black/5">
-              <CardContent className="p-5 space-y-4">
+            <Card>
+              <CardContent className="space-y-4">
                 <div className="flex items-center gap-3">
                   <p className="text-sm font-semibold">Understanding</p>
                   {log.aiConfidence != null && (
@@ -249,7 +245,7 @@ export default function LogDetailPage({
                       <p className="text-xs font-semibold text-emerald-400 mb-1">Match signal</p>
                       <p className="text-xs text-muted-foreground">{log.aiMatchSignal}</p>
                     </div>
-                    <div className="rounded-lg bg-muted/30 border border-border/30 p-3">
+                    <div className="rounded-lg bg-muted/30 border border-border p-3">
                       <p className="text-xs font-semibold text-muted-foreground mb-1">No match signal</p>
                       <p className="text-xs text-muted-foreground">{log.aiNoMatchSignal}</p>
                     </div>
@@ -276,12 +272,12 @@ export default function LogDetailPage({
         </div>
       )}
 
-      {/* Match Conditions */}
+      {/* Match conditions */}
       {log.matchConditions && (
         <div>
-          <h2 className="text-lg font-bold tracking-tight mb-3">Generated Match Conditions</h2>
-          <Card className="border-border/30 bg-card/50 shadow-sm shadow-black/5">
-            <CardContent className="p-5">
+          <h2 className="section-title mb-3">Generated match conditions</h2>
+          <Card>
+            <CardContent>
               <pre className="text-xs font-mono overflow-x-auto whitespace-pre-wrap">
                 {JSON.stringify(log.matchConditions, null, 2)}
               </pre>
@@ -294,7 +290,7 @@ export default function LogDetailPage({
       {log.error && (
         <div>
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
-            <h2 className="text-lg font-bold tracking-tight text-red-400">Error</h2>
+            <h2 className="section-title text-red-400">Error</h2>
             <Button
               size="sm"
               className="gap-1.5"
@@ -302,16 +298,17 @@ export default function LogDetailPage({
                 if (log.monitorId) {
                   router.push(`/dashboard/monitors/${log.monitorId}`);
                 } else {
-                  openCreate();
+                  // The monitor is gone, so retry from its link, not a fresh search.
+                  openWithDefaults({ name: log.monitorName ?? "", url: log.url, prompt: log.prompt });
                 }
               }}
             >
               <RotateCcw className="h-3.5 w-3.5" />
-              {log.monitorId ? "View Monitor" : "Retry"}
+              {log.monitorId ? "View monitor" : "Retry"}
             </Button>
           </div>
-          <Card className="border-red-500/20 bg-red-500/5 shadow-sm shadow-black/5">
-            <CardContent className="p-5">
+          <Card className="ring-red-500/20 bg-red-500/5">
+            <CardContent>
               <p className="text-sm font-mono text-red-400">{log.error}</p>
             </CardContent>
           </Card>
@@ -322,17 +319,17 @@ export default function LogDetailPage({
       {log.monitorId && (
         <Link
           href={`/dashboard/monitors/${log.monitorId}`}
-          className="inline-flex items-center gap-2 text-sm text-primary hover:underline"
+          className="inline-flex items-center gap-2 text-sm text-primary underline underline-offset-2"
         >
           View associated monitor →
         </Link>
       )}
 
-      {/* Raw Response */}
+      {/* Raw response */}
       {log.rawResponse && (
         <div>
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
-            <h2 className="text-lg font-bold tracking-tight">Raw AI Response</h2>
+            <h2 className="section-title">Raw AI response</h2>
             <div className="flex gap-2">
               <Button
                 variant={showRaw ? "outline" : "default"}
@@ -355,8 +352,8 @@ export default function LogDetailPage({
             </div>
           </div>
 
-          <Card className="border-border/30 bg-card/50 shadow-sm shadow-black/5">
-            <CardContent className="p-5">
+          <Card>
+            <CardContent>
               <pre className="text-xs font-mono overflow-x-auto max-h-[600px] overflow-y-auto whitespace-pre-wrap break-all">
                 {showRaw
                   ? log.rawResponse

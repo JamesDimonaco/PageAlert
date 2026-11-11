@@ -21,7 +21,7 @@ export default function LandingPage() {
       <LandingNav />
 
       {/* Hero */}
-      <main className="flex-1">
+      <main id="main" className="flex-1">
         <section className="relative overflow-hidden">
           {/* Gradient background */}
           <div className="absolute inset-0 -z-10">
@@ -218,7 +218,7 @@ export default function LandingPage() {
             </nav>
           </div>
           <div className="mt-6 pt-6 border-t border-border/20 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <p className="text-xs text-muted-foreground/60">&copy; {new Date().getFullYear()} PageAlert. All rights reserved.</p>
+            <p className="text-xs text-muted-foreground">&copy; {new Date().getFullYear()} PageAlert. All rights reserved.</p>
             <div className="flex items-center gap-4">
               <a href="https://www.producthunt.com/products/pagealert?embed=true&utm_source=badge-featured&utm_medium=badge&utm_campaign=badge-pagealert" target="_blank" rel="noopener noreferrer">
                 <img alt="PageAlert on Product Hunt" width="250" height="54" loading="lazy" decoding="async" src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1110261&theme=dark&t=1775009427331" />

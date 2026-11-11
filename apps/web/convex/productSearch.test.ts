@@ -15,7 +15,8 @@ function harness() {
   return t;
 }
 
-async function signUp(t: ReturnType<typeof harness>, betaOn = true, email = "a@example.test") {
+// No beta opt-in: Find a product is on for everyone, so every test here runs as a user who never touched Settings.
+async function signUp(t: ReturnType<typeof harness>, email = "a@example.test") {
   const user = (await t.mutation(components.betterAuth.adapter.create, {
     input: {
       model: "user",
@@ -23,7 +24,6 @@ async function signUp(t: ReturnType<typeof harness>, betaOn = true, email = "a@e
     },
   })) as { _id: string };
   const as = t.withIdentity({ subject: user._id });
-  if (betaOn) await as.mutation(api.betaFeatures.set, { feature: "find_a_product", enabled: true });
   return { as, userId: user._id };
 }
 
@@ -59,15 +59,6 @@ afterEach(() => {
 // Every search is a paid web-search call. A broken cap spends money without
 // limit; a missing refund charges users for searches that gave them nothing.
 describe("productSearch.search", () => {
-  it("refuses a user with the beta off, without calling the scraper", async () => {
-    const t = harness();
-    const { as: user } = await signUp(t, false);
-    const fetchMock = scraperReturns(found);
-
-    await expect(user.action(api.productSearch.search, SEARCH)).rejects.toThrow("beta feature");
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
   it("stops a free user at 5 a day", async () => {
     const t = harness();
     const { as: user } = await signUp(t);
@@ -259,23 +250,13 @@ describe("productSearch.findMore", () => {
   it("refuses someone else's product without searching", async () => {
     const t = harness();
     const { userId: owner } = await signUp(t);
-    const { as: other } = await signUp(t, true, "b@example.test");
+    const { as: other } = await signUp(t, "b@example.test");
     const id = await insertProduct(t, owner, [stored("https://argos.co.uk/a", "watching")]);
     const fetchMock = scraperReturns(foundAt("https://ao.com/d"));
 
     await expect(other.action(api.productSearch.findMore, { groupId: id })).rejects.toThrow("Product not found");
     expect(fetchMock).not.toHaveBeenCalled();
     expect(await listingsOf(t, id)).toHaveLength(1);
-  });
-
-  it("refuses a user with the beta off", async () => {
-    const t = harness();
-    const { as, userId } = await signUp(t, false);
-    const id = await insertProduct(t, userId, [stored("https://argos.co.uk/a", "watching")]);
-    const fetchMock = scraperReturns(foundAt("https://ao.com/d"));
-
-    await expect(as.action(api.productSearch.findMore, { groupId: id })).rejects.toThrow("beta feature");
-    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("fills a product up to 24 listings and says when some didn't fit", async () => {

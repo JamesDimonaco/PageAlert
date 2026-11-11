@@ -38,6 +38,7 @@ import { api } from "@/convex/_generated/api";
 import { toast } from "sonner";
 import { trackFilterSaved, trackItemDismissed, trackItemRestored } from "@/lib/posthog";
 import { errorText } from "@/lib/utils";
+import { EmptyState } from "@/components/prowl/empty-state";
 import { formatPrice, toSafeUrl } from "@/lib/format";
 
 interface ItemsTabProps {
@@ -60,6 +61,21 @@ function confidenceStyle(score: number): string {
 
 type StatusFilter = "all" | "matches" | "non-matches" | "dismissed";
 type SortOption = "default" | "price-asc" | "price-desc" | "name-asc" | "name-desc";
+
+const STATUS_FILTERS: { value: StatusFilter; label: string }[] = [
+  { value: "all", label: "All items" },
+  { value: "matches", label: "Matches only" },
+  { value: "non-matches", label: "Non-matches" },
+  { value: "dismissed", label: "Dismissed" },
+];
+
+const SORT_OPTIONS: { value: SortOption; label: string }[] = [
+  { value: "default", label: "Default" },
+  { value: "price-asc", label: "Price: low to high" },
+  { value: "price-desc", label: "Price: high to low" },
+  { value: "name-asc", label: "Name: A–Z" },
+  { value: "name-desc", label: "Name: Z–A" },
+];
 
 export function ItemsTab({ monitorId, allItems, schema, blacklist, scores, showFilters, onShowFiltersChange }: ItemsTabProps) {
   const [searchQuery, setSearchQuery] = useState("");
@@ -233,11 +249,9 @@ export function ItemsTab({ monitorId, allItems, schema, blacklist, scores, showF
 
   if (allItems.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center py-16 text-center">
-        <Search className="h-8 w-8 text-muted-foreground/40 mb-4" />
-        <p className="text-sm text-muted-foreground">No items extracted yet</p>
-        <p className="text-xs text-muted-foreground/70 mt-1">Items will appear after the first successful scan</p>
-      </div>
+      <EmptyState title="No items extracted yet.">
+        Items show here after the first successful scan. You can rescan from the Overview tab.
+      </EmptyState>
     );
   }
 
@@ -264,7 +278,7 @@ export function ItemsTab({ monitorId, allItems, schema, blacklist, scores, showF
           <Button
             variant={showFilters ? "default" : "outline"}
             size="sm"
-            className="gap-1.5 h-8 shrink-0"
+            className="gap-1.5 shrink-0"
             onClick={() => onShowFiltersChange(!showFilters)}
           >
             <Filter className="h-3.5 w-3.5" />
@@ -275,28 +289,25 @@ export function ItemsTab({ monitorId, allItems, schema, blacklist, scores, showF
 
       {/* Quick filters */}
       <div className="flex flex-wrap items-center gap-2">
-        <Select value={statusFilter} onValueChange={(v) => v && setStatusFilter(v as StatusFilter)}>
-          <SelectTrigger className="w-[140px] h-8 text-xs">
+        <Select items={STATUS_FILTERS} value={statusFilter} onValueChange={(v) => v && setStatusFilter(v as StatusFilter)}>
+          <SelectTrigger size="sm" className="w-[140px] text-xs">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All items</SelectItem>
-            <SelectItem value="matches">Matches only</SelectItem>
-            <SelectItem value="non-matches">Non-matches</SelectItem>
-            <SelectItem value="dismissed">Dismissed</SelectItem>
+            {STATUS_FILTERS.map(({ value, label }) => (
+              <SelectItem key={value} value={value}>{label}</SelectItem>
+            ))}
           </SelectContent>
         </Select>
-        <Select value={sortBy} onValueChange={(v) => v && setSortBy(v as SortOption)}>
-          <SelectTrigger className="w-[150px] h-8 text-xs">
+        <Select items={SORT_OPTIONS} value={sortBy} onValueChange={(v) => v && setSortBy(v as SortOption)}>
+          <SelectTrigger size="sm" className="w-[150px] text-xs">
             <ArrowUpDown className="h-3 w-3 mr-1.5" />
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="default">Default</SelectItem>
-            <SelectItem value="price-asc">Price: low to high</SelectItem>
-            <SelectItem value="price-desc">Price: high to low</SelectItem>
-            <SelectItem value="name-asc">Name: A–Z</SelectItem>
-            <SelectItem value="name-desc">Name: Z–A</SelectItem>
+            {SORT_OPTIONS.map(({ value, label }) => (
+              <SelectItem key={value} value={value}>{label}</SelectItem>
+            ))}
           </SelectContent>
         </Select>
         <div className="flex items-center gap-1.5">
@@ -311,7 +322,7 @@ export function ItemsTab({ monitorId, allItems, schema, blacklist, scores, showF
           </div>
         </div>
         {(statusFilter !== "all" || sortBy !== "default" || priceMin || priceMax) && (
-          <Button variant="ghost" size="sm" className="h-8 text-xs gap-1 text-muted-foreground" onClick={() => { setStatusFilter("all"); setSortBy("default"); setPriceMin(""); setPriceMax(""); }}>
+          <Button variant="ghost" size="sm" className="text-xs gap-1 text-muted-foreground" onClick={() => { setStatusFilter("all"); setSortBy("default"); setPriceMin(""); setPriceMax(""); }}>
             <X className="h-3 w-3" /> Clear
           </Button>
         )}
@@ -319,18 +330,18 @@ export function ItemsTab({ monitorId, allItems, schema, blacklist, scores, showF
 
       {/* Match condition editor */}
       {showFilters && schema && (
-        <Card className="border-border/30 bg-card/50 shadow-sm shadow-black/5">
-          <CardContent className="p-5 space-y-4">
+        <Card>
+          <CardContent className="space-y-4">
             <div className="flex items-center justify-between">
               <p className="text-xs text-muted-foreground">
                 Edit filters to change which items match. Changes apply instantly below.
               </p>
               {hasEdits && (
                 <div className="flex items-center gap-2">
-                  <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setEditedConditions(null)}>
+                  <Button variant="ghost" size="sm" className="text-xs" onClick={() => setEditedConditions(null)}>
                     <RotateCcw className="h-3 w-3 mr-1" /> Reset
                   </Button>
-                  <Button size="sm" className="h-7 text-xs gap-1" onClick={saveConditions} disabled={saving}>
+                  <Button size="sm" className="text-xs gap-1" onClick={saveConditions} disabled={saving}>
                     {saving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
                     Save
                   </Button>
@@ -390,19 +401,19 @@ export function ItemsTab({ monitorId, allItems, schema, blacklist, scores, showF
                   ? "bg-card/10 opacity-30"
                   : isMatch
                     ? "bg-emerald-500/5 border border-emerald-500/20"
-                    : "bg-card/30 hover:bg-card/50"
+                    : "bg-card hover:bg-muted/40"
               }`}
             >
               <div className="flex-1 min-w-0 flex items-center gap-2">
                 {isMatch && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400 shrink-0" />}
                 {score != null && (
-                  <Badge variant="outline" className={`text-[10px] shrink-0 ${confidenceStyle(score)}`}>
+                  <Badge variant="outline" className={`text-xs shrink-0 ${confidenceStyle(score)}`}>
                     {MATCH_CONFIDENCE_LABEL[matchConfidence(score)]}
                   </Badge>
                 )}
                 {safeUrl ? (
                   <a href={safeUrl} target="_blank" rel="noopener noreferrer"
-                    className="font-medium hover:text-primary hover:underline transition-colors break-words sm:truncate">
+                    className="font-medium hover:text-primary underline underline-offset-2 transition-colors break-words sm:truncate">
                     {title}
                   </a>
                 ) : (
@@ -443,11 +454,11 @@ export function ItemsTab({ monitorId, allItems, schema, blacklist, scores, showF
                   </div>
                 )}
                 {isBlacklisted ? (
-                  <Button variant="ghost" size="sm" className="h-6 text-xs px-2" onClick={() => unblacklistItem(identity)}>
+                  <Button variant="ghost" size="sm" className="text-xs px-2" onClick={() => unblacklistItem(identity)}>
                     Restore
                   </Button>
                 ) : isMatch ? (
-                  <Button variant="ghost" size="sm" className="h-6 text-xs px-2 text-muted-foreground" onClick={() => blacklistItem(item)}>
+                  <Button variant="ghost" size="sm" className="text-xs px-2 text-muted-foreground" onClick={() => blacklistItem(item)}>
                     Dismiss
                   </Button>
                 ) : null}
