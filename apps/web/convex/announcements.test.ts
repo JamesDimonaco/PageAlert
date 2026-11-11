@@ -42,11 +42,11 @@ function harness() {
 }
 type T = ReturnType<typeof harness>;
 
-async function seedUser(t: T, email: string | null, emailVerified = true): Promise<string> {
+async function seedUser(t: T, email: string | null, emailVerified = true, createdAt = NOW): Promise<string> {
   const user = (await t.mutation(components.betterAuth.adapter.create, {
     input: {
       model: "user",
-      data: { name: "A Person", email: email ?? "", emailVerified, createdAt: NOW, updatedAt: NOW },
+      data: { name: "A Person", email: email ?? "", emailVerified, createdAt, updatedAt: createdAt },
     },
   })) as { _id: string };
   return user._id;
@@ -263,6 +263,53 @@ describe("who is eligible", () => {
     expect(await t.action(internal.announcements.send, { key: KEY })).toMatchObject({ wouldSend: 1 });
     await t.action(internal.announcements.send, { key: KEY, dryRun: false });
     expect(sentPayloads().map((p) => p.to[0])).toEqual(["keep@example.com"]);
+  });
+});
+
+describe("Find a product, split by whether someone has made a monitor", () => {
+  const STARTED = "find-a-product-2026-11";
+  const NOT_STARTED = "find-a-product-first-monitor-2026-11";
+
+  async function seedPeople(t: T) {
+    const started = await seedUser(t, "started@example.com");
+    await seedUser(t, "never@example.com");
+    // Made one and deleted it: still counts as having started.
+    const deleted = await seedUser(t, "deleted@example.com");
+    await t.run(async (ctx) => {
+      await ctx.db.insert("monitorCreations", { userId: started, createdAt: NOW });
+      await ctx.db.insert("monitorCreations", { userId: deleted, createdAt: NOW });
+    });
+    // Signed up yesterday with no monitor: mid-onboarding, so in neither audience.
+    await seedUser(t, "new@example.com", true, Date.now() - 24 * 60 * 60 * 1000);
+  }
+
+  it("sends the launch email only to people who have made a monitor, and not to this week's sign-ups", async () => {
+    const t = harness();
+    await seedPeople(t);
+
+    expect(await t.action(internal.announcements.send, { key: STARTED })).toMatchObject({ wouldSend: 2 });
+    await t.action(internal.announcements.send, { key: STARTED, dryRun: false });
+    expect(sentPayloads().map((p) => p.to[0]).sort()).toEqual(["deleted@example.com", "started@example.com"]);
+  });
+
+  it("sends the first-monitor email only to people who never made one, and not to this week's sign-ups", async () => {
+    const t = harness();
+    await seedPeople(t);
+
+    expect(await t.action(internal.announcements.send, { key: NOT_STARTED })).toMatchObject({ wouldSend: 1 });
+    await t.action(internal.announcements.send, { key: NOT_STARTED, dryRun: false });
+    expect(sentPayloads().map((p) => p.to[0])).toEqual(["never@example.com"]);
+  });
+
+  it("links each example to Find a product with the search filled in, in the HTML and the text", async () => {
+    const t = harness();
+    await seedUser(t, "never@example.com");
+
+    await t.action(internal.announcements.send, { key: NOT_STARTED, dryRun: false });
+
+    const [p] = sentPayloads();
+    expect(p.html).toContain("/dashboard?find=Nintendo%20Switch%202");
+    expect(p.text).toContain("Nintendo Switch 2: https://pagealert.io/dashboard?find=Nintendo%20Switch%202");
   });
 });
 

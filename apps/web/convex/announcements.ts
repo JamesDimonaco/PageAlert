@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import { DAY_MS } from "@prowl/shared";
 import type { PaginationResult } from "convex/server";
 import { internalAction, internalMutation, internalQuery, type ActionCtx, type QueryCtx } from "./_generated/server";
 import { components, internal } from "./_generated/api";
@@ -15,6 +16,10 @@ import { isOptedOut, unsubscribeHeaders, unsubscribeUrl } from "./unsubscribe";
  *
  * A new announcement is a new entry in ANNOUNCEMENTS under a new key. The key
  * is also what makes a rerun safe: one announcementSends row per user per key.
+ *
+ * An announcement can narrow who gets it with `audience`. Two keys with
+ * opposite `monitors` audiences split everyone between two versions of a
+ * message, and each person gets exactly one.
  */
 
 /** Resend's batch endpoint takes at most 100 emails per call. */
@@ -25,21 +30,37 @@ const BATCH_SPACING_MS = 600;
 // An action may run 10 minutes; stop well short and hand the rest to a fresh one.
 const RUN_BUDGET_MS = 5 * 60_000;
 
+type Audience = {
+  /** "some": people who have ever created a monitor, deleted ones included. "none": people who never have. */
+  monitors?: "some" | "none";
+  /**
+   * Leave out accounts younger than this. New sign-ups are still in the
+   * onboarding sequence (day 0 to day 7), which already covers the same ground.
+   */
+  minAccountAgeDays?: number;
+};
+
 type Announcement = {
   subject: string;
   render: (unsubscribeLink: string) => { html: string; text: string };
+  audience?: Audience;
 };
+
+type Example = { label: string; href: string };
 
 /** The shared look of every announcement: a heading, a few paragraphs and one button. */
 function announcementEmail({
   heading,
   paragraphs,
+  examples = [],
   button,
   buttonHint,
   href,
 }: {
   heading: string;
   paragraphs: string[];
+  /** One-click starting points, listed between the paragraphs and the button. */
+  examples?: Example[];
   button: string;
   buttonHint?: string;
   href: string;
@@ -55,7 +76,16 @@ function announcementEmail({
         <h1 style="margin:0;color:#fff;font-size:20px;font-weight:600">${esc(heading)}</h1>
       </div>
       <div style="padding:32px;line-height:1.55">
-        ${paragraphs.map((p) => `<p style="margin:0 0 16px;color:#444;font-size:15px">${esc(p)}</p>`).join("\n        ")}
+        ${paragraphs.map((p) => `<p style="margin:0 0 16px;color:#444;font-size:15px">${esc(p)}</p>`).join("\n        ")}${
+          examples.length > 0
+            ? `\n        <ul style="margin:0 0 20px;padding:0;list-style:none">${examples
+                .map(
+                  (e) =>
+                    `<li style="margin:0 0 8px"><a href="${esc(e.href)}" style="display:inline-block;border:1px solid #bfdbfe;background:#eff6ff;color:#1d4ed8;padding:8px 14px;border-radius:999px;text-decoration:none;font-size:14px;font-weight:500">${esc(e.label)} &rarr;</a></li>`
+                )
+                .join("")}</ul>`
+            : ""
+        }
         <a href="${esc(href)}" style="display:inline-block;background:#3b82f6;color:#fff;padding:14px 28px;border-radius:8px;text-decoration:none;font-weight:600;font-size:15px;margin-top:8px">
           ${esc(button)}
         </a>${buttonHint ? `\n        <p style="margin:12px 0 0;color:#888;font-size:12px">${esc(buttonHint)}</p>` : ""}
@@ -70,7 +100,8 @@ function announcementEmail({
   </div>
 </body>
 </html>`;
-    const text = `${paragraphs.join("\n\n")}
+    const exampleLines = examples.map((e) => `- ${e.label}: ${e.href}`).join("\n");
+    const text = `${paragraphs.join("\n\n")}${exampleLines ? `\n\n${exampleLines}` : ""}
 
 ${button}${buttonHint ? ` (${buttonHint.replace(/\.$/, "")})` : ""}:
 ${href}
@@ -96,8 +127,17 @@ const smsAlerts: Announcement = {
   }),
 };
 
+/** Opens the new-monitor sheet on Find a product with this search typed in. */
+function findHref(product: string): string {
+  return `${APP_URL}/dashboard?find=${encodeURIComponent(product)}`;
+}
+
+/** This week's sign-ups are mid-onboarding and hear about Find a product there. */
+const PAST_ONBOARDING_DAYS = 7;
+
 const findAProduct: Announcement = {
   subject: "New in PageAlert: find a product by name",
+  audience: { monitors: "some", minAccountAgeDays: PAST_ONBOARDING_DAYS },
   render: announcementEmail({
     heading: "Find a product",
     paragraphs: [
@@ -110,9 +150,37 @@ const findAProduct: Announcement = {
   }),
 };
 
+/**
+ * For people who signed up and never made a monitor. Finding the right page
+ * to watch was the hard step, and Find a product removes it, so the examples
+ * each open a search that is one click from running.
+ */
+const findAProductFirstMonitor: Announcement = {
+  subject: "Watch a product without hunting for the link",
+  audience: { monitors: "none", minAccountAgeDays: PAST_ONBOARDING_DAYS },
+  render: announcementEmail({
+    heading: "Just type what you want",
+    paragraphs: [
+      "You signed up to PageAlert but never set up a monitor. Fair enough: finding the right page to watch was the fiddly part.",
+      "Now you can skip it. Type a product name, PageAlert finds the shops that sell it, and you tick the ones to watch. We tell you when the price drops or it comes back in stock.",
+      "Pick one to try. Each opens with the search ready to go:",
+    ],
+    examples: [
+      { label: "Nintendo Switch 2", href: findHref("Nintendo Switch 2") },
+      { label: "AirPods Pro 2", href: findHref("AirPods Pro 2") },
+      { label: "Dyson V15 Detect", href: findHref("Dyson V15 Detect") },
+      { label: "Steam Deck OLED", href: findHref("Steam Deck OLED") },
+    ],
+    button: "Search for something else",
+    buttonHint: "Or reply with what you're after, and we'll set it up for you.",
+    href: `${APP_URL}/dashboard?new=1`,
+  }),
+};
+
 const ANNOUNCEMENTS: Record<string, Announcement> = {
   "sms-alerts-2026-10": smsAlerts,
   "find-a-product-2026-11": findAProduct,
+  "find-a-product-first-monitor-2026-11": findAProductFirstMonitor,
 };
 
 const recipientValidator = v.object({ userId: v.string(), email: v.string() });
@@ -129,10 +197,19 @@ async function eligible(
   key: string,
   users: Recipient[]
 ): Promise<{ out: Recipient[]; pending: number }> {
+  const wanted = ANNOUNCEMENTS[key]?.audience?.monitors;
   const out: Recipient[] = [];
   let pending = 0;
   for (const user of users) {
     if ((await isOptedOut(ctx, user.userId, "updates")) || (await isBanned(ctx, user.userId))) continue;
+    if (wanted) {
+      // monitorCreations outlives a deleted monitor, so someone who tried it once still counts as started.
+      const created = await ctx.db
+        .query("monitorCreations")
+        .withIndex("by_userId_createdAt", (q) => q.eq("userId", user.userId))
+        .first();
+      if ((created !== null) !== (wanted === "some")) continue;
+    }
     const prior = await ctx.db
       .query("announcementSends")
       .withIndex("by_key_userId", (q) => q.eq("key", key).eq("userId", user.userId))
@@ -318,6 +395,10 @@ export const send = internalAction({
     if (args.testTo !== undefined) return sendTest(announcement, args.testTo, ctx, apiKey!, replyTo!);
 
     const started = Date.now();
+    const minAgeDays = announcement.audience?.minAccountAgeDays;
+    // An account with no readable sign-up time is treated as old enough.
+    const oldEnough = (createdAt: unknown): boolean =>
+      minAgeDays === undefined || typeof createdAt !== "number" || started - createdAt >= minAgeDays * DAY_MS;
     let cursor = args.cursor ?? null;
     let wouldSend = 0;
     let pending = 0;
@@ -332,6 +413,7 @@ export const send = internalAction({
       // sign-ups, so requiring it also keeps typo'd password sign-ups out.
       const users: Recipient[] = page.page
         .filter((u) => u.emailVerified === true && typeof u.email === "string" && u.email.length > 0)
+        .filter((u) => oldEnough(u.createdAt))
         .map((u) => ({ userId: String(u._id), email: String(u.email) }));
 
       if (dryRun) {

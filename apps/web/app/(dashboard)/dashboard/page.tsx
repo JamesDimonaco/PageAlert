@@ -87,6 +87,28 @@ export default function DashboardPage() {
     openCreate();
   }, [searchParams, router, openCreate]);
 
+  // ?find=<product> opens the sheet on Find a product with that search typed
+  // in, one click from running. The first-monitor announcement links here.
+  const lastHandledFindRef = useRef<string | null>(null);
+  useEffect(() => {
+    const searchTerm = searchParams.get("find")?.trim().slice(0, 200);
+    if (!searchTerm) {
+      lastHandledFindRef.current = null;
+      return;
+    }
+    // The URL keeps ?find= until the replace lands, and a change in atLimit
+    // in the meantime would open the sheet a second time.
+    if (searchTerm === lastHandledFindRef.current) return;
+    lastHandledFindRef.current = searchTerm;
+    router.replace("/dashboard", { scroll: false });
+    if (atLimit) {
+      toast.error("Monitor limit reached", { description: "Upgrade your plan to add more monitors." });
+      return;
+    }
+    openWithDefaults({ name: "", url: "", prompt: "", searchTerm });
+    trackEvent("onboarding_deeplink_opened", { find: searchTerm });
+  }, [searchParams, openWithDefaults, router, atLimit]);
+
   // Handle ?try=<url>&prompt=<prompt> — opens the create-monitor sheet
   // pre-populated. Used by the day-0 onboarding email's "Try this monitor"
   // button. See PROWL-038 Phase 4e.
