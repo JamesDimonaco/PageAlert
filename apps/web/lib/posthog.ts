@@ -165,6 +165,8 @@ export function muteForImpersonation() {
 export function unmuteAfterImpersonation() {
   if (localStorage.getItem(IMPERSONATION_MUTE_KEY) === null) return;
   onPostHogReady(() => {
+    // Checked again: another tab may have recorded a real choice meanwhile.
+    if (localStorage.getItem(IMPERSONATION_MUTE_KEY) === null) return;
     localStorage.removeItem(IMPERSONATION_MUTE_KEY);
     applyOptOut(false);
   });

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { toast } from "sonner";
 import { authClient } from "@/lib/auth-client";
 import {
   identifyUser,
@@ -45,15 +46,14 @@ export function useAuth() {
     isLoading: session.isPending,
     isAuthenticated: !!user,
     signOut: async () => {
-      // Signing out of an impersonation would drop the admin's own session too.
-      // If stopping fails, fall through to a real sign-out rather than land
-      // on /admin still signed in as the user.
+      // Signing out of an impersonation would strand the admin's own session,
+      // so this stops impersonating instead. A failed stop is reported, not
+      // papered over with a sign-out that leaves the admin session behind.
       if (impersonatedBy) {
         const stopped = await authClient.admin.stopImpersonating().then((r) => !r.error, () => false);
-        if (stopped) {
-          window.location.href = "/admin";
-          return;
-        }
+        if (stopped) window.location.href = "/admin";
+        else toast.error("Could not stop impersonating. Try again from the banner.");
+        return;
       }
       trackSignOut();
       try {
