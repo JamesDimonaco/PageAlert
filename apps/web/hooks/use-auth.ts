@@ -46,10 +46,14 @@ export function useAuth() {
     isAuthenticated: !!user,
     signOut: async () => {
       // Signing out of an impersonation would drop the admin's own session too.
+      // If stopping fails, fall through to a real sign-out rather than land
+      // on /admin still signed in as the user.
       if (impersonatedBy) {
-        await authClient.admin.stopImpersonating();
-        window.location.href = "/admin";
-        return;
+        const stopped = await authClient.admin.stopImpersonating().then((r) => !r.error, () => false);
+        if (stopped) {
+          window.location.href = "/admin";
+          return;
+        }
       }
       trackSignOut();
       try {

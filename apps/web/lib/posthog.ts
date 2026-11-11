@@ -125,7 +125,16 @@ export function onPostHogReady(cb: (posthog: PostHog) => void): () => void {
   };
 }
 
+/** The browser's own choice, from the Settings toggle. */
 export function setAnalyticsOptOut(optOut: boolean) {
+  if (!ph) return;
+  // An explicit choice outranks the impersonation mute, so the mute must not
+  // come back later and undo it.
+  localStorage.removeItem(IMPERSONATION_MUTE_KEY);
+  applyOptOut(optOut);
+}
+
+function applyOptOut(optOut: boolean) {
   if (!ph) return;
   if (optOut) {
     ph.opt_out_capturing();
@@ -140,7 +149,7 @@ export function setAnalyticsOptOut(optOut: boolean) {
 // An admin viewing as a user must not land clicks on that user's person.
 // Opt-out is the one switch that also stops autocapture, but PostHog persists
 // it, so this key records that the mute set it. Lifting the mute then never
-// undoes an opt-out the admin chose in Settings.
+// undoes an opt-out the admin chose in Settings, before or since.
 
 const IMPERSONATION_MUTE_KEY = "pagealert_ph_impersonation_mute";
 
@@ -148,7 +157,7 @@ export function muteForImpersonation() {
   onPostHogReady((posthog) => {
     if (posthog.has_opted_out_capturing()) return;
     localStorage.setItem(IMPERSONATION_MUTE_KEY, "1");
-    setAnalyticsOptOut(true);
+    applyOptOut(true);
   });
 }
 
@@ -157,7 +166,7 @@ export function unmuteAfterImpersonation() {
   if (localStorage.getItem(IMPERSONATION_MUTE_KEY) === null) return;
   onPostHogReady(() => {
     localStorage.removeItem(IMPERSONATION_MUTE_KEY);
-    setAnalyticsOptOut(false);
+    applyOptOut(false);
   });
 }
 

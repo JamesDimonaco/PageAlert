@@ -12,7 +12,9 @@ import { Button } from "@/components/ui/button";
  * on true the page is already unloading.
  */
 export async function startImpersonating(userId: string): Promise<boolean> {
-  const { error } = await authClient.admin.impersonateUser({ userId });
+  const { error } = await authClient.admin
+    .impersonateUser({ userId })
+    .catch((e: unknown) => ({ error: { message: e instanceof Error ? e.message : undefined } }));
   if (error) {
     toast.error(error.message ?? "Could not impersonate this user");
     return false;
@@ -27,7 +29,9 @@ export function ImpersonationBanner({ email }: { email: string }) {
 
   async function stop() {
     setStopping(true);
-    const { error } = await authClient.admin.stopImpersonating();
+    const { error } = await authClient.admin
+      .stopImpersonating()
+      .catch((e: unknown) => ({ error: { message: e instanceof Error ? e.message : undefined } }));
     if (error) {
       setStopping(false);
       toast.error(error.message ?? "Could not stop impersonating");
