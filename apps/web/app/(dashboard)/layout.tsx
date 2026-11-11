@@ -28,6 +28,13 @@ export default function DashboardLayout({
   const claimedRef = useRef(false);
   const lastTouchRef = useRef(0);
   const banStatus = useQuery(api.account.myBanStatus, isAuthenticated ? {} : "skip");
+  // Latched for the life of the page. After Stop impersonating, the session
+  // turns back into the admin's before the reload lands, while Convex still
+  // holds the user's token, so the guards below must not lift with it.
+  const wasImpersonatingRef = useRef(false);
+  useEffect(() => {
+    if (impersonatedBy) wasImpersonatingRef.current = true;
+  }, [impersonatedBy]);
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
@@ -54,7 +61,7 @@ export default function DashboardLayout({
   // mutation throttles again server-side for tabs this ref does not cover.
   // Not while an admin is impersonating: that is not the user coming back.
   useEffect(() => {
-    if (!isAuthenticated || impersonatedBy) return;
+    if (!isAuthenticated || impersonatedBy || wasImpersonatingRef.current) return;
     const now = Date.now();
     if (now - lastTouchRef.current < 60 * 60 * 1000) return;
     lastTouchRef.current = now;
@@ -67,7 +74,7 @@ export default function DashboardLayout({
   // Skipped while impersonating, or the admin's own free scan in this browser
   // would move into the user's account.
   useEffect(() => {
-    if (isAuthenticated && !impersonatedBy && banStatus && !banStatus.banned && !claimedRef.current) {
+    if (isAuthenticated && !impersonatedBy && !wasImpersonatingRef.current && banStatus && !banStatus.banned && !claimedRef.current) {
       claimedRef.current = true; // Prevent concurrent runs
       let monitorId: string | undefined;
       let anonId: string | undefined;
