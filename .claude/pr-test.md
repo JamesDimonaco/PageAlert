@@ -10,7 +10,7 @@ Personal lane. `ctx`, then `cvx personal`. Convex commands run from `apps/web`.
 git worktree add .claude/worktrees/pr-test-<N> <sha-or-branch>
 cd .claude/worktrees/pr-test-<N>
 pnpm install --frozen-lockfile
-cp /Users/jamesdimonaco/me/prowl/apps/web/.env.local apps/web/.env.local
+cp ~/me/prowl/apps/web/.env.local apps/web/.env.local
 cd apps/web
 npx convex dev --once          # pushes the PR's Convex code to dev (energetic-mongoose-440)
 npx next dev -H 127.0.0.1 -p 3100   # run in the background
