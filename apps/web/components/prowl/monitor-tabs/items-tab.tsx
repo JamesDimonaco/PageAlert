@@ -3,7 +3,7 @@
 import { useCallback, useState, useMemo } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { MatchConditionsEditor } from "@/components/prowl/match-conditions-editor";
 import {
@@ -419,7 +419,6 @@ export function ItemsTab({ monitorId, allItems, schema, blacklist, scores, showF
                 ) : (
                   <span className="font-medium break-words sm:truncate">{title}</span>
                 )}
-                {safeUrl && <ExternalLink className="h-3 w-3 text-muted-foreground shrink-0" />}
               </div>
               {reason && (
                 <p className="text-xs text-muted-foreground sm:hidden">{reason}</p>
@@ -432,6 +431,18 @@ export function ItemsTab({ monitorId, allItems, schema, blacklist, scores, showF
                   <span className="text-xs text-muted-foreground line-through tabular-nums">
                     {origPrice}
                   </span>
+                )}
+                {safeUrl && (
+                  <a
+                    href={safeUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={`${buttonVariants({ variant: "outline", size: "sm" })} gap-1`}
+                    aria-label={`View ${title}`}
+                  >
+                    View
+                    <ExternalLink className="h-3.5 w-3.5" />
+                  </a>
                 )}
                 {(isMatch || isBlacklisted) && (
                   <div className="flex items-center gap-0.5" title={reason || undefined}>

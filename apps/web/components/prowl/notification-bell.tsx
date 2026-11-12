@@ -4,17 +4,20 @@ import { Bell, Check, Loader2 } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { formatDistanceToNow } from "date-fns";
+import { useRouter } from "next/navigation";
 
 export function NotificationBell() {
   const notifications = useQuery(api.userNotifications.list, { limit: 10 });
   const unreadCount = useQuery(api.userNotifications.unreadCount);
   const markRead = useMutation(api.userNotifications.markRead);
   const markAllRead = useMutation(api.userNotifications.markAllRead);
+  const router = useRouter();
 
   return (
     <DropdownMenu>
@@ -51,12 +54,14 @@ export function NotificationBell() {
             </div>
           ) : (
             notifications.map((notif) => (
-              <button
+              // A menu item, so picking one closes the dropdown on the way to the monitor.
+              <DropdownMenuItem
                 key={notif._id}
                 onClick={() => {
-                  if (!notif.read) markRead({ id: notif._id });
+                  if (!notif.read) void markRead({ id: notif._id }).catch(() => {});
+                  router.push(`/dashboard/monitors/${notif.monitorId}`);
                 }}
-                className={`w-full text-left px-3 py-3 border-b border-border/20 last:border-0 hover:bg-muted/50 transition-colors ${
+                className={`block w-full cursor-pointer rounded-none text-left px-3 py-3 border-b border-border/20 last:border-0 hover:bg-muted/50 transition-colors ${
                   !notif.read ? "bg-primary/5" : ""
                 }`}
               >
@@ -72,7 +77,7 @@ export function NotificationBell() {
                     </p>
                   </div>
                 </div>
-              </button>
+              </DropdownMenuItem>
             ))
           )}
         </div>

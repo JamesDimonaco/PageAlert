@@ -1,7 +1,7 @@
 "use client";
 
 import { use, useState } from "react";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { StatusBadge } from "@/components/prowl/status-badge";
@@ -283,7 +283,17 @@ export default function MonitorDetailPage({
             )}
           </div>
         </div>
-        <div className="shrink-0">
+        <div className="shrink-0 flex items-center gap-2">
+          <a
+            href={monitor.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={`${buttonVariants({ variant: "outline" })} h-9 max-sm:h-11 gap-1.5`}
+            title={monitor.url}
+          >
+            <ExternalLink className="h-4 w-4" />
+            <span className="max-sm:sr-only">Visit page</span>
+          </a>
           <DropdownMenu>
             <DropdownMenuTrigger aria-label="Monitor actions" className="inline-flex h-9 w-9 max-sm:h-11 max-sm:w-11 items-center justify-center rounded-lg border border-border hover:bg-muted transition-colors">
               <MoreVertical className="h-4 w-4" />
