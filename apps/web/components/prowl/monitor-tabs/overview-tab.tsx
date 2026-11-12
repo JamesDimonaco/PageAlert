@@ -9,6 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { AiInsightsCard } from "@/components/prowl/ai-insights";
 import { IntervalSelector } from "@/components/prowl/interval-selector";
+import { MonitorChannelNudge } from "@/components/prowl/channel-coverage";
 import { ChannelSelector, defaultChannels, useConfiguredChannels, type Channel } from "@/components/prowl/channel-selector";
 import { AlertOnFields, alertOnFromFields, targetText, type PriceChoice } from "@/components/prowl/alert-on-fields";
 import {
@@ -61,6 +62,7 @@ interface OverviewTabProps {
     nextCheckAt?: number;
     notificationChannels?: string[];
     proxyPreferred?: boolean;
+    muted?: boolean;
     alertOn?: { backInStock?: boolean; priceDrop?: boolean; priceBelow?: { amount: number; currency: string } };
     lastSeen?: { currency?: string };
   };
@@ -291,6 +293,13 @@ export function OverviewTab({ monitorId, monitor, matches, totalItems, results, 
             </div>
           </CardContent>
         </Card>
+      )}
+
+      {!monitor.muted && (
+        <MonitorChannelNudge
+          monitorId={monitor.groupId ? undefined : monitorId}
+          groupId={monitor.groupId as Id<"monitorGroups"> | undefined}
+        />
       )}
 
       {/* Retry in progress banner — monitor is active but has failed checks being retried */}
@@ -636,7 +645,6 @@ function MonitorSettingsForm({
           <ChannelSelector
             value={channels}
             onChange={setEditedChannels}
-            monitorId={monitorId}
             disabled={channelsUnresolved}
           />
           {singleProduct && (

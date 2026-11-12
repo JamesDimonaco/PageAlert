@@ -22,6 +22,7 @@ import {
 import { StatusBadge } from "@/components/prowl/status-badge";
 import { DeleteDialog } from "@/components/prowl/delete-dialog";
 import { UpgradeBanner } from "@/components/prowl/upgrade-banner";
+import { MonitorChannelNudge } from "@/components/prowl/channel-coverage";
 import { planNotes, ProductCriteriaForm } from "@/components/prowl/product-criteria-form";
 import { useTier } from "@/hooks/use-tier";
 import { toSafeUrl } from "@/lib/format";
@@ -225,6 +226,8 @@ export default function ProductPage({ params }: { params: Promise<{ id: string }
           </DropdownMenu>
         </div>
       </div>
+
+      {watched.length > 0 && <MonitorChannelNudge groupId={product._id} />}
 
       {watchedRows.length > 0 && (
         <section className="space-y-2">

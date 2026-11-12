@@ -191,18 +191,16 @@ test("the web flow saves the matches, not every item, as the first scan's histor
   expect(rows.map((r) => r.matches)).toEqual([[items[0]]]);
 });
 
-test("a free user cannot use MCP to put Telegram or Discord on a second monitor", async () => {
+test("a free user's MCP monitor gets every channel but texts, whatever their other monitors use", async () => {
   const t = setup();
   const { asUser, key } = await seedUser(t, "a@example.com");
   await asUser.mutation(api.monitors.create, { ...MONITOR, checkInterval: "1h", notificationChannels: ["telegram"] });
 
-  // No channels given means "all of them", which must still respect the ration.
+  // No channels given means "all of them". Free has no texts, so the list is
+  // written out without them rather than left unset.
   const id = await t.mutation(api.mcp.createMonitor, { apiKey: key, ...MONITOR });
   const monitor = await t.run((ctx) => ctx.db.get(id));
-  expect(monitor!.notificationChannels).toBeDefined();
-  expect(monitor!.notificationChannels).not.toContain("telegram");
-  expect(monitor!.notificationChannels).not.toContain("discord");
-  expect(monitor!.notificationChannels).toContain("email");
+  expect(monitor!.notificationChannels).toEqual(["email", "telegram", "discord", "push"]);
 });
 
 test("an item still matching on every check comes back once, dated from when it first matched", async () => {

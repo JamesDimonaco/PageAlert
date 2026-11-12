@@ -6,11 +6,9 @@ import { useRouter } from "next/navigation";
 import { useTier } from "@/hooks/use-tier";
 import { useCreateMonitor } from "@/hooks/use-create-monitor";
 import { useMemo } from "react";
-import { useQuery, useMutation } from "convex/react";
+import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
-import { useMonitors } from "@/hooks/use-monitors";
 import { toast } from "sonner";
-import { errorText } from "@/lib/utils";
 
 export type Channel = "email" | "telegram" | "discord" | "push" | "sms";
 
@@ -22,20 +20,7 @@ const CHANNEL_CONFIG: Record<Channel, { label: string; icon: typeof Mail }> = {
   push: { label: "Browser", icon: Bell },
 };
 
-/**
- * Channels the free tier allows on one monitor only. Mirrors
- * isRestrictedChannel in convex/monitors.ts, which is what actually enforces it.
- * Texts are not here: free has none at all.
- */
-const RESTRICTED: Channel[] = ["telegram", "discord"];
-
-/**
- * Channels whose availability is a notificationSettings row. Equal to
- * RESTRICTED today, but by coincidence rather than by rule — email needs no
- * row, push is proved by a device, and a future paid-but-unrationed channel
- * would belong here and not there. Kept separate so adding one cannot quietly
- * change who gets rationed.
- */
+/** Channels whose availability is a notificationSettings row. Email needs no row, and push is proved by a device. */
 const SETTINGS_BACKED: Channel[] = ["telegram", "discord", "sms"];
 
 /**
@@ -80,49 +65,23 @@ export function useConfiguredChannels(): Channel[] | undefined {
 interface ChannelSelectorProps {
   value: Channel[];
   onChange: (channels: Channel[]) => void;
-  /** The monitor ID being edited — null for new monitors */
-  monitorId?: string | null;
-  /** The product being edited. Its monitors share one channel list, so they count as one. */
-  groupId?: string;
   disabled?: boolean;
 }
 
-export function ChannelSelector({ value, onChange, monitorId, groupId, disabled }: ChannelSelectorProps) {
+export function ChannelSelector({ value, onChange, disabled }: ChannelSelectorProps) {
   const router = useRouter();
   const { close: closeSheet } = useCreateMonitor();
   const { tier } = useTier();
-  const { monitors } = useMonitors();
-  const updateMonitor = useMutation(api.monitors.update);
 
   const configuredChannels = new Set<Channel>(useConfiguredChannels() ?? ["email"]);
   const smsEnabled = useQuery(api.sms.isEnabled);
 
-  // For free tier: find if another monitor already uses non-email channels
-  const freeMonitorWithChannels = tier === "free"
-    ? monitors.find((m) =>
-        m._id !== monitorId &&
-        (groupId === undefined || m.groupId !== groupId) &&
-        (m as any).notificationChannels?.some((c: string) => (RESTRICTED as string[]).includes(c))
-      )
-    : null;
-
-  function isChannelAvailable(channel: Channel): boolean {
-    if (!configuredChannels.has(channel)) return false;
-    if (tier !== "free") return true;
-    // Free tier rations Telegram and Discord to one monitor.
-    // Email and push are unrestricted — see isRestrictedChannel in
-    // convex/monitors.ts.
-    if (!RESTRICTED.includes(channel)) return true;
-    if (freeMonitorWithChannels) return false;
-    return true;
-  }
-
   function handleToggle(channel: Channel) {
     if (disabled) return;
 
-    const available = isChannelAvailable(channel);
-
     if (!configuredChannels.has(channel)) {
+      // Discord isn't ready, so there is nothing in Settings to send them to.
+      if (channel === "discord") return;
       toast("Set up " + CHANNEL_CONFIG[channel].label + " in Settings first", {
         action: {
           label: "Go to Settings",
@@ -135,39 +94,6 @@ export function ChannelSelector({ value, onChange, monitorId, groupId, disabled 
           },
         },
       });
-      return;
-    }
-
-    if (!available && tier === "free") {
-      // Free user trying to enable on a second monitor — offer to switch
-      if (freeMonitorWithChannels) {
-        const otherName = (freeMonitorWithChannels as any).name;
-        const otherId = freeMonitorWithChannels._id;
-        toast(`${CHANNEL_CONFIG[channel].label} is active on "${otherName}". Move it to this monitor?`, {
-          duration: 8000,
-          action: {
-            label: "Switch",
-            onClick: async () => {
-              try {
-                // Move only the rationed channels off the other monitor.
-                // Push is never rationed, so it stays where it is.
-                const otherChannels = ((freeMonitorWithChannels as any).notificationChannels ?? []) as string[];
-                await updateMonitor({
-                  id: otherId,
-                  notificationChannels: otherChannels.filter(
-                    (c) => c === "email" || c === "push"
-                  ) as any,
-                });
-                // Enable on this monitor
-                onChange([...value, channel]);
-                toast.success(`Switched ${CHANNEL_CONFIG[channel].label} to this monitor`);
-              } catch (err) {
-                toast.error("Failed to switch channel", { description: errorText(err, "Try again.") });
-              }
-            },
-          },
-        });
-      }
       return;
     }
 
@@ -191,36 +117,34 @@ export function ChannelSelector({ value, onChange, monitorId, groupId, disabled 
           const Icon = config.icon;
           const isActive = value.includes(channel);
           const isConfigured = configuredChannels.has(channel);
-          const available = isChannelAvailable(channel);
 
-          // Free tier: channel is configured but used on another monitor
-          const isLockedFree = isConfigured && !available && tier === "free";
+          // Discord isn't ready yet. Someone who connected it before keeps it.
+          const comingSoon = channel === "discord" && !isConfigured;
 
           return (
             <button
               key={channel}
               type="button"
               onClick={() => handleToggle(channel)}
-              disabled={disabled}
+              disabled={disabled || comingSoon}
               aria-pressed={isActive}
               className={`inline-flex h-8 max-sm:h-11 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition-colors ${
-                isLockedFree
-                  ? "border-amber-500/30 bg-amber-500/5 text-amber-400 hover:bg-amber-500/10"
+                comingSoon
+                  ? "border-dashed border-border bg-transparent text-muted-foreground/60 cursor-default"
                   : isActive
                     ? "border-primary/30 bg-primary/10 text-primary"
-                    : isConfigured && available
+                    : isConfigured
                       ? "border-border bg-card hover:border-primary/30 hover:bg-primary/5 text-muted-foreground"
                       : "border-dashed border-border bg-transparent text-muted-foreground hover:bg-muted/50"
               }`}
             >
               <Icon className="h-3 w-3" />
               {config.label}
-              {isActive && !isLockedFree && <Check className="h-3 w-3" />}
-              {!isConfigured && (
-                <Settings className="h-3 w-3" />
-              )}
-              {isLockedFree && (
-                <Badge variant="outline" className="text-xs px-1 py-0 ml-0.5 border-amber-500/30 text-amber-400">1 monitor</Badge>
+              {isActive && <Check className="h-3 w-3" />}
+              {comingSoon ? (
+                <Badge variant="outline" className="text-xs px-1 py-0 ml-0.5">Soon</Badge>
+              ) : (
+                !isConfigured && <Settings className="h-3 w-3" />
               )}
             </button>
           );

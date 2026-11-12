@@ -40,16 +40,6 @@ async function getUserTier(ctx: { db: any }, userId: string): Promise<Tier> {
   return effectiveTier(record);
 }
 
-/**
- * Channels the free tier is rationed on. Email and push are always available:
- * email is the account's own address, and push goes to a device the user has
- * already granted permission on, at no cost per message to us. SMS is not
- * rationed on free but absent: every text costs money. See SMS_LIMITS.
- */
-function isRestrictedChannel(channel: string): boolean {
-  return channel === "telegram" || channel === "discord";
-}
-
 /** A free monitor's channels. A list that was only texts falls back to email rather than alerting nobody. */
 function withoutSms<C extends string>(channels: C[]): C[] {
   const rest = channels.filter((c) => c !== "sms");
@@ -62,49 +52,20 @@ export function clampInterval(interval: string, tier: Tier): CheckInterval {
 }
 
 /** What a user's plan allows, read once per mutation however many monitors it changes. */
-export type Plan = {
-  tier: Tier;
-  /**
-   * The user's monitors, which only the free channel rule reads. Null when
-   * that rule doesn't apply: a paid plan, or a caller not changing channels.
-   */
-  monitors: Doc<"monitors">[] | null;
-};
+export type Plan = { tier: Tier };
 
-export async function readPlan(ctx: MutationCtx, userId: string, { channels }: { channels: boolean }): Promise<Plan> {
+export async function readPlan(ctx: MutationCtx, userId: string): Promise<Plan> {
   if (await isBanned(ctx, userId)) throw new ConvexError("This account has been suspended.");
-  const tier = await getUserTier(ctx, userId);
-  const monitors =
-    channels && tier === "free"
-      ? await ctx.db.query("monitors").withIndex("by_userId", (q) => q.eq("userId", userId)).collect()
-      : null;
-  return { tier, monitors };
+  return { tier: await getUserTier(ctx, userId) };
 }
 
 /**
- * The channels a monitor may use. Free tier can only have one monitor on the
- * restricted channels. Push is not one of them: it costs us nothing per
- * message and a subscription is bound to a device the user already owns, so
- * there is nothing here to ration or to abuse.
- *
- * A product counts as one monitor here: its listings are one thing to the
- * user, and share one channel list.
+ * The channels a monitor may use. Every plan gets email, push, Telegram and
+ * Discord on every monitor: none of them costs us anything per message.
+ * Texts do, so free has none.
  */
-export function allowedChannels(
-  plan: Plan,
-  channels: ChannelList,
-  own: { id?: Id<"monitors">; groupId?: Id<"monitorGroups"> }
-): ChannelList {
-  if (plan.tier !== "free") return channels;
-  if (plan.monitors === null) throw new Error("readPlan was called without channels");
-  const rest = withoutSms(channels);
-  const takenElsewhere = plan.monitors.some(
-    (m) =>
-      m._id !== own.id &&
-      (own.groupId === undefined || m.groupId !== own.groupId) &&
-      m.notificationChannels?.some(isRestrictedChannel)
-  );
-  return takenElsewhere ? rest.filter((c) => !isRestrictedChannel(c)) : rest;
+export function allowedChannels(plan: Plan, channels: ChannelList): ChannelList {
+  return plan.tier === "free" ? withoutSms(channels) : channels;
 }
 
 // Formats a millisecond duration as a human-readable wait time, rounding
@@ -286,14 +247,10 @@ export async function createMonitorForUser(
     throw new ConvexError(`Your ${tier} plan allows ${limits.maxMonitors} monitors. Upgrade for more.`);
   }
 
-  // No list means every channel, so on free it is rationed as one. The web
-  // form always sends a list; MCP leaves it out.
+  // No list means every channel, texts included, so on free it becomes an
+  // explicit list without them. The web form always sends a list; MCP leaves it out.
   const channels =
-    tier === "free"
-      ? allowedChannels({ tier, monitors: existingMonitors }, args.notificationChannels ?? ALL_CHANNELS, {
-          groupId: args.groupId,
-        })
-      : args.notificationChannels;
+    tier === "free" ? allowedChannels({ tier }, args.notificationChannels ?? ALL_CHANNELS) : args.notificationChannels;
 
   const now = Date.now();
   const id = await ctx.db.insert("monitors", {
@@ -603,7 +560,7 @@ export async function updateMonitorForUser(
   const existing = await ctx.db.get(id);
   if (!existing || existing.userId !== userId) throw new ConvexError("Monitor not found");
   const needsPlan = fields.checkInterval !== undefined || fields.notificationChannels !== undefined;
-  const rules = plan ?? (needsPlan ? await readPlan(ctx, userId, { channels: fields.notificationChannels !== undefined }) : null);
+  const rules = plan ?? (needsPlan ? await readPlan(ctx, userId) : null);
   if (!rules && (await isBanned(ctx, userId))) throw new ConvexError("This account has been suspended.");
 
   if (fields.name !== undefined) validateName(fields.name);
@@ -614,7 +571,7 @@ export async function updateMonitorForUser(
     fields.checkInterval = clampInterval(fields.checkInterval, rules.tier);
   }
   if (fields.notificationChannels !== undefined && rules) {
-    fields.notificationChannels = allowedChannels(rules, fields.notificationChannels, { id, groupId: existing.groupId });
+    fields.notificationChannels = allowedChannels(rules, fields.notificationChannels);
   }
 
   const now = Date.now();

@@ -139,7 +139,7 @@ export function WatchProductForm({ name, region, listings, ticked, guess, canPic
           <Label className="text-sm font-medium">Check frequency</Label>
           <IntervalSelector value={shownInterval} onValueChange={setCheckInterval} />
         </div>
-        <ChannelSelector value={shownChannels} onChange={setChannels} monitorId={null} />
+        <ChannelSelector value={shownChannels} onChange={setChannels} />
       </section>
       <div className="sticky -bottom-4 -mx-4 -mb-4 space-y-2 border-t border-border bg-background px-4 py-3 sm:-bottom-6 sm:-mx-6 sm:-mb-6 sm:px-6">
         {error && <p role="alert" className="text-sm text-destructive">{error}</p>}

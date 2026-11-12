@@ -26,13 +26,6 @@ interface ProductCriteriaFormProps {
 export function planNotes(asked: Channel[], got: Channel[], askedInterval: CheckInterval, gotInterval: CheckInterval): string[] {
   const dropped = asked.filter((c) => !got.includes(c));
   const notes: string[] = [];
-  const rationed = dropped.filter((c) => c === "telegram" || c === "discord");
-  if (rationed.length > 0) {
-    const names = rationed.map((c) => (c === "telegram" ? "Telegram" : "Discord")).join(" and ");
-    notes.push(
-      `${names} ${rationed.length === 1 ? "is" : "are"} off. The free plan allows Telegram and Discord on one monitor or product, and another one already uses them.`
-    );
-  }
   if (dropped.includes("sms")) notes.push("Text alerts are off. They aren't on the free plan.");
   // The free plan sends email when it removes every channel asked for.
   if (got.includes("email") && !asked.includes("email")) notes.push("Alerts go by email instead.");
@@ -113,7 +106,6 @@ export function ProductCriteriaForm({ group, listingCurrency, watchingCount }: P
       <ChannelSelector
         value={shownChannels}
         onChange={setChannels}
-        groupId={group._id}
         disabled={group.notificationChannels === undefined && configuredChannels === undefined}
       />
       <div className="flex justify-end">

@@ -461,7 +461,7 @@ export function CreateMonitorSheet({
                   <Label className="text-sm font-medium">Check frequency</Label>
                   <IntervalSelector value={checkInterval} onValueChange={setCheckInterval} />
                 </div>
-                <ChannelSelector value={channels} onChange={setChannels} monitorId={null} />
+                <ChannelSelector value={channels} onChange={setChannels} />
                 <div className="sticky -bottom-4 -mx-4 -mb-4 flex justify-end gap-3 border-t border-border bg-background px-4 py-3 sm:-bottom-6 sm:-mx-6 sm:-mb-6 sm:px-6">
                   <Button
                     type="button"

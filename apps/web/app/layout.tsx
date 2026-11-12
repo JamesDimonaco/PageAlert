@@ -134,7 +134,7 @@ const jsonLd = {
     "Natural language search — describe what you want",
     "Price tracking and drop alerts",
     "Stock availability notifications",
-    "Email, push, Telegram, and Discord notifications",
+    "Email, push, and Telegram notifications",
     "Visual change detection",
     "Works with any website",
   ],

@@ -143,10 +143,9 @@ describe("monitorGroups.create", () => {
     expect(await t.run((ctx) => ctx.db.query("monitorGroups").collect())).toHaveLength(0);
   });
 
-  // Free allows Telegram and Discord on one monitor. A product is one thing to
-  // the user, so all its listings get them, or none do. Per listing, only the
-  // first would alert there.
-  it("gives a free user's listings one channel list, counting the product as one monitor", async () => {
+  // A product's listings share one channel list, and free has no cap on
+  // which monitors use Telegram: a second product gets it too.
+  it("gives a free user's listings one channel list, on every product", async () => {
     const t = harness();
     const { as } = await signUp(t, "a@example.test");
     const telegram = { ...PRODUCT, notificationChannels: ["telegram" as const] };
@@ -159,10 +158,9 @@ describe("monitorGroups.create", () => {
     expect(monitors.map((m) => m.notificationChannels)).toEqual([["telegram"], ["telegram"]]);
     expect((await as.query(api.monitorGroups.get, { id: first.groupId }))?.notificationChannels).toEqual(["telegram"]);
 
-    // A second product is a second monitor on Telegram, which free doesn't allow.
     const second = await as.mutation(api.monitorGroups.create, { ...telegram, listings: [listing("johnlewis.com", true)] });
-    expect((await as.query(api.monitors.get, { id: second.monitorIds[0]! }))?.notificationChannels).toEqual([]);
-    expect((await as.query(api.monitorGroups.get, { id: second.groupId }))?.notificationChannels).toEqual([]);
+    expect((await as.query(api.monitors.get, { id: second.monitorIds[0]! }))?.notificationChannels).toEqual(["telegram"]);
+    expect((await as.query(api.monitorGroups.get, { id: second.groupId }))?.notificationChannels).toEqual(["telegram"]);
   });
 
   // Each creation buys a paid AI read. The client caps ticks from
@@ -659,8 +657,8 @@ describe("managing a product", () => {
   });
 
   // The form shows what was saved. Without the plan's answer it would show
-  // Telegram as on while no alert goes there.
-  it("returns the channels a free plan allows when another monitor has Telegram", async () => {
+  // texts as on while none go out.
+  it("returns the channels and interval a free plan allows", async () => {
     const t = harness();
     const { as, userId } = await signUp(t, "a@example.test");
     const { groupId } = await as.mutation(api.monitorGroups.create, PRODUCT);
@@ -682,19 +680,18 @@ describe("managing a product", () => {
     const saved = await as.mutation(api.monitorGroups.updateCriteria, {
       id: groupId,
       alertOn: { backInStock: true },
-      notificationChannels: ["email", "telegram"],
+      notificationChannels: ["email", "telegram", "sms"],
       checkInterval: "5m",
     });
 
-    expect(saved).toEqual({ notificationChannels: ["email"], checkInterval: "1h" });
+    expect(saved).toEqual({ notificationChannels: ["email", "telegram"], checkInterval: "1h" });
     const group = await as.query(api.monitorGroups.get, { id: groupId });
-    expect(group).toMatchObject({ notificationChannels: ["email"], checkInterval: "1h" });
+    expect(group).toMatchObject({ notificationChannels: ["email", "telegram"], checkInterval: "1h" });
   });
 
-  // The user is told what the new listing got. Stored on the product, one
-  // listing's clamp would change the settings its form shows and saves for
-  // every listing.
-  it("returns the channels the plan gave a newly watched listing, leaving the product's alone", async () => {
+  // The user is told what the new listing got, even when another monitor
+  // already uses the same channel.
+  it("gives a newly watched listing the product's channels", async () => {
     const t = harness();
     const { as, userId } = await signUp(t, "a@example.test");
     const { groupId } = await as.mutation(api.monitorGroups.create, {
@@ -702,10 +699,8 @@ describe("managing a product", () => {
       notificationChannels: ["telegram"],
       listings: [listing("argos.co.uk", true), listing("currys.co.uk", false)],
     });
-    // Another monitor took Telegram since, which free allows on only one.
-    await t.run(async (ctx) => {
-      for (const m of await ctx.db.query("monitors").collect()) await ctx.db.patch(m._id, { notificationChannels: [] });
-      await ctx.db.insert("monitors", {
+    await t.run((ctx) =>
+      ctx.db.insert("monitors", {
         userId,
         name: "Other",
         url: "https://shop.test/other",
@@ -716,12 +711,12 @@ describe("managing a product", () => {
         matchCount: 0,
         createdAt: 0,
         updatedAt: 0,
-      });
-    });
+      })
+    );
 
     const got = await as.mutation(api.monitorGroups.watchListing, { id: groupId, url: "https://currys.co.uk/xm5" });
 
-    expect(got.notificationChannels).toEqual([]);
+    expect(got.notificationChannels).toEqual(["telegram"]);
     expect((await as.query(api.monitorGroups.get, { id: groupId }))?.notificationChannels).toEqual(["telegram"]);
   });
 

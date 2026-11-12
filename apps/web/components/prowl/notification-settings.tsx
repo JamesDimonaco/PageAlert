@@ -9,10 +9,10 @@ import { Badge } from "@/components/ui/badge";
 import { Bell, Mail, MessageCircle, Hash, Send, CheckCircle2, Loader2, ExternalLink, Smartphone, Lock } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { useAuth } from "@/hooks/use-auth";
-import { useMonitors } from "@/hooks/use-monitors";
 import { useTier } from "@/hooks/use-tier";
 import { usePush } from "@/hooks/use-push";
 import { PushNotShownSteps, QrCode } from "@/components/prowl/push-help";
+import { ChannelCoverageBanner, useAnnounceRollout } from "@/components/prowl/channel-coverage";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { toast } from "sonner";
@@ -49,18 +49,16 @@ export function NotificationSettings() {
       });
     }
   };
-  const { monitors } = useMonitors();
+  const announceRollout = useAnnounceRollout();
   const { tier } = useTier();
 
   const [open, setOpen] = useState<NotificationChannel | null>(null);
   const [telegramChatId, setTelegramChatId] = useState("");
-  const [discordWebhook, setDiscordWebhook] = useState("");
   const [telegramQrOpen, setTelegramQrOpen] = useState(false);
   const [testEmailSending, setTestEmailSending] = useState(false);
   const [testEmailSent, setTestEmailSent] = useState(false);
   const [telegramSaving, setTelegramSaving] = useState(false);
   const [telegramTesting, setTelegramTesting] = useState(false);
-  const [discordSaving, setDiscordSaving] = useState(false);
   // Texts are the one channel with a two-step connect: a number is not a
   // destination until a code sent to it comes back. "code" means one is in
   // flight. See convex/sms.ts.
@@ -75,12 +73,10 @@ export function NotificationSettings() {
   const upsertSetting = useMutation(api.notificationSettings.upsert);
   const removeSetting = useMutation(api.notificationSettings.remove);
   const sendTelegramTest = useAction(api.telegram.sendTestMessage);
-  const sendDiscordTest = useAction(api.discord.sendTestMessage);
   const startSmsVerification = useAction(api.sms.startVerification);
   const confirmSmsVerification = useMutation(api.sms.confirmVerification);
   const smsAllowance = useQuery(api.tiers.smsAllowance);
   const smsEnabled = useQuery(api.sms.isEnabled);
-  const updateMonitor = useMutation(api.monitors.update);
   const notifSettings = useQuery(api.notificationSettings.list);
   const optOuts = useQuery(api.unsubscribe.myOptOuts);
   const [savingOptOut, setSavingOptOut] = useState(false);
@@ -112,8 +108,6 @@ export function NotificationSettings() {
     setSettingsSynced(true);
     const tg = notifSettings.find((s) => s.channel === "telegram");
     if (tg) setTelegramChatId(tg.target);
-    const dc = notifSettings.find((s) => s.channel === "discord");
-    if (dc) setDiscordWebhook(dc.target);
   }
 
   const connected = (channel: "sms" | "telegram" | "discord") =>
@@ -153,7 +147,7 @@ export function NotificationSettings() {
       id: "telegram",
       icon: <MessageCircle className="h-5 w-5" />,
       name: "Telegram",
-      blurb: tier === "free" ? "Instant messages from our bot, on one monitor" : "Instant messages from our bot",
+      blurb: "Instant messages from our bot",
       ready: connected("telegram"),
       status: connected("telegram") ? "Connected" : undefined,
     },
@@ -178,7 +172,7 @@ export function NotificationSettings() {
       id: "discord",
       icon: <Hash className="h-5 w-5" />,
       name: "Discord",
-      blurb: tier === "free" ? "Posts to a Discord channel, on one monitor" : "Posts to a Discord channel",
+      blurb: "Posts to a Discord channel",
       ready: connected("discord"),
       status: connected("discord") ? "Connected" : undefined,
     },
@@ -196,10 +190,12 @@ export function NotificationSettings() {
         <div>
           <h2 className="section-title">Where alerts go</h2>
           <p className="text-sm text-muted-foreground mt-1 leading-relaxed">
-            Set each one up once. Then each monitor picks which of these it uses.
-            {tier === "free" && " On free, one monitor can use Telegram or Discord. Upgrade for all of them, and for texts."}
+            Connect one and it&apos;s turned on for all your monitors. You can turn it off on any
+            monitor from its page.
+            {tier === "free" && smsEnabled && " Texts are on paid plans."}
           </p>
         </div>
+        <ChannelCoverageBanner />
         <div className="divide-y divide-border/30 rounded-xl border border-border bg-card">
           {channels.map((c) => (
             <div key={c.id} className="flex items-center gap-4 p-4">
@@ -213,15 +209,20 @@ export function NotificationSettings() {
                 </div>
                 <p className="text-sm text-muted-foreground mt-0.5 [overflow-wrap:anywhere]">{c.status ?? c.blurb}</p>
               </div>
-              <Button
-                variant="outline"
-                size="sm"
-                className="shrink-0"
-                disabled={c.id === "push" && push.state === "loading"}
-                onClick={() => setOpen(c.id)}
-              >
-                {c.ready ? "Manage" : "Connect"}
-              </Button>
+              {c.id === "discord" && !c.ready ? (
+                // Discord delivery isn't ready. Someone who connected it before can still manage it.
+                <Badge variant="outline" className="text-xs px-1.5 py-0 shrink-0">Coming soon</Badge>
+              ) : (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="shrink-0"
+                  disabled={c.id === "push" && push.state === "loading"}
+                  onClick={() => setOpen(c.id)}
+                >
+                  {c.ready ? "Manage" : "Connect"}
+                </Button>
+              )}
             </div>
           ))}
           <div className="flex items-center gap-4 p-4">
@@ -649,44 +650,10 @@ export function NotificationSettings() {
                   setTelegramSaving(true);
                   try {
                     await sendTelegramTest({ chatId: telegramChatId });
-                    await upsertSetting({ channel: "telegram", enabled: true, target: telegramChatId });
+                    const rollout = await upsertSetting({ channel: "telegram", enabled: true, target: telegramChatId });
                     trackNotificationChannelToggled({ channel: "telegram", enabled: true });
-
-                    // Offer to enable on all existing monitors
-                    if (monitors.length > 0) {
-                      toast.success("Telegram connected!", {
-                        description: `Enable Telegram notifications on all ${monitors.length} monitor${monitors.length !== 1 ? "s" : ""}?`,
-                        action: {
-                          label: "Enable all",
-                          onClick: async () => {
-                            try {
-                              const updates = monitors
-                                .filter((m) => {
-                                  const existing = (m as { notificationChannels?: NotificationChannel[] })
-                                    .notificationChannels;
-                                  // Skip undefined (already sends to all) and those already including telegram
-                                  return existing !== undefined && !existing.includes("telegram");
-                                })
-                                .map((m) => {
-                                  const existing = (m as { notificationChannels?: NotificationChannel[] })
-                                    .notificationChannels!;
-                                  return updateMonitor({
-                                    id: m._id,
-                                    notificationChannels: [...existing, "telegram"],
-                                  });
-                                });
-                              await Promise.all(updates);
-                              toast.success(`Telegram enabled on all monitors`);
-                            } catch (err) {
-                              toast.error("Failed to update monitors", { description: errorText(err, "Try again.") });
-                            }
-                          },
-                        },
-                        duration: 10000,
-                      });
-                    } else {
-                      toast.success("Telegram connected", { description: "Test message sent" });
-                    }
+                    toast.success("Telegram connected", { description: "Test message sent" });
+                    announceRollout("telegram", rollout);
                   } catch (e) {
                     toast.error("Failed to connect", {
                       description: errorText(e, e instanceof Error ? e.message : "Check your Chat ID and try again"),
@@ -751,53 +718,17 @@ export function NotificationSettings() {
                     // the lost panel waiting to reappear on re-enable
                     setPushTest("idle");
                     try {
-                      await push.enable();
+                      const rollout = await push.enable();
                       trackNotificationChannelToggled({ channel: "push", enabled: true });
-
-                      // Existing monitors carry an explicit channel list, so
-                      // turning push on here reaches none of them until they
-                      // are updated. Same offer the Telegram card makes.
-                      const needsPush = monitors.filter((m) => {
-                        const existing = (m as { notificationChannels?: NotificationChannel[] })
-                          .notificationChannels;
-                        return existing !== undefined && !existing.includes("push");
+                      toast.success("Alerts on", {
+                        description: "Send a test to check it reaches you.",
+                        action: {
+                          label: "Send test",
+                          onClick: () => void runPushTest(),
+                        },
+                        duration: 10000,
                       });
-
-                      if (needsPush.length > 0) {
-                        toast.success("Alerts on", {
-                          description: `Turn alerts on for your ${needsPush.length} existing monitor${needsPush.length !== 1 ? "s" : ""} too?`,
-                          action: {
-                            label: "Enable all",
-                            onClick: async () => {
-                              try {
-                                await Promise.all(
-                                  needsPush.map((m) => {
-                                    const existing = (m as { notificationChannels?: NotificationChannel[] })
-                                      .notificationChannels!;
-                                    return updateMonitor({
-                                      id: m._id,
-                                      notificationChannels: [...existing, "push"],
-                                    });
-                                  })
-                                );
-                                toast.success("Alerts enabled on all monitors");
-                              } catch (err) {
-                                toast.error("Failed to update monitors", { description: errorText(err, "Try again.") });
-                              }
-                            },
-                          },
-                          duration: 10000,
-                        });
-                      } else {
-                        toast.success("Alerts on", {
-                          description: "Send a test to check it reaches you.",
-                          action: {
-                            label: "Send test",
-                            onClick: () => void runPushTest(),
-                          },
-                          duration: 10000,
-                        });
-                      }
+                      announceRollout("push", rollout);
                     } catch (e) {
                       toast.error("Couldn't turn on alerts", {
                         description: errorText(e, e instanceof Error ? e.message : "Try again"),
@@ -986,7 +917,6 @@ export function NotificationSettings() {
                   onClick={async () => {
                     try {
                       await removeSetting({ channel: "discord" });
-                      setDiscordWebhook("");
                       trackNotificationChannelToggled({ channel: "discord", enabled: false });
                       toast.success("Discord disconnected");
                     } catch {
@@ -998,44 +928,7 @@ export function NotificationSettings() {
                 </Button>
               </div>
             ) : (
-              <>
-                <div className="space-y-2">
-                  <Label htmlFor="discord-webhook" className="text-sm font-medium">Webhook URL</Label>
-                  <Input
-                    id="discord-webhook"
-                    placeholder="https://discord.com/api/webhooks/..."
-                    value={discordWebhook}
-                    onChange={(e) => setDiscordWebhook(e.target.value)}
-                  />
-                  <p className="text-xs text-muted-foreground leading-relaxed">
-                    Discord → Server Settings → Integrations → Webhooks → New webhook → Copy webhook URL
-                  </p>
-                </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={!discordWebhook.trim().startsWith("https://discord.com/api/webhooks/") || discordSaving}
-                  onClick={async () => {
-                    setDiscordSaving(true);
-                    try {
-                      const webhookUrl = discordWebhook.trim();
-                      await sendDiscordTest({ webhookUrl });
-                      await upsertSetting({ channel: "discord", enabled: true, target: webhookUrl });
-                      trackNotificationChannelToggled({ channel: "discord", enabled: true });
-                      toast.success("Discord connected", { description: "Test message sent" });
-                    } catch (e) {
-                      toast.error("Failed to connect", {
-                        description: errorText(e, e instanceof Error ? e.message : "Check your webhook URL and try again"),
-                      });
-                    } finally {
-                      setDiscordSaving(false);
-                    }
-                  }}
-                >
-                  {discordSaving ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null}
-                  Connect & Test
-                </Button>
-              </>
+              <p className="text-sm text-muted-foreground">Discord alerts are coming soon.</p>
             )}
             </>
           )}
