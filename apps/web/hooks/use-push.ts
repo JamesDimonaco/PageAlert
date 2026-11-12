@@ -168,13 +168,15 @@ export function usePush() {
         throw new Error("Browser returned an incomplete push subscription");
       }
 
-      await subscribeMutation({
+      // What the server turned push on for, when this is the first device.
+      const rollout = await subscribeMutation({
         endpoint: subscription.endpoint,
         p256dh: json.keys.p256dh,
         auth: json.keys.auth,
         userAgent: navigator.userAgent.slice(0, 200),
       });
       setState("on");
+      return rollout;
     } finally {
       setBusy(false);
     }

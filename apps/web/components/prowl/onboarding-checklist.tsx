@@ -84,7 +84,7 @@ export function OnboardingChecklist() {
     },
     {
       id: "setup_notifications",
-      label: "Turn on browser alerts, Telegram or Discord",
+      label: "Get alerts on your phone: browser alerts or Telegram",
       checked: hasNotifications,
       onClick: () => router.push("/dashboard/settings?tab=notifications"),
     },

@@ -424,6 +424,16 @@ export default defineSchema({
     .index("by_channel_target", ["channel", "target"])
     .index("by_userId", ["userId"]),
 
+  // Which channels have already been turned on across a user's monitors on
+  // connect. It happens once per channel, so reconnecting (or re-enabling a
+  // stale push device) never undoes the per-monitor choices made since.
+  // See monitorChannels.ts.
+  channelRollouts: defineTable({
+    userId: v.string(),
+    channel: v.union(v.literal("email"), v.literal("push"), v.literal("telegram"), v.literal("discord")),
+    at: v.number(),
+  }).index("by_userId_and_channel", ["userId", "channel"]),
+
   // In-flight phone verifications. A number only becomes an alert destination
   // by answering a code sent to it, because an unverified number means texting
   // a stranger and, on the free tier, means anyone's signup can bill us for

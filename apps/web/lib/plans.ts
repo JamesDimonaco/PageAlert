@@ -26,7 +26,7 @@ export const PLANS: Plan[] = [
     features: [
       { text: "3 monitors" },
       { text: "1 hour check interval" },
-      { text: "Email and push, plus Telegram or Discord on one monitor" },
+      { text: "Email, push and Telegram alerts on every monitor" },
       { text: `${HISTORY_WINDOW_DAYS.free} days of scrape logs` },
       { text: "AI-powered extraction" },
       { text: "Change detection" },
@@ -41,7 +41,7 @@ export const PLANS: Plan[] = [
     features: [
       { text: "10 monitors" },
       { text: "30 minute check interval" },
-      { text: "Email, push, Telegram & Discord" },
+      { text: "Email, push & Telegram" },
       { text: "25 text alerts a month" },
       { text: `${HISTORY_WINDOW_DAYS.sprint} days of scrape logs` },
       { text: "AI-powered extraction" },
@@ -58,7 +58,7 @@ export const PLANS: Plan[] = [
     features: [
       { text: "25 monitors" },
       { text: "15 minute check interval" },
-      { text: "Email, push, Telegram & Discord" },
+      { text: "Email, push & Telegram" },
       { text: "60 text alerts a month" },
       { text: `${HISTORY_WINDOW_DAYS.pro} days of scrape logs` },
       { text: "Priority scraping" },

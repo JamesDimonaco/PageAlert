@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import { rolloutOnConnect, type Rollout } from "./monitorChannels";
 import { effectiveTier, type Tier } from "./tiers";
 import { requireLiveAccount } from "./account";
 import { mutation, query } from "./_generated/server";
@@ -72,6 +73,19 @@ export const upsert = mutation({
       throw new Error(`${args.channel} notifications require a Pro or Max plan`);
     }
 
+    const existing = await ctx.db
+      .query("notificationSettings")
+      .withIndex("by_userId_channel", (q) =>
+        q.eq("userId", userId).eq("channel", args.channel)
+      )
+      .unique();
+
+    // Discord delivery isn't ready, so no new connections. One already
+    // connected can still be edited or removed.
+    if (args.channel === "discord" && args.enabled && existing?.enabled !== true) {
+      throw new Error("Discord alerts are coming soon.");
+    }
+
     // Validate target based on channel
     if (args.channel === "telegram" && args.enabled) {
       if (!/^\d+$/.test(args.target.trim())) {
@@ -119,13 +133,6 @@ export const upsert = mutation({
       }
     }
 
-    const existing = await ctx.db
-      .query("notificationSettings")
-      .withIndex("by_userId_channel", (q) =>
-        q.eq("userId", userId).eq("channel", args.channel)
-      )
-      .unique();
-
     if (existing) {
       await ctx.db.patch(existing._id, {
         enabled: args.enabled,
@@ -139,6 +146,15 @@ export const upsert = mutation({
         target: args.target.trim(),
       });
     }
+
+    // A channel someone just connected goes on every monitor. The client
+    // offers to undo exactly this. Editing a connected channel's target
+    // leaves the monitors as they are.
+    const newlyOn = args.enabled && existing?.enabled !== true;
+    const rollout: Rollout = newlyOn
+      ? await rolloutOnConnect(ctx, userId, args.channel)
+      : { monitorIds: [], groupIds: [] };
+    return rollout;
   },
 });
 

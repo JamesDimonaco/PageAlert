@@ -214,6 +214,7 @@ const FIXTURES: { [T in TableNames]: (refs: Refs) => Row<T> } = {
     userId,
     claimedAt: NOW,
   }),
+  channelRollouts: ({ userId }) => ({ userId, channel: "telegram", at: NOW }),
   reviews: ({ userId }) => ({ userId, displayName: "Sam", quote: "Handy", createdAt: NOW }),
   anonymousScanCounter: () => ({ date: "2026-09-23", count: 1 }),
   userActivity: ({ userId }) => ({ userId, lastSeenAt: NOW }),

@@ -35,7 +35,7 @@ export function buildLlmsTxt(): string {
       "- new items appear on a search page, job board, classifieds or property site",
       "- a value on a page changes, such as a stock status, a count or a delivery date",
       "",
-      "Alerts go by email, browser and phone push, Telegram, Discord, and text message on paid plans.",
+      "Alerts go by email, browser and phone push, Telegram, and text message on paid plans.",
     ].join("\n"),
     [
       "## How it works",

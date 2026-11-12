@@ -65,7 +65,7 @@ export default function TermsPage() {
 
           <h2>Plans and billing</h2>
           <ul className="list-disc pl-6 space-y-2">
-            <li>The free plan includes 3 monitors, hourly checks, email and push alerts, and Telegram or Discord on one monitor</li>
+            <li>The free plan includes 3 monitors, hourly checks, and email, push and Telegram alerts on every monitor</li>
             <li>Pro and Max are monthly subscriptions, billed through Polar. You can cancel at any time — access continues until the end of the billing period</li>
             <li>Sprint is a single payment for 30 days of access. It is not a subscription: there is nothing to cancel, it expires on its own, and buying another adds 30 more days</li>
             <li>Refunds are handled on a case-by-case basis — contact us</li>

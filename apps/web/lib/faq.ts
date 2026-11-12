@@ -27,7 +27,7 @@ export const FAQ: FaqEntry[] = [
   },
   {
     q: "How will I be notified when something changes?",
-    a: "Email on every plan. Telegram and Discord can be connected on any plan too, though free accounts can only point one monitor at them. Alerts say what matched, what the price did, and link straight to the item.",
+    a: "Email, browser and phone push, and Telegram, on every plan and every monitor. Discord is coming soon. Alerts say what matched, what the price did, and link straight to the item.",
   },
   {
     q: "Is there a free plan?",

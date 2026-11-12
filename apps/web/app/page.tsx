@@ -98,7 +98,7 @@ export default function LandingPage() {
               <p className="mt-4 text-muted-foreground leading-relaxed">
                 Paste a URL, pick what kind of thing you&apos;re watching, and describe it in
                 plain English. No CSS selectors, no code, nothing that breaks when a site
-                redesigns. Alerts arrive by email, Telegram or Discord.
+                redesigns. Alerts arrive by email, push or Telegram.
               </p>
             </div>
 

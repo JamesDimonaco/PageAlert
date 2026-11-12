@@ -270,11 +270,10 @@ export const updateCriteria = mutation({
   handler: async (ctx, args) => {
     const { userId, group } = await ownedGroup(ctx, args.id);
     requireCriteria(args.alertOn);
-    const plan = await readPlan(ctx, userId, { channels: true });
+    const plan = await readPlan(ctx, userId);
     const checkInterval = clampInterval(args.checkInterval, plan.tier);
-    const notificationChannels = allowedChannels(plan, args.notificationChannels, { groupId: group._id });
-    // A free plan has already read every monitor the user has.
-    const monitors = plan.monitors?.filter((m) => m.groupId === group._id) ?? (await groupMonitors(ctx, group._id));
+    const notificationChannels = allowedChannels(plan, args.notificationChannels);
+    const monitors = await groupMonitors(ctx, group._id);
     for (const m of monitors) {
       const prompt = productPrompt(m.productTitle ?? m.name, args.alertOn);
       await updateMonitorForUser(
@@ -361,7 +360,7 @@ export const setPaused = mutation({
   args: { id: v.id("monitorGroups"), paused: v.boolean() },
   handler: async (ctx, { id, paused }) => {
     const { userId, group } = await ownedGroup(ctx, id);
-    const plan = await readPlan(ctx, userId, { channels: false });
+    const plan = await readPlan(ctx, userId);
     let changed = 0;
     for (const m of await groupMonitors(ctx, group._id)) {
       if ((m.status === "paused") === paused) continue;

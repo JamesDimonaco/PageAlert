@@ -99,7 +99,7 @@ function registerTools(server: McpServer, convex: ConvexHttpClient, apiKey: stri
       title: "Create a monitor",
       description:
         "Start watching a page. PageAlert checks it on a schedule and alerts the user by their usual channels " +
-        "(email, Telegram, Discord, push) when something matching the prompt appears. Runs the first scan " +
+        "(email, Telegram, push) when something matching the prompt appears. Runs the first scan " +
         "before returning, which takes up to a minute. The user's plan limits how many monitors they can " +
         "have and how often they are checked; a faster interval than the plan allows is lowered to the fastest it does.",
       inputSchema: z.object({
