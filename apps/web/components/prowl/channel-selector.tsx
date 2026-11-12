@@ -79,7 +79,7 @@ export function ChannelSelector({ value, onChange, disabled }: ChannelSelectorPr
   function handleToggle(channel: Channel) {
     if (disabled) return;
 
-    if (!configuredChannels.has(channel)) {
+    if (!configuredChannels.has(channel) && !value.includes(channel)) {
       // Discord isn't ready, so there is nothing in Settings to send them to.
       if (channel === "discord") return;
       toast("Set up " + CHANNEL_CONFIG[channel].label + " in Settings first", {
@@ -118,8 +118,9 @@ export function ChannelSelector({ value, onChange, disabled }: ChannelSelectorPr
           const isActive = value.includes(channel);
           const isConfigured = configuredChannels.has(channel);
 
-          // Discord isn't ready yet. Someone who connected it before keeps it.
-          const comingSoon = channel === "discord" && !isConfigured;
+          // Discord isn't ready yet. Someone who connected it before keeps it,
+          // and a monitor that has it on can still turn it off.
+          const comingSoon = channel === "discord" && !isConfigured && !isActive;
 
           return (
             <button

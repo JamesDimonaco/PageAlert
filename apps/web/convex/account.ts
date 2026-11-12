@@ -315,6 +315,11 @@ const SWEEPS: readonly {
       ctx.db.query("channelClaims").withIndex("by_userId", (q) => q.eq("userId", userId)),
   },
   {
+    table: "channelRollouts",
+    rows: (ctx, userId) =>
+      ctx.db.query("channelRollouts").withIndex("by_userId_and_channel", (q) => q.eq("userId", userId)),
+  },
+  {
     table: "monitorCreations",
     rows: (ctx, userId) =>
       ctx.db.query("monitorCreations").withIndex("by_userId_createdAt", (q) => q.eq("userId", userId)),

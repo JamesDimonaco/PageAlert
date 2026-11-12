@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { internalMutation, internalQuery, mutation, query } from "./_generated/server";
 import { requireLiveAccount } from "./account";
-import { turnOnChannel, type Rollout } from "./monitorChannels";
+import { rolloutOnConnect } from "./monitorChannels";
 
 /**
  * Device registrations for web push. Kept apart from convex/push.ts because
@@ -27,17 +27,9 @@ export const subscribe = mutation({
       .withIndex("by_endpoint", (q) => q.eq("endpoint", args.endpoint))
       .unique();
 
-    // The user's first device is them turning browser alerts on, so they go
-    // on every monitor (see monitorChannels.ts). A second device changes
-    // nothing: the monitors already have push.
-    const hadDevice =
-      (await ctx.db
-        .query("pushSubscriptions")
-        .withIndex("by_userId", (q) => q.eq("userId", identity.subject))
-        .first()) !== null;
-    const rollout: Rollout = hadDevice
-      ? { monitorIds: [], groupIds: [] }
-      : await turnOnChannel(ctx, identity.subject, "push");
+    // Turning browser alerts on puts them on every monitor, the first time
+    // only (see rolloutOnConnect).
+    const rollout = await rolloutOnConnect(ctx, identity.subject, "push");
 
     // Browsers reissue the same endpoint to whoever is signed in, so an
     // endpoint that resurfaces under a different user has changed hands.

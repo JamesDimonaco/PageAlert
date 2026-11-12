@@ -28,9 +28,10 @@ const NAMES: Record<RolloutChannel, string> = {
 
 /**
  * Channels worth nudging about. Email is left out: it's on by default, so a
- * monitor without it is one someone turned it off on.
+ * monitor without it is one someone turned it off on. Discord is left out
+ * while it's coming soon.
  */
-const NUDGED: RolloutChannel[] = ["push", "telegram", "discord"];
+const NUDGED: RolloutChannel[] = ["push", "telegram"];
 
 /** Connected channels this page should nudge about, in a fixed order. Undefined while loading. */
 function useNudgedChannels(): RolloutChannel[] | undefined {
@@ -65,16 +66,16 @@ export function useAnnounceRollout() {
 
 function useTurnOn() {
   const turnOn = useMutation(api.monitorChannels.turnOn);
-  const [busy, setBusy] = useState<string | null>(null);
-  const run = async (key: string, args: Parameters<typeof turnOn>[0], done: string) => {
-    setBusy(key);
+  const [busy, setBusy] = useState(false);
+  const run = async (args: Parameters<typeof turnOn>[0], done: string) => {
+    setBusy(true);
     try {
       await turnOn(args);
       toast.success(done);
     } catch (err) {
       toast.error("Couldn't turn that on", { description: errorText(err, "Try again.") });
     } finally {
-      setBusy(null);
+      setBusy(false);
     }
   };
   return { run, busy };
@@ -115,8 +116,8 @@ export function ChannelCoverageBanner() {
             <Button
               size="sm"
               className="shrink-0"
-              disabled={busy !== null}
-              onClick={() => run(`all:${channel}`, { channel }, `${NAMES[channel]} is on for all your monitors`)}
+              disabled={busy}
+              onClick={() => run({ channels: [channel] }, `${NAMES[channel]} is on for all your monitors`)}
             >
               Turn on for all
             </Button>
@@ -131,8 +132,8 @@ export function ChannelCoverageBanner() {
                   variant="outline"
                   size="sm"
                   className="shrink-0"
-                  disabled={busy !== null}
-                  onClick={() => run(`${unit.id}:${channel}`, { channel, ...unitArgs(unit) }, `${NAMES[channel]} is on for ${unit.name}`)}
+                  disabled={busy}
+                  onClick={() => run({ channels: [channel], ...unitArgs(unit) }, `${NAMES[channel]} is on for ${unit.name}`)}
                 >
                   Turn on
                 </Button>
@@ -169,15 +170,17 @@ export function MonitorChannelNudge({
   monitorId?: Id<"monitors">;
   groupId?: Id<"monitorGroups">;
 }) {
-  const units = useQuery(api.monitorChannels.coverage);
+  const id = (groupId ?? monitorId) as string | undefined;
+  const unit = useQuery(api.monitorChannels.coverageOf, id ? { monitorId, groupId } : "skip");
   const channels = useNudgedChannels();
   const { run, busy } = useTurnOn();
-  const id = (groupId ?? monitorId) as string | undefined;
-  const [dismissed, setDismissed] = useState(() => (id ? readDismissed(id) : false));
-  if (!id || !units || !channels || dismissed) return null;
+  // Ids dismissed while this stays mounted. Kept per id, so moving to another
+  // monitor's page doesn't carry one monitor's dismissal to the next.
+  const [dismissedIds, setDismissedIds] = useState<string[]>([]);
+  if (!id || unit === undefined || !channels || dismissedIds.includes(id) || readDismissed(id)) return null;
 
   const dismiss = () => {
-    setDismissed(true);
+    setDismissedIds((ids) => [...ids, id]);
     try {
       localStorage.setItem(dismissKey(id), "1");
     } catch {
@@ -212,7 +215,6 @@ export function MonitorChannelNudge({
     );
   }
 
-  const unit = units.find((u) => u.id === id);
   const off = unit ? channels.filter((c) => unit.missing.includes(c)) : [];
   if (!unit || off.length === 0) return null;
   const names = off.map((c) => NAMES[c]).join(" and ");
@@ -227,10 +229,8 @@ export function MonitorChannelNudge({
       <Button
         size="sm"
         className="shrink-0"
-        disabled={busy !== null}
-        onClick={async () => {
-          for (const channel of off) await run(`${id}:${channel}`, { channel, ...unitArgs(unit) }, `${NAMES[channel]} is on`);
-        }}
+        disabled={busy}
+        onClick={() => run({ channels: off, ...unitArgs(unit) }, `${names} ${off.length === 1 ? "is" : "are"} on`)}
       >
         Turn on
       </Button>

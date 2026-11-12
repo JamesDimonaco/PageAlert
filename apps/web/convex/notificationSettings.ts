@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { turnOnChannel, type Rollout } from "./monitorChannels";
+import { rolloutOnConnect, type Rollout } from "./monitorChannels";
 import { effectiveTier, type Tier } from "./tiers";
 import { requireLiveAccount } from "./account";
 import { mutation, query } from "./_generated/server";
@@ -73,14 +73,17 @@ export const upsert = mutation({
       throw new Error(`${args.channel} notifications require a Pro or Max plan`);
     }
 
+    const existing = await ctx.db
+      .query("notificationSettings")
+      .withIndex("by_userId_channel", (q) =>
+        q.eq("userId", userId).eq("channel", args.channel)
+      )
+      .unique();
+
     // Discord delivery isn't ready, so no new connections. One already
     // connected can still be edited or removed.
-    if (args.channel === "discord" && args.enabled) {
-      const connected = await ctx.db
-        .query("notificationSettings")
-        .withIndex("by_userId_channel", (q) => q.eq("userId", userId).eq("channel", "discord"))
-        .unique();
-      if (connected?.enabled !== true) throw new Error("Discord alerts are coming soon.");
+    if (args.channel === "discord" && args.enabled && existing?.enabled !== true) {
+      throw new Error("Discord alerts are coming soon.");
     }
 
     // Validate target based on channel
@@ -130,13 +133,6 @@ export const upsert = mutation({
       }
     }
 
-    const existing = await ctx.db
-      .query("notificationSettings")
-      .withIndex("by_userId_channel", (q) =>
-        q.eq("userId", userId).eq("channel", args.channel)
-      )
-      .unique();
-
     if (existing) {
       await ctx.db.patch(existing._id, {
         enabled: args.enabled,
@@ -151,13 +147,12 @@ export const upsert = mutation({
       });
     }
 
-    // A channel someone just connected is one they want alerts on, so it goes
-    // on every monitor rather than waiting for them to tick it on each. The
-    // client offers to undo exactly this. Editing an already-connected
-    // channel's target leaves the monitors as they are.
+    // A channel someone just connected goes on every monitor. The client
+    // offers to undo exactly this. Editing a connected channel's target
+    // leaves the monitors as they are.
     const newlyOn = args.enabled && existing?.enabled !== true;
     const rollout: Rollout = newlyOn
-      ? await turnOnChannel(ctx, userId, args.channel)
+      ? await rolloutOnConnect(ctx, userId, args.channel)
       : { monitorIds: [], groupIds: [] };
     return rollout;
   },
