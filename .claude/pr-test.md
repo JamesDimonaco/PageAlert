@@ -10,7 +10,7 @@ Personal lane. `ctx`, then `cvx personal`. Convex commands run from `apps/web`.
 git worktree add .claude/worktrees/pr-test-<N> <sha-or-branch>
 cd .claude/worktrees/pr-test-<N>
 pnpm install --frozen-lockfile
-cp /Users/jamesdimonaco/me/PageAlert/apps/web/.env.local apps/web/.env.local
+cp ~/me/prowl/apps/web/.env.local apps/web/.env.local
 cd apps/web
 npx convex dev --once          # pushes the PR's Convex code to dev (energetic-mongoose-440)
 npx next dev -H 127.0.0.1 -p 3100   # run in the background
@@ -78,6 +78,6 @@ npx next dev -H 127.0.0.1 -p 3100   # run in the background
 
 - Deploy check: Vercel project `prowl-web` (team `team_0zgJFkR8hgXQXkSzAgkpR06I`) has a READY
   production deployment of the merge commit. Convex deploys inside that build. Scraper changes
-  also need Railway; its token has expired, so check `/health` on the scraper URL instead.
+  also need Railway. `/health` is not enough: run the quick-check request in CLAUDE.md.
 - Alert James if it broke:
   `npx convex run --prod admin:notify '{"text":"pr-test: #<N> broke in prod: <one line>"}'`
