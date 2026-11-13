@@ -602,3 +602,52 @@ test("re-judging sold-out entries is capped, and new entries go first", async ()
   await t.action(internal.scheduler.runScheduledChecks, {});
   expect(judged[1]).toEqual(soldOut.slice(5, 10).map((c) => c.url));
 });
+
+// A recheck exists to catch a restock. When the scorer fails or reads no stock,
+// nothing says it came back, so it must stay sold out: no alert, still queued.
+test("a sold-out entry whose recheck reads no stock stays sold out", async () => {
+  vi.stubEnv("SCRAPER_URL", "https://scraper.test");
+  vi.stubEnv("SCRAPER_API_KEY", "key");
+  const entry = { title: "Kingston FURY Beast 16GB DDR5-6000", url: "https://shop.test/kingston", price: 199, snippet: "" };
+  const answers = [
+    () => new Response("down", { status: 500 }),
+    () => Response.json({ scored: [{ ...entry, matchScore: 95, matchReason: "", stock: { inStock: null, price: 19900, currency: "NZD" } }] }),
+  ];
+  let checkNo = 0;
+  vi.stubGlobal("fetch", async (url: string) => {
+    if (url.endsWith("/api/quick-check")) {
+      checkNo++;
+      return Response.json({ accessible: true, contentHash: `page-${checkNo}`, candidates: [entry], totalEntries: 9 });
+    }
+    if (url.endsWith("/api/score")) return answers[checkNo - 1]!();
+    return new Response("not mocked", { status: 500 });
+  });
+  const t = convexTest(schema, modules);
+  t.registerComponent("betterAuth", betterAuthSchema, betterAuthModules);
+  const id = await t.run((ctx) =>
+    ctx.db.insert("monitors", {
+      userId: "user_1",
+      name: "PC build: RAM",
+      url: "https://shop.test/ram",
+      prompt: "in stock at NZ$220 or less",
+      status: "active",
+      checkInterval: "1h",
+      schema: { items: [], matchConditions: { mustInclude: ["Kingston"], inStockOnly: true } },
+      matchCount: 0,
+      candidateKeys: ["shop.test/kingston"],
+      soldOutKeys: ["shop.test/kingston"],
+      checkCount: 5,
+      contentFingerprint: "page-0",
+      lastAiExtractAt: Date.now(),
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    })
+  );
+  for (let i = 0; i < answers.length; i++) {
+    await t.run((ctx) => ctx.db.patch(id, { nextCheckAt: 0 }));
+    await t.action(internal.scheduler.runScheduledChecks, {});
+    const monitor = await t.run((ctx) => ctx.db.get(id));
+    expect(monitor?.lastMatchAt).toBeUndefined();
+    expect(monitor?.soldOutKeys).toEqual(["shop.test/kingston"]);
+  }
+});

@@ -110,6 +110,46 @@ test("a monitor marked due re-reads on its next check without re-announcing old 
   const monitor = await t.run((ctx) => ctx.db.get(id));
   expect(monitor?.lastAiExtractAt).toBeGreaterThan(0);
   expect(monitor?.matchedKeys).toEqual(["shop.test/noctua"]);
+  // Nothing new matched, so "last match" must not move to now. It feeds the
+  // dashboard and get_recent_matches, which would report old matches as new.
+  expect(monitor?.lastMatchAt).toBeUndefined();
+  // The sold-out entry must be queued for rechecks, or its restock never alerts.
+  expect(monitor?.soldOutKeys).toEqual(["shop.test/kingston"]);
   const jobs = await t.run((ctx) => ctx.db.system.query("_scheduled_functions").collect());
   expect(jobs.filter((j) => j.name.includes("sendMatchAlert") || j.name.includes("notify"))).toEqual([]);
+});
+
+// The quick check stops at an unchanged page before it asks whether a re-read
+// is due. Marked due alone, a page that has not moved would never re-read.
+test("a monitor marked due re-reads even when its page has not changed", async () => {
+  vi.stubEnv("SCRAPER_URL", "https://scraper.test");
+  vi.stubEnv("SCRAPER_API_KEY", "key");
+  const calls: string[] = [];
+  vi.stubGlobal("fetch", async (url: string) => {
+    calls.push(url.replace("https://scraper.test", ""));
+    if (url.endsWith("/api/quick-check")) return Response.json({ accessible: true, contentHash: "page-1", candidates: [], totalEntries: 1 });
+    if (url.endsWith("/api/extract")) {
+      return Response.json({ schema: { items: [{ title: "Kingston", inStock: false }], matchConditions: { inStockOnly: true } }, matches: [], totalItems: 1, contentHash: "page-1" });
+    }
+    return new Response("not mocked", { status: 500 });
+  });
+  const t = setup();
+  const id = await insert(t, "ram", { schema: { items: [], matchConditions: {} }, contentFingerprint: "page-1", checkCount: 5, nextCheckAt: 0 });
+  await t.mutation(internal.backfill.markReReadDue, { dryRun: false, monitorIds: [id] });
+  await t.action(internal.scheduler.runScheduledChecks, {});
+  expect(calls).toContain("/api/extract");
+});
+
+// A product's listings alert on stock and price from their own read, never on
+// matches, so a re-read buys them nothing.
+test("the backfill leaves a product's listings alone", async () => {
+  const t = setup();
+  const groupId = await t.run((ctx) =>
+    ctx.db.insert("monitorGroups", {
+      userId: "user_1", name: "Cooler", region: "NZ", alertOn: { backInStock: true }, checkInterval: "1h", listings: [], createdAt: NOW, updatedAt: NOW,
+    })
+  );
+  const listing = await insert(t, "listing", { groupId });
+  expect(await t.mutation(internal.backfill.markReReadDue, { dryRun: false })).toEqual({ dryRun: false, marked: 0 });
+  expect((await t.run((ctx) => ctx.db.get(listing)))?.lastAiExtractAt).toBe(NOW);
 });

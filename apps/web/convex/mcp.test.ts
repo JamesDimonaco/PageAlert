@@ -6,6 +6,7 @@ import { hashApiKey } from "@prowl/shared";
 import schema from "./schema";
 import { api, components } from "./_generated/api";
 import betterAuthSchema from "./betterAuth/schema";
+import { deleteAllUserData } from "./account";
 
 const modules = import.meta.glob("./**/*.*s");
 const betterAuthModules = import.meta.glob("./betterAuth/**/*.*s");
@@ -265,8 +266,17 @@ test("tool errors carry a code, a message and whether retrying may help", async 
     retry: false,
   });
   for (let i = 0; i < 3; i++) await t.mutation(api.mcp.createMonitor, { apiKey: key, ...MONITOR });
+  // The creation limit clears with time, so the same call works later.
   expect(await toolErrorOf(t.mutation(api.mcp.createMonitor, { apiKey: key, ...MONITOR }))).toMatchObject({
     code: "limit_reached",
+    message: expect.stringMatching(/^Creation limit reached/),
+    retry: true,
+  });
+  // The plan's monitor limit does not: only an upgrade or a delete clears it.
+  vi.setSystemTime(NOW + 6 * 60 * MINUTE);
+  expect(await toolErrorOf(t.mutation(api.mcp.createMonitor, { apiKey: key, ...MONITOR }))).toMatchObject({
+    code: "limit_reached",
+    message: expect.stringMatching(/Upgrade for more/),
     retry: false,
   });
   expect(await toolErrorOf(t.mutation(api.mcp.createMonitor, { apiKey: key, ...MONITOR, url: "ftp://x.com" }))).toMatchObject({
@@ -294,7 +304,11 @@ test("an agent can rename, re-prompt, slow down and pause a monitor", async () =
   expect(monitor).toMatchObject({ name: "Milford, Feb", prompt: "any Feb start under $100", checkInterval: "1h", status: "paused" });
 
   await t.mutation(api.mcp.updateMonitor, { apiKey: key, monitorId: id, paused: false });
-  expect((await t.run((ctx) => ctx.db.get(id)))?.status).toBe("active");
+  const resumed = await t.run((ctx) => ctx.db.get(id));
+  expect(resumed?.status).toBe("active");
+  // The inactivity job reads this as the owner being alive. An agent's resume
+  // moves no session, so without it the monitor is paused again next run.
+  expect(resumed?.lastResumedAt).toBe(NOW);
 });
 
 // The URL is the monitor's identity: its history and seen set describe that page.
@@ -445,9 +459,10 @@ test("an agent's product search counts against the user's daily searches", async
   expect(await searchesUsed(t, userId)).toBe(1);
 
   for (let i = 0; i < 4; i++) await t.action(api.mcp.findProduct, { apiKey: key, query: "Sony WH-1000XM5", region: "GB" });
+  // Searches come back tomorrow, so retrying later works.
   expect(await toolErrorOf(t.action(api.mcp.findProduct, { apiKey: key, query: "Sony WH-1000XM5", region: "GB" }))).toMatchObject({
     code: "limit_reached",
-    retry: false,
+    retry: true,
   });
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
@@ -609,4 +624,68 @@ test("an agent cannot file into another account's folder", async () => {
   });
   // All or nothing: the refused monitor is not left behind.
   expect(await t.query(api.mcp.listMonitors, { apiKey: other.key })).toEqual([]);
+});
+
+// A sold-out item the first scan saw must be rechecked, or its restock never alerts.
+test("the first scan queues sold-out entries for rechecks when the prompt asks for stock", async () => {
+  const t = setup();
+  const { key } = await seedUser(t, "a@example.com");
+  const id = await t.mutation(api.mcp.createMonitor, { apiKey: key, ...MONITOR });
+  await t.mutation(api.mcp.saveScanResult, {
+    apiKey: key,
+    id,
+    schema: {
+      items: [
+        { title: "Kingston", url: "https://shop.test/kingston", inStock: false },
+        { title: "Corsair", url: "https://shop.test/corsair", inStock: true },
+      ],
+      matchConditions: { inStockOnly: true },
+    },
+    matches: [],
+  });
+  expect((await t.run((ctx) => ctx.db.get(id)))?.soldOutKeys).toEqual(["shop.test/kingston"]);
+});
+
+// A full re-read stores every current match. Only the ones it found new are news.
+test("recent matches skip what a re-read found again", async () => {
+  const t = setup();
+  const { key } = await seedUser(t, "a@example.com");
+  const ram = await t.mutation(api.mcp.createMonitor, { apiKey: key, ...MONITOR, name: "RAM" });
+  const old = { title: "Kingston kit", url: "https://shop.test/kingston" };
+  const fresh = { title: "Corsair kit", url: "https://shop.test/corsair" };
+  await t.run(async (ctx) => {
+    await ctx.db.insert("scrapeResults", {
+      monitorId: ram, matches: [old, fresh], newMatchKeys: ["shop.test/corsair"], totalItems: 9, hasNewMatches: true, scrapedAt: NOW,
+    });
+    await ctx.db.patch(ram, { lastMatchAt: NOW });
+  });
+  expect(await t.query(api.mcp.getRecentMatches, { apiKey: key, since: new Date(NOW - MINUTE).toISOString() })).toEqual([
+    { ...fresh, monitorId: ram, monitorName: "RAM", matchedAt: new Date(NOW).toISOString() },
+  ]);
+  // get_matches still lists both: both are on the page now.
+  expect(await t.query(api.mcp.getMatches, { apiKey: key, monitorId: ram })).toHaveLength(2);
+});
+
+async function previewCounters(t: T) {
+  return (await t.run((ctx) => ctx.db.query("counters").collect())).map((c) => c.name).filter((n) => n.startsWith("previewProxy:")).sort();
+}
+
+// The counters table must not grow a row per user per day for good.
+test("preview proxy counters from earlier days and hours are swept", async () => {
+  const t = setup();
+  const { key, userId } = await seedUser(t, "a@example.com");
+  await t.mutation(api.mcp.claimPreviewProxy, { apiKey: key });
+  vi.setSystemTime(NOW + 25 * 60 * MINUTE);
+  await t.mutation(api.mcp.claimPreviewProxy, { apiKey: key });
+  const now = new Date(NOW + 25 * 60 * MINUTE).toISOString();
+  expect(await previewCounters(t)).toEqual([`previewProxy:${userId}:${now.slice(0, 10)}`, `previewProxy:hour:${now.slice(0, 13)}`].sort());
+});
+
+// Erasure: a deleted account's id must not stay behind in a counter's name.
+test("deleting an account removes its preview proxy counter", async () => {
+  const t = setup();
+  const { key, userId } = await seedUser(t, "a@example.com");
+  await t.mutation(api.mcp.claimPreviewProxy, { apiKey: key });
+  await t.run((ctx) => deleteAllUserData(ctx, userId, "a@example.com"));
+  expect((await previewCounters(t)).filter((n) => n.includes(userId))).toEqual([]);
 });

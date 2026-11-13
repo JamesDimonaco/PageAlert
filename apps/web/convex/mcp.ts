@@ -27,7 +27,7 @@ import { createFolderForUser, setMonitorFolder, setProductFolder } from "./folde
 import { createProductForUser } from "./monitorGroups";
 import { findListings } from "./productSearch";
 import { alertOnValidator, checkIntervalValidator } from "./schema";
-import { displayHost } from "./shared";
+import { displayHost, matchKey, previewUserPrefix } from "./shared";
 
 /**
  * What the MCP route calls, one function per tool step. Each takes the raw API
@@ -46,13 +46,15 @@ export type ToolError = { code: ToolErrorCode; message: string; retry: boolean }
 /**
  * Sort a helper's error message into a code. The helpers are shared with the
  * web app and throw plain messages, so the message is all there is to go on.
- * A user error never improves on retry; only "failed" from our side might.
+ * Retry is true only when the message says the problem passes with time:
+ * a rolling or daily limit, or a service that is down "right now".
  */
 function toolError(message: string): ToolError {
+  const retry = /another in|tomorrow|right now|try again/i.test(message);
   if (/not found/i.test(message)) return { code: "not_found", message, retry: false };
-  if (/limit reached|plan allows|used all/i.test(message)) return { code: "limit_reached", message, retry: false };
+  if (/limit reached|plan allows|used all/i.test(message)) return { code: "limit_reached", message, retry };
   if (/\burls?\b|hostname/i.test(message)) return { code: "invalid_url", message, retry: false };
-  return { code: "failed", message, retry: false };
+  return { code: "failed", message, retry };
 }
 
 function asToolError(e: unknown): never {
@@ -123,9 +125,14 @@ export const listMonitors = query({
 /**
  * A monitor's matched items, newest first, each dated from the oldest row it
  * appears in. A full extract stores every current match, not only the new
- * ones, so an item on the page for a week is in every row.
+ * ones, so an item on the page for a week is in every row. With newOnly, an
+ * item counts only in a row that found it new.
  */
-async function datedMatches(ctx: QueryCtx, monitorId: Id<"monitors">): Promise<(AgentItem & { matchedAt: number })[]> {
+async function datedMatches(
+  ctx: QueryCtx,
+  monitorId: Id<"monitors">,
+  newOnly = false
+): Promise<(AgentItem & { matchedAt: number })[]> {
   const results = await ctx.db
     .query("scrapeResults")
     .withIndex("by_monitorId_scrapedAt", (q) => q.eq("monitorId", monitorId))
@@ -134,7 +141,9 @@ async function datedMatches(ctx: QueryCtx, monitorId: Id<"monitors">): Promise<(
   const byIdentity = new Map<string, AgentItem & { matchedAt: number }>();
   for (const result of results) {
     if (!result.hasNewMatches) continue;
+    const fresh = newOnly && result.newMatchKeys ? new Set(result.newMatchKeys) : null;
     for (const raw of result.matches) {
+      if (fresh && !fresh.has(matchKey(raw))) continue;
       const item = toAgentItem(raw);
       if (!item) continue;
       const key = itemIdentity(item);
@@ -183,7 +192,7 @@ export const getRecentMatches = query({
       .slice(0, MAX_RECENT_MATCH_MONITORS);
     const recent = [];
     for (const monitor of monitors) {
-      for (const match of await datedMatches(ctx, monitor._id)) {
+      for (const match of await datedMatches(ctx, monitor._id, true)) {
         if (match.matchedAt < from) continue;
         recent.push({ ...match, monitorId: monitor._id, monitorName: monitor.name });
       }
@@ -329,6 +338,8 @@ const PREVIEW_PROXY_DAILY_LIMIT = 5;
  */
 const PREVIEW_PROXY_HOURLY_LIMIT = 20;
 
+const PREVIEW_HOUR_PREFIX = "previewProxy:hour:";
+
 /**
  * Claim one proxy attempt for a preview the site blocked. Counted per user
  * per UTC day, and drawn from the fleet's proxy budget like a first scan's.
@@ -339,8 +350,8 @@ export const claimPreviewProxy = mutation({
     const { userId } = await requireKeyOwner(ctx, apiKey);
     const now = new Date().toISOString();
     const counter = (name: string) => ctx.db.query("counters").withIndex("by_name", (q) => q.eq("name", name)).unique();
-    const userName = `previewProxy:${userId}:${now.slice(0, 10)}`;
-    const hourName = `previewProxy:hour:${now.slice(0, 13)}`;
+    const userName = `${previewUserPrefix(userId)}${now.slice(0, 10)}`;
+    const hourName = `${PREVIEW_HOUR_PREFIX}${now.slice(0, 13)}`;
     const user = await counter(userName);
     if ((user?.value ?? 0) >= PREVIEW_PROXY_DAILY_LIMIT) {
       return { granted: false, reason: `This account has used its ${PREVIEW_PROXY_DAILY_LIMIT} proxy previews for today.` };
@@ -350,9 +361,19 @@ export const claimPreviewProxy = mutation({
     if ((hour?.value ?? 0) >= PREVIEW_PROXY_HOURLY_LIMIT || (await scraperDown(ctx)) || !(await reserveFallback(ctx, false))) {
       return { granted: false, reason: "The proxy is not available right now." };
     }
-    for (const [row, name] of [[user, userName], [hour, hourName]] as const) {
-      if (row) await ctx.db.patch(row._id, { value: row.value + 1 });
-      else await ctx.db.insert("counters", { name, value: 1 });
+    for (const [row, name, prefix] of [[user, userName, previewUserPrefix(userId)], [hour, hourName, PREVIEW_HOUR_PREFIX]] as const) {
+      if (row) {
+        await ctx.db.patch(row._id, { value: row.value + 1 });
+        continue;
+      }
+      await ctx.db.insert("counters", { name, value: 1 });
+      // Only the current day's and hour's rows are still read. Names end in an
+      // ISO date or hour, so the earlier ones sort before this one.
+      const stale = await ctx.db
+        .query("counters")
+        .withIndex("by_name", (q) => q.gte("name", prefix).lt("name", name))
+        .take(48);
+      for (const old of stale) await ctx.db.delete(old._id);
     }
     return { granted: true };
   },

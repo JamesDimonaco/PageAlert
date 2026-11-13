@@ -16,13 +16,18 @@ import { internalMutation, internalQuery } from "./_generated/server";
 
 const LIVE = new Set(["active", "error"]);
 
+/** Live, and not a product's listing: those alert on their own stock and price read, never on matches. */
+function wanted(m: { status: string; groupId?: unknown }) {
+  return LIVE.has(m.status) && m.groupId === undefined;
+}
+
 /** Each live monitor's matched keys, to compare with after the re-reads. */
 export const snapshotMatchKeys = internalQuery({
   args: {},
   handler: async (ctx) => {
     const monitors = await ctx.db.query("monitors").collect();
     return monitors
-      .filter((m) => LIVE.has(m.status))
+      .filter(wanted)
       .map((m) => ({ monitorId: m._id, name: m.name, matchedKeys: m.matchedKeys, candidateKeys: m.candidateKeys }));
   },
 });
@@ -30,8 +35,9 @@ export const snapshotMatchKeys = internalQuery({
 /**
  * Mark live monitors' AI re-read as due. Each then re-reads at its own next
  * check, through the scheduled path, which diffs against the matches it has
- * already announced, so nothing is announced twice. A dry run unless dryRun
- * is false.
+ * already announced, so nothing is announced twice. The page fingerprint is
+ * cleared too: a quick check stops at an unchanged page before it asks
+ * whether a re-read is due. A dry run unless dryRun is false.
  */
 export const markReReadDue = internalMutation({
   args: {
@@ -45,10 +51,14 @@ export const markReReadDue = internalMutation({
     const monitors = monitorIds
       ? (await Promise.all(monitorIds.map((id) => ctx.db.get(id)))).filter((m) => m !== null)
       : await ctx.db.query("monitors").collect();
-    const live = monitors.filter((m) => LIVE.has(m.status));
+    const live = monitors.filter(wanted);
     if (!dryRun) {
       for (const monitor of live) {
-        await ctx.db.patch(monitor._id, { lastAiExtractAt: 0, ...(checkNow ? { nextCheckAt: Date.now() } : {}) });
+        await ctx.db.patch(monitor._id, {
+          lastAiExtractAt: 0,
+          contentFingerprint: undefined,
+          ...(checkNow ? { nextCheckAt: Date.now() } : {}),
+        });
       }
     }
     return { dryRun, marked: live.length };

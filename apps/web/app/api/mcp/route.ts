@@ -27,6 +27,10 @@ export const maxDuration = 120;
  * scheduler never picks up. This leaves room for the saves either side.
  */
 const FIRST_SCAN_TIMEOUT_MS = 80_000;
+/** preview_page's direct read and proxy read together, inside maxDuration. */
+const PREVIEW_BUDGET_MS = 110_000;
+/** With less time left, a proxy read would be cut off, so the user's daily proxy preview is not spent on it. */
+const MIN_PROXY_READ_MS = 30_000;
 
 const SITE_URL = "https://pagealert.io";
 /** Matches shown from a scan. The dashboard has the rest. */
@@ -115,8 +119,12 @@ function registerTools(server: McpServer, convex: ConvexHttpClient, apiKey: stri
     async (args) => {
       const rejection = await urlRejection(args.url);
       if (rejection) return fail(invalidUrl(rejection));
-      let outcome = await extractPage({ url: args.url, prompt: args.prompt, userId });
+      const deadline = Date.now() + PREVIEW_BUDGET_MS;
+      let outcome = await extractPage({ url: args.url, prompt: args.prompt, userId }, PREVIEW_BUDGET_MS);
       if (!outcome.ok && isBlockedError(outcome.error)) {
+        if (deadline - Date.now() < MIN_PROXY_READ_MS) {
+          return fail({ code: "blocked", message: `${outcome.error}. There was no time left to try the proxy.`, retry: true });
+        }
         let claim;
         try {
           claim = await convex.mutation(api.mcp.claimPreviewProxy, { apiKey });
@@ -127,10 +135,11 @@ function registerTools(server: McpServer, convex: ConvexHttpClient, apiKey: stri
           return fail({
             code: "blocked",
             message: `${outcome.error}. ${claim.reason} A monitor on this page would still retry through the proxy.`,
-            retry: false,
+            // Both reasons pass with time: the daily allowance, and the hourly one.
+            retry: true,
           });
         }
-        outcome = await extractPage({ url: args.url, prompt: args.prompt, userId, useProxy: true });
+        outcome = await extractPage({ url: args.url, prompt: args.prompt, userId, useProxy: true }, deadline - Date.now());
       }
       if (!outcome.ok) {
         return fail(

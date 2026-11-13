@@ -93,9 +93,9 @@ export default defineSchema({
     // still remembered as seen — otherwise it reads as new every check and
     // buys another scoring call forever.
     candidateKeys: v.optional(v.array(v.string())),
-    // Seen entries judged sold out while the prompt asks for stock. The quick
-    // check judges a few again each time, so a restock still alerts. Oldest
-    // turn first: see MAX_SOLD_OUT_RECHECKS.
+    // Entries judged sold out while the prompt asks for stock, by a quick
+    // check or an AI read. The quick check judges a few again each time, so a
+    // restock still alerts. Oldest turn first: see MAX_SOLD_OUT_RECHECKS.
     soldOutKeys: v.optional(v.array(v.string())),
     // A name the user files it under, such as "PC build". Holds no settings.
     folderId: v.optional(v.id("folders")),
@@ -117,10 +117,11 @@ export default defineSchema({
     // Opaque restart token from the pause email. Only ever resumes a monitor
     // the reaper paused, so an old email can never undo a manual pause.
     resumeToken: v.optional(v.string()),
-    // When someone last pressed Restart in a pause email. Clicking that link
-    // signs nobody in, so it leaves no session for the reaper to read — this
-    // is the only record that the owner is alive, and without it the next
-    // day's run would pause the monitor again.
+    // When the owner last resumed this monitor: Restart in a pause email, the
+    // dashboard, or an agent's API key. The email link and the key sign nobody
+    // in, so they leave no session for the reaper to read. This is then the
+    // only record that the owner is alive, and without it the next day's run
+    // would pause the monitor again.
     lastResumedAt: v.optional(v.number()),
     notificationChannels: v.optional(notificationChannelsValidator),
     isAnonymous: v.optional(v.boolean()),
@@ -216,6 +217,9 @@ export default defineSchema({
     scoredCandidates: v.optional(v.array(v.any())),
     totalItems: v.number(),
     hasNewMatches: v.boolean(),
+    // Set by a full re-read, whose matches list every current match: the keys
+    // among them that were new. Rows without it hold only new matches.
+    newMatchKeys: v.optional(v.array(v.string())),
     scrapedAt: v.number(),
     error: v.optional(v.string()),
     // Change detection from previous check

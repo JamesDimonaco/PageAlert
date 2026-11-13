@@ -8,6 +8,8 @@ export const FEEDBACK_MAX = 2000;
 
 /** The counters row holding when this user last sent feedback. */
 export const feedbackSlotKey = (userId: string) => `contact:${userId}`;
+/** Start of a user's daily preview proxy counter names. Account deletion removes their rows by it. */
+export const previewUserPrefix = (userId: string) => `previewProxy:${userId}:`;
 
 /** Maximum retry attempts before marking a monitor as error */
 export const MAX_RETRIES = 3;
@@ -136,6 +138,16 @@ export function matchKey(item: { url?: unknown; title?: unknown; name?: unknown 
   // never alert again. Hash the item instead: stable for an unchanged item,
   // different for a new one, which is all the diff needs.
   return `#${hash(JSON.stringify(item))}`;
+}
+
+/**
+ * Keys of the entries an AI read saw sold out, when the prompt asks for stock.
+ * Quick checks judge these again, so a restock alerts. Empty otherwise.
+ */
+export function soldOutKeysOf(schema: unknown): string[] {
+  const { items, matchConditions } = (schema ?? {}) as { items?: unknown; matchConditions?: { inStockOnly?: boolean } };
+  if (matchConditions?.inStockOnly !== true || !Array.isArray(items)) return [];
+  return [...new Set((items as Record<string, unknown>[]).filter((i) => i?.inStock === false).map(matchKey))];
 }
 
 /** FNV-1a. Short, synchronous, and good enough to tell two items apart. */

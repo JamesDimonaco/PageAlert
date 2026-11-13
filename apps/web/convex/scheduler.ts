@@ -12,6 +12,7 @@ import {
   checkFailureKind,
   matchKey,
   newMatchKeys,
+  soldOutKeysOf,
   ERROR_RECOVERY_INTERVAL_MS,
   effectiveIntervalMs,
   MAX_RETRIES,
@@ -376,14 +377,6 @@ export const recordCheckResult = internalMutation({
       updates.lastAiExtractAt = now;
     }
 
-    // Keyed off new matches, not the running count. The count is "entries on
-    // the page meeting your conditions", which stays non-zero for as long as
-    // the listing is up — reading it as a fresh match reset "last match" to
-    // now on every single check.
-    if (args.hasNewMatches && !args.unchanged) {
-      updates.lastMatchAt = now;
-    }
-
     if (args.schema) {
       updates.schema = args.schema;
     }
@@ -412,6 +405,14 @@ export const recordCheckResult = internalMutation({
       const currentKeys = (args.matches as Record<string, unknown>[]).map(matchKey);
       newKeys = newMatchKeys(monitor.matchedKeys, currentKeys);
       updates.matchedKeys = [...new Set(currentKeys.filter(Boolean))];
+    }
+
+    // Keyed off new matches, not the running count. The count is "entries on
+    // the page meeting your conditions", which stays non-zero for as long as
+    // the listing is up. A full re-read lists every current match, so it
+    // counts only when one of them is new.
+    if (args.hasNewMatches && !args.unchanged && (!args.trackMatchKeys || newKeys.length > 0)) {
+      updates.lastMatchAt = now;
     }
 
     await ctx.db.patch(args.monitorId, updates);
@@ -444,6 +445,7 @@ export const recordCheckResult = internalMutation({
       scoredCandidates: args.scoredCandidates,
       totalItems: args.totalItems,
       hasNewMatches: args.hasNewMatches,
+      ...(args.trackMatchKeys ? { newMatchKeys: newKeys } : {}),
       scrapedAt: now,
       changes,
     });
@@ -1081,11 +1083,16 @@ async function runQuickCheck(
     return { hasMatch: false, matchCount: visible.length, matches: [], totalItems: totalEntries, strategy: "quick-check", newMatchKeys: [] };
   }
 
-  // Only the new entries reach the AI, and only their own text does. A page
-  // that has not changed, or whose changes are all old news, costs nothing.
+  // Only new entries and sold-out rechecks reach the AI, and only their own
+  // text does. A page that has not changed costs nothing.
   const scored = await scoreQuickCheckCandidates([...unseen, ...recheck], monitor, scraperUrl, scraperKey, asksStock);
-  // A sold-out entry the prompt wants in stock never alerts, whatever it scored.
-  const soldOut = scored.filter((c) => asksStock && c.stock?.inStock === false).map(matchKey);
+  // A sold-out entry the prompt wants in stock never alerts, whatever it
+  // scored. A recheck needs a read that says it is back: a failed or blank
+  // read leaves it sold out.
+  const rechecked = new Set(recheck.map(matchKey));
+  const soldOut = scored
+    .filter((c) => asksStock && (c.stock?.inStock === false || (rechecked.has(matchKey(c)) && c.stock?.inStock !== true)))
+    .map(matchKey);
   const soldOutNow = new Set(soldOut);
   const matches = scored.filter((c) => alertsOnScore(c.matchScore) && !soldOutNow.has(matchKey(c)));
   // Those not judged this time go first, so the next check takes them.
@@ -1337,6 +1344,7 @@ async function runFullExtract(
     schema: result.schema,
     contentFingerprint: contentHash,
     trackMatchKeys: true,
+    soldOutKeys: soldOutKeysOf(result.schema),
     usedProxy: useProxy,
     aiExtracted: true,
   });

@@ -2,7 +2,7 @@ import { ConvexError, v, type Infer, type ObjectType } from "convex/values";
 import { mutation, query, internalAction, internalMutation, internalQuery, type MutationCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
-import { displayHost, effectiveIntervalMs, ERROR_RECOVERY_INTERVAL_MS, intervalToMs, isBlockedError, MAX_RETRIES, validateMonitorUrl } from "./shared";
+import { displayHost, effectiveIntervalMs, ERROR_RECOVERY_INTERVAL_MS, intervalToMs, isBlockedError, MAX_RETRIES, soldOutKeysOf, validateMonitorUrl } from "./shared";
 import { currencyExponent, itemIdentity, RESUME_TOKEN_TTL_MS, stockNotShownNote, type ExtractedItem, type MatchConditions } from "@prowl/shared";
 import { effectiveTier, type Tier } from "./tiers";
 import { drain, isBanned, requireLiveAccount, spent, SWEEP_BUDGET_BYTES, SWEEP_BUDGET_ROWS, type Allowance } from "./account";
@@ -356,6 +356,7 @@ export async function saveScanResultForUser(
     // showed. The cost is the other half of that trade: anything appearing
     // between the scan and that extract goes unannounced.
     matchedKeys: undefined,
+    soldOutKeys: soldOutKeysOf(schema),
     updatedAt: now,
   });
 
@@ -647,6 +648,9 @@ export async function updateMonitorForUser(
     updates.nextCheckAt = now;
     updates.autoPausedAt = undefined;
     updates.resumeToken = undefined;
+    // Proof of life for the inactivity job. A dashboard resume also moves the
+    // session, but an agent's resume over an API key moves nothing else.
+    updates.lastResumedAt = now;
     if (existing.nextCheckAt === undefined) {
       // It was parked before it was paused. Same reasoning as the interval
       // branch below: without a fresh budget the next single failure re-parks
