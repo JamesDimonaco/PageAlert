@@ -1096,12 +1096,13 @@ async function runQuickCheck(
   const rechecked = new Set(recheck.map(matchKey));
   // Read as sold out: never alerts, whatever it scored. A recheck needs a
   // read that says it is back, so a failed or blank read leaves it sold out.
-  const readSoldOut = (c: ScoredCandidate) => asksStock && c.stock?.inStock === false;
   const soldOutStill = (c: ScoredCandidate) =>
-    readSoldOut(c) || (asksStock && rechecked.has(matchKey(c)) && c.stock?.inStock !== true);
+    asksStock && (c.stock?.inStock === false || (rechecked.has(matchKey(c)) && c.stock?.inStock !== true));
   const matches = scored.filter((c) => alertsOnScore(c.matchScore) && !soldOutStill(c));
-  // Queued for rechecks only if it would match but for its stock.
-  const soldOut = scored.filter((c) => soldOutStill(c) && (!readSoldOut(c) || alertsOnScore(c.matchScore))).map(matchKey);
+  // Queued whatever it scored: the scorer marks an entry down for being sold
+  // out when the prompt wants stock, so a low score cannot tell an unwanted
+  // entry from a wanted one that is sold out.
+  const soldOut = scored.filter(soldOutStill).map(matchKey);
   // Those not judged this time go first, so the next check takes them.
   const judgedNow = new Set(scored.map(matchKey));
   const soldOutKeys = [...lastSoldOut.filter((k) => byKey.has(k) && !judgedNow.has(k)), ...soldOut];

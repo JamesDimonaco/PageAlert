@@ -423,7 +423,8 @@ test("a read in a new currency gives up after three confirming reads with no pri
  * A listing monitor whose prompt asks for stock, on a page whose one matching
  * entry reads `stocks` in turn across checks. The page changes every check.
  */
-async function stockListing(stocks: boolean[], soldOutScore = 95) {
+// The real scorer marks a sold-out entry down when the prompt wants stock.
+async function stockListing(stocks: boolean[], soldOutScore = 20) {
   vi.stubEnv("SCRAPER_URL", "https://scraper.test");
   vi.stubEnv("SCRAPER_API_KEY", "key");
   let checkNo = 0;
@@ -650,13 +651,6 @@ test("a sold-out entry whose recheck reads no stock stays sold out", async () =>
     expect(monitor?.lastMatchAt).toBeUndefined();
     expect(monitor?.soldOutKeys).toEqual(["shop.test/kingston"]);
   }
-});
-
-// Only an entry that would match but for its stock is worth rechecking. A
-// sold-out entry the prompt rejects would take a scoring slot every check.
-test("a sold-out entry the prompt rejects is not queued for rechecks", async () => {
-  const { check } = await stockListing([false], 20);
-  expect((await check())?.soldOutKeys).toEqual([]);
 });
 
 // The quick check alerted on it, so the next full read must not announce it again.

@@ -106,19 +106,25 @@ export const listMonitors = query({
       .take(MAX_AGENT_MONITORS);
     const folders = await ctx.db.query("folders").withIndex("by_userId", (q) => q.eq("userId", userId)).collect();
     const folderName = new Map(folders.map((f) => [f._id, f.name]));
-    return monitors.map((m) => ({
-      id: m._id,
-      name: m.name,
-      url: m.url,
-      status: m.status,
-      checkInterval: m.checkInterval,
-      lastCheckedAt: m.lastCheckedAt === undefined ? null : new Date(m.lastCheckedAt).toISOString(),
-      matchCount: m.matchCount,
-      // checkCount counts successful checks only, so zero means we have never
-      // once read this page.
-      neverSucceeded: (m.checkCount ?? 0) === 0,
-      folder: (m.folderId && folderName.get(m.folderId)) ?? null,
-    }));
+    // A product's listings are filed with the product.
+    const products = await ctx.db.query("monitorGroups").withIndex("by_userId", (q) => q.eq("userId", userId)).collect();
+    const productFolder = new Map(products.map((p) => [p._id, p.folderId]));
+    return monitors.map((m) => {
+      const folderId = m.groupId ? productFolder.get(m.groupId) : m.folderId;
+      return {
+        id: m._id,
+        name: m.name,
+        url: m.url,
+        status: m.status,
+        checkInterval: m.checkInterval,
+        lastCheckedAt: m.lastCheckedAt === undefined ? null : new Date(m.lastCheckedAt).toISOString(),
+        matchCount: m.matchCount,
+        // checkCount counts successful checks only, so zero means we have never
+        // once read this page.
+        neverSucceeded: (m.checkCount ?? 0) === 0,
+        folder: (folderId && folderName.get(folderId)) ?? null,
+      };
+    });
   },
 });
 

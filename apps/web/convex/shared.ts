@@ -136,8 +136,10 @@ export function matchKey(item: { url?: unknown; title?: unknown; name?: unknown 
   // {description, price}, say. Falling through to "" there would make every key
   // empty, so newMatchKeys would filter them all out and the monitor would
   // never alert again. Hash the item instead: stable for an unchanged item,
-  // different for a new one, which is all the diff needs.
-  return `#${hash(JSON.stringify(item))}`;
+  // different for a new one, which is all the diff needs. Stock is left out:
+  // the read can flip between true and null, and that is not a new item.
+  const { inStock: _stock, ...rest } = item as Record<string, unknown>;
+  return `#${hash(JSON.stringify(rest))}`;
 }
 
 /**

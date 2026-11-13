@@ -121,6 +121,7 @@ function registerTools(server: McpServer, convex: ConvexHttpClient, apiKey: stri
       if (rejection) return fail(invalidUrl(rejection));
       const deadline = Date.now() + PREVIEW_BUDGET_MS;
       let outcome = await extractPage({ url: args.url, prompt: args.prompt, userId }, PREVIEW_BUDGET_MS);
+      let usedProxy = false;
       if (!outcome.ok && isBlockedError(outcome.error)) {
         if (deadline - Date.now() < MIN_PROXY_READ_MS) {
           return fail({ code: "blocked", message: `${outcome.error}. There was no time left to try the proxy.`, retry: true });
@@ -139,13 +140,15 @@ function registerTools(server: McpServer, convex: ConvexHttpClient, apiKey: stri
             retry: true,
           });
         }
+        usedProxy = true;
         outcome = await extractPage({ url: args.url, prompt: args.prompt, userId, useProxy: true }, deadline - Date.now());
       }
       if (!outcome.ok) {
         return fail(
           isBlockedError(outcome.error)
             ? { code: "blocked", message: `${outcome.error}, even through the proxy.`, retry: false }
-            : { code: "failed", message: outcome.error, retry: true }
+            // A retry after a proxy read would spend another of the day's 5.
+            : { code: "failed", message: outcome.error, retry: !usedProxy }
         );
       }
       return ok(scanSummary(outcome.data));
@@ -338,7 +341,9 @@ function registerTools(server: McpServer, convex: ConvexHttpClient, apiKey: stri
         query: z.string().min(2).max(200).describe("The product's name, e.g. 'Sony WH-1000XM5'."),
         region: z.enum(SEARCH_REGIONS.map((r) => r.code) as [string, ...string[]]).describe("Country to search in."),
       }),
-      annotations: { readOnlyHint: true },
+      // Not read-only: each call spends one of the user's daily searches, and
+      // clients skip asking the user before a read-only tool.
+      annotations: { readOnlyHint: false },
     },
     async (args) => {
       try {

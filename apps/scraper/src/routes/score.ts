@@ -24,14 +24,15 @@ const scoreSchema = z.object({
     )
     .min(1)
     .max(MAX_CANDIDATES),
-  // Also read stock and price. For one product, whose snippet is the longer
-  // product excerpt rather than a listing card.
+  // Also read stock and price: for one product, or for listing entries when
+  // the prompt asks for stock.
   readStock: z.boolean().optional(),
 }).refine(
-  (body) => body.readStock
-    ? body.candidates.length === 1
-    : body.candidates.every((c) => c.snippet.length <= MAX_SNIPPET_LENGTH),
-  { message: "readStock takes one candidate; otherwise snippets are capped" }
+  // Only a lone product read may send the longer product excerpt.
+  (body) =>
+    (body.readStock && body.candidates.length === 1) ||
+    body.candidates.every((c) => c.snippet.length <= MAX_SNIPPET_LENGTH),
+  { message: "Snippets are capped, except one product's excerpt with readStock" }
 );
 
 export const scoreRoutes = new Hono();

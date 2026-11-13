@@ -726,3 +726,15 @@ test("an agent cannot change alerts or interval on one listing of a product", as
   }
   expect((await t.run((ctx) => ctx.db.get(monitorIds[0]!)))?.alertOn).toEqual({ backInStock: true });
 });
+
+// A product's folder lives on the product. Its listings must show it too, or
+// an agent that filed the product sees it unfiled.
+test("list_monitors shows a product listing's folder", async () => {
+  const t = setup();
+  const { key } = await seedUser(t, "a@example.com");
+  const { folderId } = await t.mutation(api.mcp.createFolder, { apiKey: key, name: "PC build" });
+  await t.mutation(api.mcp.createProduct, {
+    apiKey: key, title: "Noctua", region: "NZ", urls: ["https://computerlounge.co.nz/products/noctua"], alertOn: { backInStock: true }, folderId,
+  });
+  expect((await t.query(api.mcp.listMonitors, { apiKey: key })).map((m) => m.folder)).toEqual(["PC build"]);
+});
