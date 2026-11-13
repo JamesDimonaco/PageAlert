@@ -75,10 +75,6 @@ export function initPostHog() {
   });
 }
 
-export function getPostHog() {
-  return ph;
-}
-
 // ---- Core helpers ----
 
 export function identifyUser(userId: string, properties?: Record<string, unknown>) {
@@ -185,39 +181,12 @@ export function trackPageView(url: string) {
   ph.capture("$pageview", { $current_url: url });
 }
 
-// ---- Feature flags ----
-
-export function isFeatureEnabled(flag: string): boolean {
-  if (!ph) return false;
-  return ph.isFeatureEnabled(flag) ?? false;
-}
-
-export function getFeatureFlag(flag: string): string | boolean | undefined {
-  if (!ph) return undefined;
-  return ph.getFeatureFlag(flag);
-}
-
 // ---- Revenue / Billing events ----
 
 export function trackCheckoutStarted(props: { plan: string; price: number }) {
   trackEvent("checkout_started", {
     plan: props.plan,
     price_usd: props.price,
-  });
-}
-
-export function trackCheckoutCompleted(props: { plan: string; price: number }) {
-  trackEvent("checkout_completed", {
-    plan: props.plan,
-    price_usd: props.price,
-    $set: { tier: props.plan }, // Update user property
-  });
-}
-
-export function trackUpgradePromptShown(props: { reason: string; currentTier: string }) {
-  trackEvent("upgrade_prompt_shown", {
-    reason: props.reason,
-    current_tier: props.currentTier,
   });
 }
 
@@ -232,13 +201,6 @@ export function trackUpgradeBanner(action: "shown" | "clicked", props: { current
   trackEvent(`upgrade_banner_${action}`, {
     current_tier: props.currentTier,
     target_plan: props.nextTier,
-  });
-}
-
-export function trackSubscriptionChanged(props: { from: string; to: string }) {
-  trackEvent("subscription_changed", {
-    from_tier: props.from,
-    to_tier: props.to,
   });
 }
 
@@ -348,20 +310,7 @@ export function trackCloneAsProductOpened(props: { backInStock: boolean; priceDr
   trackEvent("clone_as_product_opened", props);
 }
 
-// ---- Match events ----
-
-export function trackMatchFound(props: { monitorId: string; matchCount: number }) {
-  trackEvent("match_found", {
-    monitor_id: props.monitorId,
-    match_count: props.matchCount,
-  });
-}
-
 // ---- User interaction events ----
-
-export function trackFilterEdited() {
-  trackEvent("filter_edited");
-}
 
 export function trackFilterSaved() {
   trackEvent("filter_saved");

@@ -57,8 +57,8 @@ export const ERROR_RECOVERY_INTERVAL_MS = 6 * 60 * 60 * 1000;
  * worked even once is exempt by construction (checkCount counts successes
  * only), so this never decides anything for a working monitor.
  *
- * Counted in `retryCount`. A success resets it, and so do the manual retry
- * paths (monitors.ts saveScanError, admin.ts rerunNeverScanned), which rewrite
+ * Counted in `retryCount`. A success resets it, and so does the manual retry
+ * path (monitors.ts saveScanError), which rewrites
  * it to a small number. So pressing Retry on a parked monitor deliberately
  * buys it the better part of another budget — an explicit "I have fixed it,
  * try again" is worth more than a scheduled attempt.

@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { internalAction, action } from "./_generated/server";
+import { internalAction } from "./_generated/server";
 import { displayHost } from "./shared";
 import { formatDay, resumeUrl } from "./emails";
 
@@ -151,33 +151,6 @@ export const sendInactivityPaused = internalAction({
         },
       ],
     });
-  },
-});
-
-/** Send a test message to verify the webhook works */
-export const sendTestMessage = action({
-  args: { webhookUrl: v.string() },
-  handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new Error("Not authenticated");
-
-    if (!args.webhookUrl.startsWith("https://discord.com/api/webhooks/")) {
-      throw new Error("Invalid Discord webhook URL");
-    }
-
-    await sendWebhook(args.webhookUrl, {
-      embeds: [
-        {
-          title: "✅ PageAlert Connected!",
-          description: "You'll receive monitor alerts in this channel.",
-          color: 0x22c55e,
-          footer: { text: "PageAlert" },
-          timestamp: new Date().toISOString(),
-        },
-      ],
-    });
-
-    return { sent: true };
   },
 });
 
