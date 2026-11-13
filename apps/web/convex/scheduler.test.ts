@@ -753,12 +753,13 @@ test("a product page with a stock alert gets no sold-out rechecks", async () => 
 });
 
 // The stock alert told the user the product is back. The next full read
-// matches it, and must not announce it again as a new match.
+// matches it, and must not announce it again as a new match. The full read
+// keys the product item as matchKey does: here, by its title.
 test("a restock the stock alert reported counts as announced", async () => {
   const { t, id, read } = await seedProductMonitor({ inStock: false });
   await t.run((ctx) => ctx.db.patch(id, { matchedKeys: [] }));
   expect(await read(true)).toEqual(["stock"]);
-  expect((await t.run((ctx) => ctx.db.get(id)))?.matchedKeys).toEqual(["shop.test/xm5"]);
+  expect((await t.run((ctx) => ctx.db.get(id)))?.matchedKeys).toEqual(["sony wh-1000xm5"]);
 });
 
 // The prompt asked for stock, and the scorer could not read it. The alert
@@ -787,4 +788,45 @@ test("a quick-check alert with no stock read says stock was not shown", async ()
   // The alert's note is built from the stored matches.
   const [row] = await t.run((ctx) => ctx.db.query("scrapeResults").withIndex("by_monitorId", (q) => q.eq("monitorId", id)).collect());
   expect(stockNotShownNote(row!.matches, { inStockOnly: true })).toMatch(/Stock not shown/);
+});
+
+// The prompt asks for stock and the scorer did not answer. Alerting on every
+// new entry would send sold-out ones too. They wait for the next check instead.
+test("a stock-aware check whose scoring fails holds new entries for the next check", async () => {
+  vi.stubEnv("SCRAPER_URL", "https://scraper.test");
+  vi.stubEnv("SCRAPER_API_KEY", "key");
+  const entry = { title: "Kingston FURY Beast 16GB DDR5-6000", url: "https://shop.test/kingston", price: 199, snippet: "Sold out" };
+  let checkNo = 0;
+  vi.stubGlobal("fetch", async (url: string) => {
+    if (url.endsWith("/api/quick-check")) {
+      checkNo++;
+      return Response.json({ accessible: true, contentHash: `page-${checkNo}`, candidates: [entry], totalEntries: 9 });
+    }
+    if (url.endsWith("/api/score")) {
+      if (checkNo === 1) return new Response("down", { status: 500 });
+      return Response.json({ scored: [{ ...entry, matchScore: 20, matchReason: "", stock: { inStock: false, price: 19900, currency: "NZD" } }] });
+    }
+    return new Response("not mocked", { status: 500 });
+  });
+  const t = convexTest(schema, modules);
+  t.registerComponent("betterAuth", betterAuthSchema, betterAuthModules);
+  const id = await t.run((ctx) =>
+    ctx.db.insert("monitors", {
+      userId: "user_1", name: "PC build: RAM", url: "https://shop.test/ram", prompt: "in stock", status: "active", checkInterval: "1h",
+      schema: { items: [], matchConditions: { mustInclude: ["Kingston"], inStockOnly: true } }, matchCount: 0, candidateKeys: [],
+      checkCount: 5, contentFingerprint: "page-0", lastAiExtractAt: Date.now(), createdAt: Date.now(), updatedAt: Date.now(),
+    })
+  );
+  const check = async () => {
+    await t.run((ctx) => ctx.db.patch(id, { nextCheckAt: 0 }));
+    await t.action(internal.scheduler.runScheduledChecks, {});
+    return t.run((ctx) => ctx.db.get(id));
+  };
+  const failed = await check();
+  expect(failed?.lastMatchAt).toBeUndefined();
+  expect(failed?.candidateKeys).toEqual([]);
+  // Judged on the next check: sold out, so queued, and still no alert.
+  const judged = await check();
+  expect(judged?.lastMatchAt).toBeUndefined();
+  expect(judged?.soldOutKeys).toEqual(["shop.test/kingston"]);
 });

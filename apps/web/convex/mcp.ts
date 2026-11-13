@@ -299,6 +299,11 @@ export const updateMonitor = mutation({
       : paused === false && monitor.status === "paused" ? ("active" as const)
       : undefined;
     await updateMonitorForUser(ctx, userId, monitor._id, { ...fields, status }).catch(asToolError);
+    // The web app asks the user to rescan after a new prompt; an agent has no
+    // rescan. Due now, the next check re-reads the page with the new prompt.
+    if (fields.prompt !== undefined && fields.prompt.trim() !== monitor.prompt) {
+      await ctx.db.patch(monitor._id, { lastAiExtractAt: 0, contentFingerprint: undefined });
+    }
     if (folderId !== undefined) await setMonitorFolder(ctx, userId, monitor._id, folderId).catch(asToolError);
     const alertOn = fields.alertOn ?? monitor.alertOn;
     return wantsProductAlerts(alertOn) && !isProductMonitor(monitor)

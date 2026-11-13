@@ -1105,10 +1105,15 @@ async function runQuickCheck(
   // read that says it is back, so a failed or blank read leaves it sold out.
   const soldOutStill = (c: ScoredCandidate) =>
     asksStock && (c.stock?.inStock === false || (rechecked.has(matchKey(c)) && c.stock?.inStock !== true));
+  // With stock asked for, a new entry the scorer did not judge could be sold
+  // out. It stays unseen so the next check judges it, as past the per-check cap.
+  const unjudged = new Set(
+    asksStock ? scored.filter((c) => c.matchScore === null && unseenKeys.has(matchKey(c))).map(matchKey) : []
+  );
   // Carries the stock read the way a full read's items do, so the alert can
   // say when stock was asked for and not shown.
   const matches = scored
-    .filter((c) => alertsOnScore(c.matchScore) && !soldOutStill(c))
+    .filter((c) => alertsOnScore(c.matchScore) && !soldOutStill(c) && !unjudged.has(matchKey(c)))
     .map((c) => (asksStock ? { ...c, inStock: c.stock?.inStock ?? null } : c));
   // Queued whatever it scored: the scorer marks an entry down for being sold
   // out when the prompt wants stock, so a low score cannot tell an unwanted
@@ -1137,7 +1142,7 @@ async function runQuickCheck(
     // page having been removed.
     scoredCandidates: scored,
     contentFingerprint: contentHash,
-    candidateKeys: seenAfterCheck,
+    candidateKeys: seenAfterCheck.filter((k) => !unjudged.has(k)),
     // Left alone while a stock alert covers the restock, so the queue is
     // still there if that alert is turned off.
     ...(asksStock && !stockAlerted ? { soldOutKeys, soldOutTextHashes } : {}),
@@ -1472,7 +1477,10 @@ export const recordProductRead = internalMutation({
     let matchedKeys = monitor.matchedKeys;
     if (on.backInStock === true && previous.inStock === false && args.inStock === true) {
       alerts.push({ kind: "stock" });
-      if (matchedKeys !== undefined) matchedKeys = [...new Set([...matchedKeys, canonicalUrl(monitor.url)])];
+      // Keyed as the full read keys the product's item.
+      const item = productItem(monitor.schema, monitor.url);
+      const key = item ? matchKey(item as Record<string, unknown>) : canonicalUrl(monitor.url);
+      if (matchedKeys !== undefined) matchedKeys = [...new Set([...matchedKeys, key])];
     }
 
     // A held price or currency whose confirming read did not settle it is

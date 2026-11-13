@@ -353,9 +353,11 @@ export default function DashboardPage() {
   // can still be renamed or deleted.
   const folderOf = (item: Item) => ("product" in item ? item.product.folderId : item.monitor.folderId);
   const folderIds = new Set((folders ?? []).map((f) => f._id));
+  // Filed items wait for the folder list rather than showing unfiled and
+  // then jumping into their folder.
   const unfiled = filtered.filter((item) => {
     const id = folderOf(item);
-    return !id || !folderIds.has(id);
+    return !id || (folders !== undefined && !folderIds.has(id));
   });
   const filtering = search !== "" || statusFilter !== "all";
   const sections = (folders ?? [])

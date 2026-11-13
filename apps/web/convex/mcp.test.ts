@@ -814,3 +814,21 @@ test("a failed agent search says retrying may help", async () => {
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
 });
+
+// An agent cannot press Rescan. A new prompt must reach the page's matching
+// at the next check, not at the 14-day re-read.
+test("a new prompt over MCP makes the next check re-read the page", async () => {
+  const t = setup();
+  const { key } = await seedUser(t, "a@example.com");
+  const id = await t.mutation(api.mcp.createMonitor, { apiKey: key, ...MONITOR });
+  await t.run((ctx) => ctx.db.patch(id, { status: "active", lastAiExtractAt: NOW, contentFingerprint: "page-1" }));
+  await t.mutation(api.mcp.updateMonitor, { apiKey: key, monitorId: id, prompt: "any March start date" });
+  const monitor = await t.run((ctx) => ctx.db.get(id));
+  expect([monitor?.lastAiExtractAt, monitor?.contentFingerprint]).toEqual([0, undefined]);
+
+  // A rename, or the same prompt sent again, re-reads nothing: that would be
+  // a paid call for no reason.
+  await t.run((ctx) => ctx.db.patch(id, { lastAiExtractAt: NOW }));
+  await t.mutation(api.mcp.updateMonitor, { apiKey: key, monitorId: id, name: "Milford, March", prompt: "any March start date" });
+  expect((await t.run((ctx) => ctx.db.get(id)))?.lastAiExtractAt).toBe(NOW);
+});
