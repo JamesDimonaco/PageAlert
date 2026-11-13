@@ -789,6 +789,12 @@ test("pausing a monitor mid-scan is refused, with when to try again", async () =
     code: "failed",
     retry: true,
   });
+  // The scan saves the old prompt's reading when it ends, over the re-read.
+  expect(await toolErrorOf(t.mutation(api.mcp.updateMonitor, { apiKey: key, monitorId: id, prompt: "any March start" }))).toMatchObject({
+    code: "failed",
+    retry: true,
+  });
+  expect((await t.run((ctx) => ctx.db.get(id)))?.prompt).toBe(MONITOR.prompt);
 });
 
 // An agent fixes a bad link by picking another page, not by retrying.

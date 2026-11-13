@@ -291,8 +291,9 @@ export const updateMonitor = mutation({
         retry: false,
       });
     }
-    // The scan sets the status when it ends, so a pause now would not take.
-    if (paused === true && monitor.status === "scanning") {
+    // The scan saves its status and its reading of the old prompt when it
+    // ends, so a pause or a new prompt now would not take.
+    if ((paused === true || fields.prompt !== undefined) && monitor.status === "scanning") {
       throw new ConvexError(toolError("The first scan is still running. Try again in a minute."));
     }
     // Resuming a monitor that is not paused changes nothing.

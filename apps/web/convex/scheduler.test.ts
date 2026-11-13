@@ -860,3 +860,32 @@ test("a full read never announces the product itself when its stock or price ale
   const [row] = await t.run((ctx) => ctx.db.query("scrapeResults").withIndex("by_monitorId", (q) => q.eq("monitorId", id)).collect());
   expect(row?.newMatchKeys).toEqual(["shop.test/l12s"]);
 });
+
+// Only a stock alert reports a restock. With price alerts alone, the full
+// read's match is the only alert the restock gets, so it must not be dropped.
+test("a full read announces the product's restock when only price alerts are on", async () => {
+  vi.stubEnv("SCRAPER_URL", "https://scraper.test");
+  vi.stubEnv("SCRAPER_API_KEY", "key");
+  const page = "https://shop.test/noctua";
+  const product = { title: "Noctua NH-L9a-AM5", url: page, price: 89, inStock: true };
+  vi.stubGlobal("fetch", async (url: string) => {
+    if (url.endsWith("/api/quick-check")) return Response.json({ accessible: true, contentHash: "page-2", candidates: [], totalEntries: 1 });
+    if (url.endsWith("/api/extract")) {
+      return Response.json({ schema: { items: [product], matchConditions: { inStockOnly: true } }, matches: [product], totalItems: 1, contentHash: "page-2" });
+    }
+    return new Response("not mocked", { status: 500 });
+  });
+  const t = convexTest(schema, modules);
+  t.registerComponent("betterAuth", betterAuthSchema, betterAuthModules);
+  const id = await t.run((ctx) =>
+    ctx.db.insert("monitors", {
+      userId: "user_1", name: "Noctua", url: page, prompt: "in stock under NZ$95", status: "active", checkInterval: "1h",
+      schema: { items: [{ ...product, inStock: false }], matchConditions: { inStockOnly: true } }, matchCount: 0,
+      alertOn: { priceBelow: { amount: 9500, currency: "NZD" } }, matchedKeys: [], checkCount: 5, contentFingerprint: "page-1",
+      lastAiExtractAt: 0, nextCheckAt: 0, createdAt: Date.now(), updatedAt: Date.now(),
+    })
+  );
+  await t.action(internal.scheduler.runScheduledChecks, {});
+  const [row] = await t.run((ctx) => ctx.db.query("scrapeResults").withIndex("by_monitorId", (q) => q.eq("monitorId", id)).collect());
+  expect(row?.newMatchKeys).toEqual(["shop.test/noctua"]);
+});

@@ -205,10 +205,14 @@ After PR 3, give the 7 monitors real stock and price alerts.
 
 ### Changed while building
 
-- **Restocks did need code.** On a quick check, every judged entry joined the seen set, so a sold-out one was never judged again. Sold-out entries now sit in `soldOutKeys`, and each check judges up to 5 of them again, in turn, after new entries.
+- **Restocks did need code.** On a quick check, every judged entry joined the seen set, so a sold-out one was never judged again. Sold-out entries now sit in `soldOutKeys`, from quick checks and AI reads. One is judged again only when its own text changes, up to 5 a check. A read that does not say "in stock" leaves it sold out.
+- **The scorer reads stock for several entries.** Its route only took one before. Backorder and pre-order count as not in stock, in both prompts.
+- **When scoring fails on a stock-aware monitor,** new entries wait for the next check rather than all alerting.
+- **Quick-check alerts join `matchedKeys`,** so a full read does not announce them again. The backfill adds the ones sent before this release.
+- **A product page with a stock alert reports its restock only through that alert.** The full read does not also announce the product as a match. With price alerts alone, a price drop can still alert twice; a lost restock would be worse.
 - **Preview proxy has its own hourly bucket** of 20, apart from the monitors' escalation budget, after two security reviews pulled in opposite directions.
 - **`create_monitor` guesses alertOn from the prompt** when the agent sends none. There was no guess on the MCP before.
-- **A prompt change through `update_monitor` applies at the next full read**, as in the web app. There is no rescan tool.
+- **A prompt change through `update_monitor` makes the next check re-read the page**, and clears the old prompt's seen set. Agents have no rescan tool.
 - **`create_folder` returns the existing folder** of the same name, so agents need no list tool to find one.
 - **New Zealand is now a search region.** A real search for the Noctua cooler found 4 NZ shops priced in NZD.
 - **The AI sets `inStockOnly` on some "any shop offers" prompts.** The real-API run set it on 3 of 4 PriceSpy prompts. It only blocks items read as sold out, so it is safe, but it is not consistent.

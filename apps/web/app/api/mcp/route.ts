@@ -78,6 +78,7 @@ function scanSummary(data: ExtractResponse) {
 const intervals = z.enum(["5m", "15m", "30m", "1h", "6h", "24h"]);
 const monitorId = z.string().describe("The id from list_monitors or create_monitor.");
 const folderId = z.string().describe("A folder id from create_folder.");
+const region = z.enum(SEARCH_REGIONS.map((r) => r.code) as [string, ...string[]]);
 const alertOn = z
   .object({
     backInStock: z.boolean().optional().describe("Alert when the product goes from out of stock to in stock."),
@@ -343,7 +344,7 @@ function registerTools(server: McpServer, convex: ConvexHttpClient, apiKey: stri
         "Pass the pages you pick to create_product.",
       inputSchema: z.object({
         query: z.string().min(2).max(200).describe("The product's name, e.g. 'Sony WH-1000XM5'."),
-        region: z.enum(SEARCH_REGIONS.map((r) => r.code) as [string, ...string[]]).describe("Country to search in."),
+        region: region.describe("Country to search in."),
       }),
       // Not read-only: each call spends one of the user's daily searches, and
       // clients skip asking the user before a read-only tool.
@@ -368,7 +369,7 @@ function registerTools(server: McpServer, convex: ConvexHttpClient, apiKey: stri
         "and is first read on the server within a minute. Counts against the plan's monitor limits.",
       inputSchema: z.object({
         title: z.string().min(1).max(200).describe("The product's name, used to find it on each page."),
-        region: z.enum(SEARCH_REGIONS.map((r) => r.code) as [string, ...string[]]).describe("The country the shops are in."),
+        region: region.describe("The country the shops are in."),
         urls: z.array(url).min(1).max(8).describe("Shop pages for this product, e.g. from find_product."),
         alertOn: alertOn.describe("What to alert on. At least one of backInStock, priceDrop or priceBelow."),
         checkInterval: intervals.optional().describe("How often to check. Defaults to 1h."),
