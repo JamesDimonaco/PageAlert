@@ -118,6 +118,12 @@ describe("stockNotShownNote", () => {
     expect(stockNotShownNote([shown, hidden], asks)).toBe("Stock not shown on page for “Noctua NH-L9a-AM5 chromax”.");
   });
 
+  // The title is page text. Uncapped, one long title could swamp an SMS-sized push.
+  it("cuts a long title to 80 characters", () => {
+    const note = stockNotShownNote([{ title: "x".repeat(500), inStock: null }], asks);
+    expect(note).toBe(`Stock not shown on page for “${"x".repeat(79)}…”.`);
+  });
+
   it("counts them when there are several", () => {
     expect(stockNotShownNote([hidden, { ...hidden, title: "Other" }, shown], asks)).toBe(
       "Stock not shown on page for 2 of these matches.",

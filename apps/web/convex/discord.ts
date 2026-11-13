@@ -6,6 +6,14 @@ import { formatDay, resumeUrl } from "./emails";
 const APP_URL = process.env.SITE_URL ?? "https://pagealert.io";
 const TIMEOUT = 10_000;
 
+/**
+ * Page text, made inert for a Discord embed: no markdown, links or mentions.
+ * The "@" goes too, because a webhook pings @everyone unless told otherwise.
+ */
+function plainText(text: string): string {
+  return text.replace(/[\\`*_~|>[\]()<@#]/g, "");
+}
+
 /** Send a match alert via Discord webhook */
 export const sendMatchAlert = internalAction({
   args: {
@@ -23,7 +31,7 @@ export const sendMatchAlert = internalAction({
       embeds: [
         {
           title: `🔔 ${args.monitorName}`,
-          description: `**${args.matchCount}** new match${args.matchCount !== 1 ? "es" : ""} out of ${args.totalItems} items${args.stockNote ? `\n${args.stockNote}` : ""}`,
+          description: `**${args.matchCount}** new match${args.matchCount !== 1 ? "es" : ""} out of ${args.totalItems} items${args.stockNote ? `\n${plainText(args.stockNote)}` : ""}`,
           color: 0x3b82f6,
           fields: [
             { name: "Website", value: `[Open](${args.url})`, inline: true },

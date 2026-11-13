@@ -224,6 +224,7 @@ export const recordCheckResult = internalMutation({
     trackMatchKeys: v.optional(v.boolean()),
     // Every entry the keyword filter picked this check, judged or not.
     candidateKeys: v.optional(v.array(v.string())),
+    soldOutKeys: v.optional(v.array(v.string())),
     // Entries judged on this check, verdict included. Kept apart from `items`,
     // which is the AI's model of the page and is what change detection diffs.
     scoredCandidates: v.optional(v.array(v.any())),
@@ -402,6 +403,9 @@ export const recordCheckResult = internalMutation({
     // a later reappearance is a real event worth an alert.
     if (args.candidateKeys) {
       updates.candidateKeys = args.candidateKeys;
+    }
+    if (args.soldOutKeys) {
+      updates.soldOutKeys = args.soldOutKeys;
     }
 
     if (args.trackMatchKeys && (args.matches.length > 0 || args.totalItems > 0)) {
@@ -884,6 +888,12 @@ type ScoredCandidate = QuickCheckCandidate & {
 const MAX_SCORED_PER_CHECK = 25;
 
 /**
+ * Sold-out entries judged again in one check, out of MAX_SCORED_PER_CHECK.
+ * Capped so a page full of sold-out matches leaves room for new entries.
+ */
+const MAX_SOLD_OUT_RECHECKS = 5;
+
+/**
  * Entries named individually in a Telegram alert. Each one carries its own
  * pair of feedback buttons, and a keyboard taller than this stops being
  * something anyone reads on a phone.
@@ -1035,9 +1045,20 @@ async function runQuickCheck(
   // verdict was. Seeding on a monitor with no baseline returns nothing, so
   // this shipping does not alert anyone about listings already on the page.
   const unseenKeys = new Set(newMatchKeys(monitor.candidateKeys, candidateKeys));
+
+  // A seen entry is never judged again, so one that was sold out would never
+  // alert on its restock. When the prompt asks for stock, a few sold-out
+  // entries are judged again each check, in turn. New entries come first.
+  const asksStock = matchConditions.inStockOnly === true;
+  const lastSoldOut: string[] = asksStock ? (monitor.soldOutKeys ?? []) : [];
+  const byKey = new Map(visible.map((c) => [matchKey(c), c]));
+  const recheck = lastSoldOut
+    .filter((k) => byKey.has(k) && !unseenKeys.has(k))
+    .slice(0, MAX_SOLD_OUT_RECHECKS)
+    .map((k) => byKey.get(k)!);
   const unseen = visible
     .filter((c) => unseenKeys.has(matchKey(c)))
-    .slice(0, MAX_SCORED_PER_CHECK);
+    .slice(0, MAX_SCORED_PER_CHECK - recheck.length);
 
   // New entries past the per-check cap stay out of the seen set so the next
   // check picks them up. Recording them as seen alongside the ones actually
@@ -1045,7 +1066,7 @@ async function runQuickCheck(
   const judged = new Set(unseen.map(matchKey));
   const seenAfterCheck = candidateKeys.filter((k) => !unseenKeys.has(k) || judged.has(k));
 
-  if (unseen.length === 0) {
+  if (unseen.length === 0 && recheck.length === 0) {
     await ctx.runMutation(internal.scheduler.recordCheckResult, {
       monitorId: monitor._id,
       hasNewMatches: false,
@@ -1062,14 +1083,14 @@ async function runQuickCheck(
 
   // Only the new entries reach the AI, and only their own text does. A page
   // that has not changed, or whose changes are all old news, costs nothing.
-  const asksStock = matchConditions.inStockOnly === true;
-  const scored = await scoreQuickCheckCandidates(unseen, monitor, scraperUrl, scraperKey, asksStock);
-  // A sold-out entry the prompt wants in stock never alerts, whatever it
-  // scored. It also stays unseen, so a later check judges it again and its
-  // restock alerts. Seen, it would never be judged again. The cost is one
-  // scoring call per changed check while it is sold out.
-  const soldOut = new Set(scored.filter((c) => asksStock && c.stock?.inStock === false).map(matchKey));
-  const matches = scored.filter((c) => alertsOnScore(c.matchScore) && !soldOut.has(matchKey(c)));
+  const scored = await scoreQuickCheckCandidates([...unseen, ...recheck], monitor, scraperUrl, scraperKey, asksStock);
+  // A sold-out entry the prompt wants in stock never alerts, whatever it scored.
+  const soldOut = scored.filter((c) => asksStock && c.stock?.inStock === false).map(matchKey);
+  const soldOutNow = new Set(soldOut);
+  const matches = scored.filter((c) => alertsOnScore(c.matchScore) && !soldOutNow.has(matchKey(c)));
+  // Those not judged this time go first, so the next check takes them.
+  const judgedNow = new Set(scored.map(matchKey));
+  const soldOutKeys = [...lastSoldOut.filter((k) => byKey.has(k) && !judgedNow.has(k)), ...soldOut];
 
   const outcome = await ctx.runMutation(internal.scheduler.recordCheckResult, {
     monitorId: monitor._id,
@@ -1083,12 +1104,13 @@ async function runQuickCheck(
     // page having been removed.
     scoredCandidates: scored,
     contentFingerprint: contentHash,
-    candidateKeys: seenAfterCheck.filter((k) => !soldOut.has(k)),
+    candidateKeys: seenAfterCheck,
+    ...(asksStock ? { soldOutKeys } : {}),
     usedProxy: useProxy,
   });
 
   console.log(
-    `[scheduler] Quick check ${monitor._id}: ${visible.length} candidate(s), ${unseen.length} new, ${matches.length} above threshold`
+    `[scheduler] Quick check ${monitor._id}: ${visible.length} candidate(s), ${unseen.length} new, ${recheck.length} sold out rechecked, ${matches.length} above threshold`
   );
 
   return {

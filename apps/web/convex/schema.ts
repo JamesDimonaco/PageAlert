@@ -93,6 +93,10 @@ export default defineSchema({
     // still remembered as seen — otherwise it reads as new every check and
     // buys another scoring call forever.
     candidateKeys: v.optional(v.array(v.string())),
+    // Seen entries judged sold out while the prompt asks for stock. The quick
+    // check judges a few again each time, so a restock still alerts. Oldest
+    // turn first: see MAX_SOLD_OUT_RECHECKS.
+    soldOutKeys: v.optional(v.array(v.string())),
     // This site only ever answers through the proxy, so skip the direct attempt
     // that would fail anyway. Re-probed periodically — see PROXY_REPROBE_EVERY.
     proxyPreferred: v.optional(v.boolean()),

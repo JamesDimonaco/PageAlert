@@ -479,7 +479,7 @@ test("a sold-out entry is judged again, and alerts when it comes back in stock",
 
   const first = await check();
   expect(first?.lastMatchAt).toBeUndefined();
-  expect(first?.candidateKeys).toEqual([]);
+  expect(first?.soldOutKeys).toEqual(["shop.test/kingston"]);
   expect((await check())?.lastMatchAt).toBeUndefined();
   expect((await check())?.lastMatchAt).toBeDefined();
   expect(readStockSent).toEqual([true, true, true]);
@@ -541,4 +541,64 @@ test("a product page with related items reads the product's stock, by its own ti
   );
   await t.action(internal.scheduler.runScheduledChecks, {});
   expect(sent[0]?.productTitle).toBe("Noctua NH-L9a-AM5 Low Profile CPU Cooler");
+});
+
+// A page full of sold-out matches must not starve a new arrival of its turn
+// to be judged, and must not grow the per-check scoring bill without limit.
+test("re-judging sold-out entries is capped, and new entries go first", async () => {
+  vi.stubEnv("SCRAPER_URL", "https://scraper.test");
+  vi.stubEnv("SCRAPER_API_KEY", "key");
+  const soldOut = Array.from({ length: 30 }, (_, i) => ({
+    title: `Kingston kit ${i}`,
+    url: `https://shop.test/kingston-${i}`,
+    price: 199,
+    snippet: "",
+  }));
+  const fresh = { title: "Kingston kit new", url: "https://shop.test/kingston-new", price: 199, snippet: "" };
+  const judged: string[][] = [];
+  let checkNo = 0;
+  vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+    if (url.endsWith("/api/quick-check")) {
+      checkNo++;
+      return Response.json({ accessible: true, contentHash: `page-${checkNo}`, candidates: [...soldOut, fresh], totalEntries: 31 });
+    }
+    if (url.endsWith("/api/score")) {
+      const { candidates } = JSON.parse(String(init?.body)) as { candidates: { url: string }[] };
+      judged.push(candidates.map((c) => c.url));
+      return Response.json({
+        scored: candidates.map((c) => ({ ...c, matchScore: 20, matchReason: "", stock: { inStock: false, price: 19900, currency: "NZD" } })),
+      });
+    }
+    return new Response("not mocked", { status: 500 });
+  });
+  const keys = soldOut.map((c) => c.url.replace("https://", ""));
+  const t = convexTest(schema, modules);
+  t.registerComponent("betterAuth", betterAuthSchema, betterAuthModules);
+  const id = await t.run((ctx) =>
+    ctx.db.insert("monitors", {
+      userId: "user_1",
+      name: "RAM",
+      url: "https://shop.test/ram",
+      prompt: "in stock",
+      status: "active",
+      checkInterval: "1h",
+      schema: { items: [], matchConditions: { mustInclude: ["Kingston"], inStockOnly: true } },
+      matchCount: 0,
+      candidateKeys: keys,
+      soldOutKeys: keys,
+      checkCount: 5,
+      contentFingerprint: "page-0",
+      lastAiExtractAt: Date.now(),
+      nextCheckAt: 0,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    })
+  );
+  await t.action(internal.scheduler.runScheduledChecks, {});
+  expect(judged[0]).toEqual([fresh.url, ...soldOut.slice(0, 5).map((c) => c.url)]);
+
+  // The next check moves on to the next five, so every sold-out entry gets a turn.
+  await t.run((ctx) => ctx.db.patch(id, { nextCheckAt: 0 }));
+  await t.action(internal.scheduler.runScheduledChecks, {});
+  expect(judged[1]).toEqual(soldOut.slice(5, 10).map((c) => c.url));
 });

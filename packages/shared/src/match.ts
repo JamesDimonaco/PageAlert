@@ -74,6 +74,9 @@ export function applyMatchConditions(
   return items.filter((item) => explainMatch(item, conditions).every((check) => check.pass));
 }
 
+/** Page text in an alert is capped, so one long title can't swamp it. */
+const NOTE_TITLE_MAX = 80;
+
 /**
  * One line for a match alert when stock was asked for but some matches did
  * not show it. They matched because the page did not say, and the alert must
@@ -86,6 +89,10 @@ export function stockNotShownNote(matches: ExtractedItem[], conditions: MatchCon
   if (!conditions?.inStockOnly) return null;
   const unknown = matches.filter((item) => item.inStock === null);
   if (unknown.length === 0) return null;
-  if (unknown.length === 1) return `Stock not shown on page for “${String(unknown[0].title ?? "this item")}”.`;
+  if (unknown.length === 1) {
+    const title = String(unknown[0].title ?? "this item");
+    const short = title.length > NOTE_TITLE_MAX ? `${title.slice(0, NOTE_TITLE_MAX - 1)}…` : title;
+    return `Stock not shown on page for “${short}”.`;
+  }
   return `Stock not shown on page for ${unknown.length} of these matches.`;
 }
