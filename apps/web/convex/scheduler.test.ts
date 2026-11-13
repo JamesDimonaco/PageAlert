@@ -429,17 +429,24 @@ async function stockListing(stocks: boolean[], soldOutScore = 20) {
   vi.stubEnv("SCRAPER_API_KEY", "key");
   let checkNo = 0;
   const readStockSent: boolean[] = [];
-  const entry = { title: "Kingston FURY Beast 16GB DDR5-6000", url: "https://shop.test/kingston", price: 199, snippet: "" };
+  const stockAt = () => stocks[Math.min(checkNo - 1, stocks.length - 1)]!;
+  // The entry's own text says whether it is in stock, as on a real page.
+  const entry = () => ({
+    title: "Kingston FURY Beast 16GB DDR5-6000",
+    url: "https://shop.test/kingston",
+    price: 199,
+    snippet: stockAt() ? "In stock" : "Sold out",
+  });
   vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
     if (url.endsWith("/api/quick-check")) {
       checkNo++;
-      return Response.json({ accessible: true, contentHash: `page-${checkNo}`, candidates: [entry], totalEntries: 9 });
+      return Response.json({ accessible: true, contentHash: `page-${checkNo}`, candidates: [entry()], totalEntries: 9 });
     }
     if (url.endsWith("/api/score")) {
       readStockSent.push(JSON.parse(String(init?.body)).readStock === true);
-      const inStock = stocks[Math.min(checkNo - 1, stocks.length - 1)];
+      const inStock = stockAt();
       return Response.json({
-        scored: [{ ...entry, matchScore: inStock ? 95 : soldOutScore, matchReason: "", stock: { inStock, price: 19900, currency: "NZD" } }],
+        scored: [{ ...entry(), matchScore: inStock ? 95 : soldOutScore, matchReason: "", stock: { inStock, price: 19900, currency: "NZD" } }],
       });
     }
     return new Response("not mocked", { status: 500 });
@@ -483,7 +490,17 @@ test("a sold-out entry is judged again, and alerts when it comes back in stock",
   expect(first?.soldOutKeys).toEqual(["shop.test/kingston"]);
   expect((await check())?.lastMatchAt).toBeUndefined();
   expect((await check())?.lastMatchAt).toBeDefined();
-  expect(readStockSent).toEqual([true, true, true]);
+  // Judged when new, then again only when its own text changed.
+  expect(readStockSent).toEqual([true, true]);
+});
+
+// Each recheck is a paid scoring call. A sold-out entry whose own text has
+// not changed cannot have come back, so it costs nothing, however often the
+// rest of the page changes.
+test("a sold-out entry is not rechecked while its own text is unchanged", async () => {
+  const { check, readStockSent } = await stockListing([false]);
+  for (let i = 0; i < 3; i++) await check();
+  expect(readStockSent).toEqual([true]);
 });
 
 // Once it alerted, the entry is seen like any other: no repeat every check.

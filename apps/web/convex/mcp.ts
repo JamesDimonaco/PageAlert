@@ -289,9 +289,13 @@ export const updateMonitor = mutation({
         retry: false,
       });
     }
-    // Pausing a monitor mid-scan or resuming one that is not paused changes nothing.
+    // The scan sets the status when it ends, so a pause now would not take.
+    if (paused === true && monitor.status === "scanning") {
+      throw new ConvexError(toolError("The first scan is still running. Try again in a minute."));
+    }
+    // Resuming a monitor that is not paused changes nothing.
     const status =
-      paused === true && monitor.status !== "scanning" ? ("paused" as const)
+      paused === true ? ("paused" as const)
       : paused === false && monitor.status === "paused" ? ("active" as const)
       : undefined;
     await updateMonitorForUser(ctx, userId, monitor._id, { ...fields, status }).catch(asToolError);

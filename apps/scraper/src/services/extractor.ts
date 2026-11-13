@@ -367,7 +367,7 @@ Return one entry per input index, in any order. Keep each reason under 20 words.
 const STOCK_PROMPT = `
 
 Also read each entry's stock and price from its own text. Add to each entry:
-- "inStock": true if it can be bought now, false if it is sold out or unavailable, null if the text does not say.
+- "inStock": true if it can be bought now, false if it is sold out, unavailable, or only on backorder or pre-order, null if the text does not say.
 - "price": the current selling price as a plain number (e.g. 1299.99), or null if none is shown.
 - "currency": the three-letter ISO 4217 code of that price (e.g. "GBP", "USD", "EUR"), never a symbol such as "£" or "$". Use null if you cannot tell which currency it is.`;
 

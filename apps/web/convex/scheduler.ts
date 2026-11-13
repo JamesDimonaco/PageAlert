@@ -12,6 +12,7 @@ import {
   checkFailureKind,
   matchKey,
   newMatchKeys,
+  entryTextHash,
   soldOutKeysOf,
   ERROR_RECOVERY_INTERVAL_MS,
   effectiveIntervalMs,
@@ -226,6 +227,7 @@ export const recordCheckResult = internalMutation({
     // Every entry the keyword filter picked this check, judged or not.
     candidateKeys: v.optional(v.array(v.string())),
     soldOutKeys: v.optional(v.array(v.string())),
+    soldOutTextHashes: v.optional(v.array(v.string())),
     // Entries judged on this check, verdict included. Kept apart from `items`,
     // which is the AI's model of the page and is what change detection diffs.
     scoredCandidates: v.optional(v.array(v.any())),
@@ -399,6 +401,9 @@ export const recordCheckResult = internalMutation({
     }
     if (args.soldOutKeys) {
       updates.soldOutKeys = args.soldOutKeys;
+    }
+    if (args.soldOutTextHashes) {
+      updates.soldOutTextHashes = args.soldOutTextHashes;
     }
 
     if (args.trackMatchKeys && (args.matches.length > 0 || args.totalItems > 0)) {
@@ -1053,16 +1058,18 @@ async function runQuickCheck(
   const unseenKeys = new Set(newMatchKeys(monitor.candidateKeys, candidateKeys));
 
   // A seen entry is never judged again, so one that was sold out would never
-  // alert on its restock. When the prompt asks for stock, up to
-  // MAX_SOLD_OUT_RECHECKS sold-out entries are judged again each check, in
-  // turn, and new entries take the rest of the slots. A product page with a
+  // alert on its restock. When the prompt asks for stock, sold-out entries
+  // whose own text has changed are judged again, up to MAX_SOLD_OUT_RECHECKS
+  // a check, in turn, and new entries take the rest of the slots. Unchanged
+  // text cannot be a restock, so it costs nothing. A product page with a
   // stock alert is left out: that alert already reports the restock.
   const asksStock = matchConditions.inStockOnly === true;
   const stockAlerted = readsProduct && monitor.alertOn?.backInStock === true;
   const lastSoldOut: string[] = asksStock && !stockAlerted ? (monitor.soldOutKeys ?? []) : [];
+  const readSoldOutText = new Set<string>(monitor.soldOutTextHashes ?? []);
   const byKey = new Map(visible.map((c) => [matchKey(c), c]));
   const recheck = lastSoldOut
-    .filter((k) => byKey.has(k) && !unseenKeys.has(k))
+    .filter((k) => byKey.has(k) && !unseenKeys.has(k) && !readSoldOutText.has(entryTextHash(byKey.get(k)!)))
     .slice(0, MAX_SOLD_OUT_RECHECKS)
     .map((k) => byKey.get(k)!);
   const unseen = visible
@@ -1106,6 +1113,13 @@ async function runQuickCheck(
   // Those not judged this time go first, so the next check takes them.
   const judgedNow = new Set(scored.map(matchKey));
   const soldOutKeys = [...lastSoldOut.filter((k) => byKey.has(k) && !judgedNow.has(k)), ...soldOut];
+  // A blank read records no text, so that entry is read again next check.
+  const scoredByKey = new Map(scored.map((c) => [matchKey(c), c]));
+  const soldOutTextHashes = soldOutKeys.flatMap((k) => {
+    const text = entryTextHash(byKey.get(k)!);
+    const read = scoredByKey.get(k);
+    return (read ? read.stock?.inStock === false : readSoldOutText.has(text)) ? [text] : [];
+  });
 
   const outcome = await ctx.runMutation(internal.scheduler.recordCheckResult, {
     monitorId: monitor._id,
@@ -1122,7 +1136,7 @@ async function runQuickCheck(
     candidateKeys: seenAfterCheck,
     // Left alone while a stock alert covers the restock, so the queue is
     // still there if that alert is turned off.
-    ...(asksStock && !stockAlerted ? { soldOutKeys } : {}),
+    ...(asksStock && !stockAlerted ? { soldOutKeys, soldOutTextHashes } : {}),
     usedProxy: useProxy,
   });
 

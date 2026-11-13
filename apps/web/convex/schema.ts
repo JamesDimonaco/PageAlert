@@ -97,6 +97,9 @@ export default defineSchema({
     // check or an AI read. The quick check judges a few again each time, so a
     // restock still alerts. Oldest turn first: see MAX_SOLD_OUT_RECHECKS.
     soldOutKeys: v.optional(v.array(v.string())),
+    // Hashes of the text each queued entry had when last read as sold out.
+    // An entry is rechecked only once its own text changes.
+    soldOutTextHashes: v.optional(v.array(v.string())),
     // A name the user files it under, such as "PC build". Holds no settings.
     folderId: v.optional(v.id("folders")),
     // This site only ever answers through the proxy, so skip the direct attempt

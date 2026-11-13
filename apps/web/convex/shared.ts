@@ -157,6 +157,11 @@ export function soldOutKeysOf(schema: unknown, queued: string[] = []): string[] 
   return [...new Set([...queued.filter((k) => !back.has(k)), ...soldOut.map(matchKey)])];
 }
 
+/** Hash of a quick-check entry's own text. A restock changes it. */
+export function entryTextHash(entry: { title: string; price: number | null; snippet: string }): string {
+  return hash(`${entry.title}|${entry.price}|${entry.snippet}`);
+}
+
 /** FNV-1a. Short, synchronous, and good enough to tell two items apart. */
 function hash(input: string): string {
   let h = 0x811c9dc5;

@@ -778,3 +778,15 @@ test("turning on in-stock-only queues the sold-out entries already read", async 
   await asUser.mutation(api.monitors.update, { id, schema: { items, matchConditions: { inStockOnly: true } } });
   expect((await t.run((ctx) => ctx.db.get(id)))?.soldOutKeys).toEqual(["shop.test/kingston"]);
 });
+
+// The first scan is still running, so the pause cannot take. Saying it did
+// would leave the user believing a monitor is paused that goes on to alert.
+test("pausing a monitor mid-scan is refused, with when to try again", async () => {
+  const t = setup();
+  const { key } = await seedUser(t, "a@example.com");
+  const id = await t.mutation(api.mcp.createMonitor, { apiKey: key, ...MONITOR });
+  expect(await toolErrorOf(t.mutation(api.mcp.updateMonitor, { apiKey: key, monitorId: id, paused: true }))).toMatchObject({
+    code: "failed",
+    retry: true,
+  });
+});

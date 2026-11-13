@@ -275,7 +275,7 @@ function registerTools(server: McpServer, convex: ConvexHttpClient, apiKey: stri
       title: "Get recent matches",
       description:
         "New matches across all the user's monitors since a time, newest first, each with its monitor's id " +
-        "and name and when it matched. Reads up to the 50 monitors that matched most recently. Use it to " +
+        "and name and when it matched. Reads up to the 20 monitors that matched most recently. Use it to " +
         "answer 'what's new?' in one call. A product's listings are not included: they alert on stock and price only.",
       inputSchema: z.object({
         since: z.string().describe("ISO 8601 time, e.g. 2026-11-13T00:00:00Z."),
