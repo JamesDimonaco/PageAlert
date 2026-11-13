@@ -1,5 +1,5 @@
 import { ConvexError } from "convex/values";
-import { canonicalUrl, DAY_MS } from "@prowl/shared";
+import { applyMatchConditions, canonicalUrl, DAY_MS, type ExtractedItem, type MatchConditions } from "@prowl/shared";
 
 export { MATCH_SCORE_THRESHOLD, alertsOnScore, matchConfidence, MATCH_CONFIDENCE_LABEL, canonicalUrl } from "@prowl/shared";
 
@@ -141,13 +141,18 @@ export function matchKey(item: { url?: unknown; title?: unknown; name?: unknown 
 }
 
 /**
- * Keys of the entries an AI read saw sold out, when the prompt asks for stock.
- * Quick checks judge these again, so a restock alerts. Empty otherwise.
+ * The sold-out keys to queue for quick-check rechecks after an AI read, when
+ * the prompt asks for stock: entries that would match but for their stock.
+ * Keys already queued stay unless this read saw them in stock, because a
+ * queued entry is already seen and nothing else would judge it again.
  */
-export function soldOutKeysOf(schema: unknown): string[] {
-  const { items, matchConditions } = (schema ?? {}) as { items?: unknown; matchConditions?: { inStockOnly?: boolean } };
-  if (matchConditions?.inStockOnly !== true || !Array.isArray(items)) return [];
-  return [...new Set((items as Record<string, unknown>[]).filter((i) => i?.inStock === false).map(matchKey))];
+export function soldOutKeysOf(schema: unknown, queued: string[] = []): string[] {
+  const { items, matchConditions } = (schema ?? {}) as { items?: unknown; matchConditions?: MatchConditions };
+  if (matchConditions?.inStockOnly !== true) return [];
+  const read = Array.isArray(items) ? (items as ExtractedItem[]) : [];
+  const back = new Set(read.filter((i) => i.inStock === true).map(matchKey));
+  const soldOut = applyMatchConditions(read, { ...matchConditions, inStockOnly: false }).filter((i) => i.inStock === false);
+  return [...new Set([...queued.filter((k) => !back.has(k)), ...soldOut.map(matchKey)])];
 }
 
 /** FNV-1a. Short, synchronous, and good enough to tell two items apart. */

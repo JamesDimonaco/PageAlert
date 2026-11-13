@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { internalMutation, internalQuery } from "./_generated/server";
+import { matchKey } from "./shared";
 
 /**
  * One-off: give live monitors an AI re-read so they pick up stock-aware
@@ -34,10 +35,12 @@ export const snapshotMatchKeys = internalQuery({
 
 /**
  * Mark live monitors' AI re-read as due. Each then re-reads at its own next
- * check, through the scheduled path, which diffs against the matches it has
- * already announced, so nothing is announced twice. The page fingerprint is
- * cleared too: a quick check stops at an unchanged page before it asks
- * whether a re-read is due. A dry run unless dryRun is false.
+ * check, through the scheduled path, which diffs against matchedKeys. Quick
+ * checks only started adding their alerts to matchedKeys in this release, so
+ * the ones they sent since the last full read are added here first, or the
+ * re-read would announce them again. The page fingerprint is cleared too: a
+ * quick check stops at an unchanged page before it asks whether a re-read is
+ * due. A dry run unless dryRun is false.
  */
 export const markReReadDue = internalMutation({
   args: {
@@ -54,7 +57,18 @@ export const markReReadDue = internalMutation({
     const live = monitors.filter(wanted);
     if (!dryRun) {
       for (const monitor of live) {
+        let matchedKeys = monitor.matchedKeys;
+        // Undefined means no baseline: the re-read then seeds it silently.
+        if (matchedKeys !== undefined) {
+          const sinceRead = await ctx.db
+            .query("scrapeResults")
+            .withIndex("by_monitorId_scrapedAt", (q) => q.eq("monitorId", monitor._id).gt("scrapedAt", monitor.lastAiExtractAt ?? 0))
+            .take(500);
+          const announced = sinceRead.filter((r) => r.hasNewMatches).flatMap((r) => r.matches.map(matchKey));
+          matchedKeys = [...new Set([...matchedKeys, ...announced])];
+        }
         await ctx.db.patch(monitor._id, {
+          matchedKeys,
           lastAiExtractAt: 0,
           contentFingerprint: undefined,
           ...(checkNow ? { nextCheckAt: Date.now() } : {}),

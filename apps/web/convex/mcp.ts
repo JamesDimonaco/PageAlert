@@ -125,14 +125,9 @@ export const listMonitors = query({
 /**
  * A monitor's matched items, newest first, each dated from the oldest row it
  * appears in. A full extract stores every current match, not only the new
- * ones, so an item on the page for a week is in every row. With newOnly, an
- * item counts only in a row that found it new.
+ * ones, so an item on the page for a week is in every row.
  */
-async function datedMatches(
-  ctx: QueryCtx,
-  monitorId: Id<"monitors">,
-  newOnly = false
-): Promise<(AgentItem & { matchedAt: number })[]> {
+async function datedMatches(ctx: QueryCtx, monitorId: Id<"monitors">): Promise<(AgentItem & { matchedAt: number })[]> {
   const results = await ctx.db
     .query("scrapeResults")
     .withIndex("by_monitorId_scrapedAt", (q) => q.eq("monitorId", monitorId))
@@ -141,9 +136,7 @@ async function datedMatches(
   const byIdentity = new Map<string, AgentItem & { matchedAt: number }>();
   for (const result of results) {
     if (!result.hasNewMatches) continue;
-    const fresh = newOnly && result.newMatchKeys ? new Set(result.newMatchKeys) : null;
     for (const raw of result.matches) {
-      if (fresh && !fresh.has(matchKey(raw))) continue;
       const item = toAgentItem(raw);
       if (!item) continue;
       const key = itemIdentity(item);
@@ -153,6 +146,34 @@ async function datedMatches(
     }
   }
   return [...byIdentity.values()].sort((a, b) => b.matchedAt - a.matchedAt);
+}
+
+/**
+ * The items a monitor alerted on since a time, each dated from its latest
+ * alert, so a restock counts from the restock. A full read's row lists every
+ * current match, so only those it recorded as new count. Full-read rows from
+ * before that was recorded are skipped: there is no telling what was new.
+ */
+async function alertedSince(ctx: QueryCtx, monitorId: Id<"monitors">, from: number): Promise<(AgentItem & { matchedAt: number })[]> {
+  const results = await ctx.db
+    .query("scrapeResults")
+    .withIndex("by_monitorId_scrapedAt", (q) => q.eq("monitorId", monitorId).gte("scrapedAt", from))
+    .order("desc")
+    .take(MATCH_LOOKBACK_RESULTS);
+  const byIdentity = new Map<string, AgentItem & { matchedAt: number }>();
+  for (const result of results) {
+    if (!result.hasNewMatches || (result.items !== undefined && result.newMatchKeys === undefined)) continue;
+    const fresh = result.newMatchKeys ? new Set(result.newMatchKeys) : null;
+    for (const raw of result.matches) {
+      if (fresh && !fresh.has(matchKey(raw))) continue;
+      const item = toAgentItem(raw);
+      if (!item) continue;
+      const key = itemIdentity(item);
+      // Newest row first, so the first sighting is the latest alert.
+      if (!byIdentity.has(key)) byIdentity.set(key, { ...item, matchedAt: result.scrapedAt });
+    }
+  }
+  return [...byIdentity.values()];
 }
 
 export const getMatches = query({
@@ -192,8 +213,7 @@ export const getRecentMatches = query({
       .slice(0, MAX_RECENT_MATCH_MONITORS);
     const recent = [];
     for (const monitor of monitors) {
-      for (const match of await datedMatches(ctx, monitor._id, true)) {
-        if (match.matchedAt < from) continue;
+      for (const match of await alertedSince(ctx, monitor._id, from)) {
         recent.push({ ...match, monitorId: monitor._id, monitorName: monitor.name });
       }
     }
@@ -246,6 +266,11 @@ export const updateMonitor = mutation({
   handler: async (ctx, { apiKey, monitorId, url, paused, folderId, ...fields }): Promise<{ monitorId: Id<"monitors">; note?: string }> => {
     const { userId } = await requireKeyOwner(ctx, apiKey);
     const monitor = await ownedMonitor(ctx, userId, monitorId);
+    // A product's listings share its alerts and interval. One changed alone
+    // would alert unlike the rest, and the product page would not show it.
+    if (monitor.groupId && (fields.alertOn !== undefined || fields.checkInterval !== undefined)) {
+      throw new ConvexError(toolError("This monitor is part of a product, which sets its alerts and check interval."));
+    }
     if (url !== undefined) {
       throw new ConvexError<ToolError>({
         code: "invalid_url",

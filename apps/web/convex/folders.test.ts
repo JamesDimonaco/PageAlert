@@ -85,3 +85,14 @@ test("a user can hold at most 50 folders", async () => {
   for (let i = 0; i < 50; i++) await as.mutation(api.folders.create, { name: `f${i}` });
   await expect(as.mutation(api.folders.create, { name: "one more" })).rejects.toThrow(/50 folders/);
 });
+
+// create_folder returns the folder with that name, so names must stay unique.
+test("renaming a folder to a name already in use is refused", async () => {
+  const t = setup();
+  const as = t.withIdentity({ subject: "user_1" });
+  await as.mutation(api.folders.create, { name: "PC build" });
+  const trip = await as.mutation(api.folders.create, { name: "Trip" });
+  await expect(as.mutation(api.folders.rename, { id: trip, name: "pc build" })).rejects.toThrow(/already have a folder/);
+  // Its own name in another case is fine.
+  await as.mutation(api.folders.rename, { id: trip, name: "TRIP" });
+});

@@ -79,8 +79,15 @@ export const create = mutation({
 export const rename = mutation({
   args: { id: v.id("folders"), name: v.string() },
   handler: async (ctx, { id, name }) => {
-    const folder = await ownedFolder(ctx, await userIdOf(ctx), id);
-    await ctx.db.patch(folder._id, { name: cleanName(name), updatedAt: Date.now() });
+    const userId = await userIdOf(ctx);
+    const folder = await ownedFolder(ctx, userId, id);
+    const clean = cleanName(name);
+    // createFolderForUser finds a folder by its name, so names stay unique.
+    const folders = await ctx.db.query("folders").withIndex("by_userId", (q) => q.eq("userId", userId)).collect();
+    if (folders.some((f) => f._id !== folder._id && f.name.toLowerCase() === clean.toLowerCase())) {
+      throw new ConvexError(`You already have a folder called ${clean}.`);
+    }
+    await ctx.db.patch(folder._id, { name: clean, updatedAt: Date.now() });
   },
 });
 

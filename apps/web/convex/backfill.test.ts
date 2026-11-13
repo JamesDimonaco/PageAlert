@@ -153,3 +153,17 @@ test("the backfill leaves a product's listings alone", async () => {
   expect(await t.mutation(internal.backfill.markReReadDue, { dryRun: false })).toEqual({ dryRun: false, marked: 0 });
   expect((await t.run((ctx) => ctx.db.get(listing)))?.lastAiExtractAt).toBe(NOW);
 });
+
+// Matches a quick check announced before this release never reached
+// matchedKeys. Left out, the re-read would announce each of them again.
+test("the backfill counts what quick checks announced since the last full read as announced", async () => {
+  const t = setup();
+  const id = await insert(t, "ram", { matchedKeys: ["shop.test/a"], lastAiExtractAt: NOW - 1000 });
+  await t.run(async (ctx) => {
+    // Before the last full read: that read already counted it.
+    await ctx.db.insert("scrapeResults", { monitorId: id, matches: [{ url: "https://shop.test/old" }], totalItems: 1, hasNewMatches: true, scrapedAt: NOW - 2000 });
+    await ctx.db.insert("scrapeResults", { monitorId: id, matches: [{ url: "https://shop.test/b" }], totalItems: 1, hasNewMatches: true, scrapedAt: NOW - 500 });
+  });
+  await t.mutation(internal.backfill.markReReadDue, { dryRun: false });
+  expect((await t.run((ctx) => ctx.db.get(id)))?.matchedKeys).toEqual(["shop.test/a", "shop.test/b"]);
+});

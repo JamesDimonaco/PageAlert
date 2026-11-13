@@ -356,7 +356,8 @@ export async function saveScanResultForUser(
     // showed. The cost is the other half of that trade: anything appearing
     // between the scan and that extract goes unannounced.
     matchedKeys: undefined,
-    soldOutKeys: soldOutKeysOf(schema),
+    // A rescan keeps what quick checks queued: those entries are still seen.
+    soldOutKeys: soldOutKeysOf(schema, monitor.soldOutKeys),
     updatedAt: now,
   });
 

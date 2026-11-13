@@ -423,7 +423,7 @@ test("a read in a new currency gives up after three confirming reads with no pri
  * A listing monitor whose prompt asks for stock, on a page whose one matching
  * entry reads `stocks` in turn across checks. The page changes every check.
  */
-async function stockListing(stocks: boolean[], soldOutScore = 20) {
+async function stockListing(stocks: boolean[], soldOutScore = 95) {
   vi.stubEnv("SCRAPER_URL", "https://scraper.test");
   vi.stubEnv("SCRAPER_API_KEY", "key");
   let checkNo = 0;
@@ -469,7 +469,7 @@ async function stockListing(stocks: boolean[], soldOutScore = 20) {
     await t.action(internal.scheduler.runScheduledChecks, {});
     return t.run((ctx) => ctx.db.get(id));
   };
-  return { check, readStockSent };
+  return { t, id, check, readStockSent };
 }
 
 // Story 2: a sold-out item the user asked for must alert when it comes back.
@@ -650,4 +650,85 @@ test("a sold-out entry whose recheck reads no stock stays sold out", async () =>
     expect(monitor?.lastMatchAt).toBeUndefined();
     expect(monitor?.soldOutKeys).toEqual(["shop.test/kingston"]);
   }
+});
+
+// Only an entry that would match but for its stock is worth rechecking. A
+// sold-out entry the prompt rejects would take a scoring slot every check.
+test("a sold-out entry the prompt rejects is not queued for rechecks", async () => {
+  const { check } = await stockListing([false], 20);
+  expect((await check())?.soldOutKeys).toEqual([]);
+});
+
+// The quick check alerted on it, so the next full read must not announce it again.
+test("an entry a quick check alerted on is not announced again by the next full read", async () => {
+  const { t, id, check } = await stockListing([true]);
+  await t.run((ctx) => ctx.db.patch(id, { matchedKeys: [] }));
+  expect((await check())?.matchedKeys).toEqual(["shop.test/kingston"]);
+});
+
+/** A monitor on a page with Kingston sold out per quick checks, due a full read that returns `items`. */
+async function fullReadAfterQuickChecks(items: Record<string, unknown>[]) {
+  vi.stubEnv("SCRAPER_URL", "https://scraper.test");
+  vi.stubEnv("SCRAPER_API_KEY", "key");
+  vi.stubGlobal("fetch", async (url: string) => {
+    if (url.endsWith("/api/quick-check")) return Response.json({ accessible: true, contentHash: "page-2", candidates: [], totalEntries: 1 });
+    if (url.endsWith("/api/extract")) {
+      return Response.json({ schema: { items, matchConditions: { inStockOnly: true } }, matches: [], totalItems: items.length, contentHash: "page-2" });
+    }
+    return new Response("not mocked", { status: 500 });
+  });
+  const t = convexTest(schema, modules);
+  t.registerComponent("betterAuth", betterAuthSchema, betterAuthModules);
+  const id = await t.run((ctx) =>
+    ctx.db.insert("monitors", {
+      userId: "user_1", name: "RAM", url: "https://shop.test/ram", prompt: "in stock", status: "active", checkInterval: "1h",
+      schema: { items: [], matchConditions: { inStockOnly: true } }, matchCount: 0, matchedKeys: [],
+      candidateKeys: ["shop.test/kingston"], soldOutKeys: ["shop.test/kingston"],
+      checkCount: 5, contentFingerprint: "page-1", lastAiExtractAt: 0, nextCheckAt: 0, createdAt: Date.now(), updatedAt: Date.now(),
+    })
+  );
+  await t.action(internal.scheduler.runScheduledChecks, {});
+  return (await t.run((ctx) => ctx.db.get(id)))?.soldOutKeys;
+}
+
+// A full read that does not say the entry is back must not drop it from the
+// rechecks: it is already seen, so nothing else would ever judge it again.
+test("a full read keeps a sold-out entry it did not read as back in stock", async () => {
+  expect(await fullReadAfterQuickChecks([{ title: "Kingston", url: "https://shop.test/kingston", inStock: null }])).toEqual(["shop.test/kingston"]);
+  expect(await fullReadAfterQuickChecks([])).toEqual(["shop.test/kingston"]);
+});
+
+test("a full read drops a sold-out entry it reads as back in stock", async () => {
+  expect(await fullReadAfterQuickChecks([{ title: "Kingston", url: "https://shop.test/kingston", inStock: true }])).toEqual([]);
+});
+
+// The stock alert already reports a product page's restock. A recheck would
+// send a second alert for the same event.
+test("a product page with a stock alert gets no sold-out rechecks", async () => {
+  vi.stubEnv("SCRAPER_URL", "https://scraper.test");
+  vi.stubEnv("SCRAPER_API_KEY", "key");
+  const page = "https://shop.test/kingston";
+  const entry = { title: "Kingston FURY Beast", url: page, price: 199, snippet: "" };
+  let scored = 0;
+  vi.stubGlobal("fetch", async (url: string) => {
+    if (url.endsWith("/api/quick-check")) return Response.json({ accessible: true, contentHash: "page-2", candidates: [entry], totalEntries: 1 });
+    if (url.endsWith("/api/score")) {
+      scored++;
+      return Response.json({ scored: [{ ...entry, matchScore: 95, matchReason: "", stock: { inStock: true, price: 19900, currency: "NZD" } }] });
+    }
+    return new Response("not mocked", { status: 500 });
+  });
+  const t = convexTest(schema, modules);
+  t.registerComponent("betterAuth", betterAuthSchema, betterAuthModules);
+  await t.run((ctx) =>
+    ctx.db.insert("monitors", {
+      userId: "user_1", name: "RAM", url: page, prompt: "in stock", status: "active", checkInterval: "1h",
+      schema: { items: [{ title: "Kingston FURY Beast", url: page }], matchConditions: { inStockOnly: true } },
+      matchCount: 0, alertOn: { backInStock: true }, candidateKeys: ["shop.test/kingston"], soldOutKeys: ["shop.test/kingston"],
+      productFingerprint: "same", checkCount: 5, contentFingerprint: "page-1", lastAiExtractAt: Date.now(), nextCheckAt: 0,
+      createdAt: Date.now(), updatedAt: Date.now(),
+    })
+  );
+  await t.action(internal.scheduler.runScheduledChecks, {});
+  expect(scored).toBe(0);
 });

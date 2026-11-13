@@ -405,6 +405,10 @@ export const recordCheckResult = internalMutation({
       const currentKeys = (args.matches as Record<string, unknown>[]).map(matchKey);
       newKeys = newMatchKeys(monitor.matchedKeys, currentKeys);
       updates.matchedKeys = [...new Set(currentKeys.filter(Boolean))];
+    } else if (!args.trackMatchKeys && args.matches.length > 0 && monitor.matchedKeys !== undefined) {
+      // What a quick check alerted on is announced too. Left out, the next
+      // full read would find it missing here and announce it again.
+      updates.matchedKeys = [...new Set([...monitor.matchedKeys, ...(args.matches as Record<string, unknown>[]).map(matchKey)])];
     }
 
     // Keyed off new matches, not the running count. The count is "entries on
@@ -1049,10 +1053,13 @@ async function runQuickCheck(
   const unseenKeys = new Set(newMatchKeys(monitor.candidateKeys, candidateKeys));
 
   // A seen entry is never judged again, so one that was sold out would never
-  // alert on its restock. When the prompt asks for stock, a few sold-out
-  // entries are judged again each check, in turn. New entries come first.
+  // alert on its restock. When the prompt asks for stock, up to
+  // MAX_SOLD_OUT_RECHECKS sold-out entries are judged again each check, in
+  // turn, and new entries take the rest of the slots. A product page with a
+  // stock alert is left out: that alert already reports the restock.
   const asksStock = matchConditions.inStockOnly === true;
-  const lastSoldOut: string[] = asksStock ? (monitor.soldOutKeys ?? []) : [];
+  const stockAlerted = readsProduct && monitor.alertOn?.backInStock === true;
+  const lastSoldOut: string[] = asksStock && !stockAlerted ? (monitor.soldOutKeys ?? []) : [];
   const byKey = new Map(visible.map((c) => [matchKey(c), c]));
   const recheck = lastSoldOut
     .filter((k) => byKey.has(k) && !unseenKeys.has(k))
@@ -1086,15 +1093,15 @@ async function runQuickCheck(
   // Only new entries and sold-out rechecks reach the AI, and only their own
   // text does. A page that has not changed costs nothing.
   const scored = await scoreQuickCheckCandidates([...unseen, ...recheck], monitor, scraperUrl, scraperKey, asksStock);
-  // A sold-out entry the prompt wants in stock never alerts, whatever it
-  // scored. A recheck needs a read that says it is back: a failed or blank
-  // read leaves it sold out.
   const rechecked = new Set(recheck.map(matchKey));
-  const soldOut = scored
-    .filter((c) => asksStock && (c.stock?.inStock === false || (rechecked.has(matchKey(c)) && c.stock?.inStock !== true)))
-    .map(matchKey);
-  const soldOutNow = new Set(soldOut);
-  const matches = scored.filter((c) => alertsOnScore(c.matchScore) && !soldOutNow.has(matchKey(c)));
+  // Read as sold out: never alerts, whatever it scored. A recheck needs a
+  // read that says it is back, so a failed or blank read leaves it sold out.
+  const readSoldOut = (c: ScoredCandidate) => asksStock && c.stock?.inStock === false;
+  const soldOutStill = (c: ScoredCandidate) =>
+    readSoldOut(c) || (asksStock && rechecked.has(matchKey(c)) && c.stock?.inStock !== true);
+  const matches = scored.filter((c) => alertsOnScore(c.matchScore) && !soldOutStill(c));
+  // Queued for rechecks only if it would match but for its stock.
+  const soldOut = scored.filter((c) => soldOutStill(c) && (!readSoldOut(c) || alertsOnScore(c.matchScore))).map(matchKey);
   // Those not judged this time go first, so the next check takes them.
   const judgedNow = new Set(scored.map(matchKey));
   const soldOutKeys = [...lastSoldOut.filter((k) => byKey.has(k) && !judgedNow.has(k)), ...soldOut];
@@ -1344,7 +1351,7 @@ async function runFullExtract(
     schema: result.schema,
     contentFingerprint: contentHash,
     trackMatchKeys: true,
-    soldOutKeys: soldOutKeysOf(result.schema),
+    soldOutKeys: soldOutKeysOf(result.schema, monitor.soldOutKeys),
     usedProxy: useProxy,
     aiExtracted: true,
   });

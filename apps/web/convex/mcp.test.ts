@@ -524,7 +524,8 @@ test("recent matches cover every monitor, only what is new since then, and only 
   await t.run(async (ctx) => {
     // Matched before `since` and still on the page after: not new.
     await ctx.db.insert("scrapeResults", { monitorId: ram, matches: [old], totalItems: 9, hasNewMatches: true, scrapedAt: NOW });
-    await ctx.db.insert("scrapeResults", { monitorId: ram, matches: [old], totalItems: 9, hasNewMatches: true, scrapedAt: since + MINUTE });
+    // A full read from before rows recorded which matches were new.
+    await ctx.db.insert("scrapeResults", { monitorId: ram, matches: [old], items: [old], totalItems: 9, hasNewMatches: true, scrapedAt: since + MINUTE });
     await ctx.db.patch(ram, { lastMatchAt: since + MINUTE });
     await ctx.db.insert("scrapeResults", { monitorId: cooler, matches: [fresh], totalItems: 9, hasNewMatches: true, scrapedAt: since + 2 * MINUTE });
     await ctx.db.patch(cooler, { lastMatchAt: since + 2 * MINUTE });
@@ -636,10 +637,12 @@ test("the first scan queues sold-out entries for rechecks when the prompt asks f
     id,
     schema: {
       items: [
-        { title: "Kingston", url: "https://shop.test/kingston", inStock: false },
-        { title: "Corsair", url: "https://shop.test/corsair", inStock: true },
+        { title: "Kingston", url: "https://shop.test/kingston", price: 199, inStock: false },
+        { title: "Corsair", url: "https://shop.test/corsair", price: 199, inStock: true },
+        // Sold out, but not what the prompt wants: rechecking it is wasted.
+        { title: "Kingston", url: "https://shop.test/kingston-case", price: 500, inStock: false },
       ],
-      matchConditions: { inStockOnly: true },
+      matchConditions: { inStockOnly: true, priceMax: 220 },
     },
     matches: [],
   });
@@ -655,7 +658,7 @@ test("recent matches skip what a re-read found again", async () => {
   const fresh = { title: "Corsair kit", url: "https://shop.test/corsair" };
   await t.run(async (ctx) => {
     await ctx.db.insert("scrapeResults", {
-      monitorId: ram, matches: [old, fresh], newMatchKeys: ["shop.test/corsair"], totalItems: 9, hasNewMatches: true, scrapedAt: NOW,
+      monitorId: ram, matches: [old, fresh], items: [old, fresh], newMatchKeys: ["shop.test/corsair"], totalItems: 9, hasNewMatches: true, scrapedAt: NOW,
     });
     await ctx.db.patch(ram, { lastMatchAt: NOW });
   });
@@ -688,4 +691,38 @@ test("deleting an account removes its preview proxy counter", async () => {
   await t.mutation(api.mcp.claimPreviewProxy, { apiKey: key });
   await t.run((ctx) => deleteAllUserData(ctx, userId, "a@example.com"));
   expect((await previewCounters(t)).filter((n) => n.includes(userId))).toEqual([]);
+});
+
+// A restock alerts again. "What's new" must date it from that alert, not the first.
+test("recent matches date an item from its latest alert", async () => {
+  const t = setup();
+  const { key } = await seedUser(t, "a@example.com");
+  const ram = await t.mutation(api.mcp.createMonitor, { apiKey: key, ...MONITOR, name: "RAM" });
+  const kit = { title: "Kingston kit", url: "https://shop.test/kingston" };
+  await t.run(async (ctx) => {
+    await ctx.db.insert("scrapeResults", { monitorId: ram, matches: [kit], totalItems: 9, hasNewMatches: true, scrapedAt: NOW - 10 * 24 * 60 * MINUTE });
+    await ctx.db.insert("scrapeResults", { monitorId: ram, matches: [kit], totalItems: 9, hasNewMatches: true, scrapedAt: NOW });
+    await ctx.db.patch(ram, { lastMatchAt: NOW });
+  });
+  // Both alerts fall inside the window; the answer gives the restock's time.
+  expect(await t.query(api.mcp.getRecentMatches, { apiKey: key, since: new Date(NOW - 11 * 24 * 60 * MINUTE).toISOString() })).toEqual([
+    { ...kit, monitorId: ram, monitorName: "RAM", matchedAt: new Date(NOW).toISOString() },
+  ]);
+});
+
+// A product's listings share the product's alerts and interval. One listing
+// changed alone would alert unlike the rest, and the product page would not show it.
+test("an agent cannot change alerts or interval on one listing of a product", async () => {
+  const t = setup();
+  const { key } = await seedUser(t, "a@example.com");
+  const { monitorIds } = await t.mutation(api.mcp.createProduct, {
+    apiKey: key, title: "Sony WH-1000XM5", region: "GB", urls: ["https://www.argos.co.uk/product/1"], alertOn: { backInStock: true },
+  });
+  for (const change of [{ alertOn: { priceDrop: true } }, { checkInterval: "6h" as const }]) {
+    expect(await toolErrorOf(t.mutation(api.mcp.updateMonitor, { apiKey: key, monitorId: monitorIds[0]!, ...change }))).toMatchObject({
+      code: "failed",
+      message: expect.stringMatching(/part of a product/),
+    });
+  }
+  expect((await t.run((ctx) => ctx.db.get(monitorIds[0]!)))?.alertOn).toEqual({ backInStock: true });
 });
