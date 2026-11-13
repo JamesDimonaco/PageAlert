@@ -1,6 +1,6 @@
 # Stock-aware matching and the MCP gaps
 
-Status: ready-for-agent. Agreed in a grilling session on 13/11/2026. Terms follow the repo's `GLOSSARY.md`.
+Status: built on 13/11/2026 (tickets in `tickets/`); the backfill waits for the deploy. Agreed in a grilling session on 13/11/2026. Terms follow the repo's `GLOSSARY.md`.
 
 ## Problem Statement
 
@@ -202,3 +202,13 @@ After PR 3, give the 7 monitors real stock and price alerts.
 - 133 monitors: 63 active, 11 in error, 58 paused, 1 scanning. 25 live monitors have a prompt that mentions stock, across 11 users.
 - The two false alerts: monitors `j57fw3t5n0t5zagz8e7vxy0q498j2t41` and `j570ejts3603dbnc4xbek9mqdd8j2cs8`. Each sent one in-app notice and one delivered match email on 12/11/2026.
 - The kill switches in the repo CLAUDE.md still apply. The backfill is an internal migration, not `inactivity:pauseDormant` or `tiers.reconcile`.
+
+### Changed while building
+
+- **Restocks did need code.** On a quick check, every judged entry joined the seen set, so a sold-out one was never judged again. Sold-out entries now sit in `soldOutKeys`, and each check judges up to 5 of them again, in turn, after new entries.
+- **Preview proxy has its own hourly bucket** of 20, apart from the monitors' escalation budget, after two security reviews pulled in opposite directions.
+- **`create_monitor` guesses alertOn from the prompt** when the agent sends none. There was no guess on the MCP before.
+- **A prompt change through `update_monitor` applies at the next full read**, as in the web app. There is no rescan tool.
+- **`create_folder` returns the existing folder** of the same name, so agents need no list tool to find one.
+- **New Zealand is not a search region.** `find_product` cannot help the NZ build until the scraper's search supports it.
+- **The AI sets `inStockOnly` on some "any shop offers" prompts.** The real-API run set it on 3 of 4 PriceSpy prompts. It only blocks items read as sold out, so it is safe, but it is not consistent.
