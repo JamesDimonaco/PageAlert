@@ -1,6 +1,6 @@
 "use client";
 
-import { CheckCircle2, CircleHelp, XCircle } from "lucide-react";
+import { CheckCircle2, CircleDashed, CircleHelp, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { ExtractedItem, MatchCheck, MatchConditions } from "@prowl/shared";
 import { explainMatch } from "@prowl/shared";
@@ -10,7 +10,7 @@ import { cn } from "@/lib/utils";
 function conditionLabel(check: MatchCheck, currency: unknown): string {
   switch (check.kind) {
     case "price": {
-      const min = check.min ? formatPrice(check.min, currency) : null;
+      const min = check.min !== undefined && check.min > 0 ? formatPrice(check.min, currency) : null;
       const max = check.max !== undefined ? formatPrice(check.max, currency) : null;
       if (min && max) return `Price between ${min} and ${max}`;
       if (max) return `Price ${max} or less`;
@@ -65,20 +65,29 @@ export function MatchChecks({
       <p className="text-sm font-medium">To count as a match, {single ? "it needs" : "an item needs"}:</p>
       <ul className="mt-2 space-y-1.5">
         {rows.map((check, i) => {
+          // On a listing a tick means every item passes, a cross none. Some
+          // passing is neither: ticking it hid that no one item passed them all.
           const passing = perItem.filter((checks) => checks[i].pass).length;
-          const pass = single ? check.pass : passing > 0;
+          const state = passing === items.length ? "pass" : passing === 0 ? "fail" : "some";
           const detail = single ? singleItemDetail(check, currency) : `${passing} of ${items.length} items`;
-          const Icon = pass ? CheckCircle2 : XCircle;
+          const Icon = state === "pass" ? CheckCircle2 : state === "fail" ? XCircle : CircleDashed;
           return (
             <li key={i} className="flex items-center gap-2 text-sm">
-              <Icon className={cn("h-4 w-4 shrink-0", pass ? "text-emerald-400" : "text-red-400")} />
+              <Icon
+                className={cn(
+                  "h-4 w-4 shrink-0",
+                  state === "pass" ? "text-emerald-400" : state === "fail" ? "text-red-400" : "text-amber-400",
+                )}
+              />
               <span>{conditionLabel(check, currency)}</span>
               {detail && (
-                <span className={cn("tabular-nums", pass ? "text-muted-foreground" : "text-red-400")}>
+                <span className={cn("tabular-nums", state === "fail" ? "text-red-400" : "text-muted-foreground")}>
                   · {detail}
                 </span>
               )}
-              <span className="sr-only">{pass ? "(passes)" : "(fails)"}</span>
+              <span className="sr-only">
+                {state === "pass" ? "(passes)" : state === "fail" ? "(fails)" : "(some items pass)"}
+              </span>
             </li>
           );
         })}

@@ -381,7 +381,7 @@ export default function MonitorDetailPage({
             monitorId={monitorId}
             monitor={monitor}
             matches={matches}
-            items={allItems}
+            items={allItems.filter((item) => !blacklist.includes(getItemKey(item)))}
             conditions={conditions}
             results={results}
             scores={scores}

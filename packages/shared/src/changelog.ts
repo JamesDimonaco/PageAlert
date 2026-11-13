@@ -42,8 +42,8 @@ export const CHANGELOG: readonly ChangelogEntry[] = [
     id: "mcp-server",
     date: "2026-09-30",
     title: "Create monitors from Claude and other AI agents",
-    body: "PageAlert now has an MCP server. Make an API key in Settings, connect your agent, and it can create monitors and read their matches.",
-    cta: { label: "Get an API key", href: "/dashboard/settings?tab=api" },
+    body: "PageAlert now has an MCP server. Make an MCP key in Settings, connect your agent, and it can create monitors and read their matches.",
+    cta: { label: "Get an MCP key", href: "/dashboard/settings?tab=api" },
   },
   {
     id: "session-link-warning",

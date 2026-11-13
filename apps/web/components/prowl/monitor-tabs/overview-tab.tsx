@@ -221,7 +221,7 @@ export function OverviewTab({ monitorId, monitor, matches, items, conditions, re
             {totalItems === 1 ? "Not a match yet." : `None of the ${totalItems} items match yet.`}
           </p>
           <p className="mt-1 text-sm text-muted-foreground">
-            We check every {displayInterval}{next ? `, next ${next}` : ""}, and alert you when {totalItems === 1 ? "it passes" : "one passes"} every check above.
+            We check every {displayInterval}{next ? `, next ${next}` : ""}, and alert you as soon as {totalItems === 1 ? "it matches" : "one matches"}.
           </p>
           <div className="mt-4 flex flex-col sm:flex-row sm:items-center gap-2">
             <Button
@@ -441,8 +441,12 @@ export function OverviewTab({ monitorId, monitor, matches, items, conditions, re
         <MatchChecks
           items={items}
           conditions={conditions}
-          showStockHint={isProductMonitor(monitor) && monitor.alertOn?.backInStock !== true}
-          onOpenSettings={() => onSettingsOpenChange(true)}
+          showStockHint={totalItems === 1 && isProductMonitor(monitor) && monitor.alertOn?.backInStock !== true}
+          onOpenSettings={() => {
+            onSettingsOpenChange(true);
+            // The settings sit below the matches list, often off screen.
+            requestAnimationFrame(() => document.getElementById("monitor-settings")?.scrollIntoView({ behavior: "smooth" }));
+          }}
         />
 
         <div className="rounded-xl border border-border bg-card divide-y divide-border overflow-hidden">
@@ -516,7 +520,7 @@ export function OverviewTab({ monitorId, monitor, matches, items, conditions, re
       </div>
 
       {/* Monitor settings — collapsible */}
-      <div>
+      <div id="monitor-settings" className="scroll-mt-6">
         <button
           onClick={() => onSettingsOpenChange(!settingsOpen)}
           className="section-title flex w-full items-center gap-2 hover:text-primary transition-colors"
