@@ -301,10 +301,26 @@ export const updateMonitor = mutation({
     await updateMonitorForUser(ctx, userId, monitor._id, { ...fields, status }).catch(asToolError);
     // The web app asks the user to rescan after a new prompt; an agent has no
     // rescan. Due now, the next check re-reads the page with the new prompt.
+    // The old prompt's seen set and sold-out queue go too: the quick check
+    // after the re-read then seeds them silently, rather than announcing what
+    // the re-read already did.
     if (fields.prompt !== undefined && fields.prompt.trim() !== monitor.prompt) {
-      await ctx.db.patch(monitor._id, { lastAiExtractAt: 0, contentFingerprint: undefined });
+      await ctx.db.patch(monitor._id, {
+        lastAiExtractAt: 0,
+        contentFingerprint: undefined,
+        candidateKeys: undefined,
+        soldOutKeys: undefined,
+        soldOutTextHashes: undefined,
+      });
     }
-    if (folderId !== undefined) await setMonitorFolder(ctx, userId, monitor._id, folderId).catch(asToolError);
+    if (folderId !== undefined) {
+      // A product's listings are filed with the product, and agents have no
+      // tool to move a product, so filing a listing files its product.
+      const filing = monitor.groupId
+        ? setProductFolder(ctx, userId, monitor.groupId, folderId)
+        : setMonitorFolder(ctx, userId, monitor._id, folderId);
+      await filing.catch(asToolError);
+    }
     const alertOn = fields.alertOn ?? monitor.alertOn;
     return wantsProductAlerts(alertOn) && !isProductMonitor(monitor)
       ? { monitorId: monitor._id, note: NOT_A_PRODUCT_NOTE }

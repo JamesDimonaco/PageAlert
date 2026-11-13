@@ -1122,12 +1122,13 @@ async function runQuickCheck(
   // Those not judged this time go first, so the next check takes them.
   const judgedNow = new Set(scored.map(matchKey));
   const soldOutKeys = [...lastSoldOut.filter((k) => byKey.has(k) && !judgedNow.has(k)), ...soldOut];
-  // A blank read records no text, so that entry is read again next check.
+  // Any stock read that came back records the entry's text, so it waits for
+  // that text to change. A failed read records none, so it is tried again.
   const scoredByKey = new Map(scored.map((c) => [matchKey(c), c]));
   const soldOutTextHashes = soldOutKeys.flatMap((k) => {
     const text = entryTextHash(byKey.get(k)!);
     const read = scoredByKey.get(k);
-    return (read ? read.stock?.inStock === false : readSoldOutText.has(text)) ? [text] : [];
+    return (read ? read.stock !== undefined : readSoldOutText.has(text)) ? [text] : [];
   });
 
   const outcome = await ctx.runMutation(internal.scheduler.recordCheckResult, {

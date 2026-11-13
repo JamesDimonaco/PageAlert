@@ -114,12 +114,6 @@ function cleanListing(listing: FoundListing, fallbackTitle: string): FoundListin
   };
 }
 
-/**
- * Create a product from a search: one monitor per ticked listing, each with
- * the product's criteria, channels and interval. Unticked listings are kept
- * as suggestions. All or nothing: if any monitor can't be created (the plan's
- * monitor limit, the creation rate limit, a bad link) nothing is.
- */
 const createArgs = {
   name: v.string(),
   region: v.string(),
@@ -139,9 +133,12 @@ export const create = mutation({
 });
 
 /**
- * Create a product for this user. The web app passes what it found by search;
- * the MCP passes the shop pages an agent picked. No channels means every
- * channel, as for a monitor.
+ * Create a product for this user: one monitor per ticked listing, each with
+ * the product's criteria, channels and interval. Unticked listings are kept
+ * as suggestions. The web app passes what it found by search; the MCP passes
+ * the shop pages an agent picked. No channels means every channel, as for a
+ * monitor. All or nothing: if any monitor can't be created (the plan's
+ * monitor limit, the creation rate limit, a bad link) nothing is.
  */
 export async function createProductForUser(
   ctx: MutationCtx,

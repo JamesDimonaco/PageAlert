@@ -372,10 +372,9 @@ function registerTools(server: McpServer, convex: ConvexHttpClient, apiKey: stri
       }),
     },
     async (args) => {
-      for (const page of args.urls) {
-        const rejection = await urlRejection(page);
-        if (rejection) return fail(invalidUrl(`${page}: ${rejection}`));
-      }
+      const rejections = await Promise.all(args.urls.map(urlRejection));
+      const bad = rejections.findIndex((r) => r !== null);
+      if (bad !== -1) return fail(invalidUrl(`${args.urls[bad]}: ${rejections[bad]}`));
       try {
         return ok(await convex.mutation(api.mcp.createProduct, { apiKey, ...args }));
       } catch (e) {

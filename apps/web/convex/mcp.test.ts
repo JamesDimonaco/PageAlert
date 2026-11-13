@@ -821,14 +821,34 @@ test("a new prompt over MCP makes the next check re-read the page", async () => 
   const t = setup();
   const { key } = await seedUser(t, "a@example.com");
   const id = await t.mutation(api.mcp.createMonitor, { apiKey: key, ...MONITOR });
-  await t.run((ctx) => ctx.db.patch(id, { status: "active", lastAiExtractAt: NOW, contentFingerprint: "page-1" }));
+  await t.run((ctx) =>
+    ctx.db.patch(id, {
+      status: "active", lastAiExtractAt: NOW, contentFingerprint: "page-1",
+      candidateKeys: ["example.com/feb"], soldOutKeys: ["example.com/feb"], soldOutTextHashes: ["h"],
+    })
+  );
   await t.mutation(api.mcp.updateMonitor, { apiKey: key, monitorId: id, prompt: "any March start date" });
   const monitor = await t.run((ctx) => ctx.db.get(id));
   expect([monitor?.lastAiExtractAt, monitor?.contentFingerprint]).toEqual([0, undefined]);
+  // The old prompt's seen set and queue describe other entries. Kept, the
+  // quick check after the re-read would announce its matches a second time.
+  expect([monitor?.candidateKeys, monitor?.soldOutKeys, monitor?.soldOutTextHashes]).toEqual([undefined, undefined, undefined]);
 
   // A rename, or the same prompt sent again, re-reads nothing: that would be
   // a paid call for no reason.
   await t.run((ctx) => ctx.db.patch(id, { lastAiExtractAt: NOW }));
   await t.mutation(api.mcp.updateMonitor, { apiKey: key, monitorId: id, name: "Milford, March", prompt: "any March start date" });
   expect((await t.run((ctx) => ctx.db.get(id)))?.lastAiExtractAt).toBe(NOW);
+});
+
+// Agents have no move-product tool. Filing one of its listings files the product.
+test("filing a product's listing files the product", async () => {
+  const t = setup();
+  const { key } = await seedUser(t, "a@example.com");
+  const { folderId } = await t.mutation(api.mcp.createFolder, { apiKey: key, name: "PC build" });
+  const { productId, monitorIds } = await t.mutation(api.mcp.createProduct, {
+    apiKey: key, title: "Noctua", region: "NZ", urls: ["https://computerlounge.co.nz/products/noctua"], alertOn: { backInStock: true },
+  });
+  await t.mutation(api.mcp.updateMonitor, { apiKey: key, monitorId: monitorIds[0]!, folderId });
+  expect((await t.run((ctx) => ctx.db.get(productId)))?.folderId).toBe(folderId);
 });

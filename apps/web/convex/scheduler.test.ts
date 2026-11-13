@@ -633,12 +633,16 @@ test("a sold-out entry whose recheck reads no stock stays sold out", async () =>
     () => Response.json({ scored: [{ ...entry, matchScore: 95, matchReason: "", stock: { inStock: null, price: 19900, currency: "NZD" } }] }),
   ];
   let checkNo = 0;
+  let scoreCalls = 0;
   vi.stubGlobal("fetch", async (url: string) => {
     if (url.endsWith("/api/quick-check")) {
       checkNo++;
       return Response.json({ accessible: true, contentHash: `page-${checkNo}`, candidates: [entry], totalEntries: 9 });
     }
-    if (url.endsWith("/api/score")) return answers[checkNo - 1]!();
+    if (url.endsWith("/api/score")) {
+      scoreCalls++;
+      return answers[checkNo - 1]!();
+    }
     return new Response("not mocked", { status: 500 });
   });
   const t = convexTest(schema, modules);
@@ -669,6 +673,11 @@ test("a sold-out entry whose recheck reads no stock stays sold out", async () =>
     expect(monitor?.lastMatchAt).toBeUndefined();
     expect(monitor?.soldOutKeys).toEqual(["shop.test/kingston"]);
   }
+  // The failed read is tried again; the blank one waits for the entry's own
+  // text to change, or every page change would pay for it again.
+  await t.run((ctx) => ctx.db.patch(id, { nextCheckAt: 0 }));
+  await t.action(internal.scheduler.runScheduledChecks, {});
+  expect(scoreCalls).toBe(2);
 });
 
 // The quick check alerted on it, so the next full read must not announce it again.
