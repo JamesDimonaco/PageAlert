@@ -116,37 +116,74 @@ export const listMonitors = query({
   },
 });
 
+/**
+ * A monitor's matched items, newest first, each dated from the oldest row it
+ * appears in. A full extract stores every current match, not only the new
+ * ones, so an item on the page for a week is in every row.
+ */
+async function datedMatches(ctx: QueryCtx, monitorId: Id<"monitors">): Promise<(AgentItem & { matchedAt: number })[]> {
+  const results = await ctx.db
+    .query("scrapeResults")
+    .withIndex("by_monitorId_scrapedAt", (q) => q.eq("monitorId", monitorId))
+    .order("desc")
+    .take(MATCH_LOOKBACK_RESULTS);
+  const byIdentity = new Map<string, AgentItem & { matchedAt: number }>();
+  for (const result of results) {
+    if (!result.hasNewMatches) continue;
+    for (const raw of result.matches) {
+      const item = toAgentItem(raw);
+      if (!item) continue;
+      const key = itemIdentity(item);
+      const seen = byIdentity.get(key);
+      if (seen) seen.matchedAt = result.scrapedAt;
+      else byIdentity.set(key, { ...item, matchedAt: result.scrapedAt });
+    }
+  }
+  return [...byIdentity.values()].sort((a, b) => b.matchedAt - a.matchedAt);
+}
+
 export const getMatches = query({
   args: { apiKey: v.string(), monitorId: v.string(), limit: v.optional(v.number()) },
   handler: async (ctx, { apiKey, monitorId, limit }) => {
     const { userId } = await requireKeyOwner(ctx, apiKey);
     const monitor = await ownedMonitor(ctx, userId, monitorId);
     const max = Math.min(Math.max(Math.floor(limit ?? DEFAULT_AGENT_MATCHES), 1), MAX_AGENT_MATCHES);
+    return (await datedMatches(ctx, monitor._id))
+      .slice(0, max)
+      .map((m) => ({ ...m, matchedAt: new Date(m.matchedAt).toISOString() }));
+  },
+});
 
-    const results = await ctx.db
-      .query("scrapeResults")
-      .withIndex("by_monitorId_scrapedAt", (q) => q.eq("monitorId", monitor._id))
-      .order("desc")
-      .take(MATCH_LOOKBACK_RESULTS);
+/** Monitors read by one recent-matches call. Each costs a history read. */
+const MAX_RECENT_MATCH_MONITORS = 50;
 
-    // A full extract stores every current match, not only the new ones, so an
-    // item on the page for a week is in every row. Keep one entry per item,
-    // dated from the oldest row it appears in.
-    const byIdentity = new Map<string, AgentItem & { matchedAt: number }>();
-    for (const result of results) {
-      if (!result.hasNewMatches) continue;
-      for (const raw of result.matches) {
-        const item = toAgentItem(raw);
-        if (!item) continue;
-        const key = itemIdentity(item);
-        const seen = byIdentity.get(key);
-        if (seen) seen.matchedAt = result.scrapedAt;
-        else byIdentity.set(key, { ...item, matchedAt: result.scrapedAt });
+/**
+ * New matches across all of a user's monitors since a time, newest first.
+ * Picks monitors by lastMatchAt, which only moves on a new match; matchCount
+ * is a per-check total and says nothing about what is new. A product's
+ * listings are left out, because they never send match alerts.
+ */
+export const getRecentMatches = query({
+  args: { apiKey: v.string(), since: v.string() },
+  handler: async (ctx, { apiKey, since }) => {
+    const { userId } = await requireKeyOwner(ctx, apiKey);
+    const from = Date.parse(since);
+    if (Number.isNaN(from)) throw new ConvexError(toolError("since must be an ISO 8601 time, e.g. 2026-11-13T00:00:00Z."));
+    const monitors = (
+      await ctx.db.query("monitors").withIndex("by_userId", (q) => q.eq("userId", userId)).collect()
+    )
+      .filter((m) => m.groupId === undefined && m.lastMatchAt !== undefined && m.lastMatchAt >= from)
+      .sort((a, b) => b.lastMatchAt! - a.lastMatchAt!)
+      .slice(0, MAX_RECENT_MATCH_MONITORS);
+    const recent = [];
+    for (const monitor of monitors) {
+      for (const match of await datedMatches(ctx, monitor._id)) {
+        if (match.matchedAt < from) continue;
+        recent.push({ ...match, monitorId: monitor._id, monitorName: monitor.name });
       }
     }
-    return [...byIdentity.values()]
+    return recent
       .sort((a, b) => b.matchedAt - a.matchedAt)
-      .slice(0, max)
       .map((m) => ({ ...m, matchedAt: new Date(m.matchedAt).toISOString() }));
   },
 });
@@ -272,7 +309,9 @@ export const claimPreviewProxy = mutation({
     if ((row?.value ?? 0) >= PREVIEW_PROXY_DAILY_LIMIT) {
       return { granted: false, reason: `This account has used its ${PREVIEW_PROXY_DAILY_LIMIT} proxy previews for today.` };
     }
-    if ((await scraperDown(ctx)) || !(await reserveFallback(ctx, false))) {
+    // An escalation: a reach for the proxy after a block, so the hourly cap
+    // on bursts applies as well as the monthly one.
+    if ((await scraperDown(ctx)) || !(await reserveFallback(ctx, true))) {
       return { granted: false, reason: "The proxy is not available right now." };
     }
     if (row) await ctx.db.patch(row._id, { value: row.value + 1 });

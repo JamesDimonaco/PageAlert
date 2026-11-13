@@ -255,6 +255,28 @@ function registerTools(server: McpServer, convex: ConvexHttpClient, apiKey: stri
   );
 
   server.registerTool(
+    "get_recent_matches",
+    {
+      title: "Get recent matches",
+      description:
+        "New matches across all the user's monitors since a time, newest first, each with its monitor's id " +
+        "and name and when it matched. Reads up to the 50 monitors that matched most recently. Use it to " +
+        "answer 'what's new?' in one call. A product's listings are not included: they alert on stock and price only.",
+      inputSchema: z.object({
+        since: z.string().describe("ISO 8601 time, e.g. 2026-11-13T00:00:00Z."),
+      }),
+      annotations: { readOnlyHint: true },
+    },
+    async (args) => {
+      try {
+        return ok(await convex.query(api.mcp.getRecentMatches, { apiKey, ...args }));
+      } catch (e) {
+        return fail(convexFailure(e));
+      }
+    }
+  );
+
+  server.registerTool(
     "update_monitor",
     {
       title: "Update a monitor",

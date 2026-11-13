@@ -494,3 +494,75 @@ test("an agent creates a product from the shop pages it picked", async () => {
     await toolErrorOf(t.mutation(api.mcp.createProduct, { apiKey: key, title: "x", region: "GB", urls: ["https://a.test/1"], alertOn: {} }))
   ).toMatchObject({ code: "failed", message: "Pick what to be alerted about." });
 });
+
+// One call for "what's new", instead of get_matches on every monitor.
+test("recent matches cover every monitor, only what is new since then, and only the key's own", async () => {
+  const t = setup();
+  const { key, userId } = await seedUser(t, "a@example.com");
+  const other = await seedUser(t, "b@example.com");
+  const ram = await t.mutation(api.mcp.createMonitor, { apiKey: key, ...MONITOR, name: "RAM" });
+  const cooler = await t.mutation(api.mcp.createMonitor, { apiKey: key, ...MONITOR, name: "Cooler" });
+  const theirs = await t.mutation(api.mcp.createMonitor, { apiKey: other.key, ...MONITOR, name: "Theirs" });
+  const old = { title: "Kingston kit", url: "https://shop.test/kingston" };
+  const fresh = { title: "Noctua", url: "https://shop.test/noctua" };
+  const since = NOW + 10 * MINUTE;
+  await t.run(async (ctx) => {
+    // Matched before `since` and still on the page after: not new.
+    await ctx.db.insert("scrapeResults", { monitorId: ram, matches: [old], totalItems: 9, hasNewMatches: true, scrapedAt: NOW });
+    await ctx.db.insert("scrapeResults", { monitorId: ram, matches: [old], totalItems: 9, hasNewMatches: true, scrapedAt: since + MINUTE });
+    await ctx.db.patch(ram, { lastMatchAt: since + MINUTE });
+    await ctx.db.insert("scrapeResults", { monitorId: cooler, matches: [fresh], totalItems: 9, hasNewMatches: true, scrapedAt: since + 2 * MINUTE });
+    await ctx.db.patch(cooler, { lastMatchAt: since + 2 * MINUTE });
+    await ctx.db.insert("scrapeResults", { monitorId: theirs, matches: [fresh], totalItems: 9, hasNewMatches: true, scrapedAt: since + 2 * MINUTE });
+    await ctx.db.patch(theirs, { lastMatchAt: since + 2 * MINUTE });
+  });
+
+
+  expect(await t.query(api.mcp.getRecentMatches, { apiKey: key, since: new Date(since).toISOString() })).toEqual([
+    { ...fresh, monitorId: cooler, monitorName: "Cooler", matchedAt: new Date(since + 2 * MINUTE).toISOString() },
+  ]);
+});
+
+test("recent matches leave out a product's listings, which never send match alerts", async () => {
+  const t = setup();
+  const { key } = await seedUser(t, "a@example.com");
+  const { monitorIds } = await t.mutation(api.mcp.createProduct, {
+    apiKey: key,
+    title: "Sony WH-1000XM5",
+    region: "GB",
+    urls: ["https://www.argos.co.uk/product/1"],
+    alertOn: { backInStock: true },
+  });
+  await t.run(async (ctx) => {
+    await ctx.db.insert("scrapeResults", { monitorId: monitorIds[0]!, matches: [{ title: "Case" }], totalItems: 9, hasNewMatches: true, scrapedAt: NOW });
+    await ctx.db.patch(monitorIds[0]!, { lastMatchAt: NOW });
+  });
+  expect(await t.query(api.mcp.getRecentMatches, { apiKey: key, since: new Date(NOW - MINUTE).toISOString() })).toEqual([]);
+});
+
+// Each monitor read costs a history read; one call must stay bounded.
+test("recent matches read at most the 50 monitors that matched most recently", async () => {
+  const t = setup();
+  const { key, userId } = await seedUser(t, "a@example.com");
+  await t.run(async (ctx) => {
+    for (let i = 0; i < 51; i++) {
+      const id = await ctx.db.insert("monitors", {
+        userId, name: `m${i}`, url: `https://shop.test/${i}`, prompt: "x", status: "active", checkInterval: "1h",
+        matchCount: 1, lastMatchAt: NOW + i, createdAt: NOW, updatedAt: NOW,
+      });
+      await ctx.db.insert("scrapeResults", { monitorId: id, matches: [{ title: `item ${i}` }], totalItems: 1, hasNewMatches: true, scrapedAt: NOW + i });
+    }
+  });
+  const recent = await t.query(api.mcp.getRecentMatches, { apiKey: key, since: new Date(NOW).toISOString() });
+  expect(recent).toHaveLength(50);
+  expect(recent.at(-1)?.monitorName).toBe("m1");
+});
+
+// A burst of agents all hitting blocked shops is the incident the hourly cap exists for.
+test("preview gets no proxy attempt once this hour's escalation budget is spent", async () => {
+  const t = setup();
+  const { key } = await seedUser(t, "a@example.com");
+  const hour = new Date(NOW).toISOString().slice(0, 13);
+  await t.run((ctx) => ctx.db.insert("counters", { name: `fallback:escalations:${hour}`, value: 1_000_000 }));
+  expect(await t.mutation(api.mcp.claimPreviewProxy, { apiKey: key })).toMatchObject({ granted: false });
+});
