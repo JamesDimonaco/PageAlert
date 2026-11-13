@@ -167,3 +167,19 @@ test("the backfill counts what quick checks announced since the last full read a
   await t.mutation(internal.backfill.markReReadDue, { dryRun: false });
   expect((await t.run((ctx) => ctx.db.get(id)))?.matchedKeys).toEqual(["shop.test/a", "shop.test/b"]);
 });
+
+// The cap on rows read must drop the oldest alerts, not the newest: the newest
+// are the ones most likely still on the page for the re-read to find.
+test("the backfill reads the newest quick-check alerts first", async () => {
+  const t = setup();
+  const id = await insert(t, "ram", { matchedKeys: [], lastAiExtractAt: NOW - 10_000 });
+  await t.run(async (ctx) => {
+    for (let i = 0; i < 501; i++) {
+      await ctx.db.insert("scrapeResults", { monitorId: id, matches: [{ url: `https://shop.test/${i}` }], totalItems: 1, hasNewMatches: true, scrapedAt: NOW - 9_000 + i });
+    }
+  });
+  await t.mutation(internal.backfill.markReReadDue, { dryRun: false });
+  const keys = (await t.run((ctx) => ctx.db.get(id)))?.matchedKeys ?? [];
+  expect(keys).toContain("shop.test/500");
+  expect(keys).toHaveLength(500);
+});

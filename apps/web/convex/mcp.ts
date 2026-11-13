@@ -165,7 +165,7 @@ async function alertedSince(ctx: QueryCtx, monitorId: Id<"monitors">, from: numb
     .query("scrapeResults")
     .withIndex("by_monitorId_scrapedAt", (q) => q.eq("monitorId", monitorId).gte("scrapedAt", from))
     .order("desc")
-    .take(MATCH_LOOKBACK_RESULTS);
+    .take(MAX_RECENT_ROWS);
   const byIdentity = new Map<string, AgentItem & { matchedAt: number }>();
   for (const result of results) {
     if (!result.hasNewMatches || (result.items !== undefined && result.newMatchKeys === undefined)) continue;
@@ -194,8 +194,13 @@ export const getMatches = query({
   },
 });
 
-/** Monitors read by one recent-matches call. Each costs a history read. */
-const MAX_RECENT_MATCH_MONITORS = 50;
+/**
+ * Monitors read by one recent-matches call, and result rows read per monitor.
+ * About 2KB a row, so a call reads at most about 8MB, under the query limit.
+ * 200 rows is two days of a 15-minute monitor.
+ */
+const MAX_RECENT_MATCH_MONITORS = 20;
+const MAX_RECENT_ROWS = 200;
 
 /**
  * New matches across all of a user's monitors since a time, newest first.

@@ -399,7 +399,9 @@ export async function scoreCandidates(
   const client = getClient();
   const message = await client.messages.create({
     model: "claude-sonnet-5",
-    max_tokens: 2048,
+    // 25 entries with stock, price and currency each run near 2,000 tokens.
+    // A cut-off answer parses as nothing, and every entry then alerts unscored.
+    max_tokens: 4096,
     // A short judging task; the reasoning tokens would come out of max_tokens.
     thinking: { type: "disabled" },
     system: readStock ? SCORING_PROMPT + STOCK_PROMPT : SCORING_PROMPT,

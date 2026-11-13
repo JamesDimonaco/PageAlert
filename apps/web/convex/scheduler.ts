@@ -1120,7 +1120,9 @@ async function runQuickCheck(
     scoredCandidates: scored,
     contentFingerprint: contentHash,
     candidateKeys: seenAfterCheck,
-    ...(asksStock ? { soldOutKeys } : {}),
+    // Left alone while a stock alert covers the restock, so the queue is
+    // still there if that alert is turned off.
+    ...(asksStock && !stockAlerted ? { soldOutKeys } : {}),
     usedProxy: useProxy,
   });
 

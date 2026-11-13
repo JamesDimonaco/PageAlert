@@ -661,6 +661,12 @@ export async function updateMonitorForUser(
     }
   }
 
+  // Turning on "in stock only" must queue what the last read saw sold out:
+  // those entries are already seen, so nothing else would judge them again.
+  if (fields.schema !== undefined) {
+    updates.soldOutKeys = soldOutKeysOf(fields.schema, existing.soldOutKeys);
+  }
+
   // A new URL or prompt is in effect a new monitor, whose first error the
   // owner has not been told about.
   if (fields.url !== undefined || fields.prompt !== undefined) {

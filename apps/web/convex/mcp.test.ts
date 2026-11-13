@@ -557,11 +557,11 @@ test("recent matches leave out a product's listings, which never send match aler
 });
 
 // Each monitor read costs a history read; one call must stay bounded.
-test("recent matches read at most the 50 monitors that matched most recently", async () => {
+test("recent matches read at most the 20 monitors that matched most recently", async () => {
   const t = setup();
   const { key, userId } = await seedUser(t, "a@example.com");
   await t.run(async (ctx) => {
-    for (let i = 0; i < 51; i++) {
+    for (let i = 0; i < 21; i++) {
       const id = await ctx.db.insert("monitors", {
         userId, name: `m${i}`, url: `https://shop.test/${i}`, prompt: "x", status: "active", checkInterval: "1h",
         matchCount: 1, lastMatchAt: NOW + i, createdAt: NOW, updatedAt: NOW,
@@ -570,10 +570,8 @@ test("recent matches read at most the 50 monitors that matched most recently", a
     }
   });
   const recent = await t.query(api.mcp.getRecentMatches, { apiKey: key, since: new Date(NOW).toISOString(), limit: 100 });
-  expect(recent).toHaveLength(50);
+  expect(recent).toHaveLength(20);
   expect(recent.at(-1)?.monitorName).toBe("m1");
-  // The answer is capped like get_matches, by default and at most.
-  expect(await t.query(api.mcp.getRecentMatches, { apiKey: key, since: new Date(NOW).toISOString() })).toHaveLength(20);
 });
 
 // Previews have their own hourly bucket. On the monitors' escalation budget,
@@ -737,4 +735,46 @@ test("list_monitors shows a product listing's folder", async () => {
     apiKey: key, title: "Noctua", region: "NZ", urls: ["https://computerlounge.co.nz/products/noctua"], alertOn: { backInStock: true }, folderId,
   });
   expect((await t.query(api.mcp.listMonitors, { apiKey: key })).map((m) => m.folder)).toEqual(["PC build"]);
+});
+
+// A 15-minute monitor writes about 96 rows a day, most with no match. An alert
+// from early in the window must not fall past the rows read.
+test("recent matches find an alert 150 checks back", async () => {
+  const t = setup();
+  const { key } = await seedUser(t, "a@example.com");
+  const ram = await t.mutation(api.mcp.createMonitor, { apiKey: key, ...MONITOR, name: "RAM" });
+  const kit = { title: "Kingston kit", url: "https://shop.test/kingston" };
+  await t.run(async (ctx) => {
+    await ctx.db.insert("scrapeResults", { monitorId: ram, matches: [kit], totalItems: 9, hasNewMatches: true, scrapedAt: NOW });
+    for (let i = 1; i <= 150; i++) {
+      await ctx.db.insert("scrapeResults", { monitorId: ram, matches: [], totalItems: 9, hasNewMatches: false, scrapedAt: NOW + i * 15 * MINUTE });
+    }
+    await ctx.db.patch(ram, { lastMatchAt: NOW });
+  });
+  expect(await t.query(api.mcp.getRecentMatches, { apiKey: key, since: new Date(NOW - MINUTE).toISOString() })).toHaveLength(1);
+});
+
+// The default answer size is the same as get_matches.
+test("recent matches return 20 by default", async () => {
+  const t = setup();
+  const { key } = await seedUser(t, "a@example.com");
+  const ram = await t.mutation(api.mcp.createMonitor, { apiKey: key, ...MONITOR, name: "RAM" });
+  await t.run(async (ctx) => {
+    const matches = Array.from({ length: 30 }, (_, i) => ({ title: `kit ${i}`, url: `https://shop.test/${i}` }));
+    await ctx.db.insert("scrapeResults", { monitorId: ram, matches, totalItems: 30, hasNewMatches: true, scrapedAt: NOW });
+    await ctx.db.patch(ram, { lastMatchAt: NOW });
+  });
+  expect(await t.query(api.mcp.getRecentMatches, { apiKey: key, since: new Date(NOW - MINUTE).toISOString() })).toHaveLength(20);
+});
+
+// Ticking "In stock only" on a page already read must queue what is sold out
+// now, or those entries, already seen, are never judged again.
+test("turning on in-stock-only queues the sold-out entries already read", async () => {
+  const t = setup();
+  const { key, asUser } = await seedUser(t, "a@example.com");
+  const id = await t.mutation(api.mcp.createMonitor, { apiKey: key, ...MONITOR });
+  const items = [{ title: "Kingston", url: "https://shop.test/kingston", price: 199, inStock: false }];
+  await t.run((ctx) => ctx.db.patch(id, { status: "active", schema: { items, matchConditions: {} } }));
+  await asUser.mutation(api.monitors.update, { id, schema: { items, matchConditions: { inStockOnly: true } } });
+  expect((await t.run((ctx) => ctx.db.get(id)))?.soldOutKeys).toEqual(["shop.test/kingston"]);
 });

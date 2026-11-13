@@ -63,6 +63,7 @@ export const markReReadDue = internalMutation({
           const sinceRead = await ctx.db
             .query("scrapeResults")
             .withIndex("by_monitorId_scrapedAt", (q) => q.eq("monitorId", monitor._id).gt("scrapedAt", monitor.lastAiExtractAt ?? 0))
+            .order("desc")
             .take(500);
           const announced = sinceRead.filter((r) => r.hasNewMatches).flatMap((r) => r.matches.map(matchKey));
           matchedKeys = [...new Set([...matchedKeys, ...announced])];

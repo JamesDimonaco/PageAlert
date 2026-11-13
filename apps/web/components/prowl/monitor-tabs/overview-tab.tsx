@@ -103,6 +103,7 @@ const ROWS_SHOWN = 8;
 export function OverviewTab({ monitorId, monitor, matches, items, conditions, results, scores, onRescan, onToggleMute, settingsOpen, onSettingsOpenChange, onAdjustFilters, onViewItems, displayInterval }: OverviewTabProps) {
   const totalItems = items.length;
   const itemsWord = totalItems === 1 ? "item" : "items";
+  const product = productItem(monitor.schema, monitor.url);
   const [insightsOpen, setInsightsOpen] = useState(false);
   const [showAll, setShowAll] = useState(false);
   const [retrying, setRetrying] = useState(false);
@@ -439,7 +440,8 @@ export function OverviewTab({ monitorId, monitor, matches, items, conditions, re
         )}
 
         <MatchChecks
-          items={items}
+          // On a product page the checks are about the product, not the related items listed with it.
+          items={product ? [product] : items}
           conditions={conditions}
           showStockHint={
             isProductMonitor(monitor) && monitor.alertOn?.backInStock !== true && !conditions.inStockOnly

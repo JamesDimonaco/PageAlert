@@ -703,18 +703,23 @@ test("a product page with a stock alert gets no sold-out rechecks", async () => 
   vi.stubEnv("SCRAPER_API_KEY", "key");
   const page = "https://shop.test/kingston";
   const entry = { title: "Kingston FURY Beast", url: page, price: 199, snippet: "" };
-  let scored = 0;
-  vi.stubGlobal("fetch", async (url: string) => {
-    if (url.endsWith("/api/quick-check")) return Response.json({ accessible: true, contentHash: "page-2", candidates: [entry], totalEntries: 1 });
+  // A related item new to the page, so the check scores and writes.
+  const related = { title: "Kingston FURY Renegade", url: "https://shop.test/renegade", price: 249, snippet: "" };
+  const judged: string[] = [];
+  vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+    if (url.endsWith("/api/quick-check")) return Response.json({ accessible: true, contentHash: "page-2", candidates: [entry, related], totalEntries: 2 });
     if (url.endsWith("/api/score")) {
-      scored++;
-      return Response.json({ scored: [{ ...entry, matchScore: 95, matchReason: "", stock: { inStock: true, price: 19900, currency: "NZD" } }] });
+      const { candidates } = JSON.parse(String(init?.body)) as { candidates: { url: string }[] };
+      judged.push(...candidates.map((c) => c.url));
+      return Response.json({
+        scored: candidates.map((c) => ({ ...c, matchScore: 20, matchReason: "", stock: { inStock: true, price: 24900, currency: "NZD" } })),
+      });
     }
     return new Response("not mocked", { status: 500 });
   });
   const t = convexTest(schema, modules);
   t.registerComponent("betterAuth", betterAuthSchema, betterAuthModules);
-  await t.run((ctx) =>
+  const id = await t.run((ctx) =>
     ctx.db.insert("monitors", {
       userId: "user_1", name: "RAM", url: page, prompt: "in stock", status: "active", checkInterval: "1h",
       schema: { items: [{ title: "Kingston FURY Beast", url: page }], matchConditions: { inStockOnly: true } },
@@ -724,5 +729,7 @@ test("a product page with a stock alert gets no sold-out rechecks", async () => 
     })
   );
   await t.action(internal.scheduler.runScheduledChecks, {});
-  expect(scored).toBe(0);
+  expect(judged).toEqual([related.url]);
+  // The queue is kept, for if the stock alert is turned off later.
+  expect((await t.run((ctx) => ctx.db.get(id)))?.soldOutKeys).toEqual(["shop.test/kingston"]);
 });
