@@ -12,6 +12,7 @@ import {
   toMinorUnits,
   type AgentItem,
 } from "@prowl/shared";
+import { reserveFallback, scraperDown } from "./admin";
 import { requireKeyOwner } from "./apiKeys";
 import {
   createMonitorForUser,
@@ -208,6 +209,31 @@ export const deleteMonitor = mutation({
     const monitor = await ownedMonitor(ctx, userId, monitorId);
     await removeMonitorsForUser(ctx, userId, [monitor._id]).catch(asToolError);
     return { deleted: monitor._id };
+  },
+});
+
+/** Proxy reads a preview may spend per user per UTC day. Each one costs proxy credit. */
+const PREVIEW_PROXY_DAILY_LIMIT = 5;
+
+/**
+ * Claim one proxy attempt for a preview the site blocked. Counted per user
+ * per UTC day, and drawn from the fleet's proxy budget like a first scan's.
+ */
+export const claimPreviewProxy = mutation({
+  args: { apiKey: v.string() },
+  handler: async (ctx, { apiKey }): Promise<{ granted: true } | { granted: false; reason: string }> => {
+    const { userId } = await requireKeyOwner(ctx, apiKey);
+    const name = `previewProxy:${userId}:${new Date().toISOString().slice(0, 10)}`;
+    const row = await ctx.db.query("counters").withIndex("by_name", (q) => q.eq("name", name)).unique();
+    if ((row?.value ?? 0) >= PREVIEW_PROXY_DAILY_LIMIT) {
+      return { granted: false, reason: `This account has used its ${PREVIEW_PROXY_DAILY_LIMIT} proxy previews for today.` };
+    }
+    if ((await scraperDown(ctx)) || !(await reserveFallback(ctx, false))) {
+      return { granted: false, reason: "The proxy is not available right now." };
+    }
+    if (row) await ctx.db.patch(row._id, { value: row.value + 1 });
+    else await ctx.db.insert("counters", { name, value: 1 });
+    return { granted: true };
   },
 });
 

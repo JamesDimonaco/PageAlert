@@ -105,17 +105,34 @@ function registerTools(server: McpServer, convex: ConvexHttpClient, apiKey: stri
       title: "Preview a page",
       description:
         "Read a page once and show what PageAlert would match on it for this prompt. Saves nothing. " +
-        "Use it to check a page is readable and the prompt picks out the right items before creating a monitor.",
+        "Use it to check a page is readable and the prompt picks out the right items before creating a monitor. " +
+        "If the site blocks the read, it tries once through a proxy, up to 5 times a day per user.",
       inputSchema: z.object({ url, prompt }),
     },
     async (args) => {
       const rejection = await urlRejection(args.url);
       if (rejection) return fail(invalidUrl(rejection));
-      const outcome = await extractPage({ url: args.url, prompt: args.prompt, userId });
+      let outcome = await extractPage({ url: args.url, prompt: args.prompt, userId });
+      if (!outcome.ok && isBlockedError(outcome.error)) {
+        let claim;
+        try {
+          claim = await convex.mutation(api.mcp.claimPreviewProxy, { apiKey });
+        } catch (e) {
+          return fail(convexFailure(e));
+        }
+        if (!claim.granted) {
+          return fail({
+            code: "blocked",
+            message: `${outcome.error}. ${claim.reason} A monitor on this page would still retry through the proxy.`,
+            retry: false,
+          });
+        }
+        outcome = await extractPage({ url: args.url, prompt: args.prompt, userId, useProxy: true });
+      }
       if (!outcome.ok) {
         return fail(
           isBlockedError(outcome.error)
-            ? { code: "blocked", message: `${outcome.error}. A monitor on this page would retry through a proxy.`, retry: false }
+            ? { code: "blocked", message: `${outcome.error}, even through the proxy.`, retry: false }
             : { code: "failed", message: outcome.error, retry: true }
         );
       }

@@ -389,3 +389,31 @@ test("a first scan says when the stock and price alerts it was given cannot run 
   });
   expect(result).toEqual({ note: expect.stringMatching(/only run on a product page/) });
 });
+
+// Proxy reads cost credit. An agent retrying blocked shops in a loop must hit
+// a wall at 5 a day per user, and the answer must say so.
+test("preview gets 5 proxy attempts per user per day", async () => {
+  const t = setup();
+  const { key } = await seedUser(t, "a@example.com");
+  const other = await seedUser(t, "b@example.com");
+  for (let i = 0; i < 5; i++) {
+    expect(await t.mutation(api.mcp.claimPreviewProxy, { apiKey: key })).toEqual({ granted: true });
+  }
+  expect(await t.mutation(api.mcp.claimPreviewProxy, { apiKey: key })).toEqual({
+    granted: false,
+    reason: "This account has used its 5 proxy previews for today.",
+  });
+  // Another user's allowance is their own.
+  expect(await t.mutation(api.mcp.claimPreviewProxy, { apiKey: other.key })).toEqual({ granted: true });
+
+  vi.setSystemTime(NOW + 24 * 60 * MINUTE);
+  expect(await t.mutation(api.mcp.claimPreviewProxy, { apiKey: key })).toEqual({ granted: true });
+});
+
+test("preview gets no proxy attempt once the fleet's proxy budget is spent", async () => {
+  const t = setup();
+  const { key } = await seedUser(t, "a@example.com");
+  const month = new Date(NOW).toISOString().slice(0, 7);
+  await t.run((ctx) => ctx.db.insert("counters", { name: `fallback:calls:${month}`, value: 1_000_000 }));
+  expect(await t.mutation(api.mcp.claimPreviewProxy, { apiKey: key })).toMatchObject({ granted: false });
+});
