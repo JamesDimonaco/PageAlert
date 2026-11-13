@@ -14,63 +14,55 @@ function itemHaystack(item: ExtractedItem): string {
     .toLowerCase();
 }
 
+/** One condition checked against one item, so the UI can say why it missed. */
+export type MatchCheck =
+  | { kind: "titleContains" | "titleExcludes" | "mustInclude" | "mustExclude"; word: string; pass: boolean }
+  | { kind: "price"; min: number | undefined; max: number | undefined; price: number | undefined; pass: boolean };
+
+function readPrice(item: ExtractedItem): number | undefined {
+  const raw = typeof item.price === "number" ? item.price : parseFloat(String(item.price ?? ""));
+  return Number.isFinite(raw) ? raw : undefined;
+}
+
+/** Every condition, in order, with whether this item passes it. */
+export function explainMatch(item: ExtractedItem, conditions: MatchConditions): MatchCheck[] {
+  const checks: MatchCheck[] = [];
+  const title = String(item.title || "").toLowerCase();
+
+  for (const word of conditions.titleContains ?? []) {
+    checks.push({ kind: "titleContains", word, pass: title.includes(word.toLowerCase()) });
+  }
+  for (const word of conditions.titleExcludes ?? []) {
+    checks.push({ kind: "titleExcludes", word, pass: !title.includes(word.toLowerCase()) });
+  }
+
+  // An item with no readable price cannot be known to sit inside the range.
+  // Treating "no price" as a pass is how a price filter let everything
+  // through on pages where only some entries carry a price.
+  const { priceMin: min, priceMax: max } = conditions;
+  if (min !== undefined || max !== undefined) {
+    const price = readPrice(item);
+    const pass =
+      price !== undefined && (max === undefined || price <= max) && (min === undefined || price >= min);
+    checks.push({ kind: "price", min, max, price, pass });
+  }
+
+  if (conditions.mustInclude?.length || conditions.mustExclude?.length) {
+    const haystack = itemHaystack(item);
+    for (const word of conditions.mustInclude ?? []) {
+      checks.push({ kind: "mustInclude", word, pass: haystack.includes(word.toLowerCase()) });
+    }
+    for (const word of conditions.mustExclude ?? []) {
+      checks.push({ kind: "mustExclude", word, pass: !haystack.includes(word.toLowerCase()) });
+    }
+  }
+
+  return checks;
+}
+
 export function applyMatchConditions(
   items: ExtractedItem[],
   conditions: MatchConditions
 ): ExtractedItem[] {
-  return items.filter((item) => {
-    const title = String(item.title || "").toLowerCase();
-    const rawPrice =
-      typeof item.price === "number"
-        ? item.price
-        : parseFloat(String(item.price ?? ""));
-    const price = Number.isFinite(rawPrice) ? rawPrice : undefined;
-
-    if (conditions.titleContains?.length) {
-      const hasAll = conditions.titleContains.every((kw) =>
-        title.includes(kw.toLowerCase())
-      );
-      if (!hasAll) return false;
-    }
-
-    if (conditions.titleExcludes?.length) {
-      const hasExcluded = conditions.titleExcludes.some((kw) =>
-        title.includes(kw.toLowerCase())
-      );
-      if (hasExcluded) return false;
-    }
-
-    // An item with no readable price cannot be known to sit inside the range.
-    // Treating "no price" as a pass is how a price filter let everything
-    // through on pages where only some entries carry a price.
-    const hasPriceFilter =
-      conditions.priceMin !== undefined || conditions.priceMax !== undefined;
-    if (hasPriceFilter) {
-      if (price === undefined) return false;
-      if (conditions.priceMax !== undefined && price > conditions.priceMax)
-        return false;
-      if (conditions.priceMin !== undefined && price < conditions.priceMin)
-        return false;
-    }
-
-    if (conditions.mustInclude?.length || conditions.mustExclude?.length) {
-      const itemStr = itemHaystack(item);
-
-      if (conditions.mustInclude?.length) {
-        const hasAll = conditions.mustInclude.every((kw) =>
-          itemStr.includes(kw.toLowerCase())
-        );
-        if (!hasAll) return false;
-      }
-
-      if (conditions.mustExclude?.length) {
-        const hasExcluded = conditions.mustExclude.some((kw) =>
-          itemStr.includes(kw.toLowerCase())
-        );
-        if (hasExcluded) return false;
-      }
-    }
-
-    return true;
-  });
+  return items.filter((item) => explainMatch(item, conditions).every((check) => check.pass));
 }

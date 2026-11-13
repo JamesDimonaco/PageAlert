@@ -61,10 +61,10 @@ export function ApiKeysCard() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-lg font-semibold">API keys</CardTitle>
+        <CardTitle className="text-lg font-semibold">MCP keys</CardTitle>
         <CardDescription className="text-sm">
-          Let an AI agent such as Claude create monitors and read matches for you, over MCP. Anyone with a key can
-          do that as you, so treat it like a password.
+          Connect PageAlert to an AI agent such as Claude over MCP. It can then create monitors and read matches for
+          you. Anyone with a key can do that as you, so treat it like a password.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">

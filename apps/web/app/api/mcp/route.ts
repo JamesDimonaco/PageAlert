@@ -215,7 +215,7 @@ async function handler(request: Request): Promise<Response> {
   const owner = apiKey ? await convex.mutation(api.apiKeys.verify, { key: apiKey }) : null;
   if (!apiKey || !owner) {
     return Response.json(
-      { error: "Send a PageAlert API key as 'Authorization: Bearer pa_live_…'. Create one in Settings → API." },
+      { error: "Send a PageAlert API key as 'Authorization: Bearer pa_live_…'. Create one in Settings → MCP." },
       { status: 401, headers: { "WWW-Authenticate": 'Bearer realm="pagealert"' } }
     );
   }

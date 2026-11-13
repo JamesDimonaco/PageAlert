@@ -256,7 +256,7 @@ export default function MonitorDetailPage({
               every {proxyFloored ? "6h" : monitor.checkInterval}
             </span>
             <span>checked {timeAgo(monitor.lastCheckedAt)}</span>
-            <span>{monitor.checkCount ?? 0} checks</span>
+            <span>{monitor.checkCount ?? 0} check{(monitor.checkCount ?? 0) !== 1 && "s"}</span>
             {!alertsOff ? (
               <button
                 type="button"
@@ -381,7 +381,8 @@ export default function MonitorDetailPage({
             monitorId={monitorId}
             monitor={monitor}
             matches={matches}
-            totalItems={allItems.length}
+            items={allItems}
+            conditions={conditions}
             results={results}
             scores={scores}
             onRescan={handleRescan}

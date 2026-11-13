@@ -32,7 +32,8 @@ import {
 } from "lucide-react";
 import type { Id } from "@/convex/_generated/dataModel";
 import type { Doc } from "@/convex/_generated/dataModel";
-import type { ExtractedItem, ExtractionSchema, PriceChange } from "@prowl/shared";
+import type { ExtractedItem, ExtractionSchema, MatchConditions, PriceChange } from "@prowl/shared";
+import { MatchChecks } from "@/components/prowl/match-checks";
 import { currencyExponent, getItemKey, isProductMonitor, matchConfidence, MATCH_CONFIDENCE_LABEL } from "@prowl/shared";
 import { useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
@@ -67,7 +68,9 @@ interface OverviewTabProps {
     lastSeen?: { currency?: string };
   };
   matches: ExtractedItem[];
-  totalItems: number;
+  /** Every item on the page, matching or not */
+  items: ExtractedItem[];
+  conditions: MatchConditions;
   results: Doc<"scrapeResults">[];
   scores: Record<string, { matchScore: number; matchReason: string }>;
   onRescan?: (id: Id<"monitors">) => Promise<void>;
@@ -97,7 +100,9 @@ const RETRY_LIMIT = 3;
 const RETRY_WINDOW_MS = 60 * 60 * 1000; // 1 hour
 const ROWS_SHOWN = 8;
 
-export function OverviewTab({ monitorId, monitor, matches, totalItems, results, scores, onRescan, onToggleMute, settingsOpen, onSettingsOpenChange, onAdjustFilters, onViewItems, displayInterval }: OverviewTabProps) {
+export function OverviewTab({ monitorId, monitor, matches, items, conditions, results, scores, onRescan, onToggleMute, settingsOpen, onSettingsOpenChange, onAdjustFilters, onViewItems, displayInterval }: OverviewTabProps) {
+  const totalItems = items.length;
+  const itemsWord = totalItems === 1 ? "item" : "items";
   const [insightsOpen, setInsightsOpen] = useState(false);
   const [showAll, setShowAll] = useState(false);
   const [retrying, setRetrying] = useState(false);
@@ -211,13 +216,14 @@ export function OverviewTab({ monitorId, monitor, matches, totalItems, results, 
     if (totalItems > 0) {
       const next = timeUntil(monitor.nextCheckAt);
       return (
-        <div className="px-4 py-8 text-center">
-          <p className="text-sm font-medium">No matches yet.</p>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Watching {totalItems} items, checking every {displayInterval}.
-            {next && ` Next check ${next}.`}
+        <div className="px-4 py-5">
+          <p className="text-sm font-medium">
+            {totalItems === 1 ? "Not a match yet." : `None of the ${totalItems} items match yet.`}
           </p>
-          <div className="mt-4 flex flex-col sm:flex-row items-center justify-center gap-2">
+          <p className="mt-1 text-sm text-muted-foreground">
+            We check every {displayInterval}{next ? `, next ${next}` : ""}, and alert you when {totalItems === 1 ? "it passes" : "one passes"} every check above.
+          </p>
+          <div className="mt-4 flex flex-col sm:flex-row sm:items-center gap-2">
             <Button
               variant="outline"
               size="sm"
@@ -225,7 +231,7 @@ export function OverviewTab({ monitorId, monitor, matches, totalItems, results, 
               onClick={() => { trackEvent("empty_state_view_items"); onViewItems(); }}
             >
               <List className="h-3.5 w-3.5" />
-              See the {totalItems} items we&apos;re watching
+              {totalItems === 1 ? "See the item we're watching" : `See the ${totalItems} items we're watching`}
             </Button>
             <Button
               variant="ghost"
@@ -411,13 +417,17 @@ export function OverviewTab({ monitorId, monitor, matches, totalItems, results, 
         <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 mb-3">
           <div className="flex items-baseline gap-2">
             <h2 className="section-title flex items-center gap-2">
-              <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+              {/* Green only once something matched: a green 0 read as success. */}
+              <CheckCircle2 className={cn("h-4 w-4", matches.length > 0 ? "text-emerald-400" : "text-muted-foreground")} />
               Matches
-              <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-xs">
+              <Badge
+                variant={matches.length > 0 ? "default" : "outline"}
+                className={cn("text-xs", matches.length > 0 && "bg-emerald-500/10 text-emerald-400 border-emerald-500/20")}
+              >
                 {matches.length}
               </Badge>
             </h2>
-            <span className="text-xs text-muted-foreground">of {totalItems} items</span>
+            <span className="text-xs text-muted-foreground">of {totalItems} {itemsWord}</span>
           </div>
           {monitor.lastMatchAt !== undefined && (
             <span className="text-xs text-muted-foreground">Last found {timeAgo(monitor.lastMatchAt)}</span>
@@ -427,6 +437,13 @@ export function OverviewTab({ monitorId, monitor, matches, totalItems, results, 
         {isFirstScan && matches.length > 0 && (
           <p className="mb-2 text-xs text-emerald-400">First scan — all of these are new to you.</p>
         )}
+
+        <MatchChecks
+          items={items}
+          conditions={conditions}
+          showStockHint={isProductMonitor(monitor) && monitor.alertOn?.backInStock !== true}
+          onOpenSettings={() => onSettingsOpenChange(true)}
+        />
 
         <div className="rounded-xl border border-border bg-card divide-y divide-border overflow-hidden">
           {visibleMatches.length > 0 ? (

@@ -72,7 +72,7 @@ export function buildLlmsTxt(): string {
       `- [Pricing](${SITE_URL}/pricing): plans and limits`,
       `- [Example monitor](${SITE_URL}/try/example): what a scan returns`,
       `- [Changelog](${SITE_URL}/changelog): new features, newest first`,
-      `- [MCP server](${SITE_URL}/api/mcp): tools preview_page, create_monitor, list_monitors and get_matches; authenticate with a PageAlert API key from Settings → API as \`Authorization: Bearer pa_live_…\``,
+      `- [MCP server](${SITE_URL}/api/mcp): tools preview_page, create_monitor, list_monitors and get_matches; authenticate with a PageAlert API key from Settings → MCP as \`Authorization: Bearer pa_live_…\``,
       "- [Source code](https://github.com/JamesDimonaco/prowl): PageAlert is open source",
     ].join("\n"),
   ];

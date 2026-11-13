@@ -140,7 +140,7 @@ export default function SettingsPage() {
           </TabsTrigger>
           <TabsTrigger value="api">
             <KeyRound className="hidden sm:block" />
-            API
+            MCP
           </TabsTrigger>
         </TabsList>
 
