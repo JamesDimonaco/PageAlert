@@ -486,6 +486,7 @@ type Price = { price: number; currency: string; site: string };
 export type ProductSummary = {
   _id: Id<"monitorGroups">;
   name: string;
+  folderId?: Id<"folders">;
   watching: number;
   /** Null when no listing has a price yet. */
   cheapest: Price | null;
@@ -549,6 +550,7 @@ export const listMine = query({
         return {
           _id: group._id,
           name: group.name,
+          folderId: group.folderId,
           watching: watched.length,
           cheapest,
           inStock: stock.length === 0 ? null : stock.includes(true),

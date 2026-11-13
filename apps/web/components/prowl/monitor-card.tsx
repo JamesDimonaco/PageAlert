@@ -25,6 +25,7 @@ import {
   Bell,
   BellOff,
   Copy,
+  FolderInput,
 } from "lucide-react";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
 import Link from "next/link";
@@ -40,9 +41,10 @@ interface MonitorCardProps {
   onRescan?: (id: Id<"monitors">) => void;
   onClone?: (monitor: Doc<"monitors">) => void;
   onToggleMute?: (id: Id<"monitors">) => void;
+  onMoveToFolder?: (monitor: Doc<"monitors">) => void;
 }
 
-export function MonitorCard({ monitor, onTogglePause, onDelete, onRescan, onClone, onToggleMute }: MonitorCardProps) {
+export function MonitorCard({ monitor, onTogglePause, onDelete, onRescan, onClone, onToggleMute, onMoveToFolder }: MonitorCardProps) {
   const router = useRouter();
 
   const statusBorderColor =
@@ -161,6 +163,11 @@ export function MonitorCard({ monitor, onTogglePause, onDelete, onRescan, onClon
               {onClone && (
                 <DropdownMenuItem onClick={() => onClone(monitor)}>
                   <Copy className="mr-2 h-4 w-4" /> Clone
+                </DropdownMenuItem>
+              )}
+              {onMoveToFolder && (
+                <DropdownMenuItem onClick={() => onMoveToFolder(monitor)}>
+                  <FolderInput className="mr-2 h-4 w-4" /> Move to folder
                 </DropdownMenuItem>
               )}
               {isDev && onRescan && (

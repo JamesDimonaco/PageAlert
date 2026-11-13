@@ -2,13 +2,20 @@
 
 import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
-import { Plus, Search, Radar, Sparkles } from "lucide-react";
+import { ChevronDown, Folder, MoreVertical, Plus, Search, Radar, Sparkles } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { MonitorCard } from "@/components/prowl/monitor-card";
 import { ProductCard } from "@/components/prowl/product-card";
 import type { ProductSummary } from "@/convex/monitorGroups";
 import { StatsCards } from "@/components/prowl/stats-cards";
 import { DeleteDialog } from "@/components/prowl/delete-dialog";
+import { MoveToFolderDialog, RenameFolderDialog, type FolderTarget } from "@/components/prowl/folder-dialogs";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { EmptyState } from "@/components/prowl/empty-state";
 import { ReviewPrompt } from "@/components/prowl/review-prompt";
 import { OnboardingChecklist } from "@/components/prowl/onboarding-checklist";
@@ -254,6 +261,12 @@ export default function DashboardPage() {
   const [deleteTarget, setDeleteTarget] = useState<Doc<"monitors"> | null>(null);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [moveTarget, setMoveTarget] = useState<FolderTarget | null>(null);
+  const [renameTarget, setRenameTarget] = useState<Doc<"folders"> | null>(null);
+  const [deleteFolderTarget, setDeleteFolderTarget] = useState<Doc<"folders"> | null>(null);
+  const [collapsed, setCollapsed] = useState<Set<Id<"folders">>>(new Set());
+  const folders = useQuery(api.folders.list);
+  const removeFolder = useMutation(api.folders.remove);
 
   const matchesSearch = (m: Doc<"monitors">) =>
     !search ||
@@ -285,6 +298,69 @@ export default function DashboardPage() {
       filtered.push({ product, monitors: children });
     }
   }
+
+  type Item = (typeof filtered)[number];
+  const renderItem = (item: Item) => "product" in item ? (
+            <ProductCard
+              key={item.product._id}
+              product={item.product}
+              monitors={item.monitors}
+              onMoveToFolder={() =>
+                setMoveTarget({ productId: item.product._id, name: item.product.name, folderId: item.product.folderId })
+              }
+            />
+          ) : (
+            <MonitorCard
+              key={item.monitor._id}
+              monitor={item.monitor}
+              onTogglePause={async (id) => {
+                const m = monitors.find((x) => x._id === id);
+                try {
+                  await togglePause(id);
+                  if (m?.status === "paused") {
+                    trackMonitorResumed();
+                    toast.success("Monitor resumed");
+                  } else {
+                    trackMonitorPaused();
+                    toast.success("Monitor paused");
+                  }
+                } catch (err) {
+                  toast.error("Failed to update monitor", { description: errorText(err, "Try again.") });
+                }
+              }}
+              onRescan={handleRescan}
+              onToggleMute={async (id) => {
+                try {
+                  const newMuted = await toggleMute(id);
+                  trackEvent(newMuted ? "monitor_muted" : "monitor_unmuted", { monitor_id: id });
+                  toast.success(newMuted ? "Monitor muted — notifications paused" : "Monitor unmuted — notifications resumed");
+                } catch (err) {
+                  captureException(err, { context: "toggleMute", monitorId: id });
+                  toast.error("Failed to update monitor");
+                }
+              }}
+              onDelete={(id) => {
+                const m = monitors.find((x) => x._id === id);
+                if (m) setDeleteTarget(m);
+              }}
+              onClone={(m) => handleClone(m)}
+              onMoveToFolder={(m) => setMoveTarget({ monitorId: m._id, name: m.name, folderId: m.folderId })}
+            />
+          );
+
+  // Everything outside a folder shows as before; each folder follows as its
+  // own section. Empty folders show only when nothing is filtered, so they
+  // can still be renamed or deleted.
+  const folderOf = (item: Item) => ("product" in item ? item.product.folderId : item.monitor.folderId);
+  const folderIds = new Set((folders ?? []).map((f) => f._id));
+  const unfiled = filtered.filter((item) => {
+    const id = folderOf(item);
+    return !id || !folderIds.has(id);
+  });
+  const filtering = search !== "" || statusFilter !== "all";
+  const sections = (folders ?? [])
+    .map((folder) => ({ folder, items: filtered.filter((item) => folderOf(item) === folder._id) }))
+    .filter(({ items }) => items.length > 0 || !filtering);
 
   return (
     <div className="space-y-10">
@@ -397,49 +473,84 @@ export default function DashboardPage() {
             <EmptyState title="No monitors found.">Try a different search or status.</EmptyState>
           )
         ) : (
-          filtered.map((item) => "product" in item ? (
-            <ProductCard key={item.product._id} product={item.product} monitors={item.monitors} />
-          ) : (
-            <MonitorCard
-              key={item.monitor._id}
-              monitor={item.monitor}
-              onTogglePause={async (id) => {
-                const m = monitors.find((x) => x._id === id);
-                try {
-                  await togglePause(id);
-                  if (m?.status === "paused") {
-                    trackMonitorResumed();
-                    toast.success("Monitor resumed");
-                  } else {
-                    trackMonitorPaused();
-                    toast.success("Monitor paused");
-                  }
-                } catch (err) {
-                  toast.error("Failed to update monitor", { description: errorText(err, "Try again.") });
-                }
-              }}
-              onRescan={handleRescan}
-              onToggleMute={async (id) => {
-                try {
-                  const newMuted = await toggleMute(id);
-                  trackEvent(newMuted ? "monitor_muted" : "monitor_unmuted", { monitor_id: id });
-                  toast.success(newMuted ? "Monitor muted — notifications paused" : "Monitor unmuted — notifications resumed");
-                } catch (err) {
-                  captureException(err, { context: "toggleMute", monitorId: id });
-                  toast.error("Failed to update monitor");
-                }
-              }}
-              onDelete={(id) => {
-                const m = monitors.find((x) => x._id === id);
-                if (m) setDeleteTarget(m);
-              }}
-              onClone={(m) => handleClone(m)}
-            />
-          ))
+          <>
+            {unfiled.map(renderItem)}
+            {sections.map(({ folder, items }) => {
+              const open = !collapsed.has(folder._id);
+              return (
+                <section key={folder._id} className="space-y-3 pt-2">
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      aria-expanded={open}
+                      onClick={() =>
+                        setCollapsed((prev) => {
+                          const next = new Set(prev);
+                          if (open) next.add(folder._id);
+                          else next.delete(folder._id);
+                          return next;
+                        })
+                      }
+                      className="flex min-w-0 flex-1 items-center gap-2 rounded-md py-1 text-left text-sm font-medium hover:text-primary"
+                    >
+                      <ChevronDown className={`h-4 w-4 shrink-0 transition-transform ${open ? "" : "-rotate-90"}`} />
+                      <Folder className="h-4 w-4 shrink-0 text-muted-foreground" />
+                      <span className="truncate">{folder.name}</span>
+                      <span className="text-xs font-normal text-muted-foreground">{items.length}</span>
+                    </button>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger
+                        aria-label={`Folder actions for ${folder.name}`}
+                        className="inline-flex h-8 w-8 max-sm:h-11 max-sm:w-11 items-center justify-center rounded-lg hover:bg-muted outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      >
+                        <MoreVertical className="h-4 w-4" />
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem onClick={() => setRenameTarget(folder)}>Rename</DropdownMenuItem>
+                        <DropdownMenuItem className="text-destructive" onClick={() => setDeleteFolderTarget(folder)}>
+                          Delete folder
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
+                  {open && (
+                    <div className="space-y-4 border-l border-border/60 pl-3 sm:pl-4">
+                      {items.length > 0 ? (
+                        items.map(renderItem)
+                      ) : (
+                        <p className="text-sm text-muted-foreground">Empty. Use &ldquo;Move to folder&rdquo; on a monitor or product.</p>
+                      )}
+                    </div>
+                  )}
+                </section>
+              );
+            })}
+          </>
         )}
       </div>
 
       <ReviewPrompt />
+
+      <MoveToFolderDialog target={moveTarget} onClose={() => setMoveTarget(null)} />
+      <RenameFolderDialog folder={renameTarget} onClose={() => setRenameTarget(null)} />
+      <DeleteDialog
+        open={!!deleteFolderTarget}
+        onOpenChange={(open) => !open && setDeleteFolderTarget(null)}
+        onConfirm={async () => {
+          if (!deleteFolderTarget) return;
+          try {
+            await removeFolder({ id: deleteFolderTarget._id });
+          } catch (err) {
+            toast.error("Failed to delete the folder", { description: errorText(err, "Try again.") });
+            throw err;
+          }
+          toast.success("Folder deleted");
+          setDeleteFolderTarget(null);
+        }}
+        monitorName={deleteFolderTarget?.name ?? ""}
+        title="Delete folder"
+        detail="What is in it stays on your dashboard, outside any folder."
+      />
 
       <DeleteDialog
         open={!!deleteTarget}
