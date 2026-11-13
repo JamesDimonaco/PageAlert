@@ -38,15 +38,21 @@ async function seedUser(t: T, email: string) {
   return { userId: user._id, asUser, key };
 }
 
-/** The message a ConvexError carries, which is all a client sees in prod. */
-async function errorOf(promise: Promise<unknown>): Promise<string> {
+/** What a ConvexError carries, which is all a client sees in prod. */
+async function toolErrorOf(promise: Promise<unknown>): Promise<unknown> {
   try {
     await promise;
   } catch (e) {
-    if (e instanceof ConvexError) return String(e.data);
+    if (e instanceof ConvexError) return e.data;
     throw e;
   }
   throw new Error("expected a rejection");
+}
+
+/** The readable message, whether the error is a plain string or a tool error. */
+async function errorOf(promise: Promise<unknown>): Promise<string> {
+  const data = await toolErrorOf(promise);
+  return typeof data === "object" && data !== null && "message" in data ? String(data.message) : String(data);
 }
 
 const MONITOR = { url: "https://example.com/huts", prompt: "any Feb start date", name: "Milford" };
@@ -246,4 +252,140 @@ test("a first scan's alert says when a match's stock was not shown", async () =>
   const jobs = await t.run((ctx) => ctx.db.system.query("_scheduled_functions").collect());
   const job = jobs.find((j) => j.name.includes("sendInitialScanNotifications"));
   expect(job?.args[0]).toMatchObject({ stockNote: "Stock not shown on page for “Noctua NH-L9a-AM5”." });
+});
+
+
+// An agent decides what to do from the code, not by parsing English.
+test("tool errors carry a code, a message and whether retrying may help", async () => {
+  const t = setup();
+  const { key } = await seedUser(t, "a@example.com");
+  expect(await toolErrorOf(t.query(api.mcp.getMatches, { apiKey: key, monitorId: "nope" }))).toEqual({
+    code: "not_found",
+    message: "Monitor not found",
+    retry: false,
+  });
+  for (let i = 0; i < 3; i++) await t.mutation(api.mcp.createMonitor, { apiKey: key, ...MONITOR });
+  expect(await toolErrorOf(t.mutation(api.mcp.createMonitor, { apiKey: key, ...MONITOR }))).toMatchObject({
+    code: "limit_reached",
+    retry: false,
+  });
+  expect(await toolErrorOf(t.mutation(api.mcp.createMonitor, { apiKey: key, ...MONITOR, url: "ftp://x.com" }))).toMatchObject({
+    code: "invalid_url",
+    retry: false,
+  });
+});
+
+test("an agent can rename, re-prompt, slow down and pause a monitor", async () => {
+  const t = setup();
+  const { key } = await seedUser(t, "a@example.com");
+  const id = await t.mutation(api.mcp.createMonitor, { apiKey: key, ...MONITOR });
+  await t.run((ctx) => ctx.db.patch(id, { status: "active" }));
+
+  await t.mutation(api.mcp.updateMonitor, {
+    apiKey: key,
+    monitorId: id,
+    name: " Milford, Feb ",
+    prompt: "any Feb start under $100",
+    checkInterval: "5m",
+    paused: true,
+  });
+  const monitor = await t.run((ctx) => ctx.db.get(id));
+  // 5m is not on the free plan, so it is clamped as in the web app.
+  expect(monitor).toMatchObject({ name: "Milford, Feb", prompt: "any Feb start under $100", checkInterval: "1h", status: "paused" });
+
+  await t.mutation(api.mcp.updateMonitor, { apiKey: key, monitorId: id, paused: false });
+  expect((await t.run((ctx) => ctx.db.get(id)))?.status).toBe("active");
+});
+
+// The URL is the monitor's identity: its history and seen set describe that page.
+test("changing a monitor's URL is refused, with how to do it instead", async () => {
+  const t = setup();
+  const { key } = await seedUser(t, "a@example.com");
+  const id = await t.mutation(api.mcp.createMonitor, { apiKey: key, ...MONITOR });
+  expect(await toolErrorOf(t.mutation(api.mcp.updateMonitor, { apiKey: key, monitorId: id, url: "https://example.com/other" }))).toEqual({
+    code: "invalid_url",
+    message: "A monitor's URL can't change. Delete it and create a new one.",
+    retry: false,
+  });
+});
+
+test("one key can neither edit nor delete another account's monitor", async () => {
+  const t = setup();
+  const owner = await seedUser(t, "a@example.com");
+  const other = await seedUser(t, "b@example.com");
+  const id = await t.mutation(api.mcp.createMonitor, { apiKey: owner.key, ...MONITOR });
+
+  expect(await toolErrorOf(t.mutation(api.mcp.updateMonitor, { apiKey: other.key, monitorId: id, name: "mine" }))).toMatchObject({ code: "not_found" });
+  expect(await toolErrorOf(t.mutation(api.mcp.deleteMonitor, { apiKey: other.key, monitorId: id }))).toMatchObject({ code: "not_found" });
+  expect((await t.run((ctx) => ctx.db.get(id)))?.name).toBe("Milford");
+});
+
+test("deleting a monitor removes it and its history", async () => {
+  const t = setup();
+  const { key } = await seedUser(t, "a@example.com");
+  const id = await t.mutation(api.mcp.createMonitor, { apiKey: key, ...MONITOR });
+  await t.mutation(api.mcp.saveScanResult, { apiKey: key, id, schema: { items: [{ title: "x" }] }, matches: [] });
+
+  await t.mutation(api.mcp.deleteMonitor, { apiKey: key, monitorId: id });
+  expect(await t.run((ctx) => ctx.db.get(id))).toBeNull();
+  expect(await t.run((ctx) => ctx.db.query("scrapeResults").collect())).toEqual([]);
+});
+
+test("an agent can set stock and price alerts, and is told when the page is not a product page", async () => {
+  const t = setup();
+  const { key } = await seedUser(t, "a@example.com");
+  const id = await t.mutation(api.mcp.createMonitor, { apiKey: key, ...MONITOR });
+  await t.mutation(api.mcp.saveScanResult, {
+    apiKey: key,
+    id,
+    schema: { items: [{ title: "Clinton Hut", url: "https://example.com/1" }, { title: "Mintaro Hut", url: "https://example.com/2" }] },
+    matches: [],
+  });
+
+  const result = await t.mutation(api.mcp.updateMonitor, { apiKey: key, monitorId: id, alertOn: { backInStock: true } });
+  expect((await t.run((ctx) => ctx.db.get(id)))?.alertOn).toEqual({ backInStock: true });
+  expect(result.note).toMatch(/only run on a product page/);
+
+  const product = await t.mutation(api.mcp.createMonitor, { apiKey: key, ...MONITOR });
+  await t.mutation(api.mcp.saveScanResult, { apiKey: key, id: product, schema: { items: [{ title: "Clinton Hut" }] }, matches: [] });
+  expect(await t.mutation(api.mcp.updateMonitor, { apiKey: key, monitorId: product, alertOn: { backInStock: true } })).toEqual({
+    monitorId: product,
+  });
+});
+
+test("create_monitor takes stock and price alerts, and guesses them from the prompt when left out", async () => {
+  const t = setup();
+  const { key } = await seedUser(t, "a@example.com");
+  const given = await t.mutation(api.mcp.createMonitor, {
+    apiKey: key,
+    ...MONITOR,
+    alertOn: { priceBelow: { amount: 9500, currency: "NZD" } },
+  });
+  const guessed = await t.mutation(api.mcp.createMonitor, {
+    apiKey: key,
+    ...MONITOR,
+    prompt: "The Noctua NH-L9a-AM5 is back in stock, under NZ$95.",
+  });
+  expect((await t.run((ctx) => ctx.db.get(given)))?.alertOn).toEqual({ priceBelow: { amount: 9500, currency: "NZD" } });
+  expect((await t.run((ctx) => ctx.db.get(guessed)))?.alertOn).toEqual({
+    backInStock: true,
+    priceBelow: { amount: 9500, currency: "NZD" },
+  });
+  // A prompt with nothing to guess leaves alerts off, as before.
+  const plain = await t.mutation(api.mcp.createMonitor, { apiKey: key, ...MONITOR });
+  expect((await t.run((ctx) => ctx.db.get(plain)))?.alertOn).toBeUndefined();
+});
+
+// Alerts the agent asked for that will never run must be said, not left silent.
+test("a first scan says when the stock and price alerts it was given cannot run on the page", async () => {
+  const t = setup();
+  const { key } = await seedUser(t, "a@example.com");
+  const id = await t.mutation(api.mcp.createMonitor, { apiKey: key, ...MONITOR, alertOn: { backInStock: true } });
+  const result = await t.mutation(api.mcp.saveScanResult, {
+    apiKey: key,
+    id,
+    schema: { items: [{ title: "Clinton Hut", url: "https://example.com/1" }, { title: "Mintaro Hut", url: "https://example.com/2" }] },
+    matches: [],
+  });
+  expect(result).toEqual({ note: expect.stringMatching(/only run on a product page/) });
 });

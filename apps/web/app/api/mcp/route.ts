@@ -13,6 +13,7 @@ import {
   toAgentNotices,
 } from "@prowl/shared";
 import { api } from "@/convex/_generated/api";
+import type { ToolError } from "@/convex/mcp";
 import { isBlockedError } from "@/convex/shared";
 import { extractPage, urlRejection, type ExtractResponse } from "@/lib/scraper-server";
 import { logger } from "@/lib/server-logger";
@@ -36,14 +37,20 @@ function ok(data: unknown): ToolResult {
   return { content: [{ type: "text", text: formatToolResult(data) }] };
 }
 
-function fail(message: string): ToolResult {
-  return { isError: true, content: [{ type: "text", text: message }] };
+/** Every tool fails the same way, so an agent can act on the code. See ToolError. */
+function fail(error: ToolError): ToolResult {
+  return { isError: true, content: [{ type: "text", text: JSON.stringify(error) }] };
 }
 
-/** Convex keeps a ConvexError's message and hides every other one in prod. */
-function errorMessage(e: unknown): string {
-  if (e instanceof ConvexError) return String(e.data);
-  return "Something went wrong on our side. Try again shortly.";
+/** Convex keeps a ConvexError's data and hides every other error in prod. */
+function convexFailure(e: unknown): ToolError {
+  if (e instanceof ConvexError && typeof e.data === "object" && e.data !== null) return e.data as ToolError;
+  if (e instanceof ConvexError) return { code: "failed", message: String(e.data), retry: false };
+  return { code: "failed", message: "Something went wrong on our side. Try again shortly.", retry: true };
+}
+
+function invalidUrl(message: string): ToolError {
+  return { code: "invalid_url", message, retry: false };
 }
 
 function scanSummary(data: ExtractResponse) {
@@ -60,6 +67,23 @@ function scanSummary(data: ExtractResponse) {
 }
 
 const intervals = z.enum(["5m", "15m", "30m", "1h", "6h", "24h"]);
+const monitorId = z.string().describe("The id from list_monitors or create_monitor.");
+const alertOn = z
+  .object({
+    backInStock: z.boolean().optional().describe("Alert when the product goes from out of stock to in stock."),
+    priceDrop: z.boolean().optional().describe("Alert on any price drop. Not with priceBelow."),
+    priceBelow: z
+      .object({
+        amount: z.number().int().positive().describe("In minor units: 9500 for NZ$95.00."),
+        currency: z.string().length(3).describe("ISO 4217 code, e.g. NZD."),
+      })
+      .optional()
+      .describe("Alert when the price falls below this target. Not with priceDrop."),
+  })
+  .describe(
+    "Stock and price alerts. They run only on a product page; on a listing the result says so. " +
+      "Send {} to turn them off."
+  );
 const url = z.string().max(2048).describe("The full http(s) URL of the page to watch.");
 const prompt = z
   .string()
@@ -86,9 +110,15 @@ function registerTools(server: McpServer, convex: ConvexHttpClient, apiKey: stri
     },
     async (args) => {
       const rejection = await urlRejection(args.url);
-      if (rejection) return fail(rejection);
+      if (rejection) return fail(invalidUrl(rejection));
       const outcome = await extractPage({ url: args.url, prompt: args.prompt, userId });
-      if (!outcome.ok) return fail(outcome.error);
+      if (!outcome.ok) {
+        return fail(
+          isBlockedError(outcome.error)
+            ? { code: "blocked", message: `${outcome.error}. A monitor on this page would retry through a proxy.`, retry: false }
+            : { code: "failed", message: outcome.error, retry: true }
+        );
+      }
       return ok(scanSummary(outcome.data));
     }
   );
@@ -107,17 +137,18 @@ function registerTools(server: McpServer, convex: ConvexHttpClient, apiKey: stri
         prompt,
         name: z.string().min(1).max(200).describe("A short name the user will recognise in alerts."),
         checkInterval: intervals.optional().describe("How often to check. Defaults to 1h."),
+        alertOn: alertOn.optional().describe("Stock and price alerts. Left out, they are guessed from the prompt."),
       }),
     },
     async (args) => {
       const rejection = await urlRejection(args.url);
-      if (rejection) return fail(rejection);
+      if (rejection) return fail(invalidUrl(rejection));
 
       let monitorId;
       try {
         monitorId = await convex.mutation(api.mcp.createMonitor, { apiKey, ...args });
       } catch (e) {
-        return fail(errorMessage(e));
+        return fail(convexFailure(e));
       }
       const dashboardUrl = `${SITE_URL}/dashboard/monitors/${monitorId}`;
 
@@ -137,20 +168,25 @@ function registerTools(server: McpServer, convex: ConvexHttpClient, apiKey: stri
           return ok({ monitorId, dashboardUrl, status, firstScan: { ...summary, next } });
         }
 
-        await convex.mutation(api.mcp.saveScanResult, {
+        const { note } = await convex.mutation(api.mcp.saveScanResult, {
           apiKey,
           id: monitorId,
           schema: outcome.data.schema,
           matches: outcome.data.matches ?? [],
           contentFingerprint: outcome.data.contentHash,
         });
-        return ok({ monitorId, dashboardUrl, status: "active", firstScan: summary });
+        return ok({ monitorId, dashboardUrl, status: "active", firstScan: summary, ...(note ? { note } : {}) });
       } catch (e) {
         // Get it out of "scanning", where nothing would ever check it again.
         await convex
           .mutation(api.mcp.saveScanError, { apiKey, id: monitorId, error: "Saving the first scan failed" })
           .catch(() => {});
-        return fail(`The monitor was created (${dashboardUrl}) but saving its first scan failed: ${errorMessage(e)}`);
+        const { message } = convexFailure(e);
+        return fail({
+          code: "failed",
+          message: `The monitor was created (${dashboardUrl}) but saving its first scan failed: ${message}`,
+          retry: false,
+        });
       }
     }
   );
@@ -169,7 +205,7 @@ function registerTools(server: McpServer, convex: ConvexHttpClient, apiKey: stri
       try {
         return ok(await convex.query(api.mcp.listMonitors, { apiKey }));
       } catch (e) {
-        return fail(errorMessage(e));
+        return fail(convexFailure(e));
       }
     }
   );
@@ -180,7 +216,7 @@ function registerTools(server: McpServer, convex: ConvexHttpClient, apiKey: stri
       title: "Get matches",
       description: "The most recent items that matched a monitor's prompt, newest first, with when each matched.",
       inputSchema: z.object({
-        monitorId: z.string().describe("The id from list_monitors or create_monitor."),
+        monitorId,
         limit: z
           .number()
           .int()
@@ -195,7 +231,53 @@ function registerTools(server: McpServer, convex: ConvexHttpClient, apiKey: stri
       try {
         return ok(await convex.query(api.mcp.getMatches, { apiKey, ...args }));
       } catch (e) {
-        return fail(errorMessage(e));
+        return fail(convexFailure(e));
+      }
+    }
+  );
+
+  server.registerTool(
+    "update_monitor",
+    {
+      title: "Update a monitor",
+      description:
+        "Change a monitor's name, prompt, check interval or stock and price alerts, or pause and resume it. " +
+        "Send only what changes. The URL can't change: delete the monitor and create a new one. " +
+        "A new prompt takes effect at the next full read of the page, as in the web app. " +
+        "A faster interval than the plan allows is lowered to the fastest it does.",
+      inputSchema: z.object({
+        monitorId,
+        name: z.string().min(1).max(200).optional(),
+        prompt: prompt.optional(),
+        checkInterval: intervals.optional(),
+        alertOn: alertOn.optional(),
+        paused: z.boolean().optional().describe("true pauses checks and alerts; false resumes them."),
+        url: z.string().optional().describe("Not allowed. Present only so the refusal can say why."),
+      }),
+      annotations: { idempotentHint: true },
+    },
+    async (args) => {
+      try {
+        return ok(await convex.mutation(api.mcp.updateMonitor, { apiKey, ...args }));
+      } catch (e) {
+        return fail(convexFailure(e));
+      }
+    }
+  );
+
+  server.registerTool(
+    "delete_monitor",
+    {
+      title: "Delete a monitor",
+      description: "Delete a monitor and its history for good. Confirm with the user first.",
+      inputSchema: z.object({ monitorId }),
+      annotations: { destructiveHint: true },
+    },
+    async (args) => {
+      try {
+        return ok(await convex.mutation(api.mcp.deleteMonitor, { apiKey, ...args }));
+      } catch (e) {
+        return fail(convexFailure(e));
       }
     }
   );

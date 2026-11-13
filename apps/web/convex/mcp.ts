@@ -1,45 +1,89 @@
-import { ConvexError, v } from "convex/values";
+import { ConvexError, v, type Infer } from "convex/values";
 import { mutation, query, type QueryCtx } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
 import {
   DEFAULT_AGENT_MATCHES,
   MAX_AGENT_MATCHES,
   MAX_AGENT_MONITORS,
+  guessAlertOn,
+  isProductMonitor,
   itemIdentity,
   toAgentItem,
+  toMinorUnits,
   type AgentItem,
 } from "@prowl/shared";
 import { requireKeyOwner } from "./apiKeys";
 import {
   createMonitorForUser,
+  removeMonitorsForUser,
   saveScanErrorForUser,
   saveScanResultForUser,
+  updateMonitorForUser,
 } from "./monitors";
-import { checkIntervalValidator } from "./schema";
+import { alertOnValidator, checkIntervalValidator } from "./schema";
 
 /**
  * What the MCP route calls, one function per tool step. Each takes the raw API
  * key and resolves the owner itself, so nothing here trusts a userId from the
  * caller.
  *
- * Errors are ConvexErrors on purpose: Convex hides a plain Error's message
- * from clients in production, and an agent told only "Server Error" cannot
- * tell a creation limit from a bad URL.
+ * Errors are ConvexErrors carrying a ToolError on purpose: Convex hides a
+ * plain Error's message from clients in production, and an agent told only
+ * "Server Error" cannot tell a creation limit from a bad URL.
  */
+
+export type ToolErrorCode = "blocked" | "limit_reached" | "not_found" | "invalid_url" | "failed";
+/** What every MCP tool returns on failure. `retry` says whether the same call may work later. */
+export type ToolError = { code: ToolErrorCode; message: string; retry: boolean };
+
+/**
+ * Sort a helper's error message into a code. The helpers are shared with the
+ * web app and throw plain messages, so the message is all there is to go on.
+ * A user error never improves on retry; only "failed" from our side might.
+ */
+function toolError(message: string): ToolError {
+  if (/not found/i.test(message)) return { code: "not_found", message, retry: false };
+  if (/limit reached|plan allows/i.test(message)) return { code: "limit_reached", message, retry: false };
+  if (/\burls?\b|hostname/i.test(message)) return { code: "invalid_url", message, retry: false };
+  return { code: "failed", message, retry: false };
+}
+
+function asToolError(e: unknown): never {
+  if (e instanceof ConvexError && typeof e.data === "object") throw e;
+  if (e instanceof ConvexError) throw new ConvexError(toolError(String(e.data)));
+  throw new ConvexError(toolError(e instanceof Error ? e.message : "Something went wrong"));
+}
 
 /** Scan history rows looked through for matches. Most checks find nothing, so this is a lookback, not a page size. */
 const MATCH_LOOKBACK_RESULTS = 50;
 
-function asUserError(e: unknown): never {
-  if (e instanceof ConvexError) throw e;
-  throw new ConvexError(e instanceof Error ? e.message : "Something went wrong");
-}
-
 async function ownedMonitor(ctx: QueryCtx, userId: string, monitorId: string) {
   const id = ctx.db.normalizeId("monitors", monitorId);
   const monitor = id ? await ctx.db.get(id) : null;
-  if (!monitor || monitor.userId !== userId) throw new ConvexError("Monitor not found");
+  if (!monitor || monitor.userId !== userId) throw new ConvexError(toolError("Monitor not found"));
   return monitor;
+}
+
+type AlertOn = Infer<typeof alertOnValidator>;
+
+/** Stock and price alerts read from the prompt, for an agent that sent none. */
+function guessedAlertOn(prompt: string): AlertOn | undefined {
+  const guess = guessAlertOn(prompt);
+  const currency = guess.priceBelow?.currency;
+  const amount = guess.priceBelow && currency ? toMinorUnits(guess.priceBelow.amount, currency) : null;
+  const alertOn: AlertOn = {
+    ...(guess.backInStock ? { backInStock: true } : {}),
+    ...(amount !== null && currency ? { priceBelow: { amount, currency } } : guess.priceDrop ? { priceDrop: true } : {}),
+  };
+  return Object.keys(alertOn).length > 0 ? alertOn : undefined;
+}
+
+/** Said when stock or price alerts are on but the page is not a product page, so they will not run. */
+const NOT_A_PRODUCT_NOTE =
+  "Stock and price alerts only run on a product page. This page reads as a listing, so only match alerts will fire.";
+
+function wantsProductAlerts(alertOn: AlertOn | undefined): boolean {
+  return alertOn?.backInStock === true || alertOn?.priceDrop === true || alertOn?.priceBelow !== undefined;
 }
 
 export const listMonitors = query({
@@ -108,11 +152,62 @@ export const createMonitor = mutation({
     prompt: v.string(),
     name: v.string(),
     checkInterval: v.optional(checkIntervalValidator),
+    alertOn: v.optional(alertOnValidator),
   },
-  handler: async (ctx, { apiKey, checkInterval, ...args }): Promise<Id<"monitors">> => {
+  handler: async (ctx, { apiKey, checkInterval, alertOn, ...args }): Promise<Id<"monitors">> => {
     const owner = await requireKeyOwner(ctx, apiKey);
-    // Same default as the web form.
-    return createMonitorForUser(ctx, owner, { ...args, checkInterval: checkInterval ?? "1h" }).catch(asUserError);
+    return createMonitorForUser(ctx, owner, {
+      ...args,
+      // Same default as the web form.
+      checkInterval: checkInterval ?? "1h",
+      alertOn: alertOn ?? guessedAlertOn(args.prompt),
+    }).catch(asToolError);
+  },
+});
+
+export const updateMonitor = mutation({
+  args: {
+    apiKey: v.string(),
+    monitorId: v.string(),
+    name: v.optional(v.string()),
+    prompt: v.optional(v.string()),
+    checkInterval: v.optional(checkIntervalValidator),
+    alertOn: v.optional(alertOnValidator),
+    paused: v.optional(v.boolean()),
+    // Accepted only to refuse it with a reason. Left out of the args, it would
+    // be rejected as an unknown field with a message no agent can act on.
+    url: v.optional(v.string()),
+  },
+  handler: async (ctx, { apiKey, monitorId, url, paused, ...fields }): Promise<{ monitorId: Id<"monitors">; note?: string }> => {
+    const { userId } = await requireKeyOwner(ctx, apiKey);
+    const monitor = await ownedMonitor(ctx, userId, monitorId);
+    if (url !== undefined) {
+      throw new ConvexError<ToolError>({
+        code: "invalid_url",
+        message: "A monitor's URL can't change. Delete it and create a new one.",
+        retry: false,
+      });
+    }
+    // Pausing a monitor mid-scan or resuming one that is not paused changes nothing.
+    const status =
+      paused === true && monitor.status !== "scanning" ? ("paused" as const)
+      : paused === false && monitor.status === "paused" ? ("active" as const)
+      : undefined;
+    await updateMonitorForUser(ctx, userId, monitor._id, { ...fields, status }).catch(asToolError);
+    const alertOn = fields.alertOn ?? monitor.alertOn;
+    return wantsProductAlerts(alertOn) && !isProductMonitor(monitor)
+      ? { monitorId: monitor._id, note: NOT_A_PRODUCT_NOTE }
+      : { monitorId: monitor._id };
+  },
+});
+
+export const deleteMonitor = mutation({
+  args: { apiKey: v.string(), monitorId: v.string() },
+  handler: async (ctx, { apiKey, monitorId }) => {
+    const { userId } = await requireKeyOwner(ctx, apiKey);
+    const monitor = await ownedMonitor(ctx, userId, monitorId);
+    await removeMonitorsForUser(ctx, userId, [monitor._id]).catch(asToolError);
+    return { deleted: monitor._id };
   },
 });
 
@@ -124,10 +219,13 @@ export const saveScanResult = mutation({
     matches: v.array(v.any()),
     contentFingerprint: v.optional(v.string()),
   },
-  handler: async (ctx, { apiKey, matches, ...args }) => {
+  handler: async (ctx, { apiKey, matches, ...args }): Promise<{ note?: string }> => {
     const { userId } = await requireKeyOwner(ctx, apiKey);
-    await ownedMonitor(ctx, userId, args.id);
-    await saveScanResultForUser(ctx, userId, { ...args, matches, matchCount: matches.length }).catch(asUserError);
+    const monitor = await ownedMonitor(ctx, userId, args.id);
+    await saveScanResultForUser(ctx, userId, { ...args, matches, matchCount: matches.length }).catch(asToolError);
+    return wantsProductAlerts(monitor.alertOn) && !isProductMonitor({ ...monitor, schema: args.schema })
+      ? { note: NOT_A_PRODUCT_NOTE }
+      : {};
   },
 });
 
@@ -136,6 +234,6 @@ export const saveScanError = mutation({
   handler: async (ctx, { apiKey, ...args }) => {
     const { userId } = await requireKeyOwner(ctx, apiKey);
     await ownedMonitor(ctx, userId, args.id);
-    await saveScanErrorForUser(ctx, userId, args).catch(asUserError);
+    await saveScanErrorForUser(ctx, userId, args).catch(asToolError);
   },
 });

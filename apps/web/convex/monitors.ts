@@ -211,6 +211,7 @@ export async function createMonitorForUser(
     notificationChannels?: ChannelList;
     /** The product this monitor watches a listing of. */
     groupId?: Id<"monitorGroups">;
+    alertOn?: Infer<typeof alertOnValidator>;
   }
 ): Promise<Id<"monitors">> {
   if (await isBanned(ctx, userId)) throw new ConvexError("This account has been suspended.");
@@ -225,6 +226,7 @@ export async function createMonitorForUser(
   validateName(args.name);
   validateMonitorUrl(args.url);
   validatePrompt(args.prompt);
+  if (args.alertOn) validateAlertOn(args.alertOn);
 
   // Rolling-window creation rate limit — counts survive deletion so
   // delete-and-remake can't bypass the paid AI extraction limit
@@ -261,6 +263,7 @@ export async function createMonitorForUser(
     checkInterval: checkInterval,
     notificationChannels: channels,
     groupId: args.groupId,
+    alertOn: args.alertOn,
     userId,
     userEmail,
     status: "scanning",
