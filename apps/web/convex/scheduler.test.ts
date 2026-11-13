@@ -761,16 +761,6 @@ test("a product page with a stock alert gets no sold-out rechecks", async () => 
   expect((await t.run((ctx) => ctx.db.get(id)))?.soldOutKeys).toEqual(["shop.test/kingston"]);
 });
 
-// The stock alert told the user the product is back. The next full read
-// matches it, and must not announce it again as a new match. The full read
-// keys the product item as matchKey does: here, by its title.
-test("a restock the stock alert reported counts as announced", async () => {
-  const { t, id, read } = await seedProductMonitor({ inStock: false });
-  await t.run((ctx) => ctx.db.patch(id, { matchedKeys: [] }));
-  expect(await read(true)).toEqual(["stock"]);
-  expect((await t.run((ctx) => ctx.db.get(id)))?.matchedKeys).toEqual(["sony wh-1000xm5"]);
-});
-
 // The prompt asked for stock, and the scorer could not read it. The alert
 // must say so, or it reads as an in-stock match.
 test("a quick-check alert with no stock read says stock was not shown", async () => {
@@ -840,11 +830,33 @@ test("a stock-aware check whose scoring fails holds new entries for the next che
   expect(judged?.soldOutKeys).toEqual(["shop.test/kingston"]);
 });
 
-// The price alert told the user it fell under target. The next full read
-// matches it at that price and must not announce it again.
-test("a price alert counts the product as announced", async () => {
-  const { t, id, read } = await seedProductMonitor({ inStock: true, price: 32000, currency: "GBP" }, { priceBelow: { amount: 30000, currency: "GBP" } });
-  await t.run((ctx) => ctx.db.patch(id, { matchedKeys: [] }));
-  expect(await read(true, { price: 28900 })).toEqual(["below"]);
-  expect((await t.run((ctx) => ctx.db.get(id)))?.matchedKeys).toEqual(["sony wh-1000xm5"]);
+// A product page with stock or price alerts reports its product through
+// them. Announced as a match as well, one restock or price drop would alert
+// twice, whichever read saw it first. Related items still alert as matches.
+test("a full read never announces the product itself when its stock or price alerts are on", async () => {
+  vi.stubEnv("SCRAPER_URL", "https://scraper.test");
+  vi.stubEnv("SCRAPER_API_KEY", "key");
+  const page = "https://shop.test/noctua";
+  const product = { title: "Noctua NH-L9a-AM5", url: page, price: 89, inStock: true };
+  const related = { title: "Noctua NH-L12S", url: "https://shop.test/l12s", price: 109, inStock: true };
+  vi.stubGlobal("fetch", async (url: string) => {
+    if (url.endsWith("/api/quick-check")) return Response.json({ accessible: true, contentHash: "page-2", candidates: [], totalEntries: 2 });
+    if (url.endsWith("/api/extract")) {
+      return Response.json({ schema: { items: [product, related], matchConditions: { inStockOnly: true } }, matches: [product, related], totalItems: 2, contentHash: "page-2" });
+    }
+    return new Response("not mocked", { status: 500 });
+  });
+  const t = convexTest(schema, modules);
+  t.registerComponent("betterAuth", betterAuthSchema, betterAuthModules);
+  const id = await t.run((ctx) =>
+    ctx.db.insert("monitors", {
+      userId: "user_1", name: "Noctua", url: page, prompt: "back in stock", status: "active", checkInterval: "1h",
+      schema: { items: [{ ...product, inStock: false }, related], matchConditions: { inStockOnly: true } }, matchCount: 0,
+      alertOn: { backInStock: true }, matchedKeys: [], checkCount: 5, contentFingerprint: "page-1", lastAiExtractAt: 0, nextCheckAt: 0,
+      createdAt: Date.now(), updatedAt: Date.now(),
+    })
+  );
+  await t.action(internal.scheduler.runScheduledChecks, {});
+  const [row] = await t.run((ctx) => ctx.db.query("scrapeResults").withIndex("by_monitorId", (q) => q.eq("monitorId", id)).collect());
+  expect(row?.newMatchKeys).toEqual(["shop.test/l12s"]);
 });

@@ -409,6 +409,12 @@ export const recordCheckResult = internalMutation({
     if (args.trackMatchKeys && (args.matches.length > 0 || args.totalItems > 0)) {
       const currentKeys = (args.matches as Record<string, unknown>[]).map(matchKey);
       newKeys = newMatchKeys(monitor.matchedKeys, currentKeys);
+      // A product page with stock or price alerts reports its product through
+      // them. Announced as a match too, one restock or price drop would alert
+      // twice, whichever read saw it first.
+      const page = { ...monitor, schema: args.schema ?? monitor.schema };
+      const product = wantsProductRead(page) ? productItem(page.schema, monitor.url) : null;
+      if (product) newKeys = newKeys.filter((k) => k !== matchKey(product as Record<string, unknown>));
       updates.matchedKeys = [...new Set(currentKeys.filter(Boolean))];
     } else if (!args.trackMatchKeys && args.matches.length > 0 && monitor.matchedKeys !== undefined) {
       // What a quick check alerted on is announced too. Left out, the next
@@ -1169,9 +1175,10 @@ async function runQuickCheck(
  * Ask the scraper to judge entries against the user's own words.
  *
  * A scoring failure must not silence a monitor, so entries come back with a
- * null score, which the caller lets through. The keyword filter already
- * vouched for them; the judgement narrows further, it does not grant the
- * match.
+ * null score, which the caller lets through: the keyword filter already
+ * vouched for them, and the judgement narrows further, it does not grant the
+ * match. When the prompt asks for stock, the caller holds new ones back for
+ * the next check instead: unjudged, they could be sold out.
  */
 async function scoreQuickCheckCandidates(
   candidates: QuickCheckCandidate[],
@@ -1537,15 +1544,6 @@ export const recordProductRead = internalMutation({
       }
     }
 
-    // An alerted restock or price counts as announced, or the next full read,
-    // which may now match the product, would announce it again as a new
-    // match. Keyed as the full read keys the product's item.
-    let matchedKeys = monitor.matchedKeys;
-    if (alerts.length > 0 && matchedKeys !== undefined) {
-      const item = productItem(monitor.schema, monitor.url);
-      matchedKeys = [...new Set([...matchedKeys, item ? matchKey(item as Record<string, unknown>) : canonicalUrl(monitor.url)])];
-    }
-
     const inStock = args.inStock ?? previous.inStock;
     await ctx.db.patch(args.monitorId, {
       // A held price or currency needs a confirming read. Keeping the old
@@ -1557,7 +1555,6 @@ export const recordProductRead = internalMutation({
           ? monitor.productFingerprint
           : args.productFingerprint,
       lastSeen: { ...(inStock !== undefined ? { inStock } : {}), ...priceFields },
-      matchedKeys,
     });
 
     for (const alert of alerts) {
