@@ -499,3 +499,46 @@ test("a sold-out entry never alerts, whatever it scored", async () => {
   const { check } = await stockListing([false], 95);
   expect((await check())?.lastMatchAt).toBeUndefined();
 });
+
+// The Computer Lounge pages list the product after a related item. The read
+// must find the product by its own link, not take the first item on the page.
+test("a product page with related items reads the product's stock, by its own title", async () => {
+  vi.stubEnv("SCRAPER_URL", "https://scraper.test");
+  vi.stubEnv("SCRAPER_API_KEY", "key");
+  const sent: { productTitle?: string }[] = [];
+  vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+    if (url.endsWith("/api/quick-check")) {
+      sent.push(JSON.parse(String(init?.body)));
+      return Response.json({ accessible: true, contentHash: "page-1", candidates: [], totalEntries: 9 });
+    }
+    return new Response("not mocked", { status: 500 });
+  });
+  const page = "https://computerlounge.co.nz/products/noctua-nh-l9a-am5-cpu-cooler";
+  const t = convexTest(schema, modules);
+  t.registerComponent("betterAuth", betterAuthSchema, betterAuthModules);
+  await t.run((ctx) =>
+    ctx.db.insert("monitors", {
+      userId: "user_1",
+      name: "PC build: Noctua",
+      url: page,
+      prompt: "back in stock up to NZ$95",
+      status: "active",
+      checkInterval: "1h",
+      schema: {
+        items: [
+          { title: "Noctua NH-L9a-AM5 Chromax Black", url: "https://computerlounge.co.nz/products/noctua-nh-l9a-am5-chromax-black-cpu-cooler" },
+          { title: "Noctua NH-L9a-AM5 Low Profile CPU Cooler", url: page },
+        ],
+      },
+      matchCount: 0,
+      alertOn: { backInStock: true },
+      checkCount: 5,
+      lastAiExtractAt: Date.now(),
+      nextCheckAt: 0,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    })
+  );
+  await t.action(internal.scheduler.runScheduledChecks, {});
+  expect(sent[0]?.productTitle).toBe("Noctua NH-L9a-AM5 Low Profile CPU Cooler");
+});

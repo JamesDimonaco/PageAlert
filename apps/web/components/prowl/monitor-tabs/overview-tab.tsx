@@ -34,7 +34,7 @@ import type { Id } from "@/convex/_generated/dataModel";
 import type { Doc } from "@/convex/_generated/dataModel";
 import type { ExtractedItem, ExtractionSchema, MatchConditions, PriceChange } from "@prowl/shared";
 import { MatchChecks } from "@/components/prowl/match-checks";
-import { currencyExponent, getItemKey, isProductMonitor, matchConfidence, MATCH_CONFIDENCE_LABEL } from "@prowl/shared";
+import { currencyExponent, getItemKey, isProductMonitor, matchConfidence, MATCH_CONFIDENCE_LABEL, productItem } from "@prowl/shared";
 import { useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { timeAgo, timeUntil } from "@/lib/time";
@@ -91,7 +91,7 @@ type CheckInterval = "5m" | "15m" | "30m" | "1h" | "6h" | "24h";
  * one rather than a guess turning their target into another currency.
  */
 function productCurrency(monitor: OverviewTabProps["monitor"]): string {
-  const itemCurrency = (monitor.schema as { items?: { currency?: unknown }[] } | undefined)?.items?.[0]?.currency;
+  const itemCurrency = productItem(monitor.schema, monitor.url)?.currency;
   const candidate = monitor.lastSeen?.currency ?? (typeof itemCurrency === "string" ? itemCurrency.toUpperCase() : "");
   return currencyExponent(candidate) === null ? "" : candidate;
 }
@@ -442,7 +442,7 @@ export function OverviewTab({ monitorId, monitor, matches, items, conditions, re
           items={items}
           conditions={conditions}
           showStockHint={
-            totalItems === 1 && isProductMonitor(monitor) && monitor.alertOn?.backInStock !== true && !conditions.inStockOnly
+            isProductMonitor(monitor) && monitor.alertOn?.backInStock !== true && !conditions.inStockOnly
           }
           onOpenSettings={() => {
             onSettingsOpenChange(true);

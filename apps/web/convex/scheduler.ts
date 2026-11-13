@@ -4,7 +4,7 @@ import { claimActivation } from "./monitors";
 import { internalAction, internalMutation, internalQuery, type ActionCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
-import { formatMinorUnits, formatSmsPrice, isProductMonitor, stockNotShownNote, type ExtractedItem } from "@prowl/shared";
+import { formatMinorUnits, formatSmsPrice, isProductMonitor, productItem, stockNotShownNote, type ExtractedItem } from "@prowl/shared";
 import { alertChannels, deliverAlert } from "./alerts";
 import {
   displayHost,
@@ -112,7 +112,7 @@ const PRODUCT_SCAN_WATCHED_MS = 15 * 60 * 1000;
 const MAX_CONFIRM_ATTEMPTS = 3;
 
 /** A product monitor whose owner wants a stock or price alert. */
-function wantsProductRead(monitor: Pick<Doc<"monitors">, "alertOn" | "schema" | "groupId">): boolean {
+function wantsProductRead(monitor: Pick<Doc<"monitors">, "alertOn" | "schema" | "groupId" | "url">): boolean {
   const on = monitor.alertOn;
   const wanted = on?.backInStock === true || on?.priceDrop === true || on?.priceBelow !== undefined;
   return wanted && isProductMonitor(monitor);
@@ -123,13 +123,11 @@ const MAX_PRODUCT_TITLE = 500;
 
 /**
  * The product's name, for finding it on the page and naming it in alerts. A
- * listing in a product uses its search result's title, because its page may
- * hold several items and the first need not be the product. Otherwise it is
- * the last full read's.
+ * listing in a product uses its search result's title. Otherwise it is the
+ * product item from the last full read (see productItem).
  */
-function productTitle(monitor: Pick<Doc<"monitors">, "name" | "schema" | "productTitle">): string {
-  const title =
-    monitor.productTitle ?? (monitor.schema as { items?: { title?: unknown }[] } | undefined)?.items?.[0]?.title;
+function productTitle(monitor: Pick<Doc<"monitors">, "name" | "schema" | "productTitle" | "url">): string {
+  const title = monitor.productTitle ?? productItem(monitor.schema, monitor.url)?.title;
   const name = typeof title === "string" && title.trim() ? title.trim() : monitor.name;
   return name.slice(0, MAX_PRODUCT_TITLE);
 }

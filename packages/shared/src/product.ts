@@ -1,20 +1,32 @@
+import { canonicalUrl } from "./url-identity";
+import type { ExtractedItem } from "./types";
+
 /**
- * A monitor watches one product when its last full read found exactly one
- * item. Only those get the stock check: on a listing page "is it in stock"
- * has no single answer.
+ * The product on a product page, or null on a listing.
+ *
+ * It is the one item that links to the page itself. Product pages often show
+ * related items too, so counting items alone called them listings and stock
+ * and price alerts never ran. With no such item, a page holding exactly one
+ * item is that item's page.
  */
-export function isSingleProduct(schema: unknown): boolean {
+export function productItem(schema: unknown, pageUrl: string): ExtractedItem | null {
   const items = (schema as { items?: unknown } | null | undefined)?.items;
-  return Array.isArray(items) && items.length === 1;
+  if (!Array.isArray(items)) return null;
+  const page = canonicalUrl(pageUrl);
+  const own = items.filter(
+    (item: ExtractedItem) => typeof item?.url === "string" && item.url && canonicalUrl(item.url) === page
+  );
+  if (own.length === 1) return own[0];
+  if (items.length === 1) return items[0];
+  return null;
 }
 
 /**
- * Whether a monitor gets the stock and price checks. A listing in a product
- * (one the user picked from a search) qualifies even when its page also shows
- * other items, such as related products.
+ * Whether a monitor gets the stock and price checks: its page is a product
+ * page, or it is a listing in a product (one the user picked from a search).
  */
-export function isProductMonitor(monitor: { schema?: unknown; groupId?: string }): boolean {
-  return monitor.groupId !== undefined || isSingleProduct(monitor.schema);
+export function isProductMonitor(monitor: { schema?: unknown; groupId?: string; url: string }): boolean {
+  return monitor.groupId !== undefined || productItem(monitor.schema, monitor.url) !== null;
 }
 
 /** Text kept before the title, for "Sold out" badges that sit above it. */

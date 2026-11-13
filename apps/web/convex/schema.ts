@@ -6,7 +6,7 @@ export const emailCategory = v.union(v.literal("tips"), v.literal("updates"));
 export type EmailCategory = Infer<typeof emailCategory>;
 
 /**
- * Stock and price alerts on a single-product monitor (isSingleProduct in
+ * Stock and price alerts on a product monitor (isProductMonitor in
  * @prowl/shared). Absent means match alerts only. priceDrop and priceBelow
  * are one choice: any drop, or below a target. The target carries its own
  * currency, so it is never compared with a price in another one.
