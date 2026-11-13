@@ -154,6 +154,7 @@ function logRow(userId: string, extra: Partial<Row<"scrapeLogs">> = {}): Row<"sc
  */
 const FIXTURES: { [T in TableNames]: (refs: Refs) => Row<T> } = {
   monitors: ({ userId }) => monitorRow(userId),
+  folders: ({ userId }) => ({ userId, name: "PC build", createdAt: 0, updatedAt: 0 }),
   monitorGroups: ({ userId, monitorId }) => ({
     userId,
     name: "Sony WH-1000XM5",

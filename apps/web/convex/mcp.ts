@@ -23,6 +23,7 @@ import {
   saveScanResultForUser,
   updateMonitorForUser,
 } from "./monitors";
+import { createFolderForUser, setMonitorFolder, setProductFolder } from "./folders";
 import { createProductForUser } from "./monitorGroups";
 import { findListings } from "./productSearch";
 import { alertOnValidator, checkIntervalValidator } from "./schema";
@@ -101,6 +102,8 @@ export const listMonitors = query({
       .withIndex("by_userId", (q) => q.eq("userId", userId))
       .order("desc")
       .take(MAX_AGENT_MONITORS);
+    const folders = await ctx.db.query("folders").withIndex("by_userId", (q) => q.eq("userId", userId)).collect();
+    const folderName = new Map(folders.map((f) => [f._id, f.name]));
     return monitors.map((m) => ({
       id: m._id,
       name: m.name,
@@ -112,6 +115,7 @@ export const listMonitors = query({
       // checkCount counts successful checks only, so zero means we have never
       // once read this page.
       neverSucceeded: (m.checkCount ?? 0) === 0,
+      folder: (m.folderId && folderName.get(m.folderId)) ?? null,
     }));
   },
 });
@@ -164,11 +168,13 @@ const MAX_RECENT_MATCH_MONITORS = 50;
  * listings are left out, because they never send match alerts.
  */
 export const getRecentMatches = query({
-  args: { apiKey: v.string(), since: v.string() },
-  handler: async (ctx, { apiKey, since }) => {
+  args: { apiKey: v.string(), since: v.string(), limit: v.optional(v.number()) },
+  handler: async (ctx, { apiKey, since, limit }) => {
     const { userId } = await requireKeyOwner(ctx, apiKey);
+    const max = Math.min(Math.max(Math.floor(limit ?? DEFAULT_AGENT_MATCHES), 1), MAX_AGENT_MATCHES);
     const from = Date.parse(since);
     if (Number.isNaN(from)) throw new ConvexError(toolError("since must be an ISO 8601 time, e.g. 2026-11-13T00:00:00Z."));
+    // The plan's monitor limit bounds this read.
     const monitors = (
       await ctx.db.query("monitors").withIndex("by_userId", (q) => q.eq("userId", userId)).collect()
     )
@@ -184,6 +190,7 @@ export const getRecentMatches = query({
     }
     return recent
       .sort((a, b) => b.matchedAt - a.matchedAt)
+      .slice(0, max)
       .map((m) => ({ ...m, matchedAt: new Date(m.matchedAt).toISOString() }));
   },
 });
@@ -196,15 +203,19 @@ export const createMonitor = mutation({
     name: v.string(),
     checkInterval: v.optional(checkIntervalValidator),
     alertOn: v.optional(alertOnValidator),
+    folderId: v.optional(v.string()),
   },
-  handler: async (ctx, { apiKey, checkInterval, alertOn, ...args }): Promise<Id<"monitors">> => {
+  handler: async (ctx, { apiKey, checkInterval, alertOn, folderId, ...args }): Promise<Id<"monitors">> => {
     const owner = await requireKeyOwner(ctx, apiKey);
-    return createMonitorForUser(ctx, owner, {
+    const id = await createMonitorForUser(ctx, owner, {
       ...args,
       // Same default as the web form.
       checkInterval: checkInterval ?? "1h",
       alertOn: alertOn ?? guessedAlertOn(args.prompt),
     }).catch(asToolError);
+    // A throw here rolls back the monitor too.
+    if (folderId !== undefined) await setMonitorFolder(ctx, owner.userId, id, folderId).catch(asToolError);
+    return id;
   },
 });
 
@@ -217,11 +228,13 @@ export const updateMonitor = mutation({
     checkInterval: v.optional(checkIntervalValidator),
     alertOn: v.optional(alertOnValidator),
     paused: v.optional(v.boolean()),
+    /** Null takes the monitor out of its folder. */
+    folderId: v.optional(v.union(v.string(), v.null())),
     // Accepted only to refuse it with a reason. Left out of the args, it would
     // be rejected as an unknown field with a message no agent can act on.
     url: v.optional(v.string()),
   },
-  handler: async (ctx, { apiKey, monitorId, url, paused, ...fields }): Promise<{ monitorId: Id<"monitors">; note?: string }> => {
+  handler: async (ctx, { apiKey, monitorId, url, paused, folderId, ...fields }): Promise<{ monitorId: Id<"monitors">; note?: string }> => {
     const { userId } = await requireKeyOwner(ctx, apiKey);
     const monitor = await ownedMonitor(ctx, userId, monitorId);
     if (url !== undefined) {
@@ -237,6 +250,7 @@ export const updateMonitor = mutation({
       : paused === false && monitor.status === "paused" ? ("active" as const)
       : undefined;
     await updateMonitorForUser(ctx, userId, monitor._id, { ...fields, status }).catch(asToolError);
+    if (folderId !== undefined) await setMonitorFolder(ctx, userId, monitor._id, folderId).catch(asToolError);
     const alertOn = fields.alertOn ?? monitor.alertOn;
     return wantsProductAlerts(alertOn) && !isProductMonitor(monitor)
       ? { monitorId: monitor._id, note: NOT_A_PRODUCT_NOTE }
@@ -278,8 +292,9 @@ export const createProduct = mutation({
     urls: v.array(v.string()),
     alertOn: alertOnValidator,
     checkInterval: v.optional(checkIntervalValidator),
+    folderId: v.optional(v.string()),
   },
-  handler: async (ctx, { apiKey, title, region, urls, alertOn, checkInterval }) => {
+  handler: async (ctx, { apiKey, title, region, urls, alertOn, checkInterval, folderId }) => {
     const owner = await requireKeyOwner(ctx, apiKey);
     const { groupId, monitorIds } = await createProductForUser(ctx, owner, {
       name: title,
@@ -289,12 +304,30 @@ export const createProduct = mutation({
       checkInterval: checkInterval ?? "1h",
       listings: urls.map((url) => ({ site: displayHost(url), url, title, label: "same" as const, watch: true })),
     }).catch(asToolError);
+    if (folderId !== undefined) await setProductFolder(ctx, owner.userId, groupId, folderId).catch(asToolError);
     return { productId: groupId, monitorIds };
+  },
+});
+
+/** A folder by name: the user's existing one with that name, or a new one. */
+export const createFolder = mutation({
+  args: { apiKey: v.string(), name: v.string() },
+  handler: async (ctx, { apiKey, name }) => {
+    const { userId } = await requireKeyOwner(ctx, apiKey);
+    const folderId = await createFolderForUser(ctx, userId, name).catch(asToolError);
+    const folder = await ctx.db.get(folderId);
+    return { folderId, name: folder!.name };
   },
 });
 
 /** Proxy reads a preview may spend per user per UTC day. Each one costs proxy credit. */
 const PREVIEW_PROXY_DAILY_LIMIT = 5;
+/**
+ * Proxy reads all previews together may spend in an hour. Previews have
+ * their own bucket rather than the monitors' escalation budget, so a few busy
+ * agents cannot leave real monitors without their proxy retries.
+ */
+const PREVIEW_PROXY_HOURLY_LIMIT = 20;
 
 /**
  * Claim one proxy attempt for a preview the site blocked. Counted per user
@@ -304,18 +337,23 @@ export const claimPreviewProxy = mutation({
   args: { apiKey: v.string() },
   handler: async (ctx, { apiKey }): Promise<{ granted: true } | { granted: false; reason: string }> => {
     const { userId } = await requireKeyOwner(ctx, apiKey);
-    const name = `previewProxy:${userId}:${new Date().toISOString().slice(0, 10)}`;
-    const row = await ctx.db.query("counters").withIndex("by_name", (q) => q.eq("name", name)).unique();
-    if ((row?.value ?? 0) >= PREVIEW_PROXY_DAILY_LIMIT) {
+    const now = new Date().toISOString();
+    const counter = (name: string) => ctx.db.query("counters").withIndex("by_name", (q) => q.eq("name", name)).unique();
+    const userName = `previewProxy:${userId}:${now.slice(0, 10)}`;
+    const hourName = `previewProxy:hour:${now.slice(0, 13)}`;
+    const user = await counter(userName);
+    if ((user?.value ?? 0) >= PREVIEW_PROXY_DAILY_LIMIT) {
       return { granted: false, reason: `This account has used its ${PREVIEW_PROXY_DAILY_LIMIT} proxy previews for today.` };
     }
-    // An escalation: a reach for the proxy after a block, so the hourly cap
-    // on bursts applies as well as the monthly one.
-    if ((await scraperDown(ctx)) || !(await reserveFallback(ctx, true))) {
+    const hour = await counter(hourName);
+    // The monthly budget is the one about money; the hourly one is previews' own.
+    if ((hour?.value ?? 0) >= PREVIEW_PROXY_HOURLY_LIMIT || (await scraperDown(ctx)) || !(await reserveFallback(ctx, false))) {
       return { granted: false, reason: "The proxy is not available right now." };
     }
-    if (row) await ctx.db.patch(row._id, { value: row.value + 1 });
-    else await ctx.db.insert("counters", { name, value: 1 });
+    for (const [row, name] of [[user, userName], [hour, hourName]] as const) {
+      if (row) await ctx.db.patch(row._id, { value: row.value + 1 });
+      else await ctx.db.insert("counters", { name, value: 1 });
+    }
     return { granted: true };
   },
 });

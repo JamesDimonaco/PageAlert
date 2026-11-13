@@ -553,16 +553,60 @@ test("recent matches read at most the 50 monitors that matched most recently", a
       await ctx.db.insert("scrapeResults", { monitorId: id, matches: [{ title: `item ${i}` }], totalItems: 1, hasNewMatches: true, scrapedAt: NOW + i });
     }
   });
-  const recent = await t.query(api.mcp.getRecentMatches, { apiKey: key, since: new Date(NOW).toISOString() });
+  const recent = await t.query(api.mcp.getRecentMatches, { apiKey: key, since: new Date(NOW).toISOString(), limit: 100 });
   expect(recent).toHaveLength(50);
   expect(recent.at(-1)?.monitorName).toBe("m1");
+  // The answer is capped like get_matches, by default and at most.
+  expect(await t.query(api.mcp.getRecentMatches, { apiKey: key, since: new Date(NOW).toISOString() })).toHaveLength(20);
 });
 
-// A burst of agents all hitting blocked shops is the incident the hourly cap exists for.
-test("preview gets no proxy attempt once this hour's escalation budget is spent", async () => {
+// Previews have their own hourly bucket. On the monitors' escalation budget,
+// a few busy agents could starve real monitors of their proxy retries.
+test("previews get 20 proxy attempts an hour across all users, apart from monitors' budget", async () => {
+  const t = setup();
+  const keys = [];
+  for (let i = 0; i < 5; i++) keys.push((await seedUser(t, `u${i}@example.com`)).key);
+  for (let i = 0; i < 20; i++) {
+    expect(await t.mutation(api.mcp.claimPreviewProxy, { apiKey: keys[i % 5]! })).toEqual({ granted: true });
+  }
+  expect(await t.mutation(api.mcp.claimPreviewProxy, { apiKey: keys[4]! })).toMatchObject({ granted: false });
+
+  const hour = new Date(NOW).toISOString().slice(0, 13);
+  const escalations = await t.run((ctx) =>
+    ctx.db.query("counters").withIndex("by_name", (q) => q.eq("name", `fallback:escalations:${hour}`)).unique()
+  );
+  expect(escalations).toBeNull();
+});
+
+test("an agent files what it creates in a folder, and can move it out", async () => {
   const t = setup();
   const { key } = await seedUser(t, "a@example.com");
-  const hour = new Date(NOW).toISOString().slice(0, 13);
-  await t.run((ctx) => ctx.db.insert("counters", { name: `fallback:escalations:${hour}`, value: 1_000_000 }));
-  expect(await t.mutation(api.mcp.claimPreviewProxy, { apiKey: key })).toMatchObject({ granted: false });
+  const { folderId } = await t.mutation(api.mcp.createFolder, { apiKey: key, name: "PC build" });
+  // Asked again in a later session, the same name is the same folder.
+  expect(await t.mutation(api.mcp.createFolder, { apiKey: key, name: "pc build" })).toEqual({ folderId, name: "PC build" });
+
+  const id = await t.mutation(api.mcp.createMonitor, { apiKey: key, ...MONITOR, folderId });
+  const { productId } = await t.mutation(api.mcp.createProduct, {
+    apiKey: key, title: "Sony WH-1000XM5", region: "GB", urls: ["https://www.argos.co.uk/product/1"],
+    alertOn: { backInStock: true }, folderId,
+  });
+  expect((await t.run((ctx) => ctx.db.get(productId)))?.folderId).toBe(folderId);
+  const listed = (await t.query(api.mcp.listMonitors, { apiKey: key })).find((m) => m.id === id);
+  expect(listed?.folder).toBe("PC build");
+
+  await t.mutation(api.mcp.updateMonitor, { apiKey: key, monitorId: id, folderId: null });
+  expect((await t.run((ctx) => ctx.db.get(id)))?.folderId).toBeUndefined();
+});
+
+test("an agent cannot file into another account's folder", async () => {
+  const t = setup();
+  const owner = await seedUser(t, "a@example.com");
+  const other = await seedUser(t, "b@example.com");
+  const { folderId } = await t.mutation(api.mcp.createFolder, { apiKey: owner.key, name: "PC build" });
+  expect(await toolErrorOf(t.mutation(api.mcp.createMonitor, { apiKey: other.key, ...MONITOR, folderId }))).toMatchObject({
+    code: "not_found",
+    message: "Folder not found",
+  });
+  // All or nothing: the refused monitor is not left behind.
+  expect(await t.query(api.mcp.listMonitors, { apiKey: other.key })).toEqual([]);
 });

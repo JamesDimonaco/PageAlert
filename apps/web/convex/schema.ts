@@ -97,6 +97,8 @@ export default defineSchema({
     // check judges a few again each time, so a restock still alerts. Oldest
     // turn first: see MAX_SOLD_OUT_RECHECKS.
     soldOutKeys: v.optional(v.array(v.string())),
+    // A name the user files it under, such as "PC build". Holds no settings.
+    folderId: v.optional(v.id("folders")),
     // This site only ever answers through the proxy, so skip the direct attempt
     // that would fail anyway. Re-probed periodically — see PROXY_REPROBE_EVERY.
     proxyPreferred: v.optional(v.boolean()),
@@ -174,6 +176,7 @@ export default defineSchema({
     .index("by_isAnonymous_expiresAt", ["isAnonymous", "expiresAt"])
     .index("by_resumeToken", ["resumeToken"])
     .index("by_host_proxyPreferred", ["host", "proxyPreferred"])
+    .index("by_folderId", ["folderId"])
     .index("by_groupId", ["groupId"]),
 
   // A product: one search's listings, some of them watched by a monitor each.
@@ -188,6 +191,17 @@ export default defineSchema({
     listings: v.array(groupListingValidator),
     // When any listing last sent an error alert. See claimErrorAlert.
     lastErrorAlertAt: v.optional(v.number()),
+    folderId: v.optional(v.id("folders")),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_userId", ["userId"])
+    .index("by_folderId", ["folderId"]),
+
+  // A name the user gives a set of monitors and products. One level, no settings.
+  folders: defineTable({
+    userId: v.string(),
+    name: v.string(),
     createdAt: v.number(),
     updatedAt: v.number(),
   }).index("by_userId", ["userId"]),

@@ -275,6 +275,10 @@ const SWEEPS: readonly {
       ctx.db.query("monitorGroups").withIndex("by_userId", (q) => q.eq("userId", userId)),
   },
   {
+    table: "folders",
+    rows: (ctx, userId) => ctx.db.query("folders").withIndex("by_userId", (q) => q.eq("userId", userId)),
+  },
+  {
     table: "scrapeLogs",
     rows: (ctx, userId) =>
       ctx.db.query("scrapeLogs").withIndex("by_userId_createdAt", (q) => q.eq("userId", userId)),

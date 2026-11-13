@@ -69,6 +69,7 @@ function scanSummary(data: ExtractResponse) {
 
 const intervals = z.enum(["5m", "15m", "30m", "1h", "6h", "24h"]);
 const monitorId = z.string().describe("The id from list_monitors or create_monitor.");
+const folderId = z.string().describe("A folder id from create_folder.");
 const alertOn = z
   .object({
     backInStock: z.boolean().optional().describe("Alert when the product goes from out of stock to in stock."),
@@ -107,7 +108,8 @@ function registerTools(server: McpServer, convex: ConvexHttpClient, apiKey: stri
       description:
         "Read a page once and show what PageAlert would match on it for this prompt. Saves nothing. " +
         "Use it to check a page is readable and the prompt picks out the right items before creating a monitor. " +
-        "If the site blocks the read, it tries once through a proxy, up to 5 times a day per user.",
+        "If the site blocks the read, it tries once through a proxy, up to 5 times a day per user, " +
+        "while the service's hourly proxy allowance lasts.",
       inputSchema: z.object({ url, prompt }),
     },
     async (args) => {
@@ -156,6 +158,7 @@ function registerTools(server: McpServer, convex: ConvexHttpClient, apiKey: stri
         name: z.string().min(1).max(200).describe("A short name the user will recognise in alerts."),
         checkInterval: intervals.optional().describe("How often to check. Defaults to 1h."),
         alertOn: alertOn.optional().describe("Stock and price alerts. Left out, they are guessed from the prompt."),
+        folderId: folderId.optional(),
       }),
     },
     async (args) => {
@@ -264,6 +267,13 @@ function registerTools(server: McpServer, convex: ConvexHttpClient, apiKey: stri
         "answer 'what's new?' in one call. A product's listings are not included: they alert on stock and price only.",
       inputSchema: z.object({
         since: z.string().describe("ISO 8601 time, e.g. 2026-11-13T00:00:00Z."),
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(MAX_AGENT_MATCHES)
+          .optional()
+          .describe(`How many to return. Defaults to ${DEFAULT_AGENT_MATCHES}.`),
       }),
       annotations: { readOnlyHint: true },
     },
@@ -292,6 +302,7 @@ function registerTools(server: McpServer, convex: ConvexHttpClient, apiKey: stri
         checkInterval: intervals.optional(),
         alertOn: alertOn.optional(),
         paused: z.boolean().optional().describe("true pauses checks and alerts; false resumes them."),
+        folderId: folderId.nullable().optional().describe("A folder id from create_folder, or null to take it out of its folder."),
         url: z.string().optional().describe("Not allowed. Present only so the refusal can say why."),
       }),
       annotations: { idempotentHint: true },
@@ -343,6 +354,7 @@ function registerTools(server: McpServer, convex: ConvexHttpClient, apiKey: stri
         urls: z.array(url).min(1).max(8).describe("Shop pages for this product, e.g. from find_product."),
         alertOn: alertOn.describe("What to alert on. At least one of backInStock, priceDrop or priceBelow."),
         checkInterval: intervals.optional().describe("How often to check. Defaults to 1h."),
+        folderId: folderId.optional(),
       }),
     },
     async (args) => {
@@ -352,6 +364,26 @@ function registerTools(server: McpServer, convex: ConvexHttpClient, apiKey: stri
       }
       try {
         return ok(await convex.mutation(api.mcp.createProduct, { apiKey, ...args }));
+      } catch (e) {
+        return fail(convexFailure(e));
+      }
+    }
+  );
+
+  server.registerTool(
+    "create_folder",
+    {
+      title: "Create a folder",
+      description:
+        "A named folder, such as 'PC build', to file monitors and products under on the user's dashboard. " +
+        "If the user already has a folder with this name, returns that one. Pass its id as folderId to " +
+        "create_monitor, create_product or update_monitor. A folder holds no settings.",
+      inputSchema: z.object({ name: z.string().min(1).max(100) }),
+      annotations: { idempotentHint: true },
+    },
+    async (args) => {
+      try {
+        return ok(await convex.mutation(api.mcp.createFolder, { apiKey, ...args }));
       } catch (e) {
         return fail(convexFailure(e));
       }
