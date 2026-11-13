@@ -1473,15 +1473,8 @@ export const recordProductRead = internalMutation({
     const on = monitor.alertOn ?? {};
     const alerts: ProductAlert[] = [];
 
-    // The restock counts as announced, or the next full read, which now
-    // matches the product, would announce it again as a new match.
-    let matchedKeys = monitor.matchedKeys;
     if (on.backInStock === true && previous.inStock === false && args.inStock === true) {
       alerts.push({ kind: "stock" });
-      // Keyed as the full read keys the product's item.
-      const item = productItem(monitor.schema, monitor.url);
-      const key = item ? matchKey(item as Record<string, unknown>) : canonicalUrl(monitor.url);
-      if (matchedKeys !== undefined) matchedKeys = [...new Set([...matchedKeys, key])];
     }
 
     // A held price or currency whose confirming read did not settle it is
@@ -1542,6 +1535,15 @@ export const recordProductRead = internalMutation({
           alerts.push({ ...price, reason: "below", target: target.amount });
         }
       }
+    }
+
+    // An alerted restock or price counts as announced, or the next full read,
+    // which may now match the product, would announce it again as a new
+    // match. Keyed as the full read keys the product's item.
+    let matchedKeys = monitor.matchedKeys;
+    if (alerts.length > 0 && matchedKeys !== undefined) {
+      const item = productItem(monitor.schema, monitor.url);
+      matchedKeys = [...new Set([...matchedKeys, item ? matchKey(item as Record<string, unknown>) : canonicalUrl(monitor.url)])];
     }
 
     const inStock = args.inStock ?? previous.inStock;

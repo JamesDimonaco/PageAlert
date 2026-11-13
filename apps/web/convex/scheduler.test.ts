@@ -839,3 +839,12 @@ test("a stock-aware check whose scoring fails holds new entries for the next che
   expect(judged?.lastMatchAt).toBeUndefined();
   expect(judged?.soldOutKeys).toEqual(["shop.test/kingston"]);
 });
+
+// The price alert told the user it fell under target. The next full read
+// matches it at that price and must not announce it again.
+test("a price alert counts the product as announced", async () => {
+  const { t, id, read } = await seedProductMonitor({ inStock: true, price: 32000, currency: "GBP" }, { priceBelow: { amount: 30000, currency: "GBP" } });
+  await t.run((ctx) => ctx.db.patch(id, { matchedKeys: [] }));
+  expect(await read(true, { price: 28900 })).toEqual(["below"]);
+  expect((await t.run((ctx) => ctx.db.get(id)))?.matchedKeys).toEqual(["sony wh-1000xm5"]);
+});

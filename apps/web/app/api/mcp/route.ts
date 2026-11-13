@@ -29,8 +29,12 @@ export const maxDuration = 120;
 const FIRST_SCAN_TIMEOUT_MS = 80_000;
 /** preview_page's direct read and proxy read together, inside maxDuration. */
 const PREVIEW_BUDGET_MS = 110_000;
-/** With less time left, a proxy read would be cut off, so the user's daily proxy preview is not spent on it. */
-const MIN_PROXY_READ_MS = 30_000;
+/**
+ * With less time left, a proxy read would likely be cut off, so the user's
+ * daily proxy preview is not spent on it. A proxy fetch plus the AI extract
+ * often runs 30-45s.
+ */
+const MIN_PROXY_READ_MS = 50_000;
 
 const SITE_URL = "https://pagealert.io";
 /** Matches shown from a scan. The dashboard has the rest. */

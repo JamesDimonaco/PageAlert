@@ -852,3 +852,19 @@ test("filing a product's listing files the product", async () => {
   await t.mutation(api.mcp.updateMonitor, { apiKey: key, monitorId: monitorIds[0]!, folderId });
   expect((await t.run((ctx) => ctx.db.get(productId)))?.folderId).toBe(folderId);
 });
+
+// The block lifts tomorrow. Mentioning a URL as advice does not make it a bad URL.
+test("a search blocked for the day says retry, not invalid_url", async () => {
+  vi.stubEnv("SCRAPER_URL", "https://scraper.test");
+  vi.stubEnv("SCRAPER_API_KEY", "key");
+  const t = setup();
+  const { key, userId } = await seedUser(t, "a@example.com");
+  const day = new Date(NOW).toISOString().slice(0, 10);
+  await t.run((ctx) => ctx.db.insert("userTiers", { userId, tier: "free", productSearchDay: day, productSearchCount: 0, productSearchAttempts: 99, updatedAt: NOW }));
+  expect(await toolErrorOf(t.action(api.mcp.findProduct, { apiKey: key, query: "Sony WH-1000XM5", region: "GB" }))).toEqual({
+    code: "failed",
+    message: "Search isn't working for you today. Paste a URL instead, or try again tomorrow.",
+    retry: true,
+  });
+  vi.unstubAllEnvs();
+});

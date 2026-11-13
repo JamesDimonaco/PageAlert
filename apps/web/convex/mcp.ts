@@ -54,6 +54,8 @@ function toolError(message: string): ToolError {
   const retry = /another in|tomorrow|right now|try again|didn't work/i.test(message);
   if (/not found/i.test(message)) return { code: "not_found", message, retry: false };
   if (/limit reached|plan allows|used all/i.test(message)) return { code: "limit_reached", message, retry };
+  // Before the URL rule: "Paste a URL instead, or try again tomorrow" is advice, not a bad URL.
+  if (retry) return { code: "failed", message, retry };
   if (/\burls?\b|\blinks?\b|hostname/i.test(message)) return { code: "invalid_url", message, retry: false };
   return { code: "failed", message, retry };
 }
