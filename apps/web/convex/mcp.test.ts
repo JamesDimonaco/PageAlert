@@ -229,3 +229,21 @@ test("a user can hold at most 20 keys, so every key stays on the page that revok
   await expect(asUser.mutation(api.apiKeys.create, { name: "k20" })).rejects.toThrow(/20 API keys/);
   expect(await asUser.query(api.apiKeys.listMine, {})).toHaveLength(20);
 });
+
+// A first-scan alert must not let a match whose stock the page hid read as in stock.
+test("a first scan's alert says when a match's stock was not shown", async () => {
+  const t = setup();
+  const { key } = await seedUser(t, "a@example.com");
+  const id = await t.mutation(api.mcp.createMonitor, { apiKey: key, ...MONITOR, prompt: "in stock under NZ$100" });
+  const cooler = { title: "Noctua NH-L9a-AM5", price: 89, inStock: null };
+  await t.mutation(api.mcp.saveScanResult, {
+    apiKey: key,
+    id,
+    schema: { items: [cooler], matchConditions: { priceMax: 100, inStockOnly: true } },
+    matches: [cooler],
+  });
+
+  const jobs = await t.run((ctx) => ctx.db.system.query("_scheduled_functions").collect());
+  const job = jobs.find((j) => j.name.includes("sendInitialScanNotifications"));
+  expect(job?.args[0]).toMatchObject({ stockNote: "Stock not shown on page for “Noctua NH-L9a-AM5”." });
+});

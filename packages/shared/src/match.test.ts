@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyMatchConditions, explainMatch } from "./match";
+import { applyMatchConditions, explainMatch, stockNotShownNote } from "./match";
 
 const terra = {
   title: "Fractal Design Terra Mini ITX Case - Jade",
@@ -64,5 +64,74 @@ describe("applyMatchConditions", () => {
 
   it("keeps everything when there are no conditions", () => {
     expect(applyMatchConditions([terra], {})).toEqual([terra]);
+  });
+});
+
+// Prod, 12/11/2026: "PC build: 16GB DDR5-6000 RAM" asked for "in stock at
+// NZ$220 or less" and alerted on a sold-out kit at NZ$199.
+describe("stock", () => {
+  const kingston = {
+    title: "Kingston FURY Beast 16GB DDR5-6000",
+    price: 199,
+    currency: "NZD",
+    stock: "Out of Stock",
+    inStock: false,
+  };
+  const asksStock = { priceMax: 220, mustInclude: ["Kingston"], inStockOnly: true };
+
+  it("never matches a sold-out item when the prompt asks for stock", () => {
+    expect(applyMatchConditions([kingston], asksStock)).toEqual([]);
+    expect(explainMatch(kingston, asksStock)).toContainEqual({ kind: "stock", inStock: false, pass: false });
+  });
+
+  it("matches the same item once it is back in stock", () => {
+    const back = { ...kingston, stock: "In Stock", inStock: true };
+    expect(applyMatchConditions([back], asksStock)).toEqual([back]);
+  });
+
+  // Honest unknown: the page does not say, so the item may match, marked "not shown".
+  it("lets an item through when the page does not show stock, and says so", () => {
+    const unknown = { ...kingston, stock: null, inStock: null };
+    expect(applyMatchConditions([unknown], asksStock)).toEqual([unknown]);
+    expect(explainMatch(unknown, asksStock)).toContainEqual({ kind: "stock", inStock: null, pass: true });
+  });
+
+  // Items saved before inStock existed have no field at all.
+  it("reads a missing inStock field as not shown", () => {
+    const { inStock: _drop, ...old } = kingston;
+    expect(explainMatch(old, asksStock)).toContainEqual({ kind: "stock", inStock: null, pass: true });
+  });
+
+  it("ignores stock when the prompt does not ask for it", () => {
+    expect(applyMatchConditions([kingston], { priceMax: 220 })).toEqual([kingston]);
+    expect(explainMatch(kingston, { priceMax: 220 }).some((c) => c.kind === "stock")).toBe(false);
+  });
+});
+
+describe("stockNotShownNote", () => {
+  const asks = { inStockOnly: true };
+  const shown = { title: "Noctua NH-L9a-AM5", inStock: true };
+  const hidden = { title: "Noctua NH-L9a-AM5 chromax", inStock: null };
+
+  // A match alert must not read as "in stock" when the page never said so.
+  it("names the one item whose stock the page did not show", () => {
+    expect(stockNotShownNote([shown, hidden], asks)).toBe("Stock not shown on page for “Noctua NH-L9a-AM5 chromax”.");
+  });
+
+  it("counts them when there are several", () => {
+    expect(stockNotShownNote([hidden, { ...hidden, title: "Other" }, shown], asks)).toBe(
+      "Stock not shown on page for 2 of these matches.",
+    );
+  });
+
+  it("says nothing when stock was not asked for, or every match showed it", () => {
+    expect(stockNotShownNote([hidden], {})).toBeNull();
+    expect(stockNotShownNote([shown], asks)).toBeNull();
+  });
+
+  // Quick-check matches have no inStock field: the scorer already judged stock
+  // from the entry's text, so the alert must not claim it was not shown.
+  it("says nothing for matches that were judged without a stock field", () => {
+    expect(stockNotShownNote([{ title: "Noctua NH-L9a-AM5", matchScore: 90 }], asks)).toBeNull();
   });
 });

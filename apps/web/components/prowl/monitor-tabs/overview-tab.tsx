@@ -441,7 +441,9 @@ export function OverviewTab({ monitorId, monitor, matches, items, conditions, re
         <MatchChecks
           items={items}
           conditions={conditions}
-          showStockHint={totalItems === 1 && isProductMonitor(monitor) && monitor.alertOn?.backInStock !== true}
+          showStockHint={
+            totalItems === 1 && isProductMonitor(monitor) && monitor.alertOn?.backInStock !== true && !conditions.inStockOnly
+          }
           onOpenSettings={() => {
             onSettingsOpenChange(true);
             // The settings sit below the matches list, often off screen.

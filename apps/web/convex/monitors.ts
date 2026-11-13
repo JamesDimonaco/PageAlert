@@ -3,7 +3,7 @@ import { mutation, query, internalAction, internalMutation, internalQuery, type 
 import type { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { displayHost, effectiveIntervalMs, ERROR_RECOVERY_INTERVAL_MS, intervalToMs, isBlockedError, MAX_RETRIES, validateMonitorUrl } from "./shared";
-import { currencyExponent, itemIdentity, RESUME_TOKEN_TTL_MS } from "@prowl/shared";
+import { currencyExponent, itemIdentity, RESUME_TOKEN_TTL_MS, stockNotShownNote, type ExtractedItem, type MatchConditions } from "@prowl/shared";
 import { effectiveTier, type Tier } from "./tiers";
 import { drain, isBanned, requireLiveAccount, spent, SWEEP_BUDGET_BYTES, SWEEP_BUDGET_ROWS, type Allowance } from "./account";
 import { reserveFallback, scraperDown } from "./admin";
@@ -372,10 +372,15 @@ export async function saveScanResultForUser(
   // Send notifications for initial scan matches. A listing in a product
   // alerts only on stock and price, as in the scheduler.
   if (matchCount > 0 && monitor.groupId === undefined) {
+    const stockNote = stockNotShownNote(
+      (matches ?? []) as ExtractedItem[],
+      (schema as { matchConditions?: MatchConditions } | null)?.matchConditions
+    );
     await ctx.scheduler.runAfter(0, internal.monitors.sendInitialScanNotifications, {
       monitorId: id,
       matchCount,
       totalItems: items.length,
+      ...(stockNote ? { stockNote } : {}),
     });
   }
 }
@@ -881,6 +886,7 @@ export const sendInitialScanNotifications = internalAction({
     monitorId: v.id("monitors"),
     matchCount: v.number(),
     totalItems: v.number(),
+    stockNote: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const monitor = await ctx.runQuery(internal.monitors.getInternal, { id: args.monitorId });
@@ -888,12 +894,14 @@ export const sendInitialScanNotifications = internalAction({
     if (monitor.muted) return; // Muted — skip all notifications
 
     const plural = args.matchCount !== 1 ? "es" : "";
+    const note = args.stockNote ? ` ${args.stockNote}` : "";
     const base = {
       monitorName: monitor.name,
       monitorId: args.monitorId,
       url: monitor.url,
       matchCount: args.matchCount,
       totalItems: args.totalItems,
+      ...(args.stockNote ? { stockNote: args.stockNote } : {}),
     };
 
     // No SMS: the first scan has never texted, and the user is on the page
@@ -901,8 +909,8 @@ export const sendInitialScanNotifications = internalAction({
     await deliverAlert(ctx, monitor, {
       type: "match",
       title: `${monitor.name} — ${args.matchCount} match${plural} found`,
-      inAppMessage: `Initial scan found ${args.matchCount} match${plural} out of ${args.totalItems} items on ${monitor.url}`,
-      pushBody: `Initial scan found ${args.matchCount} match${plural} out of ${args.totalItems} items`,
+      inAppMessage: `Initial scan found ${args.matchCount} match${plural} out of ${args.totalItems} items on ${monitor.url}.${note}`,
+      pushBody: `Initial scan found ${args.matchCount} match${plural} out of ${args.totalItems} items.${note}`,
       email: (to) => ctx.runAction(internal.emails.sendMatchAlert, { ...base, to, matches: [] }),
       telegram: (chatId) => ctx.runAction(internal.telegram.sendMatchAlert, { ...base, chatId }),
       discord: (webhookUrl) => ctx.runAction(internal.discord.sendMatchAlert, { ...base, webhookUrl }),

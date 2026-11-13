@@ -130,6 +130,8 @@ export const sendMatchAlert = internalAction({
     matchCount: v.number(),
     matches: v.array(v.any()),
     totalItems: v.number(),
+    /** Set when stock was asked for and some matches did not show it. See stockNotShownNote. */
+    stockNote: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const safeName = esc(args.monitorName);
@@ -173,6 +175,7 @@ export const sendMatchAlert = internalAction({
         </p>
         ${matchList ? `<ul style="list-style:none;padding:0;margin:0 0 16px">${matchList}</ul>` : ""}
         ${moreText}
+        ${args.stockNote ? `<p style="color:#b45309;font-size:14px">${esc(args.stockNote)}</p>` : ""}
         <div style="margin-top:24px">
           <a href="${safeHref(viewOnSiteUrl)}" style="display:inline-block;background:#4f46e5;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:500;font-size:14px;margin-right:8px">View on site</a>
           <a href="${APP_URL}/dashboard/monitors/${args.monitorId}" style="display:inline-block;background:#f4f4f5;color:#333;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:500;font-size:14px">View in PageAlert</a>
@@ -198,7 +201,7 @@ export const sendMatchAlert = internalAction({
         return `• ${String(m.title ?? m.name ?? "Item")}${price}${band}`;
       })
       .join("\n");
-    const text = `Match Found — ${args.monitorName}\n\nYour monitor found ${args.matchCount} new match${args.matchCount !== 1 ? "es" : ""}${plainItemsText} on ${safeHostname(args.url)}.\n\n${plainMatches}\n${args.matchCount > 5 ? `+${args.matchCount - 5} more` : ""}\n\nView on site: ${viewOnSiteUrl}\nView in PageAlert: ${APP_URL}/dashboard/monitors/${args.monitorId}`;
+    const text = `Match Found — ${args.monitorName}\n\nYour monitor found ${args.matchCount} new match${args.matchCount !== 1 ? "es" : ""}${plainItemsText} on ${safeHostname(args.url)}.\n\n${plainMatches}\n${args.matchCount > 5 ? `+${args.matchCount - 5} more` : ""}${args.stockNote ? `\n${args.stockNote}` : ""}\n\nView on site: ${viewOnSiteUrl}\nView in PageAlert: ${APP_URL}/dashboard/monitors/${args.monitorId}`;
 
     await send(ctx, {
       to: args.to,

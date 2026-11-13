@@ -29,6 +29,8 @@ export const sendMatchAlert = internalAction({
     }))),
     /** The result row the buttons point at. Without it the alert carries no buttons. */
     resultId: v.optional(v.string()),
+    /** Set when stock was asked for and some matches did not show it. See stockNotShownNote. */
+    stockNote: v.optional(v.string()),
   },
   handler: async (_ctx, args) => {
     const token = getBotToken();
@@ -46,6 +48,7 @@ export const sendMatchAlert = internalAction({
       ``,
       `${args.matchCount} new match${args.matchCount !== 1 ? "es" : ""} out of ${args.totalItems} items`,
       ...(itemLines.length > 0 ? [``, ...itemLines] : []),
+      ...(args.stockNote ? [``, escMd(args.stockNote)] : []),
       ``,
       `🔗 [View on site](${escUrl(args.url)})`,
       `📊 [View in PageAlert](${escUrl(APP_URL + "/dashboard")})`,

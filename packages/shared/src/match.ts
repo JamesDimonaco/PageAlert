@@ -17,7 +17,9 @@ function itemHaystack(item: ExtractedItem): string {
 /** One condition checked against one item, so the UI can say why it missed. */
 export type MatchCheck =
   | { kind: "titleContains" | "titleExcludes" | "mustInclude" | "mustExclude"; word: string; pass: boolean }
-  | { kind: "price"; min: number | undefined; max: number | undefined; price: number | undefined; pass: boolean };
+  | { kind: "price"; min: number | undefined; max: number | undefined; price: number | undefined; pass: boolean }
+  /** inStock null means the page does not show stock. It passes, and the UI says so. */
+  | { kind: "stock"; inStock: boolean | null; pass: boolean };
 
 function readPrice(item: ExtractedItem): number | undefined {
   const raw = typeof item.price === "number" ? item.price : parseFloat(String(item.price ?? ""));
@@ -47,6 +49,11 @@ export function explainMatch(item: ExtractedItem, conditions: MatchConditions): 
     checks.push({ kind: "price", min, max, price, pass });
   }
 
+  if (conditions.inStockOnly) {
+    const inStock = typeof item.inStock === "boolean" ? item.inStock : null;
+    checks.push({ kind: "stock", inStock, pass: inStock !== false });
+  }
+
   if (conditions.mustInclude?.length || conditions.mustExclude?.length) {
     const haystack = itemHaystack(item);
     for (const word of conditions.mustInclude ?? []) {
@@ -65,4 +72,20 @@ export function applyMatchConditions(
   conditions: MatchConditions
 ): ExtractedItem[] {
   return items.filter((item) => explainMatch(item, conditions).every((check) => check.pass));
+}
+
+/**
+ * One line for a match alert when stock was asked for but some matches did
+ * not show it. They matched because the page did not say, and the alert must
+ * not let them read as in stock. Null when there is nothing to say.
+ *
+ * Counts only an explicit null from the full read. Quick-check matches have
+ * no inStock field, because the scorer judged stock from their text.
+ */
+export function stockNotShownNote(matches: ExtractedItem[], conditions: MatchConditions | undefined): string | null {
+  if (!conditions?.inStockOnly) return null;
+  const unknown = matches.filter((item) => item.inStock === null);
+  if (unknown.length === 0) return null;
+  if (unknown.length === 1) return `Stock not shown on page for “${String(unknown[0].title ?? "this item")}”.`;
+  return `Stock not shown on page for ${unknown.length} of these matches.`;
 }

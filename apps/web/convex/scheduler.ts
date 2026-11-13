@@ -4,7 +4,7 @@ import { claimActivation } from "./monitors";
 import { internalAction, internalMutation, internalQuery, type ActionCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
-import { formatMinorUnits, formatSmsPrice, isProductMonitor } from "@prowl/shared";
+import { formatMinorUnits, formatSmsPrice, isProductMonitor, stockNotShownNote, type ExtractedItem } from "@prowl/shared";
 import { alertChannels, deliverAlert } from "./alerts";
 import {
   displayHost,
@@ -574,12 +574,15 @@ export const runScheduledChecks = internalAction({
                 .filter(({ m }) => newKeys.has(matchKey(m)));
               const newMatches = newWithIndex.map(({ m }) => m);
               const plural = newCount !== 1 ? "es" : "";
+              const stockNote = stockNotShownNote(newMatches as ExtractedItem[], freshMonitor.schema?.matchConditions);
+              const note = stockNote ? ` ${stockNote}` : "";
               const base = {
                 monitorName: freshMonitor.name,
                 monitorId: freshMonitor._id,
                 url: freshMonitor.url,
                 matchCount: newCount,
                 totalItems: displayTotalItems,
+                ...(stockNote ? { stockNote } : {}),
               };
 
               await ctx.scheduler.runAfter(0, internal.admin.notify, {
@@ -589,8 +592,8 @@ export const runScheduledChecks = internalAction({
               await deliverAlert(ctx, freshMonitor, {
                 type: "match",
                 title: `${freshMonitor.name} — ${newCount} new match${plural}`,
-                inAppMessage: `Found ${newCount} new match${plural} out of ${displayTotalItems} items on ${freshMonitor.url}`,
-                pushBody: `${newCount} new match${plural} out of ${displayTotalItems} items on ${displayHost(freshMonitor.url)}`,
+                inAppMessage: `Found ${newCount} new match${plural} out of ${displayTotalItems} items on ${freshMonitor.url}.${note}`,
+                pushBody: `${newCount} new match${plural} out of ${displayTotalItems} items on ${displayHost(freshMonitor.url)}.${note}`,
                 email: (to) => ctx.runAction(internal.emails.sendMatchAlert, { ...base, to, matches: newMatches }),
                 telegram: (chatId) =>
                   ctx.runAction(internal.telegram.sendMatchAlert, {
@@ -1061,8 +1064,14 @@ async function runQuickCheck(
 
   // Only the new entries reach the AI, and only their own text does. A page
   // that has not changed, or whose changes are all old news, costs nothing.
-  const scored = await scoreQuickCheckCandidates(unseen, monitor, scraperUrl, scraperKey);
-  const matches = scored.filter((c) => alertsOnScore(c.matchScore));
+  const asksStock = matchConditions.inStockOnly === true;
+  const scored = await scoreQuickCheckCandidates(unseen, monitor, scraperUrl, scraperKey, asksStock);
+  // A sold-out entry the prompt wants in stock never alerts, whatever it
+  // scored. It also stays unseen, so a later check judges it again and its
+  // restock alerts. Seen, it would never be judged again. The cost is one
+  // scoring call per changed check while it is sold out.
+  const soldOut = new Set(scored.filter((c) => asksStock && c.stock?.inStock === false).map(matchKey));
+  const matches = scored.filter((c) => alertsOnScore(c.matchScore) && !soldOut.has(matchKey(c)));
 
   const outcome = await ctx.runMutation(internal.scheduler.recordCheckResult, {
     monitorId: monitor._id,
@@ -1076,7 +1085,7 @@ async function runQuickCheck(
     // page having been removed.
     scoredCandidates: scored,
     contentFingerprint: contentHash,
-    candidateKeys: seenAfterCheck,
+    candidateKeys: seenAfterCheck.filter((k) => !soldOut.has(k)),
     usedProxy: useProxy,
   });
 

@@ -44,4 +44,6 @@ export interface MatchConditions {
   priceMin?: number;
   mustInclude?: string[];
   mustExclude?: string[];
+  /** The prompt asks for the item to be in stock or available now. */
+  inStockOnly?: boolean;
 }

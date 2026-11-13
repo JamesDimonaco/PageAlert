@@ -15,13 +15,15 @@ export const sendMatchAlert = internalAction({
     url: v.string(),
     matchCount: v.number(),
     totalItems: v.number(),
+    /** Set when stock was asked for and some matches did not show it. See stockNotShownNote. */
+    stockNote: v.optional(v.string()),
   },
   handler: async (_ctx, args) => {
     await sendWebhook(args.webhookUrl, {
       embeds: [
         {
           title: `🔔 ${args.monitorName}`,
-          description: `**${args.matchCount}** new match${args.matchCount !== 1 ? "es" : ""} out of ${args.totalItems} items`,
+          description: `**${args.matchCount}** new match${args.matchCount !== 1 ? "es" : ""} out of ${args.totalItems} items${args.stockNote ? `\n${args.stockNote}` : ""}`,
           color: 0x3b82f6,
           fields: [
             { name: "Website", value: `[Open](${args.url})`, inline: true },

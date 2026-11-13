@@ -25,13 +25,27 @@ function conditionLabel(check: MatchCheck, currency: unknown): string {
       return `Mentions “${check.word}”`;
     case "mustExclude":
       return `Doesn't mention “${check.word}”`;
+    case "stock":
+      return "In stock";
   }
 }
 
+const STOCK_NOT_SHOWN = "Stock not shown on page";
+
 /** What the one item on a product page shows for this condition. */
 function singleItemDetail(check: MatchCheck, currency: unknown): string | null {
+  if (check.kind === "stock") {
+    return check.inStock === null ? STOCK_NOT_SHOWN : check.inStock ? "in stock now" : "out of stock";
+  }
   if (check.kind !== "price") return null;
   return check.price === undefined ? "no price found" : `now ${formatPrice(check.price, currency)}`;
+}
+
+/** On a listing: how many items pass, and how many passed only because the page did not say. */
+function listingDetail(checks: MatchCheck[], passing: number): string {
+  const unknown = checks.filter((check) => check.kind === "stock" && check.inStock === null).length;
+  const detail = `${passing} of ${checks.length} items`;
+  return unknown > 0 ? `${detail}, ${unknown} with stock not shown` : detail;
 }
 
 /**
@@ -69,7 +83,7 @@ export function MatchChecks({
           // passing is neither: ticking it hid that no one item passed them all.
           const passing = perItem.filter((checks) => checks[i].pass).length;
           const state = passing === items.length ? "pass" : passing === 0 ? "fail" : "some";
-          const detail = single ? singleItemDetail(check, currency) : `${passing} of ${items.length} items`;
+          const detail = single ? singleItemDetail(check, currency) : listingDetail(perItem.map((checks) => checks[i]), passing);
           const Icon = state === "pass" ? CheckCircle2 : state === "fail" ? XCircle : CircleDashed;
           return (
             <li key={i} className="flex items-center gap-2 text-sm">

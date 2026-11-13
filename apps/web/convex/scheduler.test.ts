@@ -418,3 +418,84 @@ test("a read in a new currency gives up after three confirming reads with no pri
   expect(monitor?.lastSeen).toEqual({ inStock: true, price: 29900, currency: "GBP" });
   expect(monitor?.productFingerprint).toBe("product-2");
 });
+
+/**
+ * A listing monitor whose prompt asks for stock, on a page whose one matching
+ * entry reads `stocks` in turn across checks. The page changes every check.
+ */
+async function stockListing(stocks: boolean[], soldOutScore = 20) {
+  vi.stubEnv("SCRAPER_URL", "https://scraper.test");
+  vi.stubEnv("SCRAPER_API_KEY", "key");
+  let checkNo = 0;
+  const readStockSent: boolean[] = [];
+  const entry = { title: "Kingston FURY Beast 16GB DDR5-6000", url: "https://shop.test/kingston", price: 199, snippet: "" };
+  vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+    if (url.endsWith("/api/quick-check")) {
+      checkNo++;
+      return Response.json({ accessible: true, contentHash: `page-${checkNo}`, candidates: [entry], totalEntries: 9 });
+    }
+    if (url.endsWith("/api/score")) {
+      readStockSent.push(JSON.parse(String(init?.body)).readStock === true);
+      const inStock = stocks[Math.min(checkNo - 1, stocks.length - 1)];
+      return Response.json({
+        scored: [{ ...entry, matchScore: inStock ? 95 : soldOutScore, matchReason: "", stock: { inStock, price: 19900, currency: "NZD" } }],
+      });
+    }
+    return new Response("not mocked", { status: 500 });
+  });
+
+  const t = convexTest(schema, modules);
+  t.registerComponent("betterAuth", betterAuthSchema, betterAuthModules);
+  const id = await t.run((ctx) =>
+    ctx.db.insert("monitors", {
+      userId: "user_1",
+      name: "PC build: RAM",
+      url: "https://shop.test/ram",
+      prompt: "in stock at NZ$220 or less",
+      status: "active",
+      checkInterval: "1h",
+      schema: { items: [], matchConditions: { mustInclude: ["Kingston"], priceMax: 220, inStockOnly: true } },
+      matchCount: 0,
+      candidateKeys: [],
+      checkCount: 5,
+      contentFingerprint: "page-0",
+      lastAiExtractAt: Date.now(),
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    })
+  );
+  const check = async () => {
+    await t.run((ctx) => ctx.db.patch(id, { nextCheckAt: 0 }));
+    await t.action(internal.scheduler.runScheduledChecks, {});
+    return t.run((ctx) => ctx.db.get(id));
+  };
+  return { check, readStockSent };
+}
+
+// Story 2: a sold-out item the user asked for must alert when it comes back.
+// Marking it seen while sold out meant it was never judged again.
+test("a sold-out entry is judged again, and alerts when it comes back in stock", async () => {
+  const { check, readStockSent } = await stockListing([false, false, true]);
+
+  const first = await check();
+  expect(first?.lastMatchAt).toBeUndefined();
+  expect(first?.candidateKeys).toEqual([]);
+  expect((await check())?.lastMatchAt).toBeUndefined();
+  expect((await check())?.lastMatchAt).toBeDefined();
+  expect(readStockSent).toEqual([true, true, true]);
+});
+
+// Once it alerted, the entry is seen like any other: no repeat every check.
+test("an in-stock entry is judged once", async () => {
+  const { check, readStockSent } = await stockListing([true]);
+  await check();
+  await check();
+  expect(readStockSent).toEqual([true]);
+});
+
+// The score is the model's judgement; the stock read is a fact. A high score
+// on a sold-out entry must not send an alert.
+test("a sold-out entry never alerts, whatever it scored", async () => {
+  const { check } = await stockListing([false], 95);
+  expect((await check())?.lastMatchAt).toBeUndefined();
+});
