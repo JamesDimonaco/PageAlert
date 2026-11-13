@@ -7,6 +7,7 @@ import { z } from "zod";
 import {
   DEFAULT_AGENT_MATCHES,
   MAX_AGENT_MATCHES,
+  SEARCH_REGIONS,
   formatToolResult,
   isUnreadableScan,
   toAgentItem,
@@ -276,6 +277,59 @@ function registerTools(server: McpServer, convex: ConvexHttpClient, apiKey: stri
     async (args) => {
       try {
         return ok(await convex.mutation(api.mcp.updateMonitor, { apiKey, ...args }));
+      } catch (e) {
+        return fail(convexFailure(e));
+      }
+    }
+  );
+
+  server.registerTool(
+    "find_product",
+    {
+      title: "Find a product",
+      description:
+        "Search shops in one country for a product by name. Returns up to 8 shop pages, each labelled same, " +
+        "similar or accessory, with price in minor units and stock where known. Counts against the user's " +
+        "daily searches, as in the web app; a search that fails or finds nothing is not counted. " +
+        "Pass the pages you pick to create_product.",
+      inputSchema: z.object({
+        query: z.string().min(2).max(200).describe("The product's name, e.g. 'Sony WH-1000XM5'."),
+        region: z.enum(SEARCH_REGIONS.map((r) => r.code) as [string, ...string[]]).describe("Country to search in."),
+      }),
+      annotations: { readOnlyHint: true },
+    },
+    async (args) => {
+      try {
+        return ok(await convex.action(api.mcp.findProduct, { apiKey, ...args }));
+      } catch (e) {
+        return fail(convexFailure(e));
+      }
+    }
+  );
+
+  server.registerTool(
+    "create_product",
+    {
+      title: "Create a product",
+      description:
+        "Watch one product across several shop pages, with one set of stock and price alerts. A product " +
+        "alerts only on stock and price, never on other items on its pages. Each page becomes a monitor " +
+        "and is first read on the server within a minute. Counts against the plan's monitor limits.",
+      inputSchema: z.object({
+        title: z.string().min(1).max(200).describe("The product's name, used to find it on each page."),
+        region: z.enum(SEARCH_REGIONS.map((r) => r.code) as [string, ...string[]]).describe("The country the shops are in."),
+        urls: z.array(url).min(1).max(8).describe("Shop pages for this product, e.g. from find_product."),
+        alertOn: alertOn.describe("What to alert on. At least one of backInStock, priceDrop or priceBelow."),
+        checkInterval: intervals.optional().describe("How often to check. Defaults to 1h."),
+      }),
+    },
+    async (args) => {
+      for (const page of args.urls) {
+        const rejection = await urlRejection(page);
+        if (rejection) return fail(invalidUrl(`${page}: ${rejection}`));
+      }
+      try {
+        return ok(await convex.mutation(api.mcp.createProduct, { apiKey, ...args }));
       } catch (e) {
         return fail(convexFailure(e));
       }

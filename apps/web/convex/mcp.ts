@@ -1,5 +1,6 @@
 import { ConvexError, v, type Infer } from "convex/values";
-import { mutation, query, type QueryCtx } from "./_generated/server";
+import { action, mutation, query, type QueryCtx } from "./_generated/server";
+import { api } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import {
   DEFAULT_AGENT_MATCHES,
@@ -11,6 +12,7 @@ import {
   toAgentItem,
   toMinorUnits,
   type AgentItem,
+  type ProductListing,
 } from "@prowl/shared";
 import { reserveFallback, scraperDown } from "./admin";
 import { requireKeyOwner } from "./apiKeys";
@@ -21,7 +23,10 @@ import {
   saveScanResultForUser,
   updateMonitorForUser,
 } from "./monitors";
+import { createProductForUser } from "./monitorGroups";
+import { findListings } from "./productSearch";
 import { alertOnValidator, checkIntervalValidator } from "./schema";
+import { displayHost } from "./shared";
 
 /**
  * What the MCP route calls, one function per tool step. Each takes the raw API
@@ -44,7 +49,7 @@ export type ToolError = { code: ToolErrorCode; message: string; retry: boolean }
  */
 function toolError(message: string): ToolError {
   if (/not found/i.test(message)) return { code: "not_found", message, retry: false };
-  if (/limit reached|plan allows/i.test(message)) return { code: "limit_reached", message, retry: false };
+  if (/limit reached|plan allows|used all/i.test(message)) return { code: "limit_reached", message, retry: false };
   if (/\burls?\b|hostname/i.test(message)) return { code: "invalid_url", message, retry: false };
   return { code: "failed", message, retry: false };
 }
@@ -209,6 +214,45 @@ export const deleteMonitor = mutation({
     const monitor = await ownedMonitor(ctx, userId, monitorId);
     await removeMonitorsForUser(ctx, userId, [monitor._id]).catch(asToolError);
     return { deleted: monitor._id };
+  },
+});
+
+/**
+ * Search shops for a product, as the web app's "Find a product" does: the
+ * same daily allowance, and a failed search is given back.
+ */
+export const findProduct = action({
+  args: { apiKey: v.string(), query: v.string(), region: v.string() },
+  handler: async (ctx, { apiKey, ...args }): Promise<ProductListing[]> => {
+    const owner = await ctx.runMutation(api.apiKeys.verify, { key: apiKey });
+    if (!owner) throw new ConvexError("Invalid API key");
+    // The region is not saved as the user's default: that is what they last picked by hand.
+    const { listings } = await findListings(ctx, owner.userId, { ...args, saveRegion: false }).catch(asToolError);
+    return listings;
+  },
+});
+
+/** Watch one product across the shop pages an agent picked, with one set of stock and price alerts. */
+export const createProduct = mutation({
+  args: {
+    apiKey: v.string(),
+    title: v.string(),
+    region: v.string(),
+    urls: v.array(v.string()),
+    alertOn: alertOnValidator,
+    checkInterval: v.optional(checkIntervalValidator),
+  },
+  handler: async (ctx, { apiKey, title, region, urls, alertOn, checkInterval }) => {
+    const owner = await requireKeyOwner(ctx, apiKey);
+    const { groupId, monitorIds } = await createProductForUser(ctx, owner, {
+      name: title,
+      region,
+      alertOn,
+      notificationChannels: undefined,
+      checkInterval: checkInterval ?? "1h",
+      listings: urls.map((url) => ({ site: displayHost(url), url, title, label: "same" as const, watch: true })),
+    }).catch(asToolError);
+    return { productId: groupId, monitorIds };
   },
 });
 

@@ -417,3 +417,80 @@ test("preview gets no proxy attempt once the fleet's proxy budget is spent", asy
   await t.run((ctx) => ctx.db.insert("counters", { name: `fallback:calls:${month}`, value: 1_000_000 }));
   expect(await t.mutation(api.mcp.claimPreviewProxy, { apiKey: key })).toMatchObject({ granted: false });
 });
+
+const LISTING = {
+  site: "argos.co.uk",
+  url: "https://www.argos.co.uk/product/1",
+  title: "Sony WH-1000XM5",
+  price: 27999,
+  currency: "GBP",
+  inStock: true,
+  label: "same",
+};
+
+async function searchesUsed(t: T, userId: string) {
+  const row = await t.run((ctx) => ctx.db.query("userTiers").withIndex("by_userId", (q) => q.eq("userId", userId)).unique());
+  return row?.productSearchCount ?? 0;
+}
+
+// An agent's search is the same paid call as the app's: same cap, same refund.
+test("an agent's product search counts against the user's daily searches", async () => {
+  vi.stubEnv("SCRAPER_URL", "https://scraper.test");
+  vi.stubEnv("SCRAPER_API_KEY", "key");
+  vi.stubGlobal("fetch", async () => Response.json({ listings: [LISTING] }));
+  const t = setup();
+  const { key, userId } = await seedUser(t, "a@example.com");
+
+  expect(await t.action(api.mcp.findProduct, { apiKey: key, query: "Sony WH-1000XM5", region: "GB" })).toEqual([LISTING]);
+  expect(await searchesUsed(t, userId)).toBe(1);
+
+  for (let i = 0; i < 4; i++) await t.action(api.mcp.findProduct, { apiKey: key, query: "Sony WH-1000XM5", region: "GB" });
+  expect(await toolErrorOf(t.action(api.mcp.findProduct, { apiKey: key, query: "Sony WH-1000XM5", region: "GB" }))).toMatchObject({
+    code: "limit_reached",
+    retry: false,
+  });
+  vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
+});
+
+test("a failed agent search is refunded", async () => {
+  vi.stubEnv("SCRAPER_URL", "https://scraper.test");
+  vi.stubEnv("SCRAPER_API_KEY", "key");
+  vi.stubGlobal("fetch", async () => new Response("down", { status: 502 }));
+  const t = setup();
+  const { key, userId } = await seedUser(t, "a@example.com");
+  expect(await toolErrorOf(t.action(api.mcp.findProduct, { apiKey: key, query: "Sony WH-1000XM5", region: "GB" }))).toMatchObject({
+    code: "failed",
+  });
+  expect(await searchesUsed(t, userId)).toBe(0);
+  vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
+});
+
+test("an agent creates a product from the shop pages it picked", async () => {
+  const t = setup();
+  const { key, userId } = await seedUser(t, "a@example.com");
+  const { productId, monitorIds } = await t.mutation(api.mcp.createProduct, {
+    apiKey: key,
+    title: "Sony WH-1000XM5",
+    region: "GB",
+    urls: ["https://www.argos.co.uk/product/1", "https://www.currys.co.uk/products/2"],
+    alertOn: { backInStock: true },
+  });
+  const product = await t.run((ctx) => ctx.db.get(productId));
+  expect(product).toMatchObject({ userId, name: "Sony WH-1000XM5", alertOn: { backInStock: true } });
+  expect(product?.listings.map((l) => [l.site, l.state])).toEqual([
+    ["argos.co.uk", "watching"],
+    ["currys.co.uk", "watching"],
+  ]);
+  const monitors = await t.run((ctx) => Promise.all(monitorIds.map((id) => ctx.db.get(id))));
+  expect(monitors.map((m) => [m?.groupId, m?.alertOn, m?.productTitle])).toEqual([
+    [productId, { backInStock: true }, "Sony WH-1000XM5"],
+    [productId, { backInStock: true }, "Sony WH-1000XM5"],
+  ]);
+
+  // A product with nothing to alert on would watch silently.
+  expect(
+    await toolErrorOf(t.mutation(api.mcp.createProduct, { apiKey: key, title: "x", region: "GB", urls: ["https://a.test/1"], alertOn: {} }))
+  ).toMatchObject({ code: "failed", message: "Pick what to be alerted about." });
+});

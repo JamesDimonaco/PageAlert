@@ -122,7 +122,7 @@ export const refund = internalMutation({
  * given back if it fails or finds nothing. Returns the day it was counted
  * on, for a caller that has its own reason to give it back.
  */
-async function findListings(
+export async function findListings(
   ctx: ActionCtx,
   userId: string,
   args: { query: string; region: string; saveRegion: boolean }
