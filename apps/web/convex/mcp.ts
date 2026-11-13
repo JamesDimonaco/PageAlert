@@ -47,13 +47,14 @@ export type ToolError = { code: ToolErrorCode; message: string; retry: boolean }
  * Sort a helper's error message into a code. The helpers are shared with the
  * web app and throw plain messages, so the message is all there is to go on.
  * Retry is true only when the message says the problem passes with time:
- * a rolling or daily limit, or a service that is down "right now".
+ * a rolling or daily limit, a service that is down "right now", or a failed
+ * search that was not counted.
  */
 function toolError(message: string): ToolError {
-  const retry = /another in|tomorrow|right now|try again/i.test(message);
+  const retry = /another in|tomorrow|right now|try again|didn't work/i.test(message);
   if (/not found/i.test(message)) return { code: "not_found", message, retry: false };
   if (/limit reached|plan allows|used all/i.test(message)) return { code: "limit_reached", message, retry };
-  if (/\burls?\b|hostname/i.test(message)) return { code: "invalid_url", message, retry: false };
+  if (/\burls?\b|\blinks?\b|hostname/i.test(message)) return { code: "invalid_url", message, retry: false };
   return { code: "failed", message, retry };
 }
 
@@ -196,8 +197,9 @@ export const getMatches = query({
 
 /**
  * Monitors read by one recent-matches call, and result rows read per monitor.
- * About 2KB a row, so a call reads at most about 8MB, under the query limit.
- * 200 rows is two days of a 15-minute monitor.
+ * Rows average about 2KB on prod (measured 2026-11-13), so a call reads about
+ * 8MB at most. A row that scored 25 entries is larger. 200 rows is two days
+ * of a 15-minute monitor.
  */
 const MAX_RECENT_MATCH_MONITORS = 20;
 const MAX_RECENT_ROWS = 200;
@@ -222,12 +224,10 @@ export const getRecentMatches = query({
       .filter((m) => m.groupId === undefined && m.lastMatchAt !== undefined && m.lastMatchAt >= from)
       .sort((a, b) => b.lastMatchAt! - a.lastMatchAt!)
       .slice(0, MAX_RECENT_MATCH_MONITORS);
-    const recent = [];
-    for (const monitor of monitors) {
-      for (const match of await alertedSince(ctx, monitor._id, from)) {
-        recent.push({ ...match, monitorId: monitor._id, monitorName: monitor.name });
-      }
-    }
+    const perMonitor = await Promise.all(monitors.map((m) => alertedSince(ctx, m._id, from)));
+    const recent = monitors.flatMap((monitor, i) =>
+      perMonitor[i]!.map((match) => ({ ...match, monitorId: monitor._id, monitorName: monitor.name }))
+    );
     return recent
       .sort((a, b) => b.matchedAt - a.matchedAt)
       .slice(0, max)

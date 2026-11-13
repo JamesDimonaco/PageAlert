@@ -141,3 +141,10 @@ describe("stockNotShownNote", () => {
     expect(stockNotShownNote([{ title: "Noctua NH-L9a-AM5", matchScore: 90 }], asks)).toBeNull();
   });
 });
+
+// A brand called "True" must match on its name, not on every in-stock item.
+it("the stock flag is not keyword text", () => {
+  const item = { title: "Corsair Vengeance", price: 199, inStock: true };
+  expect(explainMatch(item, { mustInclude: ["true"] }).every((c) => c.pass)).toBe(false);
+  expect(explainMatch({ ...item, inStock: false }, { mustExclude: ["false"] }).every((c) => c.pass)).toBe(true);
+});

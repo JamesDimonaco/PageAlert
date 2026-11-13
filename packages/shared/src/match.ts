@@ -5,10 +5,12 @@ import type { ExtractedItem, MatchConditions } from "./types";
  *
  * Deliberately not `JSON.stringify(item)`, which also carries the field names:
  * against that, `mustInclude: ["price"]` matched every item that had a price
- * field and `mustExclude: ["url"]` excluded the entire page.
+ * field and `mustExclude: ["url"]` excluded the entire page. The stock flag is
+ * left out for the same reason: "true" is not text on the page.
  */
 function itemHaystack(item: ExtractedItem): string {
-  return Object.values(item)
+  const { inStock: _stock, ...text } = item;
+  return Object.values(text)
     .filter((v) => v !== null && v !== undefined)
     .join(" ")
     .toLowerCase();
@@ -82,8 +84,8 @@ const NOTE_TITLE_MAX = 80;
  * not show it. They matched because the page did not say, and the alert must
  * not let them read as in stock. Null when there is nothing to say.
  *
- * Counts only an explicit null from the full read. Quick-check matches have
- * no inStock field, because the scorer judged stock from their text.
+ * Counts only an explicit null: from the full read, or the scorer's read on
+ * a quick check.
  */
 export function stockNotShownNote(matches: ExtractedItem[], conditions: MatchConditions | undefined): string | null {
   if (!conditions?.inStockOnly) return null;

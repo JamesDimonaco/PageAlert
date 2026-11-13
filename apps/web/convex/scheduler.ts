@@ -1105,7 +1105,11 @@ async function runQuickCheck(
   // read that says it is back, so a failed or blank read leaves it sold out.
   const soldOutStill = (c: ScoredCandidate) =>
     asksStock && (c.stock?.inStock === false || (rechecked.has(matchKey(c)) && c.stock?.inStock !== true));
-  const matches = scored.filter((c) => alertsOnScore(c.matchScore) && !soldOutStill(c));
+  // Carries the stock read the way a full read's items do, so the alert can
+  // say when stock was asked for and not shown.
+  const matches = scored
+    .filter((c) => alertsOnScore(c.matchScore) && !soldOutStill(c))
+    .map((c) => (asksStock ? { ...c, inStock: c.stock?.inStock ?? null } : c));
   // Queued whatever it scored: the scorer marks an entry down for being sold
   // out when the prompt wants stock, so a low score cannot tell an unwanted
   // entry from a wanted one that is sold out.
@@ -1463,8 +1467,12 @@ export const recordProductRead = internalMutation({
     const on = monitor.alertOn ?? {};
     const alerts: ProductAlert[] = [];
 
+    // The restock counts as announced, or the next full read, which now
+    // matches the product, would announce it again as a new match.
+    let matchedKeys = monitor.matchedKeys;
     if (on.backInStock === true && previous.inStock === false && args.inStock === true) {
       alerts.push({ kind: "stock" });
+      if (matchedKeys !== undefined) matchedKeys = [...new Set([...matchedKeys, canonicalUrl(monitor.url)])];
     }
 
     // A held price or currency whose confirming read did not settle it is
@@ -1538,6 +1546,7 @@ export const recordProductRead = internalMutation({
           ? monitor.productFingerprint
           : args.productFingerprint,
       lastSeen: { ...(inStock !== undefined ? { inStock } : {}), ...priceFields },
+      matchedKeys,
     });
 
     for (const alert of alerts) {

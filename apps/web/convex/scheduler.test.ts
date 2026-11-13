@@ -5,6 +5,7 @@ import schema from "./schema";
 import { api, internal } from "./_generated/api";
 import betterAuthSchema from "./betterAuth/schema";
 import type { Doc } from "./_generated/dataModel";
+import { stockNotShownNote } from "@prowl/shared";
 
 const modules = import.meta.glob("./**/*.*s");
 const betterAuthModules = import.meta.glob("./betterAuth/**/*.*s");
@@ -749,4 +750,41 @@ test("a product page with a stock alert gets no sold-out rechecks", async () => 
   expect(judged).toEqual([related.url]);
   // The queue is kept, for if the stock alert is turned off later.
   expect((await t.run((ctx) => ctx.db.get(id)))?.soldOutKeys).toEqual(["shop.test/kingston"]);
+});
+
+// The stock alert told the user the product is back. The next full read
+// matches it, and must not announce it again as a new match.
+test("a restock the stock alert reported counts as announced", async () => {
+  const { t, id, read } = await seedProductMonitor({ inStock: false });
+  await t.run((ctx) => ctx.db.patch(id, { matchedKeys: [] }));
+  expect(await read(true)).toEqual(["stock"]);
+  expect((await t.run((ctx) => ctx.db.get(id)))?.matchedKeys).toEqual(["shop.test/xm5"]);
+});
+
+// The prompt asked for stock, and the scorer could not read it. The alert
+// must say so, or it reads as an in-stock match.
+test("a quick-check alert with no stock read says stock was not shown", async () => {
+  vi.stubEnv("SCRAPER_URL", "https://scraper.test");
+  vi.stubEnv("SCRAPER_API_KEY", "key");
+  const entry = { title: "Kingston FURY Beast 16GB DDR5-6000", url: "https://shop.test/kingston", price: 199, snippet: "NZ$199" };
+  vi.stubGlobal("fetch", async (url: string) => {
+    if (url.endsWith("/api/quick-check")) return Response.json({ accessible: true, contentHash: "page-2", candidates: [entry], totalEntries: 9 });
+    if (url.endsWith("/api/score")) {
+      return Response.json({ scored: [{ ...entry, matchScore: 90, matchReason: "", stock: { inStock: null, price: 19900, currency: "NZD" } }] });
+    }
+    return new Response("not mocked", { status: 500 });
+  });
+  const t = convexTest(schema, modules);
+  t.registerComponent("betterAuth", betterAuthSchema, betterAuthModules);
+  const id = await t.run((ctx) =>
+    ctx.db.insert("monitors", {
+      userId: "user_1", name: "PC build: RAM", url: "https://shop.test/ram", prompt: "in stock", status: "active", checkInterval: "1h",
+      schema: { items: [], matchConditions: { mustInclude: ["Kingston"], inStockOnly: true } }, matchCount: 0, candidateKeys: [],
+      checkCount: 5, contentFingerprint: "page-1", lastAiExtractAt: Date.now(), nextCheckAt: 0, createdAt: Date.now(), updatedAt: Date.now(),
+    })
+  );
+  await t.action(internal.scheduler.runScheduledChecks, {});
+  // The alert's note is built from the stored matches.
+  const [row] = await t.run((ctx) => ctx.db.query("scrapeResults").withIndex("by_monitorId", (q) => q.eq("monitorId", id)).collect());
+  expect(stockNotShownNote(row!.matches, { inStockOnly: true })).toMatch(/Stock not shown/);
 });

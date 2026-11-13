@@ -790,3 +790,27 @@ test("pausing a monitor mid-scan is refused, with when to try again", async () =
     retry: true,
   });
 });
+
+// An agent fixes a bad link by picking another page, not by retrying.
+test("create_product with a link that can't be watched says invalid_url", async () => {
+  const t = setup();
+  const { key } = await seedUser(t, "a@example.com");
+  expect(
+    await toolErrorOf(t.mutation(api.mcp.createProduct, { apiKey: key, title: "x", region: "GB", urls: ["ftp://a.test/1"], alertOn: { backInStock: true } }))
+  ).toMatchObject({ code: "invalid_url", retry: false });
+});
+
+// A search that failed on our side is refunded and may work on a retry.
+test("a failed agent search says retrying may help", async () => {
+  vi.stubEnv("SCRAPER_URL", "https://scraper.test");
+  vi.stubEnv("SCRAPER_API_KEY", "key");
+  vi.stubGlobal("fetch", async () => new Response("down", { status: 502 }));
+  const t = setup();
+  const { key } = await seedUser(t, "a@example.com");
+  expect(await toolErrorOf(t.action(api.mcp.findProduct, { apiKey: key, query: "Sony WH-1000XM5", region: "GB" }))).toMatchObject({
+    code: "failed",
+    retry: true,
+  });
+  vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
+});
