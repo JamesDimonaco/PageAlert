@@ -9,6 +9,7 @@ import { alertChannels, deliverAlert } from "./alerts";
 import {
   displayHost,
   isBlockedError,
+  isProxyFirstHost,
   checkFailureKind,
   matchKey,
   newMatchKeys,
@@ -319,7 +320,7 @@ export const recordCheckResult = internalMutation({
     // site to proxy-preferred would still book itself an un-floored slot.
     const nextProxyPreferred =
       args.usedProxy === true
-        ? isBlockedError(monitor.lastError ?? "") || monitor.proxyPreferred === true
+        ? isBlockedError(monitor.lastError ?? "") || monitor.proxyPreferred === true || isProxyFirstHost(monitor.url)
         : args.usedProxy === false
           ? false
           : monitor.proxyPreferred;
@@ -509,8 +510,10 @@ export const runScheduledChecks = internalAction({
         // This site has only ever answered through the proxy, so the direct
         // attempt is a guaranteed failure plus a wasted 2-minute backoff before
         // the alert. Probe direct occasionally in case the site drops its WAF.
+        const proxyFirst = isProxyFirstHost(monitor.url);
         const reprobeDirect = ((monitor.checkCount ?? 0) + 1) % PROXY_REPROBE_EVERY === 0;
         const wantProxy =
+          proxyFirst ||
           (monitor.proxyPreferred === true && !reprobeDirect) ||
           (retryCount >= 1 && isBlockedError(monitor.lastError ?? ""));
 
@@ -528,7 +531,7 @@ export const runScheduledChecks = internalAction({
           wantProxy &&
           !scraperDown &&
           (await ctx.runMutation(internal.admin.reserveFallbackCall, {
-            escalation: monitor.proxyPreferred !== true || reprobeDirect,
+            escalation: !proxyFirst && (monitor.proxyPreferred !== true || reprobeDirect),
           }));
         let strategyLabel = "quick-check";
         try {

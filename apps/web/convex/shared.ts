@@ -100,9 +100,31 @@ export const PARK_REASON_NEVER_SUCCEEDED =
  */
 export const PROXY_REPROBE_EVERY = 8;
 
-/** One classifier for "the site refused us" across scheduler, scan errors, and operator tooling. */
+/**
+ * Sites that block every direct fetch, so their checks always go through the
+ * proxy, with no direct re-probe. Costco serves an empty page rather than a
+ * challenge, so it never read as blocked and every retry failed the same way.
+ * Matches the domain and its subdomains.
+ */
+const PROXY_FIRST_DOMAINS = ["costco.com"];
+
+export function isProxyFirstHost(url: string): boolean {
+  let host: string;
+  try {
+    host = new URL(url).hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+  return PROXY_FIRST_DOMAINS.some((d) => host === d || host.endsWith(`.${d}`));
+}
+
+/**
+ * One classifier for "the site refused us" across scheduler, scan errors, and
+ * operator tooling. An empty page counts: it is how Akamai-style protection
+ * blocks us, and only a block sends the retry through the proxy.
+ */
 export function isBlockedError(message: string): boolean {
-  return /blocking automated access|anti-bot|CAPTCHA|Cloudflare|Access denied|blocked/i.test(message);
+  return /blocking automated access|anti-bot|CAPTCHA|Cloudflare|Access denied|blocked|Page inaccessible/i.test(message);
 }
 
 export type CheckFailureKind = "proxy_provider" | "ai_billing" | "timeout" | "blocked" | "other";
