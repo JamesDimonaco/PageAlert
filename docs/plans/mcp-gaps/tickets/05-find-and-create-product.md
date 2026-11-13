@@ -8,4 +8,4 @@
 
 - [x] `find_product` shares the web daily search cap and refund.
 - [x] `create_product` reuses the web product creation, now `createProductForUser`.
-- [ ] New Zealand is not a search region yet, so this does not help the NZ build. Adding it touches the scraper's search.
+- [x] New Zealand is a search region, so `find_product` works for the NZ build.

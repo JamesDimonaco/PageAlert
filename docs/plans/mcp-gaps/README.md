@@ -210,5 +210,5 @@ After PR 3, give the 7 monitors real stock and price alerts.
 - **`create_monitor` guesses alertOn from the prompt** when the agent sends none. There was no guess on the MCP before.
 - **A prompt change through `update_monitor` applies at the next full read**, as in the web app. There is no rescan tool.
 - **`create_folder` returns the existing folder** of the same name, so agents need no list tool to find one.
-- **New Zealand is not a search region.** `find_product` cannot help the NZ build until the scraper's search supports it.
+- **New Zealand is now a search region.** A real search for the Noctua cooler found 4 NZ shops priced in NZD.
 - **The AI sets `inStockOnly` on some "any shop offers" prompts.** The real-API run set it on 3 of 4 PriceSpy prompts. It only blocks items read as sold out, so it is safe, but it is not consistent.

@@ -4,6 +4,7 @@ export const SEARCH_REGIONS = [
   { code: "US", name: "United States", currency: "USD" },
   { code: "CA", name: "Canada", currency: "CAD" },
   { code: "AU", name: "Australia", currency: "AUD" },
+  { code: "NZ", name: "New Zealand", currency: "NZD" },
   { code: "IE", name: "Ireland", currency: "EUR" },
   { code: "DE", name: "Germany", currency: "EUR" },
   { code: "FR", name: "France", currency: "EUR" },
