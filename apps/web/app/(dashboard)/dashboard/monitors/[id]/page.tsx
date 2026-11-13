@@ -6,6 +6,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { StatusBadge } from "@/components/prowl/status-badge";
 import { AutoPauseNote } from "@/components/prowl/auto-pause-note";
+import { SpeedUpsell } from "@/components/prowl/speed-upsell";
 import { DeleteDialog } from "@/components/prowl/delete-dialog";
 import { OverviewTab } from "@/components/prowl/monitor-tabs/overview-tab";
 import { ItemsTab } from "@/components/prowl/monitor-tabs/items-tab";
@@ -35,7 +36,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { BackLink } from "@/components/prowl/back-link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useMonitor, useMonitorResults, useMonitors } from "@/hooks/use-monitors";
 import { useTier } from "@/hooks/use-tier";
 import { useMutation, useQuery } from "convex/react";
@@ -63,7 +64,9 @@ export default function MonitorDetailPage({
   const monitor = useMonitor(monitorId);
   const results = useMonitorResults(monitorId);
   const { monitors, togglePause, deleteMonitor, updateMonitor, toggleMute } = useMonitors();
-  const { maxMonitors } = useTier();
+  const { maxMonitors, tier, resolved: tierResolved } = useTier();
+  // Set by the create sheet when a first scan lands here.
+  const justCreated = useSearchParams().get("new") === "1";
   const atLimit = monitors.length >= maxMonitors;
   const scanBudget = useQuery(api.tiers.canScan);
   const scores = useQuery(api.monitors.latestScores, { monitorId }) ?? {};
@@ -205,6 +208,7 @@ export default function MonitorDetailPage({
     <div className="space-y-6">
       {/* Header */}
       <BackLink href="/dashboard">Back to dashboard</BackLink>
+      {justCreated && <SpeedUpsell tier={tier} tierResolved={tierResolved} proxyFloored={proxyFloored} />}
       <div className="flex items-start gap-3 overflow-hidden">
         <div className="flex-1 min-w-0">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1">

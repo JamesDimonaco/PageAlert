@@ -125,3 +125,13 @@ test("a first scan on a proxy-first site goes straight to the proxy", async () =
   const id = await owner.mutation(api.monitors.create, { url: COSTCO, prompt: "in stock", name: "Bose", checkInterval: "24h" });
   expect(await owner.mutation(api.monitors.claimFirstScanProxy, { id, knownHost: true })).toBe(COSTCO);
 });
+
+// Faster checks can only be sold where we can deliver them: a proxy-only site
+// checks every 6 hours on any plan, and paying users already have speed.
+test("the Sprint offer goes to Free users on sites we can check fast", async () => {
+  const { sprintOfferTo } = await import("./shared");
+  expect(sprintOfferTo("free", { userId: "u", proxyPreferred: undefined })).toEqual({ offerSprintTo: "u" });
+  expect(sprintOfferTo("free", { userId: "u", proxyPreferred: true })).toEqual({});
+  expect(sprintOfferTo("sprint", { userId: "u", proxyPreferred: undefined })).toEqual({});
+  expect(sprintOfferTo("pro", { userId: "u" })).toEqual({});
+});

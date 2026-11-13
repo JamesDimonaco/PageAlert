@@ -316,6 +316,17 @@ export function effectiveIntervalMs(monitor: {
   return monitor.proxyPreferred === true ? Math.max(base, PROXY_MIN_INTERVAL_MS) : base;
 }
 
+/**
+ * The match email's Sprint offer, as sendMatchAlert args: only for Free users,
+ * and never on a proxy-only site, which checks every 6 hours on any plan.
+ */
+export function sprintOfferTo(
+  tier: string,
+  monitor: { userId: string; proxyPreferred?: boolean }
+): { offerSprintTo?: string } {
+  return tier === "free" && monitor.proxyPreferred !== true ? { offerSprintTo: monitor.userId } : {};
+}
+
 /** Escape text for HTML element content and quoted attributes. */
 export function esc(str: string): string {
   return str

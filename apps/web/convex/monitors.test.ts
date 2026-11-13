@@ -84,3 +84,12 @@ test("no proxy claim once the first scan has finished", async () => {
 
   expect(await owner.mutation(api.monitors.claimFirstScanProxy, { id })).toBeNull();
 });
+
+// The Sprint pass is sold on speed: 15-minute checks for 30 days. Max alone
+// gets 5 minutes, and Free stays hourly.
+test("a Sprint pass checks every 15 minutes at fastest", async () => {
+  const { clampInterval } = await import("./monitors");
+  expect(clampInterval("15m", "sprint")).toBe("15m");
+  expect(clampInterval("5m", "sprint")).toBe("15m");
+  expect(clampInterval("15m", "free")).toBe("1h");
+});

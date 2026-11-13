@@ -16,7 +16,7 @@ type CheckInterval = "5m" | "15m" | "30m" | "1h" | "6h" | "24h";
 
 const INTERVALS: { value: CheckInterval; label: string; tier: Tier }[] = [
   { value: "5m", label: "Every 5 minutes", tier: "max" },
-  { value: "15m", label: "Every 15 minutes", tier: "pro" },
+  { value: "15m", label: "Every 15 minutes", tier: "sprint" },
   { value: "30m", label: "Every 30 minutes", tier: "sprint" },
   { value: "1h", label: "Every hour", tier: "free" },
   { value: "6h", label: "Every 6 hours", tier: "free" },

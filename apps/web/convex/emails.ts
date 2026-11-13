@@ -132,9 +132,13 @@ export const sendMatchAlert = internalAction({
     totalItems: v.number(),
     /** Set when stock was asked for and some matches did not show it. See stockNotShownNote. */
     stockNote: v.optional(v.string()),
+    /** The owner's user id when they are on Free: adds the Sprint pass offer. */
+    offerSprintTo: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const safeName = esc(args.monitorName);
+    const sprintUrl = `${APP_URL}/dashboard/settings?tab=billing&from=match_email`;
+    const sprintPitch = "Free checks every hour, and restocks can sell out in minutes. A $4 Sprint pass checks every 15 minutes for 30 days, with no subscription.";
     const safeHost = esc(safeHostname(args.url));
 
     // Use the first matched item's URL if available, otherwise fall back to the monitor URL
@@ -180,6 +184,7 @@ export const sendMatchAlert = internalAction({
           <a href="${safeHref(viewOnSiteUrl)}" style="display:inline-block;background:#4f46e5;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:500;font-size:14px;margin-right:8px">View on site</a>
           <a href="${APP_URL}/dashboard/monitors/${args.monitorId}" style="display:inline-block;background:#f4f4f5;color:#333;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:500;font-size:14px">View in PageAlert</a>
         </div>
+        ${args.offerSprintTo ? `<p style="margin:24px 0 0;color:#666;font-size:14px">${sprintPitch} <a href="${esc(sprintUrl)}" style="color:#4f46e5;font-weight:500">Get a Sprint pass</a></p>` : ""}
       </div>
       <div style="padding:16px 32px;background:#f9fafb;border-top:1px solid #eee">
         <p style="margin:0;color:#999;font-size:12px">
@@ -201,7 +206,7 @@ export const sendMatchAlert = internalAction({
         return `• ${String(m.title ?? m.name ?? "Item")}${price}${band}`;
       })
       .join("\n");
-    const text = `Match Found — ${args.monitorName}\n\nYour monitor found ${args.matchCount} new match${args.matchCount !== 1 ? "es" : ""}${plainItemsText} on ${safeHostname(args.url)}.\n\n${plainMatches}\n${args.matchCount > 5 ? `+${args.matchCount - 5} more` : ""}${args.stockNote ? `\n${args.stockNote}` : ""}\n\nView on site: ${viewOnSiteUrl}\nView in PageAlert: ${APP_URL}/dashboard/monitors/${args.monitorId}`;
+    const text = `Match Found — ${args.monitorName}\n\nYour monitor found ${args.matchCount} new match${args.matchCount !== 1 ? "es" : ""}${plainItemsText} on ${safeHostname(args.url)}.\n\n${plainMatches}\n${args.matchCount > 5 ? `+${args.matchCount - 5} more` : ""}${args.stockNote ? `\n${args.stockNote}` : ""}\n\nView on site: ${viewOnSiteUrl}\nView in PageAlert: ${APP_URL}/dashboard/monitors/${args.monitorId}${args.offerSprintTo ? `\n\n${sprintPitch}\nGet a Sprint pass: ${sprintUrl}` : ""}`;
 
     await send(ctx, {
       to: args.to,
@@ -211,6 +216,13 @@ export const sendMatchAlert = internalAction({
       kind: "match",
       monitorId: args.monitorId,
     });
+    if (args.offerSprintTo) {
+      await ctx.scheduler.runAfter(0, internal.analytics.capture, {
+        distinctId: args.offerSprintTo,
+        event: "upgrade_prompt_shown",
+        properties: { placement: "match_email", current_tier: "free", target_plan: "sprint" },
+      });
+    }
   },
 });
 

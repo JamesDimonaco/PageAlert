@@ -247,7 +247,7 @@ export const recordScraperHealth = internalMutation({
  * Also slows any monitor left on an interval the free tier can't pick.
  * Interval limits are enforced when a monitor is written, never when it is
  * checked, so without this a lapsed £4 pass would keep ten monitors running
- * at 30 minutes forever — 480 checks a day, bought once.
+ * at 15 minutes forever — 960 checks a day, bought once.
  */
 export const expireGrants = internalMutation({
   args: {},

@@ -10,6 +10,7 @@ import {
   displayHost,
   isBlockedError,
   isProxyFirstHost,
+  sprintOfferTo,
   checkFailureKind,
   matchKey,
   newMatchKeys,
@@ -621,7 +622,13 @@ export const runScheduledChecks = internalAction({
                 title: `${freshMonitor.name} — ${newCount} new match${plural}`,
                 inAppMessage: `Found ${newCount} new match${plural} out of ${displayTotalItems} items on ${freshMonitor.url}.${note}`,
                 pushBody: `${newCount} new match${plural} out of ${displayTotalItems} items on ${displayHost(freshMonitor.url)}.${note}`,
-                email: (to) => ctx.runAction(internal.emails.sendMatchAlert, { ...base, to, matches: newMatches }),
+                email: (to) =>
+                  ctx.runAction(internal.emails.sendMatchAlert, {
+                    ...base,
+                    to,
+                    matches: newMatches,
+                    ...sprintOfferTo(tier, freshMonitor),
+                  }),
                 telegram: (chatId) =>
                   ctx.runAction(internal.telegram.sendMatchAlert, {
                     ...base,

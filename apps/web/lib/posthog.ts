@@ -183,24 +183,30 @@ export function trackPageView(url: string) {
 
 // ---- Revenue / Billing events ----
 
-export function trackCheckoutStarted(props: { plan: string; price: number }) {
+/** `from` is the upgrade prompt that sent them, or null when they came by themselves. */
+export function trackCheckoutStarted(props: { plan: string; price: number; from: string | null }) {
   trackEvent("checkout_started", {
     plan: props.plan,
     price_usd: props.price,
+    from: props.from,
   });
 }
 
-export function trackUpgradePromptClicked(props: { plan: string; currentTier: string }) {
-  trackEvent("upgrade_prompt_clicked", {
-    target_plan: props.plan,
-    current_tier: props.currentTier,
-  });
-}
+/**
+ * Where an upgrade offer was shown. One event pair for every offer, so one
+ * query compares which one sells. A link to billing carries the placement as
+ * `from`, so checkout_started can be tied back to it.
+ */
+export type UpgradePlacement = "limit_banner" | "first_scan" | "match_email";
 
-export function trackUpgradeBanner(action: "shown" | "clicked", props: { currentTier: string; nextTier: string }) {
-  trackEvent(`upgrade_banner_${action}`, {
+export function trackUpgradePrompt(
+  action: "shown" | "clicked",
+  props: { placement: UpgradePlacement; currentTier: string; targetPlan: string }
+) {
+  trackEvent(`upgrade_prompt_${action}`, {
+    placement: props.placement,
     current_tier: props.currentTier,
-    target_plan: props.nextTier,
+    target_plan: props.targetPlan,
   });
 }
 

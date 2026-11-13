@@ -17,7 +17,7 @@ const MAX_RESULTS_LIMIT = 100;
 
 const TIER_LIMITS: Record<Tier, { maxMonitors: number; allowedIntervals: string[] }> = {
   free: { maxMonitors: 3, allowedIntervals: ["1h", "6h", "24h"] },
-  sprint: { maxMonitors: 10, allowedIntervals: ["30m", "1h", "6h", "24h"] },
+  sprint: { maxMonitors: 10, allowedIntervals: ["15m", "30m", "1h", "6h", "24h"] },
   pro: { maxMonitors: 25, allowedIntervals: ["15m", "30m", "1h", "6h", "24h"] },
   max: { maxMonitors: 9999, allowedIntervals: ["5m", "15m", "30m", "1h", "6h", "24h"] },
 };
