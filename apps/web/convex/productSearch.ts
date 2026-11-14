@@ -4,7 +4,7 @@ import { action, internalMutation, query, type ActionCtx, type MutationCtx, type
 import { internal } from "./_generated/api";
 import { activityRow, requireLiveAccount } from "./account";
 import { effectiveTier, type Tier } from "./tiers";
-import { isSearchRegion, type ProductListing } from "@prowl/shared";
+import { isComparisonSite, isSearchRegion, type ProductListing } from "@prowl/shared";
 
 const DAILY_SEARCH_LIMITS: Record<Tier, number> = { free: 5, sprint: 15, pro: 30, max: 100 };
 
@@ -161,7 +161,9 @@ export async function findListings(
       throw new Error(`HTTP ${res.status} (${reason})`);
     }
     reason = "bad_response";
-    listings = scraperResponse.parse(await res.json()).listings;
+    // The search is told to skip them, and still returns some. Their price and
+    // stock come from search snippets, not from any shop.
+    listings = scraperResponse.parse(await res.json()).listings.filter((l) => !isComparisonSite(l.url));
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error("[productSearch] Search failed:", message);

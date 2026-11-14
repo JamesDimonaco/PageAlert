@@ -138,7 +138,7 @@ export default function MonitorDetailPage({
       if (!json.schema || typeof json.schema !== "object") throw new Error("Invalid response from scraper");
       const matchCount = Array.isArray(json.matches) ? json.matches.length : 0;
       const totalItems = typeof json.totalItems === "number" ? json.totalItems : 0;
-      await saveScanResult({ id, schema: json.schema, matchCount });
+      await saveScanResult({ id, schema: json.schema, matchCount, matches: json.matches ?? [] });
       await createLog({
         monitorId: id, monitorName: monitor.name, url: monitor.url, prompt: monitor.prompt,
         status: "success" as const, durationMs, itemCount: totalItems, matchCount,

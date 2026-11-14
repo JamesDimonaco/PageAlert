@@ -244,7 +244,8 @@ function registerTools(server: McpServer, convex: ConvexHttpClient, apiKey: stri
     {
       title: "List monitors",
       description:
-        "The user's monitors, newest first, up to 50. neverSucceeded means PageAlert has never read the page " +
+        "The user's monitors, newest first, up to 50, each with its prompt, alerts and shop. productId is set on " +
+        "a product's shop pages: pass it to get_product. neverSucceeded means PageAlert has never read the page " +
         "successfully, which usually means the monitor needs fixing.",
       inputSchema: z.object({}),
       annotations: { readOnlyHint: true },
@@ -321,7 +322,7 @@ function registerTools(server: McpServer, convex: ConvexHttpClient, apiKey: stri
         "Change a monitor's name, prompt, check interval or stock and price alerts, or pause and resume it. " +
         "Send only what changes. The URL can't change: delete the monitor and create a new one. " +
         "A new prompt takes effect at the next full read of the page, as in the web app. " +
-        "A faster interval than the plan allows is lowered to the fastest it does.",
+        "A faster interval than the plan allows is lowered to the fastest it does. Returns the monitor as saved.",
       inputSchema: z.object({
         monitorId,
         name: z.string().min(1).max(200).optional(),
@@ -351,6 +352,7 @@ function registerTools(server: McpServer, convex: ConvexHttpClient, apiKey: stri
         "Search shops in one country for a product by name. Returns up to 8 shop pages, each labelled same, " +
         "similar or accessory, with price in minor units and stock where known. Counts against the user's " +
         "daily searches, as in the web app; a search that fails or finds nothing is not counted. " +
+        "Price and stock come from the search, not from reading the page. Price comparison sites are left out. " +
         "Pass the pages you pick to create_product.",
       inputSchema: z.object({
         query: z.string().min(2).max(200).describe("The product's name, e.g. 'Sony WH-1000XM5'."),
@@ -376,7 +378,8 @@ function registerTools(server: McpServer, convex: ConvexHttpClient, apiKey: stri
       description:
         "Watch one product across several shop pages, with one set of stock and price alerts. A product " +
         "alerts only on stock and price, never on other items on its pages. Each page becomes a monitor " +
-        "and is first read on the server within a minute. Counts against the plan's monitor limits.",
+        "and is first read on the server within a minute. Counts against the plan's monitor limits. " +
+        "Shops' own pages only: a price comparison site is refused. To watch one, use create_monitor with a prompt.",
       inputSchema: z.object({
         title: z.string().min(1).max(200).describe("The product's name, used to find it on each page."),
         region: region.describe("The country the shops are in."),
@@ -392,6 +395,25 @@ function registerTools(server: McpServer, convex: ConvexHttpClient, apiKey: stri
       if (bad !== -1) return fail(invalidUrl(`${args.urls[bad]}: ${rejections[bad]}`));
       try {
         return ok(await convex.mutation(api.mcp.createProduct, { apiKey, ...args }));
+      } catch (e) {
+        return fail(convexFailure(e));
+      }
+    }
+  );
+
+  server.registerTool(
+    "get_product",
+    {
+      title: "Get a product",
+      description:
+        "A product's alerts and, for each shop page it watches, the price and stock PageAlert last read and when. " +
+        "Prices are in minor units. null means not read yet, or the page did not show it.",
+      inputSchema: z.object({ productId: z.string().describe("The productId from create_product or list_monitors.") }),
+      annotations: { readOnlyHint: true },
+    },
+    async (args) => {
+      try {
+        return ok(await convex.query(api.mcp.getProduct, { apiKey, ...args }));
       } catch (e) {
         return fail(convexFailure(e));
       }

@@ -1,12 +1,13 @@
 import { ConvexError, v, type Infer } from "convex/values";
 import { action, mutation, query, type QueryCtx } from "./_generated/server";
 import { api } from "./_generated/api";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import {
   DEFAULT_AGENT_MATCHES,
   MAX_AGENT_MATCHES,
   MAX_AGENT_MONITORS,
   guessAlertOn,
+  isComparisonSite,
   isProductMonitor,
   itemIdentity,
   toAgentItem,
@@ -92,11 +93,46 @@ function guessedAlertOn(prompt: string): AlertOn | undefined {
 }
 
 /** Said when stock or price alerts are on but the page is not a product page, so they will not run. */
-const NOT_A_PRODUCT_NOTE =
-  "Stock and price alerts only run on a product page. This page reads as a listing, so only match alerts will fire.";
+function notAProductNote(url: string): string {
+  return isComparisonSite(url)
+    ? "This is a price comparison page, so stock and price alerts don't run on it and only prompt alerts fire. " +
+        "Put the target in the prompt instead, e.g. 'lowest in-stock price under $300'."
+    : "Stock and price alerts only run on a product page. This page reads as a listing, so only match alerts will fire.";
+}
 
 function wantsProductAlerts(alertOn: AlertOn | undefined): boolean {
   return alertOn?.backInStock === true || alertOn?.priceDrop === true || alertOn?.priceBelow !== undefined;
+}
+
+function isoOrNull(time: number | undefined): string | null {
+  return time === undefined ? null : new Date(time).toISOString();
+}
+
+/** A monitor as list_monitors and update_monitor show it. */
+function agentMonitor(m: Doc<"monitors">, folder: string | null) {
+  return {
+    id: m._id,
+    name: m.name,
+    url: m.url,
+    shop: displayHost(m.url),
+    prompt: m.prompt,
+    status: m.status,
+    checkInterval: m.checkInterval,
+    alertOn: m.alertOn ?? null,
+    productId: m.groupId ?? null,
+    lastCheckedAt: isoOrNull(m.lastCheckedAt),
+    matchCount: m.matchCount,
+    // checkCount counts successful checks only, so zero means we have never
+    // once read this page.
+    neverSucceeded: (m.checkCount ?? 0) === 0,
+    folder,
+  };
+}
+
+/** A product's listings are filed with the product. */
+async function folderNameOf(ctx: QueryCtx, m: Doc<"monitors">): Promise<string | null> {
+  const folderId = m.groupId ? (await ctx.db.get(m.groupId))?.folderId : m.folderId;
+  return folderId ? ((await ctx.db.get(folderId))?.name ?? null) : null;
 }
 
 export const listMonitors = query({
@@ -110,25 +146,47 @@ export const listMonitors = query({
       .take(MAX_AGENT_MONITORS);
     const folders = await ctx.db.query("folders").withIndex("by_userId", (q) => q.eq("userId", userId)).collect();
     const folderName = new Map(folders.map((f) => [f._id, f.name]));
-    // A product's listings are filed with the product.
     const products = await ctx.db.query("monitorGroups").withIndex("by_userId", (q) => q.eq("userId", userId)).collect();
     const productFolder = new Map(products.map((p) => [p._id, p.folderId]));
     return monitors.map((m) => {
       const folderId = m.groupId ? productFolder.get(m.groupId) : m.folderId;
-      return {
-        id: m._id,
-        name: m.name,
-        url: m.url,
-        status: m.status,
-        checkInterval: m.checkInterval,
-        lastCheckedAt: m.lastCheckedAt === undefined ? null : new Date(m.lastCheckedAt).toISOString(),
-        matchCount: m.matchCount,
-        // checkCount counts successful checks only, so zero means we have never
-        // once read this page.
-        neverSucceeded: (m.checkCount ?? 0) === 0,
-        folder: (folderId && folderName.get(folderId)) ?? null,
-      };
+      return agentMonitor(m, (folderId && folderName.get(folderId)) ?? null);
     });
+  },
+});
+
+/** A product and what each of its watched shop pages last read. */
+export const getProduct = query({
+  args: { apiKey: v.string(), productId: v.string() },
+  handler: async (ctx, { apiKey, productId }) => {
+    const { userId } = await requireKeyOwner(ctx, apiKey);
+    const id = ctx.db.normalizeId("monitorGroups", productId);
+    const product = id ? await ctx.db.get(id) : null;
+    if (!product || product.userId !== userId) throw new ConvexError(toolError("Product not found"));
+    const folder = product.folderId ? ((await ctx.db.get(product.folderId))?.name ?? null) : null;
+    // Listings are capped (see monitorGroups.ts), so this read is too.
+    const monitors = await Promise.all(product.listings.map((l) => (l.monitorId ? ctx.db.get(l.monitorId) : null)));
+    return {
+      id: product._id,
+      name: product.name,
+      region: product.region,
+      alertOn: product.alertOn,
+      checkInterval: product.checkInterval,
+      folder,
+      listings: monitors
+        .filter((m) => m !== null)
+        .map((m) => ({
+          monitorId: m._id,
+          shop: displayHost(m.url),
+          url: m.url,
+          status: m.status,
+          inStock: m.lastSeen?.inStock ?? null,
+          price: m.lastSeen?.price ?? null,
+          currency: m.lastSeen?.currency ?? null,
+          lastCheckedAt: isoOrNull(m.lastCheckedAt),
+          lastError: m.lastError ?? null,
+        })),
+    };
   },
 });
 
@@ -277,7 +335,7 @@ export const updateMonitor = mutation({
     // be rejected as an unknown field with a message no agent can act on.
     url: v.optional(v.string()),
   },
-  handler: async (ctx, { apiKey, monitorId, url, paused, folderId, ...fields }): Promise<{ monitorId: Id<"monitors">; note?: string }> => {
+  handler: async (ctx, { apiKey, monitorId, url, paused, folderId, ...fields }) => {
     const { userId } = await requireKeyOwner(ctx, apiKey);
     const monitor = await ownedMonitor(ctx, userId, monitorId);
     // A product's listings share its alerts and interval. One changed alone
@@ -313,6 +371,8 @@ export const updateMonitor = mutation({
         lastAiExtractAt: 0,
         contentFingerprint: undefined,
         candidateKeys: undefined,
+        passedKeys: undefined,
+        candidatePrices: undefined,
         soldOutKeys: undefined,
         soldOutTextHashes: undefined,
       });
@@ -325,10 +385,9 @@ export const updateMonitor = mutation({
         : setMonitorFolder(ctx, userId, monitor._id, folderId);
       await filing.catch(asToolError);
     }
-    const alertOn = fields.alertOn ?? monitor.alertOn;
-    return wantsProductAlerts(alertOn) && !isProductMonitor(monitor)
-      ? { monitorId: monitor._id, note: NOT_A_PRODUCT_NOTE }
-      : { monitorId: monitor._id };
+    const saved = (await ctx.db.get(monitor._id))!;
+    const note = wantsProductAlerts(saved.alertOn) && !isProductMonitor(saved) ? notAProductNote(saved.url) : null;
+    return { ...agentMonitor(saved, await folderNameOf(ctx, saved)), ...(note ? { note } : {}) };
   },
 });
 
@@ -457,7 +516,7 @@ export const saveScanResult = mutation({
     const monitor = await ownedMonitor(ctx, userId, args.id);
     await saveScanResultForUser(ctx, userId, { ...args, matches, matchCount: matches.length }).catch(asToolError);
     return wantsProductAlerts(monitor.alertOn) && !isProductMonitor({ ...monitor, schema: args.schema })
-      ? { note: NOT_A_PRODUCT_NOTE }
+      ? { note: notAProductNote(monitor.url) }
       : {};
   },
 });

@@ -228,6 +228,7 @@ export const recordCheckResult = internalMutation({
     trackMatchKeys: v.optional(v.boolean()),
     // Every entry the keyword filter picked this check, judged or not.
     candidateKeys: v.optional(v.array(v.string())),
+    candidatePrices: v.optional(v.array(v.object({ key: v.string(), price: v.number() }))),
     soldOutKeys: v.optional(v.array(v.string())),
     soldOutTextHashes: v.optional(v.array(v.string())),
     // Entries judged on this check, verdict included. Kept apart from `items`,
@@ -401,6 +402,9 @@ export const recordCheckResult = internalMutation({
     if (args.candidateKeys) {
       updates.candidateKeys = args.candidateKeys;
     }
+    if (args.candidatePrices) {
+      updates.candidatePrices = args.candidatePrices;
+    }
     if (args.soldOutKeys) {
       updates.soldOutKeys = args.soldOutKeys;
     }
@@ -423,10 +427,16 @@ export const recordCheckResult = internalMutation({
       const product = stockAlerted ? productItem(page.schema, monitor.url) : null;
       if (product) newKeys = newKeys.filter((k) => k !== matchKey(product as Record<string, unknown>));
       updates.matchedKeys = [...new Set(currentKeys.filter(Boolean))];
+      updates.passedKeys = updates.matchedKeys;
     } else if (!args.trackMatchKeys && args.matches.length > 0 && monitor.matchedKeys !== undefined) {
       // What a quick check alerted on is announced too. Left out, the next
       // full read would find it missing here and announce it again.
       updates.matchedKeys = [...new Set([...monitor.matchedKeys, ...(args.matches as Record<string, unknown>[]).map(matchKey)])];
+    }
+
+    if (!args.trackMatchKeys && args.matches.length > 0) {
+      const passed = (args.matches as Record<string, unknown>[]).map(matchKey);
+      updates.passedKeys = [...new Set([...(monitor.passedKeys ?? monitor.matchedKeys ?? []), ...passed])];
     }
 
     // Keyed off new matches, not the running count. The count is "entries on
@@ -916,6 +926,15 @@ type ScoredCandidate = QuickCheckCandidate & {
   stock?: { inStock: boolean | null; price: number | null; currency: string | null };
 };
 
+/**
+ * Entries on the page now that the AI passed, leaving out any read as sold
+ * out. The count the user sees, so never the keyword filter's hits.
+ */
+function passingCount(keys: string[], passed: Set<string>, soldOut: string[] = []): number {
+  const out = new Set(soldOut);
+  return keys.filter((k) => passed.has(k) && !out.has(k)).length;
+}
+
 /** Entries judged in one check. The rest keep their place in the seen set and wait their turn. */
 const MAX_SCORED_PER_CHECK = 25;
 
@@ -1097,30 +1116,70 @@ async function runQuickCheck(
     .filter((c) => unseenKeys.has(matchKey(c)))
     .slice(0, MAX_SCORED_PER_CHECK - recheck.length);
 
+  // A seen entry is judged once, so an offer whose price later moves into
+  // the user's range would never alert. One that has not passed is judged
+  // again when its price changes, in the slots left over, if the prompt
+  // bounds the price. Left out: a product's listing, which never alerts on
+  // its page's entries; a product page whose product read already alerts on
+  // price; and the sold-out queue, which the rechecks above judge.
+  // Rows from before passedKeys fall back to the last full read's matches.
+  const alertedKeys = new Set<string>(monitor.passedKeys ?? monitor.matchedKeys ?? []);
+  const lastPrice = new Map<string, number>(
+    ((monitor.candidatePrices ?? []) as { key: string; price: number }[]).map((p) => [p.key, p.price])
+  );
+  const queuedSoldOut = new Set(lastSoldOut);
+  const boundsPrice = matchConditions.priceMax !== undefined || (matchConditions.priceMin ?? 0) > 0;
+  const repricedAll =
+    monitor.groupId !== undefined || readsProduct || !boundsPrice
+      ? []
+      : visible.filter((c) => {
+          const k = matchKey(c);
+          const was = lastPrice.get(k);
+          return !unseenKeys.has(k) && !alertedKeys.has(k) && !queuedSoldOut.has(k) && c.price !== null && was !== undefined && was !== c.price;
+        });
+  const repriced = repricedAll.slice(0, MAX_SCORED_PER_CHECK - recheck.length - unseen.length);
+
   // New entries past the per-check cap stay out of the seen set so the next
   // check picks them up. Recording them as seen alongside the ones actually
   // judged would drop them silently and for good.
   const judged = new Set(unseen.map(matchKey));
   const seenAfterCheck = candidateKeys.filter((k) => !unseenKeys.has(k) || judged.has(k));
 
-  if (unseen.length === 0 && recheck.length === 0) {
+  /**
+   * Each entry's price now, except a repriced one this check did not judge,
+   * which keeps its old price so the change is still there next check.
+   */
+  const pricesAfterCheck = (notJudged: Set<string>) =>
+    visible.flatMap((c) => {
+      const key = matchKey(c);
+      const price = notJudged.has(key) ? lastPrice.get(key) : c.price;
+      return key && typeof price === "number" ? [{ key, price }] : [];
+    });
+
+  if (unseen.length === 0 && recheck.length === 0 && repriced.length === 0) {
+    const matchCount = passingCount(candidateKeys, alertedKeys, monitor.soldOutKeys);
     await ctx.runMutation(internal.scheduler.recordCheckResult, {
       monitorId: monitor._id,
       hasNewMatches: false,
-      matchCount: visible.length,
+      matchCount,
       totalItems: totalEntries,
       matches: [],
       contentFingerprint: contentHash,
       candidateKeys: seenAfterCheck,
+      candidatePrices: pricesAfterCheck(new Set()),
       usedProxy: useProxy,
     });
     console.log(`[scheduler] Quick check ${monitor._id}: ${visible.length} candidate(s), none new`);
-    return { hasMatch: false, matchCount: visible.length, matches: [], totalItems: totalEntries, strategy: "quick-check", newMatchKeys: [] };
+    return { hasMatch: false, matchCount, matches: [], totalItems: totalEntries, strategy: "quick-check", newMatchKeys: [] };
   }
 
-  // Only new entries and sold-out rechecks reach the AI, and only their own
-  // text does. A page that has not changed costs nothing.
-  const scored = await scoreQuickCheckCandidates([...unseen, ...recheck], monitor, scraperUrl, scraperKey, asksStock);
+  // Only new entries, sold-out rechecks and price changes reach the AI, and
+  // only their own text does. A page that has not changed costs nothing.
+  const scored = await scoreQuickCheckCandidates([...unseen, ...recheck, ...repriced], monitor, scraperUrl, scraperKey, asksStock);
+  // A repriced entry was already judged once. Unjudged now, it must not slip
+  // through as an unscored new entry would, and waits for the next check.
+  const repricedKeys = new Set(repriced.map(matchKey));
+  const repricedUnjudged = new Set(scored.filter((c) => repricedKeys.has(matchKey(c)) && c.matchScore === null).map(matchKey));
   const rechecked = new Set(recheck.map(matchKey));
   // Read as sold out: never alerts, whatever it scored. A recheck needs a
   // read that says it is back, so a failed or blank read leaves it sold out.
@@ -1134,7 +1193,7 @@ async function runQuickCheck(
   // Carries the stock read the way a full read's items do, so the alert can
   // say when stock was asked for and not shown.
   const matches = scored
-    .filter((c) => alertsOnScore(c.matchScore) && !soldOutStill(c) && !unjudged.has(matchKey(c)))
+    .filter((c) => alertsOnScore(c.matchScore) && !soldOutStill(c) && !unjudged.has(matchKey(c)) && !repricedUnjudged.has(matchKey(c)))
     .map((c) => (asksStock ? { ...c, inStock: c.stock?.inStock ?? null } : c));
   // Queued whatever it scored: the scorer marks an entry down for being sold
   // out when the prompt wants stock, so a low score cannot tell an unwanted
@@ -1152,10 +1211,13 @@ async function runQuickCheck(
     return (read ? read.stock !== undefined : readSoldOutText.has(text)) ? [text] : [];
   });
 
+  const keptSoldOut = asksStock && !stockAlerted ? soldOutKeys : monitor.soldOutKeys;
+  const matchCount = passingCount(candidateKeys, new Set([...alertedKeys, ...matches.map(matchKey)]), keptSoldOut);
+  const repricedLater = new Set([...repricedAll.slice(repriced.length).map(matchKey), ...repricedUnjudged]);
   const outcome = await ctx.runMutation(internal.scheduler.recordCheckResult, {
     monitorId: monitor._id,
     hasNewMatches: matches.length > 0,
-    matchCount: visible.length,
+    matchCount,
     totalItems: totalEntries,
     matches,
     // Deliberately not `items`: that field is the AI's model of the whole
@@ -1165,6 +1227,7 @@ async function runQuickCheck(
     scoredCandidates: scored,
     contentFingerprint: contentHash,
     candidateKeys: seenAfterCheck.filter((k) => !unjudged.has(k)),
+    candidatePrices: pricesAfterCheck(repricedLater),
     // Left alone while a stock alert covers the restock, so the queue is
     // still there if that alert is turned off.
     ...(asksStock && !stockAlerted ? { soldOutKeys, soldOutTextHashes } : {}),
@@ -1172,12 +1235,12 @@ async function runQuickCheck(
   });
 
   console.log(
-    `[scheduler] Quick check ${monitor._id}: ${visible.length} candidate(s), ${unseen.length} new, ${recheck.length} sold out rechecked, ${matches.length} above threshold`
+    `[scheduler] Quick check ${monitor._id}: ${visible.length} candidate(s), ${unseen.length} new, ${recheck.length} sold out rechecked, ${repriced.length} repriced, ${matches.length} above threshold`
   );
 
   return {
     hasMatch: matches.length > 0,
-    matchCount: visible.length,
+    matchCount,
     matches,
     totalItems: totalEntries,
     strategy: "quick-check",

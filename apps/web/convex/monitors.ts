@@ -2,7 +2,7 @@ import { ConvexError, v, type Infer, type ObjectType } from "convex/values";
 import { mutation, query, internalAction, internalMutation, internalQuery, type MutationCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
-import { displayHost, effectiveIntervalMs, ERROR_RECOVERY_INTERVAL_MS, intervalToMs, isBlockedError, isProxyFirstHost, MAX_RETRIES, soldOutKeysOf, validateMonitorUrl } from "./shared";
+import { displayHost, effectiveIntervalMs, ERROR_RECOVERY_INTERVAL_MS, intervalToMs, isBlockedError, isProxyFirstHost, matchKey, MAX_RETRIES, soldOutKeysOf, validateMonitorUrl } from "./shared";
 import { currencyExponent, itemIdentity, RESUME_TOKEN_TTL_MS, stockNotShownNote, type ExtractedItem, type MatchConditions } from "@prowl/shared";
 import { effectiveTier, type Tier } from "./tiers";
 import { drain, isBanned, requireLiveAccount, spent, SWEEP_BUDGET_BYTES, SWEEP_BUDGET_ROWS, type Allowance } from "./account";
@@ -356,6 +356,8 @@ export async function saveScanResultForUser(
     // showed. The cost is the other half of that trade: anything appearing
     // between the scan and that extract goes unannounced.
     matchedKeys: undefined,
+    // An old browser bundle sends no matches. Unset falls back to matchedKeys.
+    passedKeys: matches?.map((m) => matchKey(m as Record<string, unknown>)),
     // A rescan keeps what quick checks queued: those entries are still seen.
     soldOutKeys: soldOutKeysOf(schema, monitor.soldOutKeys),
     updatedAt: now,

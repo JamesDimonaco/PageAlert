@@ -93,6 +93,13 @@ export default defineSchema({
     // still remembered as seen — otherwise it reads as new every check and
     // buys another scoring call forever.
     candidateKeys: v.optional(v.array(v.string())),
+    // Entries the AI passed as matches: by the first scan, the last full read,
+    // or a quick check since. Unlike matchedKeys, a first scan sets it rather
+    // than clearing it. It is what matchCount counts.
+    passedKeys: v.optional(v.array(v.string())),
+    // The price each seen entry last showed, where it showed one. A seen entry
+    // that has not alerted is judged again when its price changes.
+    candidatePrices: v.optional(v.array(v.object({ key: v.string(), price: v.number() }))),
     // Entries judged sold out while the prompt asks for stock, by a quick
     // check or an AI read. The quick check judges a few again each time, so a
     // restock still alerts. Oldest turn first: see MAX_SOLD_OUT_RECHECKS.
