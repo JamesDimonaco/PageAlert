@@ -27,7 +27,7 @@ function toCandidate(item: ExtractedItem): ScoreCandidate {
  *
  * A match read as sold out, when the prompt asks for stock, is marked so in
  * the items too, which puts it in the restock queue. A scoring failure keeps
- * every match, as a quick check does.
+ * that batch's matches, as a quick check does.
  */
 export async function judgeMatches(
   schema: ExtractionSchema,
@@ -36,15 +36,15 @@ export async function judgeMatches(
 ): Promise<{ schema: ExtractionSchema; matches: ExtractedItem[] }> {
   if (matches.length === 0) return { schema, matches };
   const readStock = schema.matchConditions?.inStockOnly === true;
-  let scored: ScoredCandidate[];
-  try {
-    const batches: ExtractedItem[][] = [];
-    for (let i = 0; i < matches.length; i += SCORE_BATCH) batches.push(matches.slice(i, i + SCORE_BATCH));
-    scored = (await Promise.all(batches.map((batch) => score(batch.map(toCandidate), readStock)))).flat();
-  } catch (e) {
-    console.warn("[judge] Scoring failed, keeping every match:", (e as Error).message);
-    return { schema, matches };
-  }
+  const batches: ExtractedItem[][] = [];
+  for (let i = 0; i < matches.length; i += SCORE_BATCH) batches.push(matches.slice(i, i + SCORE_BATCH));
+  // A failed batch leaves its matches unjudged, which keeps them.
+  const settled = await Promise.allSettled(batches.map((batch) => score(batch.map(toCandidate), readStock)));
+  const scored: (ScoredCandidate | undefined)[] = settled.flatMap((outcome, i) => {
+    if (outcome.status === "fulfilled") return outcome.value;
+    console.warn("[judge] Scoring failed, keeping the batch's matches:", (outcome.reason as Error)?.message);
+    return batches[i]!.map(() => undefined);
+  });
 
   const soldOut = new Set<ExtractedItem>();
   const kept: ExtractedItem[] = [];

@@ -55,6 +55,18 @@ describe("judgeMatches", () => {
     expect(result.matches).toHaveLength(28);
   });
 
+  // One rate-limited batch must not throw away the verdicts the others got.
+  it("keeps a failed batch's matches unjudged and applies the rest", async () => {
+    const many = Array.from({ length: 30 }, (_, i) => ({ title: `Guitar ${i}`, url: `https://shop.test/${i}` }));
+    let call = 0;
+    const score: Scorer = async (candidates) => {
+      if (call++ === 1) throw new Error("429");
+      return candidates.map((c) => ({ ...c, matchScore: 10, matchReason: "" }));
+    };
+    const result = await judgeMatches(schema(many), many, score);
+    expect(result.matches.map((m) => m.title)).toEqual(many.slice(25).map((m) => m.title));
+  });
+
   // Same rule as a quick check: a scoring outage must not silence a monitor.
   it("keeps every match when scoring fails", async () => {
     const page = schema([ram, cooler]);

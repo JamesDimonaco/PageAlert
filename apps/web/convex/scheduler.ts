@@ -1117,22 +1117,25 @@ async function runQuickCheck(
     .slice(0, MAX_SCORED_PER_CHECK - recheck.length);
 
   // A seen entry is judged once, so an offer whose price later moves into
-  // the user's range would never alert. One that has not alerted is judged
-  // again when its price changes, in the slots left over. A product's
-  // listing is left out: it never alerts on its page's entries.
+  // the user's range would never alert. One that has not passed is judged
+  // again when its price changes, in the slots left over, if the prompt
+  // bounds the price. Left out: a product's listing, which never alerts on
+  // its page's entries; a product page whose product read already alerts on
+  // price; and the sold-out queue, which the rechecks above judge.
   // Rows from before passedKeys fall back to the last full read's matches.
   const alertedKeys = new Set<string>(monitor.passedKeys ?? monitor.matchedKeys ?? []);
   const lastPrice = new Map<string, number>(
     ((monitor.candidatePrices ?? []) as { key: string; price: number }[]).map((p) => [p.key, p.price])
   );
-  const rechecking = new Set(recheck.map(matchKey));
+  const queuedSoldOut = new Set(lastSoldOut);
+  const boundsPrice = matchConditions.priceMax !== undefined || (matchConditions.priceMin ?? 0) > 0;
   const repricedAll =
-    monitor.groupId !== undefined
+    monitor.groupId !== undefined || readsProduct || !boundsPrice
       ? []
       : visible.filter((c) => {
           const k = matchKey(c);
           const was = lastPrice.get(k);
-          return !unseenKeys.has(k) && !alertedKeys.has(k) && !rechecking.has(k) && c.price !== null && was !== undefined && was !== c.price;
+          return !unseenKeys.has(k) && !alertedKeys.has(k) && !queuedSoldOut.has(k) && c.price !== null && was !== undefined && was !== c.price;
         });
   const repriced = repricedAll.slice(0, MAX_SCORED_PER_CHECK - recheck.length - unseen.length);
 

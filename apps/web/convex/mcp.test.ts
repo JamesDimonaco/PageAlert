@@ -1060,6 +1060,20 @@ test("a first scan records which entries it passed, and a new prompt forgets the
   await t.mutation(api.mcp.saveScanResult, { apiKey: key, id, schema: { items: [hut, { title: "Mintaro" }] }, matches: [hut] });
   expect((await t.run((ctx) => ctx.db.get(id)))?.passedKeys).toEqual(["example.com/3feb"]);
 
+  // The old prompt's prices would make the re-read's silent seed judge entries again.
+  await t.run((ctx) => ctx.db.patch(id, { status: "active", candidatePrices: [{ key: "example.com/3feb", price: 92 }] }));
   await t.mutation(api.mcp.updateMonitor, { apiKey: key, monitorId: id, prompt: "any March start" });
+  const changed = await t.run((ctx) => ctx.db.get(id));
+  expect(changed?.passedKeys).toBeUndefined();
+  expect(changed?.candidatePrices).toBeUndefined();
+});
+
+// An old browser bundle saves a first scan without its matches. An empty
+// list would claim the scan passed nothing.
+test("a first scan saved without its matches leaves passedKeys unset", async () => {
+  const t = setup();
+  const { asUser } = await seedUser(t, "a@example.com");
+  const id = await asUser.mutation(api.monitors.create, { ...MONITOR, checkInterval: "1h" });
+  await asUser.mutation(api.monitors.saveScanResult, { id, schema: { items: [{ title: "one" }] }, matchCount: 1 });
   expect((await t.run((ctx) => ctx.db.get(id)))?.passedKeys).toBeUndefined();
 });

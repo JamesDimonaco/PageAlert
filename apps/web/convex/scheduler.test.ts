@@ -955,7 +955,7 @@ async function offerListing(pages: Offer[][], score: (entry: Offer) => number | 
       prompt: "Any shop offers the Gigabyte B650I AX for under NZ$310.",
       status: "active",
       checkInterval: "1h",
-      schema: { items: [], matchConditions: { mustInclude: ["B650I"] } },
+      schema: { items: [], matchConditions: { mustInclude: ["B650I"], priceMax: 310 } },
       matchCount: 0,
       candidateKeys: [],
       matchedKeys: [],
@@ -1091,4 +1091,68 @@ test("what a quick check passes is added to passedKeys, and a full read replaces
     monitorId: id, hasNewMatches: true, matchCount: 1, totalItems: 3, matches: [{ title: "Only", url: "https://shop.test/only" }], trackMatchKeys: true,
   });
   expect((await t.run((ctx) => ctx.db.get(id)))?.passedKeys).toEqual(["shop.test/only"]);
+});
+
+// A price change can only bring an entry into a prompt that bounds the price.
+// On pages whose prices move on every load, judging them all would buy a
+// scoring call every check.
+test("a prompt with no price limit does not judge seen entries again on a price change", async () => {
+  const { check, judged } = await offerListing([[pbtech(329)], [pbtech(309)]], under310, {
+    candidateKeys: ["pricespy.co.nz/go/pbtech"],
+    schema: { items: [], matchConditions: { mustInclude: ["B650I"] } },
+  });
+  await check();
+  await check();
+  expect(judged).toEqual([]);
+});
+
+// The product read already alerts on its price. Judging the product's own
+// entry again would send the same drop a second time, as a match.
+test("a product page with a price alert does not judge entries again on a price change", async () => {
+  const page = "https://shop.test/b650i";
+  const own: Offer = { title: "Gigabyte B650I AX", url: page, price: 329, snippet: "In stock" };
+  const { check, judged } = await offerListing([[own], [{ ...own, price: 299 }]], under310, {
+    url: page,
+    alertOn: { priceDrop: true },
+    candidateKeys: ["shop.test/b650i"],
+    schema: { items: [{ title: own.title, url: page }], matchConditions: { mustInclude: ["B650I"], priceMax: 310 } },
+  });
+  await check();
+  await check();
+  expect(judged).toEqual([]);
+});
+
+// A queued sold-out entry is the restock queue's to judge, which needs a read
+// that says it is back. Judged as repriced, a blank stock read let it alert.
+test("an entry in the sold-out queue is not judged again as repriced", async () => {
+  vi.stubEnv("SCRAPER_URL", "https://scraper.test");
+  vi.stubEnv("SCRAPER_API_KEY", "key");
+  const entries = Array.from({ length: 6 }, (_, i) => ({ title: `Kingston kit ${i}`, url: `https://shop.test/k-${i}`, price: 199, snippet: "" }));
+  const judged: string[][] = [];
+  vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+    if (url.endsWith("/api/quick-check")) {
+      return Response.json({ accessible: true, contentHash: "page-1", candidates: entries, totalEntries: 6 });
+    }
+    if (url.endsWith("/api/score")) {
+      const { candidates } = JSON.parse(String(init?.body)) as { candidates: Offer[] };
+      judged.push(candidates.map((c) => c.url));
+      return Response.json({ scored: candidates.map((c) => ({ ...c, matchScore: 90, matchReason: "", stock: { inStock: null, price: null, currency: null } })) });
+    }
+    return new Response("not mocked", { status: 500 });
+  });
+  const keys = entries.map((c) => c.url.replace("https://", ""));
+  const t = convexTest(schema, modules);
+  t.registerComponent("betterAuth", betterAuthSchema, betterAuthModules);
+  const id = await t.run((ctx) =>
+    ctx.db.insert("monitors", {
+      userId: "user_1", name: "RAM", url: "https://shop.test/ram", prompt: "in stock under $220", status: "active", checkInterval: "1h",
+      schema: { items: [], matchConditions: { mustInclude: ["Kingston"], priceMax: 220, inStockOnly: true } },
+      matchCount: 0, candidateKeys: keys, soldOutKeys: keys, matchedKeys: [],
+      candidatePrices: keys.map((key) => ({ key, price: 219 })),
+      checkCount: 5, contentFingerprint: "page-0", lastAiExtractAt: Date.now(), nextCheckAt: 0, createdAt: Date.now(), updatedAt: Date.now(),
+    })
+  );
+  await t.action(internal.scheduler.runScheduledChecks, {});
+  expect(judged[0]).toHaveLength(5);
+  expect((await t.run((ctx) => ctx.db.get(id)))?.lastMatchAt).toBeUndefined();
 });

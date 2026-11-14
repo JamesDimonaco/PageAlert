@@ -356,7 +356,8 @@ export async function saveScanResultForUser(
     // showed. The cost is the other half of that trade: anything appearing
     // between the scan and that extract goes unannounced.
     matchedKeys: undefined,
-    passedKeys: (matches ?? []).map((m) => matchKey(m as Record<string, unknown>)),
+    // An old browser bundle sends no matches. Unset falls back to matchedKeys.
+    passedKeys: matches?.map((m) => matchKey(m as Record<string, unknown>)),
     // A rescan keeps what quick checks queued: those entries are still seen.
     soldOutKeys: soldOutKeysOf(schema, monitor.soldOutKeys),
     updatedAt: now,

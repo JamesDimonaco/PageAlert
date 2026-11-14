@@ -372,6 +372,7 @@ export const updateMonitor = mutation({
         contentFingerprint: undefined,
         candidateKeys: undefined,
         passedKeys: undefined,
+        candidatePrices: undefined,
         soldOutKeys: undefined,
         soldOutTextHashes: undefined,
       });
