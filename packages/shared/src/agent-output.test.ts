@@ -120,3 +120,13 @@ describe("isUnreadableScan", () => {
     expect(isUnreadableScan({ confidence: undefined, totalItems: 0 })).toBe(false);
   });
 });
+
+// An agent told only the title and price would report a match the page shows
+// no stock for as available. The stock read goes with it, unknown included.
+describe("toAgentItem stock", () => {
+  it("passes the stock read through, null when the page did not say", () => {
+    expect(toAgentItem({ title: "Kingston", inStock: false })).toEqual({ title: "Kingston", inStock: false });
+    expect(toAgentItem({ title: "Kingston", inStock: null })).toEqual({ title: "Kingston", inStock: null });
+    expect(toAgentItem({ title: "Kingston", inStock: "yes" })).toEqual({ title: "Kingston" });
+  });
+});

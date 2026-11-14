@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { ChevronDown, Package, Tag, Zap } from "lucide-react";
+import { ChevronDown, FolderInput, Package, Tag, Zap } from "lucide-react";
 import { formatMinorUnits } from "@prowl/shared";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -14,9 +14,10 @@ import { timeAgo } from "@/lib/time";
 interface ProductCardProps {
   product: ProductSummary;
   monitors: Doc<"monitors">[];
+  onMoveToFolder?: () => void;
 }
 
-export function ProductCard({ product, monitors }: ProductCardProps) {
+export function ProductCard({ product, monitors, onMoveToFolder }: ProductCardProps) {
   const [open, setOpen] = useState(false);
   const detailHref = `/dashboard/products/${product._id}`;
   const { cheapest } = product;
@@ -51,6 +52,17 @@ export function ProductCard({ product, monitors }: ProductCardProps) {
             <Badge variant="outline" className="bg-red-500/10 text-red-400 border-red-500/20">
               {product.errored} with errors
             </Badge>
+          )}
+          {onMoveToFolder && (
+            <button
+              type="button"
+              aria-label="Move to folder"
+              title="Move to folder"
+              onClick={onMoveToFolder}
+              className="relative z-10 ml-auto inline-flex h-9 w-9 max-sm:h-11 max-sm:w-11 items-center justify-center rounded-lg border border-border text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            >
+              <FolderInput className="h-4 w-4" />
+            </button>
           )}
         </div>
 

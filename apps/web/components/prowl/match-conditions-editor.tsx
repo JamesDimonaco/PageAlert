@@ -126,6 +126,19 @@ export function MatchConditionsEditor({ conditions, onChange }: MatchConditionsE
           />
         </div>
       </div>
+
+      <div className="space-y-1">
+        <label className="flex items-center gap-2 text-sm font-medium">
+          <input
+            type="checkbox"
+            checked={conditions.inStockOnly === true}
+            onChange={(e) => onChange({ ...conditions, inStockOnly: e.target.checked || undefined })}
+            className="size-4 accent-primary"
+          />
+          In stock only
+        </label>
+        <p className="text-xs text-muted-foreground">Sold-out items never match. Items that don&apos;t show stock still do.</p>
+      </div>
     </div>
   );
 }

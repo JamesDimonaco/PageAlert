@@ -2,8 +2,8 @@ import { ConvexError, v, type Infer, type ObjectType } from "convex/values";
 import { mutation, query, internalAction, internalMutation, internalQuery, type MutationCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
-import { displayHost, effectiveIntervalMs, ERROR_RECOVERY_INTERVAL_MS, intervalToMs, isBlockedError, MAX_RETRIES, validateMonitorUrl } from "./shared";
-import { currencyExponent, itemIdentity, RESUME_TOKEN_TTL_MS } from "@prowl/shared";
+import { displayHost, effectiveIntervalMs, ERROR_RECOVERY_INTERVAL_MS, intervalToMs, isBlockedError, isProxyFirstHost, MAX_RETRIES, soldOutKeysOf, validateMonitorUrl } from "./shared";
+import { currencyExponent, itemIdentity, RESUME_TOKEN_TTL_MS, stockNotShownNote, type ExtractedItem, type MatchConditions } from "@prowl/shared";
 import { effectiveTier, type Tier } from "./tiers";
 import { drain, isBanned, requireLiveAccount, spent, SWEEP_BUDGET_BYTES, SWEEP_BUDGET_ROWS, type Allowance } from "./account";
 import { reserveFallback, scraperDown } from "./admin";
@@ -17,7 +17,7 @@ const MAX_RESULTS_LIMIT = 100;
 
 const TIER_LIMITS: Record<Tier, { maxMonitors: number; allowedIntervals: string[] }> = {
   free: { maxMonitors: 3, allowedIntervals: ["1h", "6h", "24h"] },
-  sprint: { maxMonitors: 10, allowedIntervals: ["30m", "1h", "6h", "24h"] },
+  sprint: { maxMonitors: 10, allowedIntervals: ["15m", "30m", "1h", "6h", "24h"] },
   pro: { maxMonitors: 25, allowedIntervals: ["15m", "30m", "1h", "6h", "24h"] },
   max: { maxMonitors: 9999, allowedIntervals: ["5m", "15m", "30m", "1h", "6h", "24h"] },
 };
@@ -211,6 +211,7 @@ export async function createMonitorForUser(
     notificationChannels?: ChannelList;
     /** The product this monitor watches a listing of. */
     groupId?: Id<"monitorGroups">;
+    alertOn?: Infer<typeof alertOnValidator>;
   }
 ): Promise<Id<"monitors">> {
   if (await isBanned(ctx, userId)) throw new ConvexError("This account has been suspended.");
@@ -225,6 +226,7 @@ export async function createMonitorForUser(
   validateName(args.name);
   validateMonitorUrl(args.url);
   validatePrompt(args.prompt);
+  if (args.alertOn) validateAlertOn(args.alertOn);
 
   // Rolling-window creation rate limit — counts survive deletion so
   // delete-and-remake can't bypass the paid AI extraction limit
@@ -261,6 +263,7 @@ export async function createMonitorForUser(
     checkInterval: checkInterval,
     notificationChannels: channels,
     groupId: args.groupId,
+    alertOn: args.alertOn,
     userId,
     userEmail,
     status: "scanning",
@@ -353,6 +356,8 @@ export async function saveScanResultForUser(
     // showed. The cost is the other half of that trade: anything appearing
     // between the scan and that extract goes unannounced.
     matchedKeys: undefined,
+    // A rescan keeps what quick checks queued: those entries are still seen.
+    soldOutKeys: soldOutKeysOf(schema, monitor.soldOutKeys),
     updatedAt: now,
   });
 
@@ -372,10 +377,15 @@ export async function saveScanResultForUser(
   // Send notifications for initial scan matches. A listing in a product
   // alerts only on stock and price, as in the scheduler.
   if (matchCount > 0 && monitor.groupId === undefined) {
+    const stockNote = stockNotShownNote(
+      (matches ?? []) as ExtractedItem[],
+      (schema as { matchConditions?: MatchConditions } | null)?.matchConditions
+    );
     await ctx.scheduler.runAfter(0, internal.monitors.sendInitialScanNotifications, {
       monitorId: id,
       matchCount,
       totalItems: items.length,
+      ...(stockNote ? { stockNote } : {}),
     });
   }
 }
@@ -512,12 +522,14 @@ export const claimFirstScanProxy = mutation({
 
 /**
  * Whether another monitor on this site needs the proxy and is still being
- * checked. Read from the fleet rather than kept as a list: the scheduler
+ * checked, or the site is on the proxy-first list (see isProxyFirstHost).
+ * Otherwise read from the fleet rather than kept as a list: the scheduler
  * re-probes a direct fetch every PROXY_REPROBE_EVERY checks and clears
  * proxyPreferred when it works, so a site that drops its protection leaves by
  * itself. A parked monitor is never re-probed, so its flag proves nothing.
  */
 async function hostNeedsProxy(ctx: MutationCtx, monitor: Doc<"monitors">): Promise<boolean> {
+  if (isProxyFirstHost(monitor.url)) return true;
   const flagged = await ctx.db
     .query("monitors")
     .withIndex("by_host_proxyPreferred", (q) =>
@@ -639,6 +651,9 @@ export async function updateMonitorForUser(
     updates.nextCheckAt = now;
     updates.autoPausedAt = undefined;
     updates.resumeToken = undefined;
+    // Proof of life for the inactivity job. A dashboard resume also moves the
+    // session, but an agent's resume over an API key moves nothing else.
+    updates.lastResumedAt = now;
     if (existing.nextCheckAt === undefined) {
       // It was parked before it was paused. Same reasoning as the interval
       // branch below: without a fresh budget the next single failure re-parks
@@ -646,6 +661,12 @@ export async function updateMonitorForUser(
       updates.proxyBlockCount = 0;
       updates.retryCount = 0;
     }
+  }
+
+  // Turning on "in stock only" must queue what the last read saw sold out:
+  // those entries are already seen, so nothing else would judge them again.
+  if (fields.schema !== undefined) {
+    updates.soldOutKeys = soldOutKeysOf(fields.schema, existing.soldOutKeys);
   }
 
   // A new URL or prompt is in effect a new monitor, whose first error the
@@ -881,6 +902,7 @@ export const sendInitialScanNotifications = internalAction({
     monitorId: v.id("monitors"),
     matchCount: v.number(),
     totalItems: v.number(),
+    stockNote: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const monitor = await ctx.runQuery(internal.monitors.getInternal, { id: args.monitorId });
@@ -888,12 +910,14 @@ export const sendInitialScanNotifications = internalAction({
     if (monitor.muted) return; // Muted — skip all notifications
 
     const plural = args.matchCount !== 1 ? "es" : "";
+    const note = args.stockNote ? ` ${args.stockNote}` : "";
     const base = {
       monitorName: monitor.name,
       monitorId: args.monitorId,
       url: monitor.url,
       matchCount: args.matchCount,
       totalItems: args.totalItems,
+      ...(args.stockNote ? { stockNote: args.stockNote } : {}),
     };
 
     // No SMS: the first scan has never texted, and the user is on the page
@@ -901,8 +925,8 @@ export const sendInitialScanNotifications = internalAction({
     await deliverAlert(ctx, monitor, {
       type: "match",
       title: `${monitor.name} — ${args.matchCount} match${plural} found`,
-      inAppMessage: `Initial scan found ${args.matchCount} match${plural} out of ${args.totalItems} items on ${monitor.url}`,
-      pushBody: `Initial scan found ${args.matchCount} match${plural} out of ${args.totalItems} items`,
+      inAppMessage: `Initial scan found ${args.matchCount} match${plural} out of ${args.totalItems} items on ${monitor.url}.${note}`,
+      pushBody: `Initial scan found ${args.matchCount} match${plural} out of ${args.totalItems} items.${note}`,
       email: (to) => ctx.runAction(internal.emails.sendMatchAlert, { ...base, to, matches: [] }),
       telegram: (chatId) => ctx.runAction(internal.telegram.sendMatchAlert, { ...base, chatId }),
       discord: (webhookUrl) => ctx.runAction(internal.discord.sendMatchAlert, { ...base, webhookUrl }),

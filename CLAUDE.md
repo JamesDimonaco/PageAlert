@@ -3,7 +3,7 @@
 ## Stack and commands
 
 - Turbo monorepo, pnpm 10. `apps/web`: Next.js 16, React 19, Convex (functions in `apps/web/convex`),
-  Better Auth, Polar billing. `apps/scraper`: Hono + Playwright 1.63, Anthropic SDK. `packages/shared`:
+  Better Auth, Polar billing. `apps/scraper`: Hono + Playwright 1.65, Anthropic SDK. `packages/shared`:
   shared types and logic, imported as `@prowl/shared`.
 - Root: `pnpm dev`, `pnpm dev:web`, `pnpm dev:scraper` (port 3001), `pnpm build`, `pnpm lint`, `pnpm test`.
 - Tests are Vitest in every package. `apps/web` runs Convex functions under `convex-test`.

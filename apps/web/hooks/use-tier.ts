@@ -23,9 +23,9 @@ export const TIER_LIMITS: Record<Tier, {
   },
   sprint: {
     maxMonitors: 10,
-    minInterval: "30m",
-    description: "10 monitors, 30 min checks, all channels",
-    allowedIntervals: ["30m", "1h", "6h", "24h"],
+    minInterval: "15m",
+    description: "10 monitors, 15 min checks, all channels",
+    allowedIntervals: ["15m", "30m", "1h", "6h", "24h"],
   },
   pro: {
     maxMonitors: 25,

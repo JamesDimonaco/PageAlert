@@ -22,6 +22,8 @@ export type AgentItem = {
   price?: string | number;
   url?: string;
   status?: string;
+  /** The stock read. Null means the page did not show stock. */
+  inStock?: boolean | null;
 };
 
 function cap(value: string, max: number): string {
@@ -49,6 +51,7 @@ export function toAgentItem(item: unknown): AgentItem | null {
   if (url) out.url = url;
   const status = typeof raw.status === "string" ? raw.status : raw.availability;
   if (typeof status === "string") out.status = cap(status, MAX_FIELD_CHARS);
+  if (typeof raw.inStock === "boolean" || raw.inStock === null) out.inStock = raw.inStock;
   return out;
 }
 

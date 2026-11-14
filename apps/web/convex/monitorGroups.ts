@@ -1,4 +1,4 @@
-import { ConvexError, v, type Infer } from "convex/values";
+import { ConvexError, v, type Infer, type ObjectType } from "convex/values";
 import { internalMutation, internalQuery, mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { canonicalUrl, isSearchRegion, SEARCH_REGIONS } from "@prowl/shared";
@@ -114,90 +114,103 @@ function cleanListing(listing: FoundListing, fallbackTitle: string): FoundListin
   };
 }
 
-/**
- * Create a product from a search: one monitor per ticked listing, each with
- * the product's criteria, channels and interval. Unticked listings are kept
- * as suggestions. All or nothing: if any monitor can't be created (the plan's
- * monitor limit, the creation rate limit, a bad link) nothing is.
- */
+const createArgs = {
+  name: v.string(),
+  region: v.string(),
+  alertOn: alertOnValidator,
+  notificationChannels: notificationChannelsValidator,
+  checkInterval: checkIntervalValidator,
+  listings: v.array(v.object({ ...foundListingValidator.fields, watch: v.boolean() })),
+};
+
 export const create = mutation({
-  args: {
-    name: v.string(),
-    region: v.string(),
-    alertOn: alertOnValidator,
-    notificationChannels: notificationChannelsValidator,
-    checkInterval: checkIntervalValidator,
-    listings: v.array(v.object({ ...foundListingValidator.fields, watch: v.boolean() })),
-  },
+  args: createArgs,
   handler: async (ctx, args): Promise<{ groupId: Id<"monitorGroups">; monitorIds: Id<"monitors">[] }> => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new ConvexError("Sign in to watch a product.");
-    const userId = identity.subject;
-
-    const name = args.name.trim().slice(0, MAX_NAME_LENGTH);
-    if (!name) throw new ConvexError("Give the product a name.");
-    if (!isSearchRegion(args.region)) throw new ConvexError("Pick a country to search.");
-    if (args.listings.length > MAX_LISTINGS) throw new ConvexError(`A product starts with at most ${MAX_LISTINGS} listings.`);
-    requireCriteria(args.alertOn);
-
-    const seen = new Set<string>();
-    const listings: (GroupListing & { watch: boolean })[] = [];
-    for (const { watch, ...found } of args.listings) {
-      const listing = cleanListing(found, name);
-      if (!listing) {
-        if (watch) throw new ConvexError(`We can't watch the link from ${found.site}.`);
-        continue;
-      }
-      // Compared the way addSuggestions compares, so both agree on what a repeat is.
-      const key = canonicalUrl(listing.url);
-      if (seen.has(key)) continue;
-      seen.add(key);
-      listings.push({ ...listing, state: watch ? "watching" : "suggested", watch });
-    }
-    if (!listings.some((l) => l.watch)) throw new ConvexError("Tick at least one listing to watch.");
-
-    const now = Date.now();
-    const groupId = await ctx.db.insert("monitorGroups", {
-      userId,
-      name,
-      region: args.region,
-      alertOn: args.alertOn,
-      notificationChannels: args.notificationChannels,
-      checkInterval: args.checkInterval,
-      listings: [],
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    const stored: GroupListing[] = [];
-    const monitorIds: Id<"monitors">[] = [];
-    for (const { watch, ...listing } of listings) {
-      if (!watch) {
-        stored.push(listing);
-        continue;
-      }
-      // A throw rolls back the product and every monitor made so far.
-      const monitorId = await watchListingMonitor(
-        ctx,
-        { userId, userEmail: identity.email ?? undefined },
-        { _id: groupId, alertOn: args.alertOn, notificationChannels: args.notificationChannels, checkInterval: args.checkInterval },
-        listing
-      );
-      monitorIds.push(monitorId);
-      stored.push({ ...listing, monitorId });
-    }
-
-    // The plan may have slowed the interval or dropped channels, the same for
-    // every listing. Store what the monitors got.
-    const first = await ctx.db.get(monitorIds[0]!);
-    await ctx.db.patch(groupId, {
-      listings: stored,
-      checkInterval: first?.checkInterval ?? args.checkInterval,
-      notificationChannels: first?.notificationChannels ?? args.notificationChannels,
-    });
-    return { groupId, monitorIds };
+    return createProductForUser(ctx, { userId: identity.subject, userEmail: identity.email ?? undefined }, args);
   },
 });
+
+/**
+ * Create a product for this user: one monitor per ticked listing, each with
+ * the product's criteria, channels and interval. Unticked listings are kept
+ * as suggestions. The web app passes what it found by search; the MCP passes
+ * the shop pages an agent picked. No channels means every channel, as for a
+ * monitor. All or nothing: if any monitor can't be created (the plan's
+ * monitor limit, the creation rate limit, a bad link) nothing is.
+ */
+export async function createProductForUser(
+  ctx: MutationCtx,
+  user: { userId: string; userEmail: string | undefined },
+  args: Omit<ObjectType<typeof createArgs>, "notificationChannels"> & {
+    notificationChannels: ObjectType<typeof createArgs>["notificationChannels"] | undefined;
+  }
+): Promise<{ groupId: Id<"monitorGroups">; monitorIds: Id<"monitors">[] }> {
+  const { userId } = user;
+  const name = args.name.trim().slice(0, MAX_NAME_LENGTH);
+  if (!name) throw new ConvexError("Give the product a name.");
+  if (!isSearchRegion(args.region)) throw new ConvexError("Pick a country to search.");
+  if (args.listings.length > MAX_LISTINGS) throw new ConvexError(`A product starts with at most ${MAX_LISTINGS} listings.`);
+  requireCriteria(args.alertOn);
+
+  const seen = new Set<string>();
+  const listings: (GroupListing & { watch: boolean })[] = [];
+  for (const { watch, ...found } of args.listings) {
+    const listing = cleanListing(found, name);
+    if (!listing) {
+      if (watch) throw new ConvexError(`We can't watch the link from ${found.site}.`);
+      continue;
+    }
+    // Compared the way addSuggestions compares, so both agree on what a repeat is.
+    const key = canonicalUrl(listing.url);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    listings.push({ ...listing, state: watch ? "watching" : "suggested", watch });
+  }
+  if (!listings.some((l) => l.watch)) throw new ConvexError("Tick at least one listing to watch.");
+
+  const now = Date.now();
+  const groupId = await ctx.db.insert("monitorGroups", {
+    userId,
+    name,
+    region: args.region,
+    alertOn: args.alertOn,
+    notificationChannels: args.notificationChannels,
+    checkInterval: args.checkInterval,
+    listings: [],
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  const stored: GroupListing[] = [];
+  const monitorIds: Id<"monitors">[] = [];
+  for (const { watch, ...listing } of listings) {
+    if (!watch) {
+      stored.push(listing);
+      continue;
+    }
+    // A throw rolls back the product and every monitor made so far.
+    const monitorId = await watchListingMonitor(
+      ctx,
+      user,
+      { _id: groupId, alertOn: args.alertOn, notificationChannels: args.notificationChannels, checkInterval: args.checkInterval },
+      listing
+    );
+    monitorIds.push(monitorId);
+    stored.push({ ...listing, monitorId });
+  }
+
+  // The plan may have slowed the interval or dropped channels, the same for
+  // every listing. Store what the monitors got.
+  const first = await ctx.db.get(monitorIds[0]!);
+  await ctx.db.patch(groupId, {
+    listings: stored,
+    checkInterval: first?.checkInterval ?? args.checkInterval,
+    notificationChannels: first?.notificationChannels ?? args.notificationChannels,
+  });
+  return { groupId, monitorIds };
+}
 
 type MonitorProgress = Pick<
   Doc<"monitors">,
@@ -470,6 +483,7 @@ type Price = { price: number; currency: string; site: string };
 export type ProductSummary = {
   _id: Id<"monitorGroups">;
   name: string;
+  folderId?: Id<"folders">;
   watching: number;
   /** Null when no listing has a price yet. */
   cheapest: Price | null;
@@ -533,6 +547,7 @@ export const listMine = query({
         return {
           _id: group._id,
           name: group.name,
+          folderId: group.folderId,
           watching: watched.length,
           cheapest,
           inStock: stock.length === 0 ? null : stock.includes(true),

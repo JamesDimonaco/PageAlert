@@ -75,10 +75,6 @@ export function initPostHog() {
   });
 }
 
-export function getPostHog() {
-  return ph;
-}
-
 // ---- Core helpers ----
 
 export function identifyUser(userId: string, properties?: Record<string, unknown>) {
@@ -185,60 +181,32 @@ export function trackPageView(url: string) {
   ph.capture("$pageview", { $current_url: url });
 }
 
-// ---- Feature flags ----
-
-export function isFeatureEnabled(flag: string): boolean {
-  if (!ph) return false;
-  return ph.isFeatureEnabled(flag) ?? false;
-}
-
-export function getFeatureFlag(flag: string): string | boolean | undefined {
-  if (!ph) return undefined;
-  return ph.getFeatureFlag(flag);
-}
-
 // ---- Revenue / Billing events ----
 
-export function trackCheckoutStarted(props: { plan: string; price: number }) {
+/** `from` is the upgrade prompt that sent them, or null when they came by themselves. */
+export function trackCheckoutStarted(props: { plan: string; price: number; from: string | null }) {
   trackEvent("checkout_started", {
     plan: props.plan,
     price_usd: props.price,
+    from: props.from,
   });
 }
 
-export function trackCheckoutCompleted(props: { plan: string; price: number }) {
-  trackEvent("checkout_completed", {
-    plan: props.plan,
-    price_usd: props.price,
-    $set: { tier: props.plan }, // Update user property
-  });
-}
+/**
+ * Where an upgrade offer was shown. One event pair for every offer, so one
+ * query compares which one sells. A link to billing carries the placement as
+ * `from`, so checkout_started can be tied back to it.
+ */
+export type UpgradePlacement = "limit_banner" | "first_scan" | "match_email";
 
-export function trackUpgradePromptShown(props: { reason: string; currentTier: string }) {
-  trackEvent("upgrade_prompt_shown", {
-    reason: props.reason,
+export function trackUpgradePrompt(
+  action: "shown" | "clicked",
+  props: { placement: UpgradePlacement; currentTier: string; targetPlan: string }
+) {
+  trackEvent(`upgrade_prompt_${action}`, {
+    placement: props.placement,
     current_tier: props.currentTier,
-  });
-}
-
-export function trackUpgradePromptClicked(props: { plan: string; currentTier: string }) {
-  trackEvent("upgrade_prompt_clicked", {
-    target_plan: props.plan,
-    current_tier: props.currentTier,
-  });
-}
-
-export function trackUpgradeBanner(action: "shown" | "clicked", props: { currentTier: string; nextTier: string }) {
-  trackEvent(`upgrade_banner_${action}`, {
-    current_tier: props.currentTier,
-    target_plan: props.nextTier,
-  });
-}
-
-export function trackSubscriptionChanged(props: { from: string; to: string }) {
-  trackEvent("subscription_changed", {
-    from_tier: props.from,
-    to_tier: props.to,
+    target_plan: props.targetPlan,
   });
 }
 
@@ -348,20 +316,7 @@ export function trackCloneAsProductOpened(props: { backInStock: boolean; priceDr
   trackEvent("clone_as_product_opened", props);
 }
 
-// ---- Match events ----
-
-export function trackMatchFound(props: { monitorId: string; matchCount: number }) {
-  trackEvent("match_found", {
-    monitor_id: props.monitorId,
-    match_count: props.matchCount,
-  });
-}
-
 // ---- User interaction events ----
-
-export function trackFilterEdited() {
-  trackEvent("filter_edited");
-}
 
 export function trackFilterSaved() {
   trackEvent("filter_saved");

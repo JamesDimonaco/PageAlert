@@ -66,14 +66,15 @@ Respond with ONLY valid JSON in this exact format:
     "url": "description"
   },
   "items": [
-    { "title": "...", "price": 1299, "url": "https://...", ...other fields },
+    { "title": "...", "price": 1299, "url": "https://...", "inStock": true, ...other fields },
     ...
   ],
   "matchConditions": {
     "mustInclude": ["keyword1", "keyword2"],
     "mustExclude": ["unwanted1"],
     "priceMin": 0,
-    "priceMax": 1500
+    "priceMax": 1500,
+    "inStockOnly": true
   }
 }
 
@@ -94,13 +95,15 @@ Rules for extraction:
 - The user needs to see all items so they can adjust their filters. Extract every product, listing, or result card visible.
 - Do NOT extract page chrome like navigation links, breadcrumbs, filter buttons, ads, or pagination controls — only actual product/listing entries.
 - ALWAYS include a "url" field for each item. Links appear as [text](url). If no link exists, use null.
-- Keep item data concise: title, price, url, currency, and 1-2 other relevant fields
+- Keep item data concise: title, price, url, currency, inStock, and 1-2 other relevant fields
+- "inStock" on every item: true if it can be bought now, false if it is sold out, unavailable, on backorder or pre-order only, null if the page does not say for that item.
 - Prices MUST be the actual price shown for that specific item. Be very careful with sites like Amazon where prices are split across HTML elements.
 - Price should be a number (no currency symbols). Include a separate "currency" field (e.g. "USD", "GBP", "EUR") if the page shows a non-USD currency.
 - matchConditions should reflect ONLY the user's stated criteria — these are used to highlight which items match
 - matchConditions.mustInclude: keywords that must appear ANYWHERE in the item
 - matchConditions.mustExclude: keywords that must NOT appear anywhere
 - priceMin/priceMax: price range filter
+- matchConditions.inStockOnly: true only when the user asks for the item to be in stock, available or back in stock. Leave it out otherwise.
 - If you can't determine a field value, use null
 - Do NOT wrap your response in markdown code fences - output raw JSON only`;
 
@@ -210,12 +213,19 @@ export async function extractWithAI(
   // Normalise into our expected schema shape - be lenient about what AI returns
   const parsed: ExtractionSchema = {
     fields: (raw.fields as Record<string, string>) ?? {},
-    items: Array.isArray(raw.items) ? raw.items.filter((i): i is ExtractedItem => i != null && typeof i === "object").slice(0, 50) : [],
+    items: Array.isArray(raw.items)
+      ? raw.items
+          .filter((i): i is ExtractedItem => i != null && typeof i === "object")
+          .slice(0, 50)
+          // Anything but a boolean reads as "the page does not say".
+          .map((i) => ({ ...i, inStock: typeof i.inStock === "boolean" ? i.inStock : null }))
+      : [],
     matchConditions: {
       priceMax: getNumber(raw.matchConditions, "priceMax"),
       priceMin: getNumber(raw.matchConditions, "priceMin"),
       mustInclude: getStringArray(raw.matchConditions, "mustInclude"),
       mustExclude: getStringArray(raw.matchConditions, "mustExclude"),
+      ...((raw.matchConditions as Record<string, unknown> | undefined)?.inStockOnly === true ? { inStockOnly: true } : {}),
     },
     insights,
   };
@@ -356,8 +366,8 @@ Return one entry per input index, in any order. Keep each reason under 20 words.
 
 const STOCK_PROMPT = `
 
-Also read the product's stock and price from its text. Add to each entry:
-- "inStock": true if it can be bought now, false if it is sold out or unavailable, null if the text does not say.
+Also read each entry's stock and price from its own text. Add to each entry:
+- "inStock": true if it can be bought now, false if it is sold out, unavailable, or only on backorder or pre-order, null if the text does not say.
 - "price": the current selling price as a plain number (e.g. 1299.99), or null if none is shown.
 - "currency": the three-letter ISO 4217 code of that price (e.g. "GBP", "USD", "EUR"), never a symbol such as "£" or "$". Use null if you cannot tell which currency it is.`;
 
@@ -389,7 +399,9 @@ export async function scoreCandidates(
   const client = getClient();
   const message = await client.messages.create({
     model: "claude-sonnet-5",
-    max_tokens: 2048,
+    // 25 entries with stock, price and currency each run near 2,000 tokens.
+    // A cut-off answer parses as nothing, and every entry then alerts unscored.
+    max_tokens: 4096,
     // A short judging task; the reasoning tokens would come out of max_tokens.
     thinking: { type: "disabled" },
     system: readStock ? SCORING_PROMPT + STOCK_PROMPT : SCORING_PROMPT,

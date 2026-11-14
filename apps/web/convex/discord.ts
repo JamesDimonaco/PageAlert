@@ -1,10 +1,18 @@
 import { v } from "convex/values";
-import { internalAction, action } from "./_generated/server";
+import { internalAction } from "./_generated/server";
 import { displayHost } from "./shared";
 import { formatDay, resumeUrl } from "./emails";
 
 const APP_URL = process.env.SITE_URL ?? "https://pagealert.io";
 const TIMEOUT = 10_000;
+
+/**
+ * Page text, made inert for a Discord embed: no markdown, links or mentions.
+ * The "@" goes too, because a webhook pings @everyone unless told otherwise.
+ */
+function plainText(text: string): string {
+  return text.replace(/[\\`*_~|>[\]()<@#]/g, "");
+}
 
 /** Send a match alert via Discord webhook */
 export const sendMatchAlert = internalAction({
@@ -15,13 +23,15 @@ export const sendMatchAlert = internalAction({
     url: v.string(),
     matchCount: v.number(),
     totalItems: v.number(),
+    /** Set when stock was asked for and some matches did not show it. See stockNotShownNote. */
+    stockNote: v.optional(v.string()),
   },
   handler: async (_ctx, args) => {
     await sendWebhook(args.webhookUrl, {
       embeds: [
         {
           title: `🔔 ${args.monitorName}`,
-          description: `**${args.matchCount}** new match${args.matchCount !== 1 ? "es" : ""} out of ${args.totalItems} items`,
+          description: `**${args.matchCount}** new match${args.matchCount !== 1 ? "es" : ""} out of ${args.totalItems} items${args.stockNote ? `\n${plainText(args.stockNote)}` : ""}`,
           color: 0x3b82f6,
           fields: [
             { name: "Website", value: `[Open](${args.url})`, inline: true },
@@ -141,33 +151,6 @@ export const sendInactivityPaused = internalAction({
         },
       ],
     });
-  },
-});
-
-/** Send a test message to verify the webhook works */
-export const sendTestMessage = action({
-  args: { webhookUrl: v.string() },
-  handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new Error("Not authenticated");
-
-    if (!args.webhookUrl.startsWith("https://discord.com/api/webhooks/")) {
-      throw new Error("Invalid Discord webhook URL");
-    }
-
-    await sendWebhook(args.webhookUrl, {
-      embeds: [
-        {
-          title: "✅ PageAlert Connected!",
-          description: "You'll receive monitor alerts in this channel.",
-          color: 0x22c55e,
-          footer: { text: "PageAlert" },
-          timestamp: new Date().toISOString(),
-        },
-      ],
-    });
-
-    return { sent: true };
   },
 });
 

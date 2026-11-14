@@ -40,7 +40,7 @@ export const PLANS: Plan[] = [
     description: "30 days, then it just stops",
     features: [
       { text: "10 monitors" },
-      { text: "30 minute check interval" },
+      { text: "15 minute check interval" },
       { text: "Email, push & Telegram" },
       { text: "25 text alerts a month" },
       { text: `${HISTORY_WINDOW_DAYS.sprint} days of scrape logs` },

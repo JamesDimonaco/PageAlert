@@ -4,14 +4,18 @@ import { claimActivation } from "./monitors";
 import { internalAction, internalMutation, internalQuery, type ActionCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
-import { formatMinorUnits, formatSmsPrice, isProductMonitor } from "@prowl/shared";
+import { formatMinorUnits, formatSmsPrice, isProductMonitor, productItem, stockNotShownNote, type ExtractedItem } from "@prowl/shared";
 import { alertChannels, deliverAlert } from "./alerts";
 import {
   displayHost,
   isBlockedError,
+  isProxyFirstHost,
+  sprintOfferTo,
   checkFailureKind,
   matchKey,
   newMatchKeys,
+  entryTextHash,
+  soldOutKeysOf,
   ERROR_RECOVERY_INTERVAL_MS,
   effectiveIntervalMs,
   MAX_RETRIES,
@@ -112,7 +116,7 @@ const PRODUCT_SCAN_WATCHED_MS = 15 * 60 * 1000;
 const MAX_CONFIRM_ATTEMPTS = 3;
 
 /** A product monitor whose owner wants a stock or price alert. */
-function wantsProductRead(monitor: Pick<Doc<"monitors">, "alertOn" | "schema" | "groupId">): boolean {
+function wantsProductRead(monitor: Pick<Doc<"monitors">, "alertOn" | "schema" | "groupId" | "url">): boolean {
   const on = monitor.alertOn;
   const wanted = on?.backInStock === true || on?.priceDrop === true || on?.priceBelow !== undefined;
   return wanted && isProductMonitor(monitor);
@@ -123,13 +127,11 @@ const MAX_PRODUCT_TITLE = 500;
 
 /**
  * The product's name, for finding it on the page and naming it in alerts. A
- * listing in a product uses its search result's title, because its page may
- * hold several items and the first need not be the product. Otherwise it is
- * the last full read's.
+ * listing in a product uses its search result's title. Otherwise it is the
+ * product item from the last full read (see productItem).
  */
-function productTitle(monitor: Pick<Doc<"monitors">, "name" | "schema" | "productTitle">): string {
-  const title =
-    monitor.productTitle ?? (monitor.schema as { items?: { title?: unknown }[] } | undefined)?.items?.[0]?.title;
+function productTitle(monitor: Pick<Doc<"monitors">, "name" | "schema" | "productTitle" | "url">): string {
+  const title = monitor.productTitle ?? productItem(monitor.schema, monitor.url)?.title;
   const name = typeof title === "string" && title.trim() ? title.trim() : monitor.name;
   return name.slice(0, MAX_PRODUCT_TITLE);
 }
@@ -226,6 +228,8 @@ export const recordCheckResult = internalMutation({
     trackMatchKeys: v.optional(v.boolean()),
     // Every entry the keyword filter picked this check, judged or not.
     candidateKeys: v.optional(v.array(v.string())),
+    soldOutKeys: v.optional(v.array(v.string())),
+    soldOutTextHashes: v.optional(v.array(v.string())),
     // Entries judged on this check, verdict included. Kept apart from `items`,
     // which is the AI's model of the page and is what change detection diffs.
     scoredCandidates: v.optional(v.array(v.any())),
@@ -317,7 +321,7 @@ export const recordCheckResult = internalMutation({
     // site to proxy-preferred would still book itself an un-floored slot.
     const nextProxyPreferred =
       args.usedProxy === true
-        ? isBlockedError(monitor.lastError ?? "") || monitor.proxyPreferred === true
+        ? isBlockedError(monitor.lastError ?? "") || monitor.proxyPreferred === true || isProxyFirstHost(monitor.url)
         : args.usedProxy === false
           ? false
           : monitor.proxyPreferred;
@@ -377,14 +381,6 @@ export const recordCheckResult = internalMutation({
       updates.lastAiExtractAt = now;
     }
 
-    // Keyed off new matches, not the running count. The count is "entries on
-    // the page meeting your conditions", which stays non-zero for as long as
-    // the listing is up — reading it as a fresh match reset "last match" to
-    // now on every single check.
-    if (args.hasNewMatches && !args.unchanged) {
-      updates.lastMatchAt = now;
-    }
-
     if (args.schema) {
       updates.schema = args.schema;
     }
@@ -405,11 +401,40 @@ export const recordCheckResult = internalMutation({
     if (args.candidateKeys) {
       updates.candidateKeys = args.candidateKeys;
     }
+    if (args.soldOutKeys) {
+      updates.soldOutKeys = args.soldOutKeys;
+    }
+    if (args.soldOutTextHashes) {
+      updates.soldOutTextHashes = args.soldOutTextHashes;
+    }
 
     if (args.trackMatchKeys && (args.matches.length > 0 || args.totalItems > 0)) {
       const currentKeys = (args.matches as Record<string, unknown>[]).map(matchKey);
       newKeys = newMatchKeys(monitor.matchedKeys, currentKeys);
+      // A product page with a stock alert reports its restock through it.
+      // Under "in stock only" the restock is also a new match, so announced
+      // as one it would alert twice, whichever read saw it first. Otherwise
+      // a new product match is a price change, and price alerts alone report
+      // no restock, so the match is kept: a price drop may alert twice, but
+      // no alert is lost.
+      const page = { ...monitor, schema: args.schema ?? monitor.schema };
+      const stockAlerted =
+        wantsProductRead(page) && monitor.alertOn?.backInStock === true && page.schema?.matchConditions?.inStockOnly === true;
+      const product = stockAlerted ? productItem(page.schema, monitor.url) : null;
+      if (product) newKeys = newKeys.filter((k) => k !== matchKey(product as Record<string, unknown>));
       updates.matchedKeys = [...new Set(currentKeys.filter(Boolean))];
+    } else if (!args.trackMatchKeys && args.matches.length > 0 && monitor.matchedKeys !== undefined) {
+      // What a quick check alerted on is announced too. Left out, the next
+      // full read would find it missing here and announce it again.
+      updates.matchedKeys = [...new Set([...monitor.matchedKeys, ...(args.matches as Record<string, unknown>[]).map(matchKey)])];
+    }
+
+    // Keyed off new matches, not the running count. The count is "entries on
+    // the page meeting your conditions", which stays non-zero for as long as
+    // the listing is up. A full re-read lists every current match, so it
+    // counts only when one of them is new.
+    if (args.hasNewMatches && !args.unchanged && (!args.trackMatchKeys || newKeys.length > 0)) {
+      updates.lastMatchAt = now;
     }
 
     await ctx.db.patch(args.monitorId, updates);
@@ -442,6 +467,7 @@ export const recordCheckResult = internalMutation({
       scoredCandidates: args.scoredCandidates,
       totalItems: args.totalItems,
       hasNewMatches: args.hasNewMatches,
+      ...(args.trackMatchKeys ? { newMatchKeys: newKeys } : {}),
       scrapedAt: now,
       changes,
     });
@@ -485,8 +511,10 @@ export const runScheduledChecks = internalAction({
         // This site has only ever answered through the proxy, so the direct
         // attempt is a guaranteed failure plus a wasted 2-minute backoff before
         // the alert. Probe direct occasionally in case the site drops its WAF.
+        const proxyFirst = isProxyFirstHost(monitor.url);
         const reprobeDirect = ((monitor.checkCount ?? 0) + 1) % PROXY_REPROBE_EVERY === 0;
         const wantProxy =
+          proxyFirst ||
           (monitor.proxyPreferred === true && !reprobeDirect) ||
           (retryCount >= 1 && isBlockedError(monitor.lastError ?? ""));
 
@@ -504,7 +532,7 @@ export const runScheduledChecks = internalAction({
           wantProxy &&
           !scraperDown &&
           (await ctx.runMutation(internal.admin.reserveFallbackCall, {
-            escalation: monitor.proxyPreferred !== true || reprobeDirect,
+            escalation: !proxyFirst && (monitor.proxyPreferred !== true || reprobeDirect),
           }));
         let strategyLabel = "quick-check";
         try {
@@ -574,12 +602,15 @@ export const runScheduledChecks = internalAction({
                 .filter(({ m }) => newKeys.has(matchKey(m)));
               const newMatches = newWithIndex.map(({ m }) => m);
               const plural = newCount !== 1 ? "es" : "";
+              const stockNote = stockNotShownNote(newMatches as ExtractedItem[], freshMonitor.schema?.matchConditions);
+              const note = stockNote ? ` ${stockNote}` : "";
               const base = {
                 monitorName: freshMonitor.name,
                 monitorId: freshMonitor._id,
                 url: freshMonitor.url,
                 matchCount: newCount,
                 totalItems: displayTotalItems,
+                ...(stockNote ? { stockNote } : {}),
               };
 
               await ctx.scheduler.runAfter(0, internal.admin.notify, {
@@ -589,9 +620,15 @@ export const runScheduledChecks = internalAction({
               await deliverAlert(ctx, freshMonitor, {
                 type: "match",
                 title: `${freshMonitor.name} — ${newCount} new match${plural}`,
-                inAppMessage: `Found ${newCount} new match${plural} out of ${displayTotalItems} items on ${freshMonitor.url}`,
-                pushBody: `${newCount} new match${plural} out of ${displayTotalItems} items on ${displayHost(freshMonitor.url)}`,
-                email: (to) => ctx.runAction(internal.emails.sendMatchAlert, { ...base, to, matches: newMatches }),
+                inAppMessage: `Found ${newCount} new match${plural} out of ${displayTotalItems} items on ${freshMonitor.url}.${note}`,
+                pushBody: `${newCount} new match${plural} out of ${displayTotalItems} items on ${displayHost(freshMonitor.url)}.${note}`,
+                email: (to) =>
+                  ctx.runAction(internal.emails.sendMatchAlert, {
+                    ...base,
+                    to,
+                    matches: newMatches,
+                    ...sprintOfferTo(tier, freshMonitor),
+                  }),
                 telegram: (chatId) =>
                   ctx.runAction(internal.telegram.sendMatchAlert, {
                     ...base,
@@ -883,6 +920,12 @@ type ScoredCandidate = QuickCheckCandidate & {
 const MAX_SCORED_PER_CHECK = 25;
 
 /**
+ * Sold-out entries judged again in one check, out of MAX_SCORED_PER_CHECK.
+ * Capped so a page full of sold-out matches leaves room for new entries.
+ */
+const MAX_SOLD_OUT_RECHECKS = 5;
+
+/**
  * Entries named individually in a Telegram alert. Each one carries its own
  * pair of feedback buttons, and a keyboard taller than this stops being
  * something anyone reads on a phone.
@@ -1034,9 +1077,25 @@ async function runQuickCheck(
   // verdict was. Seeding on a monitor with no baseline returns nothing, so
   // this shipping does not alert anyone about listings already on the page.
   const unseenKeys = new Set(newMatchKeys(monitor.candidateKeys, candidateKeys));
+
+  // A seen entry is never judged again, so one that was sold out would never
+  // alert on its restock. When the prompt asks for stock, sold-out entries
+  // whose own text has changed are judged again, up to MAX_SOLD_OUT_RECHECKS
+  // a check, in turn, and new entries take the rest of the slots. Unchanged
+  // text cannot be a restock, so it costs nothing. A product page with a
+  // stock alert is left out: that alert already reports the restock.
+  const asksStock = matchConditions.inStockOnly === true;
+  const stockAlerted = readsProduct && monitor.alertOn?.backInStock === true;
+  const lastSoldOut: string[] = asksStock && !stockAlerted ? (monitor.soldOutKeys ?? []) : [];
+  const readSoldOutText = new Set<string>(monitor.soldOutTextHashes ?? []);
+  const byKey = new Map(visible.map((c) => [matchKey(c), c]));
+  const recheck = lastSoldOut
+    .filter((k) => byKey.has(k) && !unseenKeys.has(k) && !readSoldOutText.has(entryTextHash(byKey.get(k)!)))
+    .slice(0, MAX_SOLD_OUT_RECHECKS)
+    .map((k) => byKey.get(k)!);
   const unseen = visible
     .filter((c) => unseenKeys.has(matchKey(c)))
-    .slice(0, MAX_SCORED_PER_CHECK);
+    .slice(0, MAX_SCORED_PER_CHECK - recheck.length);
 
   // New entries past the per-check cap stay out of the seen set so the next
   // check picks them up. Recording them as seen alongside the ones actually
@@ -1044,7 +1103,7 @@ async function runQuickCheck(
   const judged = new Set(unseen.map(matchKey));
   const seenAfterCheck = candidateKeys.filter((k) => !unseenKeys.has(k) || judged.has(k));
 
-  if (unseen.length === 0) {
+  if (unseen.length === 0 && recheck.length === 0) {
     await ctx.runMutation(internal.scheduler.recordCheckResult, {
       monitorId: monitor._id,
       hasNewMatches: false,
@@ -1059,10 +1118,39 @@ async function runQuickCheck(
     return { hasMatch: false, matchCount: visible.length, matches: [], totalItems: totalEntries, strategy: "quick-check", newMatchKeys: [] };
   }
 
-  // Only the new entries reach the AI, and only their own text does. A page
-  // that has not changed, or whose changes are all old news, costs nothing.
-  const scored = await scoreQuickCheckCandidates(unseen, monitor, scraperUrl, scraperKey);
-  const matches = scored.filter((c) => alertsOnScore(c.matchScore));
+  // Only new entries and sold-out rechecks reach the AI, and only their own
+  // text does. A page that has not changed costs nothing.
+  const scored = await scoreQuickCheckCandidates([...unseen, ...recheck], monitor, scraperUrl, scraperKey, asksStock);
+  const rechecked = new Set(recheck.map(matchKey));
+  // Read as sold out: never alerts, whatever it scored. A recheck needs a
+  // read that says it is back, so a failed or blank read leaves it sold out.
+  const soldOutStill = (c: ScoredCandidate) =>
+    asksStock && (c.stock?.inStock === false || (rechecked.has(matchKey(c)) && c.stock?.inStock !== true));
+  // With stock asked for, a new entry the scorer did not judge could be sold
+  // out. It stays unseen so the next check judges it, as past the per-check cap.
+  const unjudged = new Set(
+    asksStock ? scored.filter((c) => c.matchScore === null && unseenKeys.has(matchKey(c))).map(matchKey) : []
+  );
+  // Carries the stock read the way a full read's items do, so the alert can
+  // say when stock was asked for and not shown.
+  const matches = scored
+    .filter((c) => alertsOnScore(c.matchScore) && !soldOutStill(c) && !unjudged.has(matchKey(c)))
+    .map((c) => (asksStock ? { ...c, inStock: c.stock?.inStock ?? null } : c));
+  // Queued whatever it scored: the scorer marks an entry down for being sold
+  // out when the prompt wants stock, so a low score cannot tell an unwanted
+  // entry from a wanted one that is sold out.
+  const soldOut = scored.filter(soldOutStill).map(matchKey);
+  // Those not judged this time go first, so the next check takes them.
+  const judgedNow = new Set(scored.map(matchKey));
+  const soldOutKeys = [...lastSoldOut.filter((k) => byKey.has(k) && !judgedNow.has(k)), ...soldOut];
+  // Any stock read that came back records the entry's text, so it waits for
+  // that text to change. A failed read records none, so it is tried again.
+  const scoredByKey = new Map(scored.map((c) => [matchKey(c), c]));
+  const soldOutTextHashes = soldOutKeys.flatMap((k) => {
+    const text = entryTextHash(byKey.get(k)!);
+    const read = scoredByKey.get(k);
+    return (read ? read.stock !== undefined : readSoldOutText.has(text)) ? [text] : [];
+  });
 
   const outcome = await ctx.runMutation(internal.scheduler.recordCheckResult, {
     monitorId: monitor._id,
@@ -1076,12 +1164,15 @@ async function runQuickCheck(
     // page having been removed.
     scoredCandidates: scored,
     contentFingerprint: contentHash,
-    candidateKeys: seenAfterCheck,
+    candidateKeys: seenAfterCheck.filter((k) => !unjudged.has(k)),
+    // Left alone while a stock alert covers the restock, so the queue is
+    // still there if that alert is turned off.
+    ...(asksStock && !stockAlerted ? { soldOutKeys, soldOutTextHashes } : {}),
     usedProxy: useProxy,
   });
 
   console.log(
-    `[scheduler] Quick check ${monitor._id}: ${visible.length} candidate(s), ${unseen.length} new, ${matches.length} above threshold`
+    `[scheduler] Quick check ${monitor._id}: ${visible.length} candidate(s), ${unseen.length} new, ${recheck.length} sold out rechecked, ${matches.length} above threshold`
   );
 
   return {
@@ -1099,9 +1190,10 @@ async function runQuickCheck(
  * Ask the scraper to judge entries against the user's own words.
  *
  * A scoring failure must not silence a monitor, so entries come back with a
- * null score, which the caller lets through. The keyword filter already
- * vouched for them; the judgement narrows further, it does not grant the
- * match.
+ * null score, which the caller lets through: the keyword filter already
+ * vouched for them, and the judgement narrows further, it does not grant the
+ * match. When the prompt asks for stock, the caller holds new ones back for
+ * the next check instead: unjudged, they could be sold out.
  */
 async function scoreQuickCheckCandidates(
   candidates: QuickCheckCandidate[],
@@ -1308,6 +1400,7 @@ async function runFullExtract(
     schema: result.schema,
     contentFingerprint: contentHash,
     trackMatchKeys: true,
+    soldOutKeys: soldOutKeysOf(result.schema, monitor.soldOutKeys),
     usedProxy: useProxy,
     aiExtracted: true,
   });

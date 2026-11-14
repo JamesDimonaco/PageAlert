@@ -2,7 +2,7 @@ import { ConvexError, getDocumentSize, v, type Value } from "convex/values";
 import { internalMutation, mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { components, internal } from "./_generated/api";
 import { DAY_MS } from "@prowl/shared";
-import { feedbackSlotKey } from "./shared";
+import { feedbackSlotKey, previewUserPrefix } from "./shared";
 import type { Id, TableNames } from "./_generated/dataModel";
 
 /** Is this user currently banned? Shared by every mutation that gates on ban status. */
@@ -130,6 +130,12 @@ export async function deleteAllUserData(
     .withIndex("by_name", (q) => q.eq("name", feedbackSlotKey(userId)))
     .unique();
   if (feedbackSlot) await ctx.db.delete(feedbackSlot._id);
+  // At most today's and one stale row: claimPreviewProxy sweeps older days.
+  const previewCounters = await ctx.db
+    .query("counters")
+    .withIndex("by_name", (q) => q.gte("name", previewUserPrefix(userId)).lt("name", `${previewUserPrefix(userId)}\uffff`))
+    .take(10);
+  for (const row of previewCounters) await ctx.db.delete(row._id);
   await sweep(ctx, target);
   await ctx.scheduler.runAfter(AUDIT_DELAY_MS, internal.account.auditErasure, target);
 }
@@ -273,6 +279,10 @@ const SWEEPS: readonly {
     table: "monitorGroups",
     rows: (ctx, userId) =>
       ctx.db.query("monitorGroups").withIndex("by_userId", (q) => q.eq("userId", userId)),
+  },
+  {
+    table: "folders",
+    rows: (ctx, userId) => ctx.db.query("folders").withIndex("by_userId", (q) => q.eq("userId", userId)),
   },
   {
     table: "scrapeLogs",

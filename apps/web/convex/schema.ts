@@ -6,7 +6,7 @@ export const emailCategory = v.union(v.literal("tips"), v.literal("updates"));
 export type EmailCategory = Infer<typeof emailCategory>;
 
 /**
- * Stock and price alerts on a single-product monitor (isSingleProduct in
+ * Stock and price alerts on a product monitor (isProductMonitor in
  * @prowl/shared). Absent means match alerts only. priceDrop and priceBelow
  * are one choice: any drop, or below a target. The target carries its own
  * currency, so it is never compared with a price in another one.
@@ -93,6 +93,15 @@ export default defineSchema({
     // still remembered as seen — otherwise it reads as new every check and
     // buys another scoring call forever.
     candidateKeys: v.optional(v.array(v.string())),
+    // Entries judged sold out while the prompt asks for stock, by a quick
+    // check or an AI read. The quick check judges a few again each time, so a
+    // restock still alerts. Oldest turn first: see MAX_SOLD_OUT_RECHECKS.
+    soldOutKeys: v.optional(v.array(v.string())),
+    // Hashes of the text each queued entry had when last read as sold out.
+    // An entry is rechecked only once its own text changes.
+    soldOutTextHashes: v.optional(v.array(v.string())),
+    // A name the user files it under, such as "PC build". Holds no settings.
+    folderId: v.optional(v.id("folders")),
     // This site only ever answers through the proxy, so skip the direct attempt
     // that would fail anyway. Re-probed periodically — see PROXY_REPROBE_EVERY.
     proxyPreferred: v.optional(v.boolean()),
@@ -111,10 +120,11 @@ export default defineSchema({
     // Opaque restart token from the pause email. Only ever resumes a monitor
     // the reaper paused, so an old email can never undo a manual pause.
     resumeToken: v.optional(v.string()),
-    // When someone last pressed Restart in a pause email. Clicking that link
-    // signs nobody in, so it leaves no session for the reaper to read — this
-    // is the only record that the owner is alive, and without it the next
-    // day's run would pause the monitor again.
+    // When the owner last resumed this monitor: Restart in a pause email, the
+    // dashboard, or an agent's API key. The email link and the key sign nobody
+    // in, so they leave no session for the reaper to read. This is then the
+    // only record that the owner is alive, and without it the next day's run
+    // would pause the monitor again.
     lastResumedAt: v.optional(v.number()),
     notificationChannels: v.optional(notificationChannelsValidator),
     isAnonymous: v.optional(v.boolean()),
@@ -170,6 +180,7 @@ export default defineSchema({
     .index("by_isAnonymous_expiresAt", ["isAnonymous", "expiresAt"])
     .index("by_resumeToken", ["resumeToken"])
     .index("by_host_proxyPreferred", ["host", "proxyPreferred"])
+    .index("by_folderId", ["folderId"])
     .index("by_groupId", ["groupId"]),
 
   // A product: one search's listings, some of them watched by a monitor each.
@@ -184,6 +195,17 @@ export default defineSchema({
     listings: v.array(groupListingValidator),
     // When any listing last sent an error alert. See claimErrorAlert.
     lastErrorAlertAt: v.optional(v.number()),
+    folderId: v.optional(v.id("folders")),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_userId", ["userId"])
+    .index("by_folderId", ["folderId"]),
+
+  // A name the user gives a set of monitors and products. One level, no settings.
+  folders: defineTable({
+    userId: v.string(),
+    name: v.string(),
     createdAt: v.number(),
     updatedAt: v.number(),
   }).index("by_userId", ["userId"]),
@@ -198,6 +220,9 @@ export default defineSchema({
     scoredCandidates: v.optional(v.array(v.any())),
     totalItems: v.number(),
     hasNewMatches: v.boolean(),
+    // Set by a full re-read, whose matches list every current match: the keys
+    // among them that were new. Rows without it hold only new matches.
+    newMatchKeys: v.optional(v.array(v.string())),
     scrapedAt: v.number(),
     error: v.optional(v.string()),
     // Change detection from previous check

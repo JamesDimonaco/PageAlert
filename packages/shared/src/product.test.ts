@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { productExcerpt } from "./product";
+import { isProductMonitor, productExcerpt, productItem } from "./product";
 
 describe("productExcerpt", () => {
   // Churn outside the buy box must not change the excerpt, or every check
@@ -35,5 +35,46 @@ describe("productExcerpt", () => {
     const { excerpt, matched } = productExcerpt(page, "Sony WH-1000XM5");
     expect(matched).toBe(false);
     expect(excerpt).toContain("£299.00 Out of stock");
+  });
+});
+
+// Prod, 13/11/2026: the Computer Lounge Noctua page holds the product plus 8
+// "You may also like" items. Counting items alone said "listing", so stock
+// and price alerts could never run on it.
+describe("productItem", () => {
+  const page = "https://computerlounge.co.nz/products/noctua-nh-l9a-am5-cpu-cooler";
+  const noctua = { title: "Noctua NH-L9a-AM5 Low Profile CPU Cooler", price: 89, url: page };
+  const related = [
+    { title: "Noctua NH-L9a-AM5 Chromax Black", price: 99, url: "https://computerlounge.co.nz/products/noctua-nh-l9a-am5-chromax-black-cpu-cooler" },
+    { title: "Noctua NH-L12S", price: 109, url: "https://computerlounge.co.nz/products/noctua-nh-l12s-low-profile-cpu-cooler-w-nf-a12x15-pwm" },
+  ];
+
+  test("picks the item that links to the page itself, wherever it sits", () => {
+    expect(productItem({ items: [...related, noctua] }, page)).toEqual(noctua);
+  });
+
+  // Shops add tracking params; identity must survive them.
+  test("matches the page through tracking params", () => {
+    expect(productItem({ items: [noctua, ...related] }, `${page}?utm_source=pricespy`)).toEqual(noctua);
+  });
+
+  test("falls back to a lone item when none links to the page", () => {
+    const lone = { title: "Sony WH-1000XM5", url: null };
+    expect(productItem({ items: [lone] }, "https://shop.test/xm5")).toEqual(lone);
+  });
+
+  // A listing must stay a listing: its related items are the point.
+  test("is null on a listing, where no item links to the page", () => {
+    expect(productItem({ items: related }, "https://computerlounge.co.nz/collections/coolers")).toBeNull();
+  });
+
+  // Two items claiming the page is not one product.
+  test("is null when two items link to the page", () => {
+    expect(productItem({ items: [noctua, { ...noctua, title: "dup" }] }, page)).toBeNull();
+  });
+
+  test("makes a related-items product page a product monitor", () => {
+    expect(isProductMonitor({ url: page, schema: { items: [noctua, ...related] } })).toBe(true);
+    expect(isProductMonitor({ url: "https://computerlounge.co.nz/collections/coolers", schema: { items: related } })).toBe(false);
   });
 });

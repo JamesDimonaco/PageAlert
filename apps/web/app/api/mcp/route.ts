@@ -7,12 +7,14 @@ import { z } from "zod";
 import {
   DEFAULT_AGENT_MATCHES,
   MAX_AGENT_MATCHES,
+  SEARCH_REGIONS,
   formatToolResult,
   isUnreadableScan,
   toAgentItem,
   toAgentNotices,
 } from "@prowl/shared";
 import { api } from "@/convex/_generated/api";
+import type { ToolError } from "@/convex/mcp";
 import { isBlockedError } from "@/convex/shared";
 import { extractPage, urlRejection, type ExtractResponse } from "@/lib/scraper-server";
 import { logger } from "@/lib/server-logger";
@@ -25,6 +27,14 @@ export const maxDuration = 120;
  * scheduler never picks up. This leaves room for the saves either side.
  */
 const FIRST_SCAN_TIMEOUT_MS = 80_000;
+/** preview_page's direct read and proxy read together, inside maxDuration. */
+const PREVIEW_BUDGET_MS = 110_000;
+/**
+ * With less time left, a proxy read would likely be cut off, so the user's
+ * daily proxy preview is not spent on it. A proxy fetch plus the AI extract
+ * often runs 30-45s.
+ */
+const MIN_PROXY_READ_MS = 50_000;
 
 const SITE_URL = "https://pagealert.io";
 /** Matches shown from a scan. The dashboard has the rest. */
@@ -36,14 +46,20 @@ function ok(data: unknown): ToolResult {
   return { content: [{ type: "text", text: formatToolResult(data) }] };
 }
 
-function fail(message: string): ToolResult {
-  return { isError: true, content: [{ type: "text", text: message }] };
+/** Every tool fails the same way, so an agent can act on the code. See ToolError. */
+function fail(error: ToolError): ToolResult {
+  return { isError: true, content: [{ type: "text", text: JSON.stringify(error) }] };
 }
 
-/** Convex keeps a ConvexError's message and hides every other one in prod. */
-function errorMessage(e: unknown): string {
-  if (e instanceof ConvexError) return String(e.data);
-  return "Something went wrong on our side. Try again shortly.";
+/** Convex keeps a ConvexError's data and hides every other error in prod. */
+function convexFailure(e: unknown): ToolError {
+  if (e instanceof ConvexError && typeof e.data === "object" && e.data !== null) return e.data as ToolError;
+  if (e instanceof ConvexError) return { code: "failed", message: String(e.data), retry: false };
+  return { code: "failed", message: "Something went wrong on our side. Try again shortly.", retry: true };
+}
+
+function invalidUrl(message: string): ToolError {
+  return { code: "invalid_url", message, retry: false };
 }
 
 function scanSummary(data: ExtractResponse) {
@@ -60,6 +76,25 @@ function scanSummary(data: ExtractResponse) {
 }
 
 const intervals = z.enum(["5m", "15m", "30m", "1h", "6h", "24h"]);
+const monitorId = z.string().describe("The id from list_monitors or create_monitor.");
+const folderId = z.string().describe("A folder id from create_folder.");
+const region = z.enum(SEARCH_REGIONS.map((r) => r.code) as [string, ...string[]]);
+const alertOn = z
+  .object({
+    backInStock: z.boolean().optional().describe("Alert when the product goes from out of stock to in stock."),
+    priceDrop: z.boolean().optional().describe("Alert on any price drop. Not with priceBelow."),
+    priceBelow: z
+      .object({
+        amount: z.number().int().positive().describe("In minor units: 9500 for NZ$95.00."),
+        currency: z.string().length(3).describe("ISO 4217 code, e.g. NZD."),
+      })
+      .optional()
+      .describe("Alert when the price falls below this target. Not with priceDrop."),
+  })
+  .describe(
+    "Stock and price alerts. They run only on a product page; on a listing the result says so. " +
+      "Send {} to turn them off."
+  );
 const url = z.string().max(2048).describe("The full http(s) URL of the page to watch.");
 const prompt = z
   .string()
@@ -81,14 +116,46 @@ function registerTools(server: McpServer, convex: ConvexHttpClient, apiKey: stri
       title: "Preview a page",
       description:
         "Read a page once and show what PageAlert would match on it for this prompt. Saves nothing. " +
-        "Use it to check a page is readable and the prompt picks out the right items before creating a monitor.",
+        "Use it to check a page is readable and the prompt picks out the right items before creating a monitor. " +
+        "If the site blocks the read, it tries once through a proxy, up to 5 times a day per user, " +
+        "while the service's hourly proxy allowance lasts.",
       inputSchema: z.object({ url, prompt }),
     },
     async (args) => {
       const rejection = await urlRejection(args.url);
-      if (rejection) return fail(rejection);
-      const outcome = await extractPage({ url: args.url, prompt: args.prompt, userId });
-      if (!outcome.ok) return fail(outcome.error);
+      if (rejection) return fail(invalidUrl(rejection));
+      const deadline = Date.now() + PREVIEW_BUDGET_MS;
+      let outcome = await extractPage({ url: args.url, prompt: args.prompt, userId }, PREVIEW_BUDGET_MS);
+      let usedProxy = false;
+      if (!outcome.ok && isBlockedError(outcome.error)) {
+        if (deadline - Date.now() < MIN_PROXY_READ_MS) {
+          return fail({ code: "blocked", message: `${outcome.error}. There was no time left to try the proxy.`, retry: true });
+        }
+        let claim;
+        try {
+          claim = await convex.mutation(api.mcp.claimPreviewProxy, { apiKey });
+        } catch (e) {
+          return fail(convexFailure(e));
+        }
+        if (!claim.granted) {
+          return fail({
+            code: "blocked",
+            message: `${outcome.error}. ${claim.reason} A monitor on this page would still retry through the proxy.`,
+            // Both reasons pass with time: the daily allowance, and the hourly one.
+            retry: true,
+          });
+        }
+        usedProxy = true;
+        outcome = await extractPage({ url: args.url, prompt: args.prompt, userId, useProxy: true }, deadline - Date.now());
+      }
+      if (!outcome.ok) {
+        return fail(
+          isBlockedError(outcome.error)
+            ? { code: "blocked", message: `${outcome.error}, even through the proxy.`, retry: false }
+            // A retry after a proxy read would spend another of the day's 5.
+            : { code: "failed", message: outcome.error, retry: !usedProxy }
+        );
+      }
       return ok(scanSummary(outcome.data));
     }
   );
@@ -107,17 +174,19 @@ function registerTools(server: McpServer, convex: ConvexHttpClient, apiKey: stri
         prompt,
         name: z.string().min(1).max(200).describe("A short name the user will recognise in alerts."),
         checkInterval: intervals.optional().describe("How often to check. Defaults to 1h."),
+        alertOn: alertOn.optional().describe("Stock and price alerts. Left out, they are guessed from the prompt."),
+        folderId: folderId.optional(),
       }),
     },
     async (args) => {
       const rejection = await urlRejection(args.url);
-      if (rejection) return fail(rejection);
+      if (rejection) return fail(invalidUrl(rejection));
 
       let monitorId;
       try {
         monitorId = await convex.mutation(api.mcp.createMonitor, { apiKey, ...args });
       } catch (e) {
-        return fail(errorMessage(e));
+        return fail(convexFailure(e));
       }
       const dashboardUrl = `${SITE_URL}/dashboard/monitors/${monitorId}`;
 
@@ -137,20 +206,25 @@ function registerTools(server: McpServer, convex: ConvexHttpClient, apiKey: stri
           return ok({ monitorId, dashboardUrl, status, firstScan: { ...summary, next } });
         }
 
-        await convex.mutation(api.mcp.saveScanResult, {
+        const { note } = await convex.mutation(api.mcp.saveScanResult, {
           apiKey,
           id: monitorId,
           schema: outcome.data.schema,
           matches: outcome.data.matches ?? [],
           contentFingerprint: outcome.data.contentHash,
         });
-        return ok({ monitorId, dashboardUrl, status: "active", firstScan: summary });
+        return ok({ monitorId, dashboardUrl, status: "active", firstScan: summary, ...(note ? { note } : {}) });
       } catch (e) {
         // Get it out of "scanning", where nothing would ever check it again.
         await convex
           .mutation(api.mcp.saveScanError, { apiKey, id: monitorId, error: "Saving the first scan failed" })
           .catch(() => {});
-        return fail(`The monitor was created (${dashboardUrl}) but saving its first scan failed: ${errorMessage(e)}`);
+        const { message } = convexFailure(e);
+        return fail({
+          code: "failed",
+          message: `The monitor was created (${dashboardUrl}) but saving its first scan failed: ${message}`,
+          retry: false,
+        });
       }
     }
   );
@@ -169,7 +243,7 @@ function registerTools(server: McpServer, convex: ConvexHttpClient, apiKey: stri
       try {
         return ok(await convex.query(api.mcp.listMonitors, { apiKey }));
       } catch (e) {
-        return fail(errorMessage(e));
+        return fail(convexFailure(e));
       }
     }
   );
@@ -180,7 +254,7 @@ function registerTools(server: McpServer, convex: ConvexHttpClient, apiKey: stri
       title: "Get matches",
       description: "The most recent items that matched a monitor's prompt, newest first, with when each matched.",
       inputSchema: z.object({
-        monitorId: z.string().describe("The id from list_monitors or create_monitor."),
+        monitorId,
         limit: z
           .number()
           .int()
@@ -195,7 +269,158 @@ function registerTools(server: McpServer, convex: ConvexHttpClient, apiKey: stri
       try {
         return ok(await convex.query(api.mcp.getMatches, { apiKey, ...args }));
       } catch (e) {
-        return fail(errorMessage(e));
+        return fail(convexFailure(e));
+      }
+    }
+  );
+
+  server.registerTool(
+    "get_recent_matches",
+    {
+      title: "Get recent matches",
+      description:
+        "New matches across all the user's monitors since a time, newest first, each with its monitor's id " +
+        "and name and when it matched. Reads up to the 20 monitors that matched most recently. Use it to " +
+        "answer 'what's new?' in one call. A product's listings are not included: they alert on stock and price only.",
+      inputSchema: z.object({
+        since: z.string().describe("ISO 8601 time, e.g. 2026-11-13T00:00:00Z."),
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(MAX_AGENT_MATCHES)
+          .optional()
+          .describe(`How many to return. Defaults to ${DEFAULT_AGENT_MATCHES}.`),
+      }),
+      annotations: { readOnlyHint: true },
+    },
+    async (args) => {
+      try {
+        return ok(await convex.query(api.mcp.getRecentMatches, { apiKey, ...args }));
+      } catch (e) {
+        return fail(convexFailure(e));
+      }
+    }
+  );
+
+  server.registerTool(
+    "update_monitor",
+    {
+      title: "Update a monitor",
+      description:
+        "Change a monitor's name, prompt, check interval or stock and price alerts, or pause and resume it. " +
+        "Send only what changes. The URL can't change: delete the monitor and create a new one. " +
+        "A new prompt takes effect at the next full read of the page, as in the web app. " +
+        "A faster interval than the plan allows is lowered to the fastest it does.",
+      inputSchema: z.object({
+        monitorId,
+        name: z.string().min(1).max(200).optional(),
+        prompt: prompt.optional(),
+        checkInterval: intervals.optional(),
+        alertOn: alertOn.optional(),
+        paused: z.boolean().optional().describe("true pauses checks and alerts; false resumes them."),
+        folderId: folderId.nullable().optional().describe("A folder id from create_folder, or null to take it out of its folder."),
+        url: z.string().optional().describe("Not allowed. Present only so the refusal can say why."),
+      }),
+      annotations: { idempotentHint: true },
+    },
+    async (args) => {
+      try {
+        return ok(await convex.mutation(api.mcp.updateMonitor, { apiKey, ...args }));
+      } catch (e) {
+        return fail(convexFailure(e));
+      }
+    }
+  );
+
+  server.registerTool(
+    "find_product",
+    {
+      title: "Find a product",
+      description:
+        "Search shops in one country for a product by name. Returns up to 8 shop pages, each labelled same, " +
+        "similar or accessory, with price in minor units and stock where known. Counts against the user's " +
+        "daily searches, as in the web app; a search that fails or finds nothing is not counted. " +
+        "Pass the pages you pick to create_product.",
+      inputSchema: z.object({
+        query: z.string().min(2).max(200).describe("The product's name, e.g. 'Sony WH-1000XM5'."),
+        region: region.describe("Country to search in."),
+      }),
+      // Not read-only: each call spends one of the user's daily searches, and
+      // clients skip asking the user before a read-only tool.
+      annotations: { readOnlyHint: false },
+    },
+    async (args) => {
+      try {
+        return ok(await convex.action(api.mcp.findProduct, { apiKey, ...args }));
+      } catch (e) {
+        return fail(convexFailure(e));
+      }
+    }
+  );
+
+  server.registerTool(
+    "create_product",
+    {
+      title: "Create a product",
+      description:
+        "Watch one product across several shop pages, with one set of stock and price alerts. A product " +
+        "alerts only on stock and price, never on other items on its pages. Each page becomes a monitor " +
+        "and is first read on the server within a minute. Counts against the plan's monitor limits.",
+      inputSchema: z.object({
+        title: z.string().min(1).max(200).describe("The product's name, used to find it on each page."),
+        region: region.describe("The country the shops are in."),
+        urls: z.array(url).min(1).max(8).describe("Shop pages for this product, e.g. from find_product."),
+        alertOn: alertOn.describe("What to alert on. At least one of backInStock, priceDrop or priceBelow."),
+        checkInterval: intervals.optional().describe("How often to check. Defaults to 1h."),
+        folderId: folderId.optional(),
+      }),
+    },
+    async (args) => {
+      const rejections = await Promise.all(args.urls.map(urlRejection));
+      const bad = rejections.findIndex((r) => r !== null);
+      if (bad !== -1) return fail(invalidUrl(`${args.urls[bad]}: ${rejections[bad]}`));
+      try {
+        return ok(await convex.mutation(api.mcp.createProduct, { apiKey, ...args }));
+      } catch (e) {
+        return fail(convexFailure(e));
+      }
+    }
+  );
+
+  server.registerTool(
+    "create_folder",
+    {
+      title: "Create a folder",
+      description:
+        "A named folder, such as 'PC build', to file monitors and products under on the user's dashboard. " +
+        "If the user already has a folder with this name, returns that one. Pass its id as folderId to " +
+        "create_monitor, create_product or update_monitor. A folder holds no settings.",
+      inputSchema: z.object({ name: z.string().min(1).max(100) }),
+      annotations: { idempotentHint: true },
+    },
+    async (args) => {
+      try {
+        return ok(await convex.mutation(api.mcp.createFolder, { apiKey, ...args }));
+      } catch (e) {
+        return fail(convexFailure(e));
+      }
+    }
+  );
+
+  server.registerTool(
+    "delete_monitor",
+    {
+      title: "Delete a monitor",
+      description: "Delete a monitor and its history for good. Confirm with the user first.",
+      inputSchema: z.object({ monitorId }),
+      annotations: { destructiveHint: true },
+    },
+    async (args) => {
+      try {
+        return ok(await convex.mutation(api.mcp.deleteMonitor, { apiKey, ...args }));
+      } catch (e) {
+        return fail(convexFailure(e));
       }
     }
   );
@@ -215,7 +440,7 @@ async function handler(request: Request): Promise<Response> {
   const owner = apiKey ? await convex.mutation(api.apiKeys.verify, { key: apiKey }) : null;
   if (!apiKey || !owner) {
     return Response.json(
-      { error: "Send a PageAlert API key as 'Authorization: Bearer pa_live_…'. Create one in Settings → API." },
+      { error: "Send a PageAlert API key as 'Authorization: Bearer pa_live_…'. Create one in Settings → MCP." },
       { status: 401, headers: { "WWW-Authenticate": 'Bearer realm="pagealert"' } }
     );
   }

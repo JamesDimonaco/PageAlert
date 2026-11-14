@@ -1,0 +1,120 @@
+"use client";
+
+import { CheckCircle2, CircleDashed, CircleHelp, XCircle } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import type { ExtractedItem, MatchCheck, MatchConditions } from "@prowl/shared";
+import { explainMatch } from "@prowl/shared";
+import { formatPrice } from "@/lib/format";
+import { cn } from "@/lib/utils";
+
+function conditionLabel(check: MatchCheck, currency: unknown): string {
+  switch (check.kind) {
+    case "price": {
+      const min = check.min !== undefined && check.min > 0 ? formatPrice(check.min, currency) : null;
+      const max = check.max !== undefined ? formatPrice(check.max, currency) : null;
+      if (min && max) return `Price between ${min} and ${max}`;
+      if (max) return `Price ${max} or less`;
+      if (min) return `Price ${min} or more`;
+      return "Shows a price";
+    }
+    case "titleContains":
+      return `Name includes “${check.word}”`;
+    case "titleExcludes":
+      return `Name doesn't include “${check.word}”`;
+    case "mustInclude":
+      return `Mentions “${check.word}”`;
+    case "mustExclude":
+      return `Doesn't mention “${check.word}”`;
+    case "stock":
+      return "In stock";
+  }
+}
+
+const STOCK_NOT_SHOWN = "Stock not shown on page";
+
+/** What the one item on a product page shows for this condition. */
+function singleItemDetail(check: MatchCheck, currency: unknown): string | null {
+  if (check.kind === "stock") {
+    return check.inStock === null ? STOCK_NOT_SHOWN : check.inStock ? "in stock now" : "out of stock";
+  }
+  if (check.kind !== "price") return null;
+  return check.price === undefined ? "no price found" : `now ${formatPrice(check.price, currency)}`;
+}
+
+/** On a listing: how many items pass, and how many passed only because the page did not say. */
+function listingDetail(checks: MatchCheck[], passing: number): string {
+  const unknown = checks.filter((check) => check.kind === "stock" && check.inStock === null).length;
+  const detail = `${passing} of ${checks.length} items`;
+  return unknown > 0 ? `${detail}, ${unknown} with stock not shown` : detail;
+}
+
+/**
+ * The conditions an item has to pass to count as a match, each with a tick or
+ * a cross. On a product page it shows the product's own value ("now NZ$379");
+ * on a listing, how many items pass that one condition.
+ */
+export function MatchChecks({
+  items,
+  conditions,
+  showStockHint,
+  onOpenSettings,
+}: {
+  items: ExtractedItem[];
+  conditions: MatchConditions;
+  /** A product monitor with no back-in-stock alert: stock is not being checked at all. */
+  showStockHint: boolean;
+  onOpenSettings: () => void;
+}) {
+  if (items.length === 0) return null;
+  // Every item gets the same conditions in the same order, so row i lines up across items.
+  const perItem = items.map((item) => explainMatch(item, conditions));
+  const rows = perItem[0];
+  const currency = items.find((item) => typeof item.currency === "string")?.currency;
+  const single = items.length === 1;
+
+  if (rows.length === 0 && !showStockHint) return null;
+
+  return (
+    <div className="mb-3 rounded-xl border border-border bg-card px-4 py-3">
+      <p className="text-sm font-medium">To count as a match, {single ? "it needs" : "an item needs"}:</p>
+      <ul className="mt-2 space-y-1.5">
+        {rows.map((check, i) => {
+          // On a listing a tick means every item passes, a cross none. Some
+          // passing is neither: ticking it hid that no one item passed them all.
+          const passing = perItem.filter((checks) => checks[i].pass).length;
+          const state = passing === items.length ? "pass" : passing === 0 ? "fail" : "some";
+          const detail = single ? singleItemDetail(check, currency) : listingDetail(perItem.map((checks) => checks[i]), passing);
+          const Icon = state === "pass" ? CheckCircle2 : state === "fail" ? XCircle : CircleDashed;
+          return (
+            <li key={i} className="flex items-center gap-2 text-sm">
+              <Icon
+                className={cn(
+                  "h-4 w-4 shrink-0",
+                  state === "pass" ? "text-emerald-400" : state === "fail" ? "text-red-400" : "text-amber-400",
+                )}
+              />
+              <span>{conditionLabel(check, currency)}</span>
+              {detail && (
+                <span className={cn("tabular-nums", state === "fail" ? "text-red-400" : "text-muted-foreground")}>
+                  · {detail}
+                </span>
+              )}
+              <span className="sr-only">
+                {state === "pass" ? "(passes)" : state === "fail" ? "(fails)" : "(some items pass)"}
+              </span>
+            </li>
+          );
+        })}
+        {showStockHint && (
+          <li className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground">
+            <CircleHelp className="h-4 w-4 shrink-0" />
+            <span>Stock isn&apos;t checked.</span>
+            <Button variant="link" size="sm" className="h-auto p-0" onClick={onOpenSettings}>
+              Alert me when it&apos;s back in stock
+            </Button>
+          </li>
+        )}
+      </ul>
+    </div>
+  );
+}

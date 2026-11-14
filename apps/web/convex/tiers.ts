@@ -169,8 +169,21 @@ export const grantPass = internalMutation({
     await ctx.scheduler.runAfter(0, internal.admin.notify, {
       text: `💷 Pass bought: ${args.tier} for ${args.days} days (${args.userId})`,
     });
+    await recordSale(ctx, args.userId, args.tier, current);
   },
 });
+
+/**
+ * checkout_completed, from the server. The browser often never comes back
+ * from Polar's checkout, so a client-side event would miss sales.
+ */
+async function recordSale(ctx: MutationCtx, userId: string, plan: Tier, from: Tier) {
+  await ctx.scheduler.runAfter(0, internal.analytics.capture, {
+    distinctId: userId,
+    event: "checkout_completed",
+    properties: { plan, from },
+  });
+}
 
 /**
  * Tell the operator that money moved, in both directions — hearing only the
@@ -178,10 +191,17 @@ export const grantPass = internalMutation({
  *
  * Which message, and whether to send one at all, is `tierAlert` in
  * @prowl/shared: the combinations are subtle enough to be worth a decision
- * table with tests rather than a chain of conditions here.
+ * table with tests rather than a chain of conditions here. `silent` mutes
+ * only the Telegram line: a sale is recorded either way.
  */
-async function announce(ctx: MutationCtx, userId: string, change: TierChange) {
+async function announce(ctx: MutationCtx, userId: string, change: TierChange, { silent }: { silent?: boolean }) {
   const alert = tierAlert(change);
+  // tierAlert calls any switch to a paid plan "started", downgrades included.
+  const upgrade = alert.kind === "started" && TIER_RANK[alert.tier] > TIER_RANK[change.before];
+  if (upgrade || alert.kind === "converted") {
+    await recordSale(ctx, userId, alert.tier, change.before);
+  }
+  if (silent) return;
   const text =
     alert.kind === "none"
       ? null
@@ -321,13 +341,13 @@ export const update = internalMutation({
       }
       await ctx.db.patch(existing._id, patch);
       const liveGrant = !!existing.grantUntil && existing.grantUntil > Date.now();
-      if (!args.silent) await announce(ctx, args.userId, {
+      await announce(ctx, args.userId, {
         before: effectiveTier(existing, Date.now()),
         after: args.tier,
         keptGrant: keepGrant,
         // Only a grant actually being dropped for a real subscription counts.
         replacedGrant: !keepGrant && liveGrant && args.tier !== "free" ? existing.grantSource : undefined,
-      });
+      }, { silent: args.silent });
     } else {
       const doc: Record<string, unknown> = {
         userId: args.userId,
@@ -338,7 +358,7 @@ export const update = internalMutation({
       if (args.polarSubscriptionId != null) doc.polarSubscriptionId = args.polarSubscriptionId;
       if (args.subscriptionModifiedAt != null) doc.subscriptionModifiedAt = args.subscriptionModifiedAt;
       await ctx.db.insert("userTiers", doc as any);
-      if (!args.silent) await announce(ctx, args.userId, { before: "free", after: args.tier, keptGrant: false });
+      await announce(ctx, args.userId, { before: "free", after: args.tier, keptGrant: false }, { silent: args.silent });
     }
     return true;
   },
