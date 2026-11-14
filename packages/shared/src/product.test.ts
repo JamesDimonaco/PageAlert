@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { isProductMonitor, productExcerpt, productItem } from "./product";
+import { isComparisonSite, isProductMonitor, productExcerpt, productItem } from "./product";
 
 describe("productExcerpt", () => {
   // Churn outside the buy box must not change the excerpt, or every check
@@ -73,8 +73,36 @@ describe("productItem", () => {
     expect(productItem({ items: [noctua, { ...noctua, title: "dup" }] }, page)).toBeNull();
   });
 
+  // Prod, 14/11/2026: two PriceSpy pages with one layout read as 1 item and
+  // as 4. Its items are shops' offers, so the count says nothing about the page.
+  test("is null on a price comparison page, however many items it reads as", () => {
+    const pricespy = "https://pricespy.co.nz/product.php?p=7327471";
+    expect(productItem({ items: [{ title: "AMD Ryzen 5 7600", price: 46198, url: null }] }, pricespy)).toBeNull();
+    expect(productItem({ items: [{ title: "x", url: pricespy }] }, pricespy)).toBeNull();
+  });
+
   test("makes a related-items product page a product monitor", () => {
     expect(isProductMonitor({ url: page, schema: { items: [noctua, ...related] } })).toBe(true);
     expect(isProductMonitor({ url: "https://computerlounge.co.nz/collections/coolers", schema: { items: related } })).toBe(false);
+  });
+});
+
+describe("isComparisonSite", () => {
+  test("knows the comparison sites in the search regions, on any subdomain or country domain", () => {
+    for (const url of [
+      "https://pricespy.co.nz/product.php?p=5023628",
+      "https://www.priceme.co.nz/Gigabyte-RX-9060-XT/p-123.aspx",
+      "https://www.pricerunner.com/pl/1-2/x",
+      "https://www.idealo.de/preisvergleich/OffersOfProduct/1.html",
+      "https://www.staticice.com.au/cgi-bin/search.cgi?q=x",
+    ]) {
+      expect(isComparisonSite(url), url).toBe(true);
+    }
+  });
+
+  test("leaves shops alone, including ones whose name contains a comparison site's", () => {
+    for (const url of ["https://www.pbtech.co.nz/product/1", "https://notpricespy.com/x", "not a url"]) {
+      expect(isComparisonSite(url), url).toBe(false);
+    }
   });
 });

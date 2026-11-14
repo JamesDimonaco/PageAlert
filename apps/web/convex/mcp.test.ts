@@ -362,9 +362,7 @@ test("an agent can set stock and price alerts, and is told when the page is not 
 
   const product = await t.mutation(api.mcp.createMonitor, { apiKey: key, ...MONITOR });
   await t.mutation(api.mcp.saveScanResult, { apiKey: key, id: product, schema: { items: [{ title: "Clinton Hut" }] }, matches: [] });
-  expect(await t.mutation(api.mcp.updateMonitor, { apiKey: key, monitorId: product, alertOn: { backInStock: true } })).toEqual({
-    monitorId: product,
-  });
+  expect((await t.mutation(api.mcp.updateMonitor, { apiKey: key, monitorId: product, alertOn: { backInStock: true } })).note).toBeUndefined();
 });
 
 test("create_monitor takes stock and price alerts, and guesses them from the prompt when left out", async () => {
@@ -886,4 +884,169 @@ test("a first scan over MCP claims the proxy only for a site known to need it", 
   // One claim per monitor ever.
   expect(await t.mutation(api.mcp.claimFirstScanProxy, { apiKey: key, id: costco })).toBeNull();
   expect(await t.mutation(api.mcp.claimFirstScanProxy, { apiKey: key, id: plain })).toBeNull();
+});
+
+// Three listings of one product shared one name in the list, and nothing tied
+// them together. An agent needs the shop, the product and the alerts to tell
+// them apart and to check what it set.
+test("list_monitors shows each monitor's prompt, alerts, shop and product", async () => {
+  const t = setup();
+  const { key } = await seedUser(t, "a@example.com");
+  const standalone = await t.mutation(api.mcp.createMonitor, { apiKey: key, ...MONITOR, alertOn: { priceDrop: true } });
+  const { productId, monitorIds } = await t.mutation(api.mcp.createProduct, {
+    apiKey: key,
+    title: "Gigabyte RX 9060 XT",
+    region: "NZ",
+    urls: ["https://www.pbtech.co.nz/product/1", "https://www.thewarehouse.co.nz/p/2"],
+    alertOn: { backInStock: true },
+  });
+
+  const listed = await t.query(api.mcp.listMonitors, { apiKey: key });
+  const byId = new Map(listed.map((m) => [m.id, m]));
+  expect(byId.get(standalone)).toMatchObject({
+    prompt: MONITOR.prompt,
+    shop: "example.com",
+    alertOn: { priceDrop: true },
+    productId: null,
+  });
+  expect(monitorIds.map((id) => [byId.get(id)?.shop, byId.get(id)?.productId, byId.get(id)?.alertOn])).toEqual([
+    ["pbtech.co.nz", productId, { backInStock: true }],
+    ["thewarehouse.co.nz", productId, { backInStock: true }],
+  ]);
+});
+
+// It returned only the id, so an agent could not tell what had been saved,
+// such as an interval the plan lowered.
+test("update_monitor returns the monitor as saved", async () => {
+  const t = setup();
+  const { key } = await seedUser(t, "a@example.com");
+  const id = await t.mutation(api.mcp.createMonitor, { apiKey: key, ...MONITOR });
+  await t.run((ctx) => ctx.db.patch(id, { status: "active" }));
+
+  const result = await t.mutation(api.mcp.updateMonitor, {
+    apiKey: key,
+    monitorId: id,
+    name: "Milford, Feb",
+    checkInterval: "5m",
+    alertOn: { priceBelow: { amount: 9500, currency: "NZD" } },
+  });
+  const [listed] = await t.query(api.mcp.listMonitors, { apiKey: key });
+  expect(result).toMatchObject({ ...listed, name: "Milford, Feb", checkInterval: "1h", alertOn: { priceBelow: { amount: 9500, currency: "NZD" } } });
+});
+
+test("get_product returns each shop's last price, stock and check time", async () => {
+  const t = setup();
+  const { key } = await seedUser(t, "a@example.com");
+  const { folderId } = await t.mutation(api.mcp.createFolder, { apiKey: key, name: "PC build" });
+  const { productId, monitorIds } = await t.mutation(api.mcp.createProduct, {
+    apiKey: key,
+    title: "Gigabyte RX 9060 XT",
+    region: "NZ",
+    urls: ["https://www.pbtech.co.nz/product/1", "https://www.thewarehouse.co.nz/p/2"],
+    alertOn: { priceBelow: { amount: 80000, currency: "NZD" } },
+    folderId,
+  });
+  const [pbtech, warehouse] = monitorIds;
+  await t.run(async (ctx) => {
+    await ctx.db.patch(pbtech!, { status: "active", lastCheckedAt: NOW - MINUTE, lastSeen: { inStock: false, price: 86135, currency: "NZD" } });
+    await ctx.db.patch(warehouse!, { status: "error", lastError: "Blocked by a bot check" });
+  });
+
+  expect(await t.query(api.mcp.getProduct, { apiKey: key, productId })).toEqual({
+    id: productId,
+    name: "Gigabyte RX 9060 XT",
+    region: "NZ",
+    alertOn: { priceBelow: { amount: 80000, currency: "NZD" } },
+    checkInterval: "1h",
+    folder: "PC build",
+    listings: [
+      {
+        monitorId: pbtech,
+        shop: "pbtech.co.nz",
+        url: "https://www.pbtech.co.nz/product/1",
+        status: "active",
+        inStock: false,
+        price: 86135,
+        currency: "NZD",
+        lastCheckedAt: new Date(NOW - MINUTE).toISOString(),
+        lastError: null,
+      },
+      {
+        monitorId: warehouse,
+        shop: "thewarehouse.co.nz",
+        url: "https://www.thewarehouse.co.nz/p/2",
+        status: "error",
+        inStock: null,
+        price: null,
+        currency: null,
+        lastCheckedAt: null,
+        lastError: "Blocked by a bot check",
+      },
+    ],
+  });
+});
+
+test("get_product refuses another account's product and a malformed id", async () => {
+  const t = setup();
+  const owner = await seedUser(t, "a@example.com");
+  const other = await seedUser(t, "b@example.com");
+  const { productId } = await t.mutation(api.mcp.createProduct, {
+    apiKey: owner.key, title: "x", region: "NZ", urls: ["https://www.pbtech.co.nz/product/1"], alertOn: { backInStock: true },
+  });
+  expect(await toolErrorOf(t.query(api.mcp.getProduct, { apiKey: other.key, productId }))).toMatchObject({ code: "not_found" });
+  expect(await toolErrorOf(t.query(api.mcp.getProduct, { apiKey: owner.key, productId: "nope" }))).toMatchObject({ code: "not_found" });
+});
+
+// Prod, 14/11/2026: a PriceMe page in a product matched eBay listings of
+// other cards. A product already compares shops, so a comparison page in it
+// only adds a second, worse reading of the same offers.
+test("create_product refuses a price comparison site, with what to do instead", async () => {
+  const t = setup();
+  const { key } = await seedUser(t, "a@example.com");
+  expect(
+    await toolErrorOf(
+      t.mutation(api.mcp.createProduct, {
+        apiKey: key,
+        title: "Gigabyte RX 9060 XT",
+        region: "NZ",
+        urls: ["https://www.pbtech.co.nz/product/1", "https://www.priceme.co.nz/Gigabyte-RX-9060-XT/p-1.aspx"],
+        alertOn: { backInStock: true },
+      })
+    )
+  ).toEqual({
+    code: "invalid_url",
+    message: expect.stringMatching(/priceme\.co\.nz is a price comparison site.*each shop's own link/),
+    retry: false,
+  });
+  expect(await t.run((ctx) => ctx.db.query("monitors").collect())).toEqual([]);
+});
+
+// Prod, 14/11/2026: find_product offered a PriceMe page at NZ$729 "in stock"
+// while the page said no shop sold the card.
+test("find_product leaves out price comparison sites", async () => {
+  vi.stubEnv("SCRAPER_URL", "https://scraper.test");
+  vi.stubEnv("SCRAPER_API_KEY", "key");
+  const priceme = { ...LISTING, site: "priceme.co.nz", url: "https://www.priceme.co.nz/x/p-1.aspx", price: 72900, inStock: true };
+  vi.stubGlobal("fetch", async () => Response.json({ listings: [priceme, LISTING] }));
+  const t = setup();
+  const { key } = await seedUser(t, "a@example.com");
+  expect(await t.action(api.mcp.findProduct, { apiKey: key, query: "Sony WH-1000XM5", region: "GB" })).toEqual([LISTING]);
+  vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
+});
+
+// A standalone comparison page keeps working on its prompt, which can ask for
+// "lowest in-stock price under $300". Its price alert would read a shop's
+// offer as the product, so it is off, and the agent is told why.
+test("a stock or price alert on a comparison page says only prompt alerts run there", async () => {
+  const t = setup();
+  const { key } = await seedUser(t, "a@example.com");
+  const id = await t.mutation(api.mcp.createMonitor, {
+    apiKey: key, url: "https://pricespy.co.nz/product.php?p=7327471", prompt: "lowest in-stock price under $380", name: "Ryzen 5 7600",
+  });
+  await t.mutation(api.mcp.saveScanResult, { apiKey: key, id, schema: { items: [{ title: "AMD Ryzen 5 7600", price: 46198 }] }, matches: [] });
+  const result = await t.mutation(api.mcp.updateMonitor, {
+    apiKey: key, monitorId: id, alertOn: { priceBelow: { amount: 38000, currency: "NZD" } },
+  });
+  expect(result.note).toMatch(/price comparison page.*only prompt alerts/i);
 });

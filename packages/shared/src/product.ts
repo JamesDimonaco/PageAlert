@@ -10,6 +10,8 @@ import type { ExtractedItem } from "./types";
  * item is that item's page.
  */
 export function productItem(schema: unknown, pageUrl: string): ExtractedItem | null {
+  // Its items are shops' offers, so neither rule below means anything there.
+  if (isComparisonSite(pageUrl)) return null;
   const items = (schema as { items?: unknown } | null | undefined)?.items;
   if (!Array.isArray(items)) return null;
   const page = canonicalUrl(pageUrl);
@@ -19,6 +21,18 @@ export function productItem(schema: unknown, pageUrl: string): ExtractedItem | n
   if (own.length === 1) return own[0];
   if (items.length === 1) return items[0];
   return null;
+}
+
+/** Price comparison sites in the search regions, matched on the site name in the hostname. */
+const COMPARISON_SITE = /(^|\.)(pricespy|priceme|pricerunner|idealo|staticice|getprice|shopbot)\./;
+
+/** A page listing one product's offers from many shops, rather than a shop's own page. */
+export function isComparisonSite(url: string): boolean {
+  try {
+    return COMPARISON_SITE.test(new URL(url).hostname);
+  } catch {
+    return false;
+  }
 }
 
 /**

@@ -1,7 +1,7 @@
 import { ConvexError, v, type Infer, type ObjectType } from "convex/values";
 import { internalMutation, internalQuery, mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
-import { canonicalUrl, isSearchRegion, SEARCH_REGIONS } from "@prowl/shared";
+import { canonicalUrl, isComparisonSite, isSearchRegion, SEARCH_REGIONS } from "@prowl/shared";
 import {
   allowedChannels,
   clampInterval,
@@ -11,7 +11,7 @@ import {
   updateMonitorForUser,
   validateAlertOn,
 } from "./monitors";
-import { ERROR_ALERT_COOLDOWN_MS, validateMonitorUrl } from "./shared";
+import { displayHost, ERROR_ALERT_COOLDOWN_MS, validateMonitorUrl } from "./shared";
 import {
   alertOnValidator,
   type AlertOn,
@@ -157,6 +157,14 @@ export async function createProductForUser(
   const seen = new Set<string>();
   const listings: (GroupListing & { watch: boolean })[] = [];
   for (const { watch, ...found } of args.listings) {
+    // A product already compares shops. A comparison page in it reads another
+    // shop's offer, or a related item, as this product.
+    if (isComparisonSite(found.url)) {
+      if (watch) {
+        throw new ConvexError(`${displayHost(found.url)} is a price comparison site. Add each shop's own link instead.`);
+      }
+      continue;
+    }
     const listing = cleanListing(found, name);
     if (!listing) {
       if (watch) throw new ConvexError(`We can't watch the link from ${found.site}.`);
