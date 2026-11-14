@@ -446,7 +446,9 @@ export async function saveScanErrorForUser(
 
   if (monitor.status !== "scanning" && monitor.status !== "active") return;
 
-  const isBlocked = isBlockedError(error);
+  // A proxy-first site's direct read always fails, often as an empty page.
+  // Retrying hands it to the scheduler, which reads it through the proxy.
+  const isBlocked = isBlockedError(error) || isProxyFirstHost(monitor.url);
   const now = Date.now();
 
   if (isBlocked && monitor.status === "scanning") {
