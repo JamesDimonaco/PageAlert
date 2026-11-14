@@ -183,3 +183,46 @@ test("the backfill reads the newest quick-check alerts first", async () => {
   expect(keys).toContain("shop.test/500");
   expect(keys).toHaveLength(500);
 });
+
+// Prod, 14/11/2026: two product listings on a 24h interval had no price or
+// stock until their next check, a day away.
+test("checkNow makes given monitors due now, and is a dry run unless told otherwise", async () => {
+  const t = setup();
+  const id = await insert(t, "gpu");
+  expect(await t.mutation(internal.backfill.checkNow, { monitorIds: [id] })).toEqual({ dryRun: true, marked: 1 });
+  expect((await t.run((ctx) => ctx.db.get(id)))?.nextCheckAt).toBe(NOW + 3_600_000);
+  await t.mutation(internal.backfill.checkNow, { monitorIds: [id], dryRun: false });
+  expect((await t.run((ctx) => ctx.db.get(id)))?.nextCheckAt).toBeLessThanOrEqual(Date.now());
+
+  // The scheduler never picks up a paused monitor, so it is not counted.
+  const paused = await insert(t, "paused", { status: "paused" });
+  expect(await t.mutation(internal.backfill.checkNow, { monitorIds: [paused] })).toEqual({ dryRun: true, marked: 0 });
+});
+
+// Prod, 12/11/2026: unscored first scans matched a sold-out RAM kit and a
+// sold-out cooler. get_matches and get_recent_matches kept returning them.
+test("dropMatches removes the named matches from a monitor's history, and is a dry run unless told otherwise", async () => {
+  const t = setup();
+  const id = await insert(t, "ram", { matchedKeys: ["shop.test/kingston", "shop.test/corsair"], passedKeys: ["shop.test/kingston"] });
+  const kingston = { title: "Kingston FURY 16GB", url: "https://shop.test/kingston" };
+  const corsair = { title: "Corsair 16GB", url: "https://shop.test/corsair" };
+  const otherMonitor = await insert(t, "other");
+  const [onlyFalse, mixed, other] = await t.run(async (ctx) => [
+    await ctx.db.insert("scrapeResults", { monitorId: id, matches: [kingston], totalItems: 9, hasNewMatches: true, scrapedAt: NOW - 2 }),
+    await ctx.db.insert("scrapeResults", { monitorId: id, matches: [kingston, corsair], totalItems: 9, hasNewMatches: true, newMatchKeys: ["shop.test/kingston", "shop.test/corsair"], scrapedAt: NOW - 1 }),
+    await ctx.db.insert("scrapeResults", { monitorId: otherMonitor, matches: [kingston], totalItems: 1, hasNewMatches: true, scrapedAt: NOW }),
+  ]);
+  const args = { monitorId: id, keys: ["shop.test/kingston"] };
+  expect(await t.mutation(internal.backfill.dropMatches, args)).toEqual({ dryRun: true, rows: 2 });
+  expect((await t.run((ctx) => ctx.db.get(onlyFalse)))?.matches).toEqual([kingston]);
+
+  await t.mutation(internal.backfill.dropMatches, { ...args, dryRun: false });
+  const rows = await t.run((ctx) => Promise.all([onlyFalse, mixed, other].map((r) => ctx.db.get(r))));
+  expect(rows.map((r) => [r?.matches, r?.hasNewMatches, r?.newMatchKeys])).toEqual([
+    [[], false, undefined],
+    [[corsair], true, ["shop.test/corsair"]],
+    [[kingston], true, undefined],
+  ]);
+  const monitor = await t.run((ctx) => ctx.db.get(id));
+  expect([monitor?.matchedKeys, monitor?.passedKeys]).toEqual([["shop.test/corsair"], []]);
+});
