@@ -1050,3 +1050,16 @@ test("a stock or price alert on a comparison page says only prompt alerts run th
   });
   expect(result.note).toMatch(/price comparison page.*only prompt alerts/i);
 });
+
+// The quick checks that follow count what the first scan passed as matches.
+test("a first scan records which entries it passed, and a new prompt forgets them", async () => {
+  const t = setup();
+  const { key } = await seedUser(t, "a@example.com");
+  const id = await t.mutation(api.mcp.createMonitor, { apiKey: key, ...MONITOR });
+  const hut = { title: "Clinton Hut 3 Feb", url: "https://example.com/3feb" };
+  await t.mutation(api.mcp.saveScanResult, { apiKey: key, id, schema: { items: [hut, { title: "Mintaro" }] }, matches: [hut] });
+  expect((await t.run((ctx) => ctx.db.get(id)))?.passedKeys).toEqual(["example.com/3feb"]);
+
+  await t.mutation(api.mcp.updateMonitor, { apiKey: key, monitorId: id, prompt: "any March start" });
+  expect((await t.run((ctx) => ctx.db.get(id)))?.passedKeys).toBeUndefined();
+});

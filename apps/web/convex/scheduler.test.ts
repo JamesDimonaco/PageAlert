@@ -919,3 +919,176 @@ test("a full read announces the product's price crossing when only the stock ale
   const [row] = await t.run((ctx) => ctx.db.query("scrapeResults").withIndex("by_monitorId", (q) => q.eq("monitorId", id)).collect());
   expect(row?.newMatchKeys).toEqual(["shop.test/noctua"]);
 });
+
+type Offer = { title: string; url: string; price: number | null; snippet: string };
+
+/**
+ * A listing monitor with no stock condition, whose page shows `pages[n]` on
+ * check n+1 (the last repeats) and changes every check. The scorer gives each
+ * entry `score(entry)`. Returns the URLs sent to each scoring call.
+ */
+async function offerListing(pages: Offer[][], score: (entry: Offer) => number | null, seed: Partial<Doc<"monitors">> = {}) {
+  vi.stubEnv("SCRAPER_URL", "https://scraper.test");
+  vi.stubEnv("SCRAPER_API_KEY", "key");
+  let checkNo = 0;
+  const judged: string[][] = [];
+  vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+    if (url.endsWith("/api/quick-check")) {
+      checkNo++;
+      const candidates = pages[Math.min(checkNo - 1, pages.length - 1)]!;
+      return Response.json({ accessible: true, contentHash: `page-${checkNo}`, candidates, totalEntries: candidates.length });
+    }
+    if (url.endsWith("/api/score")) {
+      const { candidates } = JSON.parse(String(init?.body)) as { candidates: Offer[] };
+      judged.push(candidates.map((c) => c.url));
+      return Response.json({ scored: candidates.map((c) => ({ ...c, matchScore: score(c), matchReason: "" })) });
+    }
+    return new Response("not mocked", { status: 500 });
+  });
+  const t = convexTest(schema, modules);
+  t.registerComponent("betterAuth", betterAuthSchema, betterAuthModules);
+  const id = await t.run((ctx) =>
+    ctx.db.insert("monitors", {
+      userId: "user_1",
+      name: "PC build: motherboard",
+      url: "https://pricespy.co.nz/product.php?p=1",
+      prompt: "Any shop offers the Gigabyte B650I AX for under NZ$310.",
+      status: "active",
+      checkInterval: "1h",
+      schema: { items: [], matchConditions: { mustInclude: ["B650I"] } },
+      matchCount: 0,
+      candidateKeys: [],
+      matchedKeys: [],
+      checkCount: 5,
+      contentFingerprint: "page-0",
+      lastAiExtractAt: Date.now(),
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      ...seed,
+    })
+  );
+  const check = async () => {
+    await t.run((ctx) => ctx.db.patch(id, { nextCheckAt: 0 }));
+    await t.action(internal.scheduler.runScheduledChecks, {});
+    return t.run((ctx) => ctx.db.get(id));
+  };
+  return { t, id, check, judged };
+}
+
+const pbtech = (price: number): Offer => ({ title: "PB Tech B650I AX", url: "https://pricespy.co.nz/go/pbtech", price, snippet: "In stock" });
+const under310 = (entry: Offer) => (entry.price !== null && entry.price < 310 ? 90 : 20);
+
+// Prod, 14/11/2026: PB Tech dropped the motherboard to $309.35, under the
+// user's $310. Its offer had been seen before, and a seen entry was never
+// judged again, so the prompt never alerted.
+test("a seen entry that has not alerted is judged again when its price changes, and alerts once it qualifies", async () => {
+  const { check, judged } = await offerListing([[pbtech(329)], [pbtech(329)], [pbtech(309.35)]], under310, {
+    candidateKeys: ["pricespy.co.nz/go/pbtech"],
+  });
+  // No price on record yet, then the same price: nothing to judge.
+  expect((await check())?.lastMatchAt).toBeUndefined();
+  expect((await check())?.lastMatchAt).toBeUndefined();
+  expect(judged).toEqual([]);
+
+  expect((await check())?.lastMatchAt).toBeDefined();
+  expect(judged).toEqual([["https://pricespy.co.nz/go/pbtech"]]);
+});
+
+// Each judgement is a paid call, and an entry that already alerted would
+// alert again on every price wobble.
+test("an entry that already alerted is not judged again when its price changes", async () => {
+  const { check, judged } = await offerListing([[pbtech(305)], [pbtech(299)]], under310, {
+    candidateKeys: ["pricespy.co.nz/go/pbtech"],
+    passedKeys: ["pricespy.co.nz/go/pbtech"],
+  });
+  await check();
+  await check();
+  expect(judged).toEqual([]);
+});
+
+// A scoring outage lets new entries through unjudged. A seen entry has
+// already had its judgement, so an unjudged price change must not alert, and
+// must be judged again on the next check.
+test("a price change the scorer did not judge does not alert, and is judged next check", async () => {
+  let fail = true;
+  const { check, judged } = await offerListing([[pbtech(329)], [pbtech(309)]], (e) => (fail ? null : under310(e)), {
+    candidateKeys: ["pricespy.co.nz/go/pbtech"],
+  });
+  await check();
+  expect((await check())?.lastMatchAt).toBeUndefined();
+  fail = false;
+  expect((await check())?.lastMatchAt).toBeDefined();
+  expect(judged).toHaveLength(2);
+});
+
+// A product's listing alerts on stock and price through its product read, never
+// on its page's entries, so judging them again would buy nothing.
+test("a product's listing does not judge seen entries again on a price change", async () => {
+  const { t, check, judged } = await offerListing([[pbtech(329)], [pbtech(309)]], under310, {
+    candidateKeys: ["pricespy.co.nz/go/pbtech"],
+  });
+  const groupId = await t.run((ctx) =>
+    ctx.db.insert("monitorGroups", {
+      userId: "user_1", name: "B650I", region: "NZ", alertOn: { priceDrop: true }, checkInterval: "1h", listings: [], createdAt: 0, updatedAt: 0,
+    })
+  );
+  await t.run(async (ctx) => {
+    const [monitor] = await ctx.db.query("monitors").collect();
+    await ctx.db.patch(monitor!._id, { groupId });
+  });
+  await check();
+  await check();
+  expect(judged).toEqual([]);
+});
+
+// Prod, 14/11/2026: the motherboard showed 4 matches that were a category
+// link, two info pages and one offer, none of which the AI had passed.
+test("the match count is the entries on the page that passed the AI, not every keyword hit", async () => {
+  const info = (n: number): Offer => ({ title: `B650I info ${n}`, url: `https://pricespy.co.nz/info/${n}`, price: null, snippet: "" });
+  const kept: Offer = { title: "Mighty Ape B650I AX", url: "https://pricespy.co.nz/go/mightyape", price: 305, snippet: "In stock" };
+  const { check } = await offerListing([[info(1), info(2), pbtech(329), kept], [info(1), info(2), pbtech(329), kept, info(3)]], under310, {
+    candidateKeys: ["pricespy.co.nz/go/pbtech"],
+  });
+  // Two new info pages fail, the new Mighty Ape offer passes, PB Tech is seen.
+  expect((await check())?.matchCount).toBe(1);
+  // Still on the page, still counted, though not judged again.
+  expect((await check())?.matchCount).toBe(1);
+  // Nothing new at all: the count still comes from what passed.
+  expect((await check())?.matchCount).toBe(1);
+});
+
+// A first scan clears matchedKeys, and only a full read 14 days on rebuilds
+// it. What the first scan passed has to count, and must not be judged again
+// on a price change, all through that time.
+test("a first scan's matches count and are not judged again until the next full read", async () => {
+  const kept: Offer = { title: "Mighty Ape B650I AX", url: "https://pricespy.co.nz/go/mightyape", price: 305, snippet: "In stock" };
+  const { check, judged } = await offerListing([[{ ...kept, price: 299 }]], under310, {
+    candidateKeys: ["pricespy.co.nz/go/mightyape"],
+    candidatePrices: [{ key: "pricespy.co.nz/go/mightyape", price: 305 }],
+    matchedKeys: undefined,
+    passedKeys: ["pricespy.co.nz/go/mightyape"],
+  });
+  expect((await check())?.matchCount).toBe(1);
+  expect(judged).toEqual([]);
+});
+
+// Monitors from before passedKeys have only matchedKeys to go on.
+test("without passedKeys, what matchedKeys holds counts", async () => {
+  const kept: Offer = { title: "Mighty Ape B650I AX", url: "https://pricespy.co.nz/go/mightyape", price: 305, snippet: "In stock" };
+  const { check } = await offerListing([[kept]], under310, {
+    candidateKeys: ["pricespy.co.nz/go/mightyape"],
+    matchedKeys: ["pricespy.co.nz/go/mightyape"],
+  });
+  expect((await check())?.matchCount).toBe(1);
+});
+
+test("what a quick check passes is added to passedKeys, and a full read replaces them", async () => {
+  const kept: Offer = { title: "Mighty Ape B650I AX", url: "https://pricespy.co.nz/go/mightyape", price: 305, snippet: "In stock" };
+  const { t, id, check } = await offerListing([[kept]], under310, { passedKeys: ["shop.test/older"] });
+  expect((await check())?.passedKeys).toEqual(["shop.test/older", "pricespy.co.nz/go/mightyape"]);
+
+  await t.mutation(internal.scheduler.recordCheckResult, {
+    monitorId: id, hasNewMatches: true, matchCount: 1, totalItems: 3, matches: [{ title: "Only", url: "https://shop.test/only" }], trackMatchKeys: true,
+  });
+  expect((await t.run((ctx) => ctx.db.get(id)))?.passedKeys).toEqual(["shop.test/only"]);
+});

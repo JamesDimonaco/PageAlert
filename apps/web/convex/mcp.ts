@@ -371,6 +371,7 @@ export const updateMonitor = mutation({
         lastAiExtractAt: 0,
         contentFingerprint: undefined,
         candidateKeys: undefined,
+        passedKeys: undefined,
         soldOutKeys: undefined,
         soldOutTextHashes: undefined,
       });

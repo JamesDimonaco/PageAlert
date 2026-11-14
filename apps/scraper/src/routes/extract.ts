@@ -2,7 +2,8 @@ import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { FALLBACK_PROVIDER_ERROR, scrapeUrl } from "../services/scraper.js";
-import { extractWithAI } from "../services/extractor.js";
+import { extractWithAI, scoreCandidates } from "../services/extractor.js";
+import { judgeMatches } from "../services/judge-matches.js";
 import { MAX_URL_LENGTH } from "../utils/url-validation.js";
 import { hashContent } from "../utils/content-hash.js";
 
@@ -55,7 +56,10 @@ extractRoutes.post("/", zValidator("json", extractSchema), async (c) => {
       scrapedAt = scraped.scrapedAt;
     }
 
-    const { schema, matches } = await extractWithAI(text, prompt, url, name, userId);
+    const read = await extractWithAI(text, prompt, url, name, userId);
+    const { schema, matches } = await judgeMatches(read.schema, read.matches, (candidates, readStock) =>
+      scoreCandidates(candidates, prompt, name, userId, readStock)
+    );
 
     return c.json({
       url,

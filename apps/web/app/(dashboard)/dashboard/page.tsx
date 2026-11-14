@@ -228,7 +228,7 @@ export default function DashboardPage() {
         return;
       }
 
-      await saveScanResult({ id: monitorId, schema: json.schema, matchCount });
+      await saveScanResult({ id: monitorId, schema: json.schema, matchCount, matches: json.matches ?? [] });
       await createLog({
         monitorId, monitorName: monitor.name, url: monitor.url, prompt: monitor.prompt,
         status: "success" as const, durationMs, itemCount: totalItems, matchCount,
