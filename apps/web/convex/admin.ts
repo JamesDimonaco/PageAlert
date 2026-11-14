@@ -694,8 +694,7 @@ const paidTierValidator = v.union(v.literal("pro"), v.literal("max"));
 
 
 /**
- * Grant (or extend) a free trial via grantUntil (the same field
- * grantProMonth uses; expireGrants reverts it). Users already paying for a
+ * Grant (or extend) a free trial via grantUntil (expireGrants reverts it). Users already paying for a
  * plan are skipped so we never clobber a real subscription. A user already
  * on a higher live grant keeps that tier — this only extends grantUntil.
  */
@@ -742,7 +741,7 @@ async function applyTrial(
           updatedAt: now,
         });
       } else {
-        await ctx.db.insert("userTiers", { userId, tier: args.tier, grantUntil, updatedAt: now });
+        await ctx.db.insert("userTiers", { userId, tier: args.tier, grantUntil, grantSource: "admin" as const, updatedAt: now });
       }
       granted++;
     }
@@ -768,8 +767,9 @@ export const grantTrialByEmail = internalMutation({
         model: "user",
         where: [{ field: "email", operator: "eq", value: email.toLowerCase() }],
       })) as { _id: string } | null;
-      if (user) userIds.push(user._id);
-      else notFound.push(email);
+      if (!user) notFound.push(email);
+      // A second pass would extend the grant it just wrote.
+      else if (!userIds.includes(user._id)) userIds.push(user._id);
     }
     const result = userIds.length > 0 ? await applyTrial(ctx, { ...args, userIds }) : { granted: 0, skippedPaying: 0 };
     return { ...result, notFound };

@@ -196,7 +196,9 @@ async function recordSale(ctx: MutationCtx, userId: string, plan: Tier, from: Ti
  */
 async function announce(ctx: MutationCtx, userId: string, change: TierChange, { silent }: { silent?: boolean }) {
   const alert = tierAlert(change);
-  if (alert.kind === "started" || alert.kind === "converted") {
+  // tierAlert calls any switch to a paid plan "started", downgrades included.
+  const upgrade = alert.kind === "started" && TIER_RANK[alert.tier] > TIER_RANK[change.before];
+  if (upgrade || alert.kind === "converted") {
     await recordSale(ctx, userId, alert.tier, change.before);
   }
   if (silent) return;

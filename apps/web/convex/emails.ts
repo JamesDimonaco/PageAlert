@@ -71,7 +71,7 @@ async function send(
     headers?: Record<string, string>;
     replyTo?: string;
   }
-): Promise<void> {
+): Promise<boolean> {
   const { to, subject, html, text, kind, from = FROM_EMAIL, userId, monitorId, throwOnError, headers, replyTo } = opts;
   const record = (ok: boolean, resendId?: string, error?: string) =>
     ctx
@@ -85,7 +85,7 @@ async function send(
     // Throwing matters here: without it the onboarding queue marks the row
     // sent, and a missing or badly rotated key silently burns the backlog.
     if (throwOnError) throw new Error(`${kind} email failed: RESEND_API_KEY not configured`);
-    return;
+    return false;
   }
 
   let res: Response;
@@ -104,7 +104,7 @@ async function send(
     console.error("[email] send failed:", kind, monitorId ?? userId ?? "", msg);
     await record(false, undefined, msg);
     if (throwOnError) throw e;
-    return;
+    return false;
   }
 
   if (!res.ok) {
@@ -112,12 +112,13 @@ async function send(
     console.error("[email] Resend API error:", res.status, kind, monitorId ?? userId ?? "", detail);
     await record(false, undefined, `Resend ${res.status}: ${detail.slice(0, 200)}`);
     if (throwOnError) throw new Error(`${kind} email failed: ${res.status}`);
-    return;
+    return false;
   }
 
   const data = (await res.json().catch(() => ({}))) as { id?: string };
   await record(true, data.id);
   console.log("[email] sent", kind, monitorId ?? userId ?? "", "resend_id:", data.id ?? "-");
+  return true;
 }
 
 /** Send a match alert email */
@@ -208,7 +209,7 @@ export const sendMatchAlert = internalAction({
       .join("\n");
     const text = `Match Found — ${args.monitorName}\n\nYour monitor found ${args.matchCount} new match${args.matchCount !== 1 ? "es" : ""}${plainItemsText} on ${safeHostname(args.url)}.\n\n${plainMatches}\n${args.matchCount > 5 ? `+${args.matchCount - 5} more` : ""}${args.stockNote ? `\n${args.stockNote}` : ""}\n\nView on site: ${viewOnSiteUrl}\nView in PageAlert: ${APP_URL}/dashboard/monitors/${args.monitorId}${args.offerSprintTo ? `\n\n${sprintPitch}\nGet a Sprint pass: ${sprintUrl}` : ""}`;
 
-    await send(ctx, {
+    const sent = await send(ctx, {
       to: args.to,
       subject: `Match found: ${args.monitorName}`,
       html,
@@ -216,7 +217,7 @@ export const sendMatchAlert = internalAction({
       kind: "match",
       monitorId: args.monitorId,
     });
-    if (args.offerSprintTo) {
+    if (sent && args.offerSprintTo) {
       await ctx.scheduler.runAfter(0, internal.analytics.capture, {
         distinctId: args.offerSprintTo,
         event: "upgrade_prompt_shown",

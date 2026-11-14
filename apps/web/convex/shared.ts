@@ -120,11 +120,12 @@ export function isProxyFirstHost(url: string): boolean {
 
 /**
  * One classifier for "the site refused us" across scheduler, scan errors, and
- * operator tooling. An empty page counts: it is how Akamai-style protection
- * blocks us, and only a block sends the retry through the proxy.
+ * operator tooling. An empty page does not count: a page can be briefly empty,
+ * and a block moves a monitor onto the proxy's 6-hour floor and towards a park.
+ * Sites that block with an empty page go on PROXY_FIRST_DOMAINS instead.
  */
 export function isBlockedError(message: string): boolean {
-  return /blocking automated access|anti-bot|CAPTCHA|Cloudflare|Access denied|blocked|Page inaccessible/i.test(message);
+  return /blocking automated access|anti-bot|CAPTCHA|Cloudflare|Access denied|blocked/i.test(message);
 }
 
 export type CheckFailureKind = "proxy_provider" | "ai_billing" | "timeout" | "blocked" | "other";
@@ -322,9 +323,10 @@ export function effectiveIntervalMs(monitor: {
  */
 export function sprintOfferTo(
   tier: string,
-  monitor: { userId: string; proxyPreferred?: boolean }
+  monitor: { userId: string; url: string; proxyPreferred?: boolean }
 ): { offerSprintTo?: string } {
-  return tier === "free" && monitor.proxyPreferred !== true ? { offerSprintTo: monitor.userId } : {};
+  const proxyOnly = monitor.proxyPreferred === true || isProxyFirstHost(monitor.url);
+  return tier === "free" && !proxyOnly ? { offerSprintTo: monitor.userId } : {};
 }
 
 /** Escape text for HTML element content and quoted attributes. */

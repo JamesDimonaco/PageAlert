@@ -65,3 +65,11 @@ test("a match email without the offer carries no Sprint pitch", async () => {
   expect(sent[0]?.text).not.toContain("Sprint");
   expect(await shownEvents(t)).toEqual([]);
 });
+
+// "Shown" must mean the person got the email, or the placement comparison lies.
+test("a match email that fails to send records no Sprint offer", async () => {
+  vi.stubGlobal("fetch", async () => new Response("rate limited", { status: 429 }));
+  const t = setup();
+  await t.action(internal.emails.sendMatchAlert, { ...MATCH, offerSprintTo: "user_1" });
+  expect(await shownEvents(t)).toEqual([]);
+});

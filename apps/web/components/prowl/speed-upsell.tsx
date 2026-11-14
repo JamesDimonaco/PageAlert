@@ -14,14 +14,14 @@ const SPRINT_PRICE = PLANS.find((p) => p.slug === "sprint")?.price;
  * works. People watch restocks and slots, where an hourly check is often too
  * late. Never blocks anything.
  */
-export function SpeedUpsell({ tier, tierResolved, proxyFloored }: {
+export function SpeedUpsell({ tier, tierResolved, proxyOnly }: {
   tier: Tier;
   /** useTier's `resolved`, so a stale tier never shows the offer or fires its event */
   tierResolved: boolean;
   /** A proxy-only site checks every 6 hours on any plan, so faster checks would be a false promise. */
-  proxyFloored: boolean;
+  proxyOnly: boolean;
 }) {
-  const visible = tierResolved && tier === "free" && !proxyFloored && SPRINT_PRICE !== undefined;
+  const visible = tierResolved && tier === "free" && !proxyOnly && SPRINT_PRICE !== undefined;
 
   const trackedRef = useRef(false);
   useEffect(() => {

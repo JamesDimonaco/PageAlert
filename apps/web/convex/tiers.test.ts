@@ -54,3 +54,10 @@ test("a subscription ending is not a sale", async () => {
   await t.mutation(internal.tiers.update, { userId: "user_1", tier: "free", polarSubscriptionId: "sub_1" });
   expect(await sales(t)).toEqual([{ plan: "pro", from: "free" }]);
 });
+
+test("a downgrade is not a sale", async () => {
+  const t = setup();
+  await t.mutation(internal.tiers.update, { userId: "user_1", tier: "max", polarSubscriptionId: "sub_1" });
+  await t.mutation(internal.tiers.update, { userId: "user_1", tier: "pro", polarSubscriptionId: "sub_1" });
+  expect(await sales(t)).toEqual([{ plan: "max", from: "free" }]);
+});

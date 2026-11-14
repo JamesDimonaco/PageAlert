@@ -60,12 +60,12 @@ test("costco.com and its subdomains are proxy-first, look-alikes are not", () =>
   expect(isProxyFirstHost("not a url")).toBe(false);
 });
 
-// An empty page is how Akamai-style protection blocks us. Read as a block, the
-// retry goes through the proxy instead of failing direct again.
-test("an empty page counts as a block", () => {
+// A page that is briefly empty is not a block. Counted as one, a working paid
+// monitor would move to the proxy, take the 6-hour floor and could be parked.
+test("an empty page does not count as a block", () => {
   expect(
     isBlockedError("Page inaccessible — no meaningful content found. The page may be down or require JavaScript that couldn't load.")
-  ).toBe(true);
+  ).toBe(false);
 });
 
 test("a proxy-first site's first scheduled check goes through the proxy", async () => {
@@ -97,16 +97,6 @@ test("a proxy-first check is not an escalation, so the hourly cap does not stop 
   expect(bodies[0]?.useProxy).toBe(true);
 });
 
-test("a retry after an empty page goes through the proxy", async () => {
-  const t = setup();
-  await insert(t, "https://shop.test/akamai", {
-    retryCount: 1,
-    lastError: "Page inaccessible — no meaningful content found. The page may be down or require JavaScript that couldn't load.",
-  });
-  const bodies = await quickCheckBodies(t);
-  expect(bodies[0]?.useProxy).toBe(true);
-});
-
 // Every proxied check costs Scrapfly credit, so a listed site must take the
 // same 6-hour floor as any other proxy-only site.
 test("a proxy-first site that reads through the proxy becomes proxy-preferred", async () => {
@@ -130,8 +120,10 @@ test("a first scan on a proxy-first site goes straight to the proxy", async () =
 // checks every 6 hours on any plan, and paying users already have speed.
 test("the Sprint offer goes to Free users on sites we can check fast", async () => {
   const { sprintOfferTo } = await import("./shared");
-  expect(sprintOfferTo("free", { userId: "u", proxyPreferred: undefined })).toEqual({ offerSprintTo: "u" });
-  expect(sprintOfferTo("free", { userId: "u", proxyPreferred: true })).toEqual({});
-  expect(sprintOfferTo("sprint", { userId: "u", proxyPreferred: undefined })).toEqual({});
-  expect(sprintOfferTo("pro", { userId: "u" })).toEqual({});
+  const url = "https://shop.test/x";
+  expect(sprintOfferTo("free", { userId: "u", url, proxyPreferred: undefined })).toEqual({ offerSprintTo: "u" });
+  expect(sprintOfferTo("free", { userId: "u", url, proxyPreferred: true })).toEqual({});
+  expect(sprintOfferTo("free", { userId: "u", url: COSTCO })).toEqual({});
+  expect(sprintOfferTo("sprint", { userId: "u", url, proxyPreferred: undefined })).toEqual({});
+  expect(sprintOfferTo("pro", { userId: "u", url })).toEqual({});
 });

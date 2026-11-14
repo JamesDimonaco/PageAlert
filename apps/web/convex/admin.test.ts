@@ -140,9 +140,22 @@ describe("grantTrialByEmail", () => {
 
     expect(result).toEqual({ granted: 1, skippedPaying: 1, notFound: ["nobody@example.com"] });
     const tiers = await t.run((ctx) => ctx.db.query("userTiers").collect());
-    expect(tiers.find((r) => r.userId === free)).toMatchObject({ tier: "pro", grantUntil: NOW + 30 * DAY });
+    // grantSource "admin" is what lets a later subscription count as a converted sale.
+    expect(tiers.find((r) => r.userId === free)).toMatchObject({ tier: "pro", grantUntil: NOW + 30 * DAY, grantSource: "admin" });
     expect(tiers.find((r) => r.userId === paying)).toMatchObject({ tier: "max" });
     expect(tiers.find((r) => r.userId === paying)?.grantUntil).toBeUndefined();
+    vi.useRealTimers();
+  });
+
+  it("grants a person listed twice only once", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+    const t = harness();
+    const id = await seedUser(t, "jo@example.com");
+    const result = await t.mutation(internal.admin.grantTrialByEmail, { emails: ["Jo@example.com", "jo@example.com"], tier: "pro", days: 30 });
+    expect(result.granted).toBe(1);
+    const row = await t.run((ctx) => ctx.db.query("userTiers").withIndex("by_userId", (q) => q.eq("userId", id)).unique());
+    expect(row?.grantUntil).toBe(NOW + 30 * DAY);
     vi.useRealTimers();
   });
 });
