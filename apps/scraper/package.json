@@ -23,7 +23,7 @@
     "hono": "^4.13.17",
     "playwright": "1.65.0",
     "posthog-node": "^5.63.1",
-    "zod": "^3.25.76"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/node": "^22.20.5",
