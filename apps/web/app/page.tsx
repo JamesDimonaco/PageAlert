@@ -214,7 +214,8 @@ export default function LandingPage() {
             <p className="text-xs text-muted-foreground">&copy; {new Date().getFullYear()} PageAlert. All rights reserved.</p>
             <div className="flex items-center gap-4">
               <a href="https://www.producthunt.com/products/pagealert?embed=true&utm_source=badge-featured&utm_medium=badge&utm_campaign=badge-pagealert" target="_blank" rel="noopener noreferrer">
-                <img alt="PageAlert on Product Hunt" width="250" height="54" loading="lazy" decoding="async" src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1110261&theme=dark&t=1775009427331" />
+                <img className="block dark:hidden" alt="PageAlert on Product Hunt" width="250" height="54" loading="lazy" decoding="async" src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1110261&theme=light&t=1775009427331" />
+                <img className="hidden dark:block" alt="PageAlert on Product Hunt" width="250" height="54" loading="lazy" decoding="async" src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1110261&theme=dark&t=1775009427331" />
               </a>
               <a href="https://smollaunch.com" target="_blank" rel="noopener">
                 <img className="block dark:hidden" src="https://smollaunch.com/badges/featured.svg" alt="Featured on Smol Launch" loading="lazy" width="250" height="60" />

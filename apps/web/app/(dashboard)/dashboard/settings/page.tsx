@@ -304,7 +304,7 @@ export default function SettingsPage() {
               <CardContent>
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                   <div>
-                    <p className="text-sm font-semibold text-amber-400">
+                    <p className="text-sm font-semibold text-warning">
                       Your {tier.charAt(0).toUpperCase() + tier.slice(1)} plan has been cancelled
                     </p>
                     <p className="text-sm text-muted-foreground mt-1">
@@ -346,7 +346,7 @@ export default function SettingsPage() {
                   <div className="flex items-center gap-3">
                     <p className="text-xl font-bold capitalize">{tier}</p>
                     {isCancelled && (
-                      <Badge variant="outline" className="text-xs bg-amber-500/10 text-amber-400 border-amber-500/20">Cancelling</Badge>
+                      <Badge variant="outline" className="text-xs bg-amber-500/10 text-warning border-amber-500/20">Cancelling</Badge>
                     )}
                   </div>
                   <p className="text-sm text-muted-foreground mt-2 leading-relaxed">
@@ -512,7 +512,7 @@ export default function SettingsPage() {
                     />
                   </div>
                   {monitors.length >= maxMonitors && (
-                    <p className="text-xs text-amber-400 mt-2 font-medium">
+                    <p className="text-xs text-warning mt-2 font-medium">
                       {monitors.length > maxMonitors ? "Over limit — upgrade to add more" : "At limit — upgrade for more monitors"}
                     </p>
                   )}

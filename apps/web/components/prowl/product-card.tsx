@@ -37,19 +37,19 @@ export function ProductCard({ product, monitors, onMoveToFolder }: ProductCardPr
             <Badge
               variant="outline"
               className={product.inStock
-                ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                ? "bg-emerald-500/10 text-success border-emerald-500/20"
                 : "bg-muted text-muted-foreground"}
             >
               {product.inStock ? "In stock" : "Out of stock"}
             </Badge>
           )}
           {product.paused > 0 && (
-            <Badge variant="outline" className="bg-amber-500/10 text-amber-400 border-amber-500/20">
+            <Badge variant="outline" className="bg-amber-500/10 text-warning border-amber-500/20">
               {product.paused} paused
             </Badge>
           )}
           {product.errored > 0 && (
-            <Badge variant="outline" className="bg-red-500/10 text-red-400 border-red-500/20">
+            <Badge variant="outline" className="bg-red-500/10 text-destructive border-red-500/20">
               {product.errored} with errors
             </Badge>
           )}

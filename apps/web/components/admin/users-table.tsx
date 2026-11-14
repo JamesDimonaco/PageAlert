@@ -308,16 +308,16 @@ function PlanBadge({
   if (tier === "free") return <Badge variant="outline" className="text-xs">Free</Badge>;
   const label = tier === "max" ? "Max" : tier === "sprint" ? "Sprint" : "Pro";
   const colour = tier === "max"
-    ? "bg-amber-500/10 text-amber-400 border-amber-500/20"
+    ? "bg-amber-500/10 text-warning border-amber-500/20"
     : tier === "sprint"
-      ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+      ? "bg-emerald-500/10 text-success border-emerald-500/20"
       : "bg-primary/10 text-primary border-primary/20";
   return (
     <div className="flex flex-col gap-0.5">
       <Badge className={`text-xs w-fit ${colour}`}>{label}{grantUntil && tier !== "sprint" ? " trial" : ""}</Badge>
       {grantUntil && <span className="text-xs text-muted-foreground">until {formatDate(grantUntil)}</span>}
       {cancelledAt && !grantUntil && (
-        <span className="text-xs text-amber-400">cancelling{periodEnd ? `, ends ${formatDate(periodEnd)}` : ""}</span>
+        <span className="text-xs text-warning">cancelling{periodEnd ? `, ends ${formatDate(periodEnd)}` : ""}</span>
       )}
     </div>
   );

@@ -17,7 +17,7 @@ export function AutoPauseNote({ autoPausedAt }: { autoPausedAt?: number }) {
     year: "numeric",
   });
   return (
-    <p className="flex items-center gap-1.5 text-xs text-amber-400">
+    <p className="flex items-center gap-1.5 text-xs text-warning">
       <PauseCircle className="h-3.5 w-3.5 shrink-0" />
       Paused automatically on {on} because you hadn&apos;t been back for a while. Resume to start checking again.
     </p>

@@ -412,7 +412,7 @@ export function CreateMonitorSheet({
                     required
                   />
                   {sessionParams.length > 0 && (
-                    <p id="create-url-session-warning" className="flex gap-1.5 text-xs text-amber-400 leading-relaxed">
+                    <p id="create-url-session-warning" className="flex gap-1.5 text-xs text-warning leading-relaxed">
                       <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
                       <span>
                         This link includes {new Intl.ListFormat("en").format(sessionParams)}, which{" "}

@@ -73,7 +73,7 @@ export function MonitorCard({ monitor, onTogglePause, onDelete, onRescan, onClon
               </h2>
               <StatusBadge status={monitor.status} />
               {(monitor as any).muted && (
-                <Badge variant="outline" className="gap-1 bg-amber-500/10 text-amber-400 border-amber-500/20">
+                <Badge variant="outline" className="gap-1 bg-amber-500/10 text-warning border-amber-500/20">
                   <BellOff className="h-3 w-3" />
                   Muted
                 </Badge>
@@ -116,13 +116,13 @@ export function MonitorCard({ monitor, onTogglePause, onDelete, onRescan, onClon
                 </span>
               )}
               {monitor.status === "active" && (monitor.retryCount ?? 0) > 0 && (
-                <span className="flex items-center gap-1 text-amber-400">
+                <span className="flex items-center gap-1 text-warning">
                   <RefreshCw className="h-3 w-3" />
                   Retrying ({monitor.retryCount}/3)
                 </span>
               )}
               {!((monitor as any).muted) && (monitor as any).notificationChannels?.length === 0 && (
-                <span className="flex items-center gap-1 text-amber-400">
+                <span className="flex items-center gap-1 text-warning">
                   <BellOff className="h-3 w-3" />
                   No alerts
                 </span>

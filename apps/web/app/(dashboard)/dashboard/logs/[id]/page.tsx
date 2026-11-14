@@ -102,9 +102,9 @@ export default function LogDetailPage({
   }
 
   const statusConfig = {
-    success: { icon: CheckCircle2, color: "text-emerald-400", bg: "bg-emerald-500/10", label: "Success" },
-    error: { icon: XCircle, color: "text-red-400", bg: "bg-red-500/10", label: "Error" },
-    timeout: { icon: AlertTriangle, color: "text-amber-400", bg: "bg-amber-500/10", label: "Timeout" },
+    success: { icon: CheckCircle2, color: "text-success", bg: "bg-emerald-500/10", label: "Success" },
+    error: { icon: XCircle, color: "text-destructive", bg: "bg-red-500/10", label: "Error" },
+    timeout: { icon: AlertTriangle, color: "text-warning", bg: "bg-amber-500/10", label: "Timeout" },
   };
 
   const config = statusConfig[log.status];
@@ -130,10 +130,10 @@ export default function LogDetailPage({
               variant="outline"
               className={`${
                 log.status === "success"
-                  ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                  ? "bg-emerald-500/10 text-success border-emerald-500/20"
                   : log.status === "timeout"
-                    ? "bg-amber-500/10 text-amber-400 border-amber-500/20"
-                    : "bg-red-500/10 text-red-400 border-red-500/20"
+                    ? "bg-amber-500/10 text-warning border-amber-500/20"
+                    : "bg-red-500/10 text-destructive border-red-500/20"
               }`}
             >
               <Icon className="h-3 w-3 mr-1" />
@@ -152,12 +152,12 @@ export default function LogDetailPage({
             return <Badge variant="outline" className={`text-xs ${strat.color}`}>{strat.label}</Badge>;
           })()}
           {log.blocked && (
-            <Badge className="bg-red-500/10 text-red-400 border-red-500/20 text-xs">
+            <Badge className="bg-red-500/10 text-destructive border-red-500/20 text-xs">
               Blocked{log.blockReason ? `: ${log.blockReason}` : ""}
             </Badge>
           )}
           {log.retryAttempt != null && log.retryAttempt > 0 && (
-            <Badge variant="outline" className="text-xs bg-amber-500/10 text-amber-400 border-amber-500/20">
+            <Badge variant="outline" className="text-xs bg-amber-500/10 text-warning border-amber-500/20">
               Retry attempt {log.retryAttempt} of {MAX_RETRIES}
             </Badge>
           )}
@@ -226,10 +226,10 @@ export default function LogDetailPage({
                   {log.aiConfidence != null && (
                     <Badge variant="outline" className={`text-xs ${
                       (log.aiConfidence ?? 0) >= 80
-                        ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                        ? "bg-emerald-500/10 text-success border-emerald-500/20"
                         : (log.aiConfidence ?? 0) >= 50
-                          ? "bg-amber-500/10 text-amber-400 border-amber-500/20"
-                          : "bg-red-500/10 text-red-400 border-red-500/20"
+                          ? "bg-amber-500/10 text-warning border-amber-500/20"
+                          : "bg-red-500/10 text-destructive border-red-500/20"
                     }`}>
                       {log.aiConfidence}% confidence
                     </Badge>
@@ -242,7 +242,7 @@ export default function LogDetailPage({
                 {log.aiMatchSignal && (
                   <div className="grid gap-3 md:grid-cols-2 pt-2">
                     <div className="rounded-lg bg-emerald-500/5 border border-emerald-500/10 p-3">
-                      <p className="text-xs font-semibold text-emerald-400 mb-1">Match signal</p>
+                      <p className="text-xs font-semibold text-success mb-1">Match signal</p>
                       <p className="text-xs text-muted-foreground">{log.aiMatchSignal}</p>
                     </div>
                     <div className="rounded-lg bg-muted/30 border border-border p-3">
@@ -255,11 +255,11 @@ export default function LogDetailPage({
                 {Array.isArray(log.aiNotices) &&
                   (log.aiNotices as string[]).length > 0 && (
                   <div className="rounded-lg bg-amber-500/5 border border-amber-500/10 p-3 mt-2">
-                    <p className="text-xs font-semibold text-amber-400 mb-2">Notices</p>
+                    <p className="text-xs font-semibold text-warning mb-2">Notices</p>
                     <ul className="space-y-1">
                       {(log.aiNotices as string[]).map((n, i) => (
                         <li key={i} className="text-xs text-muted-foreground flex items-start gap-1.5">
-                          <span className="text-amber-400 shrink-0">•</span>
+                          <span className="text-warning shrink-0">•</span>
                           {n}
                         </li>
                       ))}
@@ -290,7 +290,7 @@ export default function LogDetailPage({
       {log.error && (
         <div>
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
-            <h2 className="section-title text-red-400">Error</h2>
+            <h2 className="section-title text-destructive">Error</h2>
             <Button
               size="sm"
               className="gap-1.5"
@@ -309,7 +309,7 @@ export default function LogDetailPage({
           </div>
           <Card className="ring-red-500/20 bg-red-500/5">
             <CardContent>
-              <p className="text-sm font-mono text-red-400">{log.error}</p>
+              <p className="text-sm font-mono text-destructive">{log.error}</p>
             </CardContent>
           </Card>
         </div>

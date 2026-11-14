@@ -152,7 +152,7 @@ export function ChannelSelector({ value, onChange, disabled }: ChannelSelectorPr
         })}
       </div>
       {value.length === 0 && (
-        <p className="text-xs text-amber-400">No notifications enabled for this monitor</p>
+        <p className="text-xs text-warning">No notifications enabled for this monitor</p>
       )}
     </div>
   );

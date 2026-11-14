@@ -21,7 +21,7 @@ export function AiInsightsCard({ insights }: { insights: AiInsights }) {
         <ul className="space-y-1.5">
           {insights.notices.map((n, i) => (
             <li key={i} className="flex items-start gap-2 text-muted-foreground">
-              <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-400" />
+              <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />
               <span className="leading-relaxed">{n}</span>
             </li>
           ))}

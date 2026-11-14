@@ -1,14 +1,19 @@
 "use client";
 
 import { useState } from "react";
-import { Radar, LogOut, Settings, ShieldCheck, Plus, MessageSquare, ScrollText } from "lucide-react";
+import { Radar, LogOut, Settings, ShieldCheck, Plus, MessageSquare, ScrollText, Monitor, Sun, Moon } from "lucide-react";
+import { useTheme } from "next-themes";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { NotificationBell } from "@/components/prowl/notification-bell";
 import { FeedbackDialog } from "@/components/prowl/feedback-dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -36,6 +41,7 @@ export function Navbar() {
   const { tier, grantUntil } = useTier();
   const isAdmin = useQuery(api.admin.isAdmin) === true;
   const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const { theme, setTheme } = useTheme();
 
   const initials = user?.name?.charAt(0)?.toUpperCase() ?? user?.email?.charAt(0)?.toUpperCase() ?? "?";
   // The dashboard index already leads with its own New monitor CTA
@@ -79,7 +85,7 @@ export function Navbar() {
 
           <Badge className={`text-xs px-1.5 py-0 hidden sm:inline-flex ${
             tier === "max"
-              ? "bg-amber-500/10 text-amber-400 border-amber-500/20"
+              ? "bg-amber-500/10 text-warning border-amber-500/20"
               : tier === "pro"
                 ? "bg-primary/10 text-primary border-primary/20"
                 : "bg-muted text-muted-foreground border-border/50"
@@ -106,7 +112,7 @@ export function Navbar() {
                     {tier !== "free" && (
                       <Badge className={`text-xs px-1.5 py-0 ${
                         tier === "max"
-                          ? "bg-amber-500/10 text-amber-400 border-amber-500/20"
+                          ? "bg-amber-500/10 text-warning border-amber-500/20"
                           : "bg-primary/10 text-primary border-primary/20"
                       }`}>
                         {tier === "max" ? "Max" : "Pro"}
@@ -135,6 +141,25 @@ export function Navbar() {
                   Admin
                 </DropdownMenuItem>
               )}
+              <DropdownMenuSeparator />
+              <DropdownMenuGroup>
+                <DropdownMenuLabel>Theme</DropdownMenuLabel>
+                {/* theme is undefined until next-themes mounts; "system" is its default. */}
+                <DropdownMenuRadioGroup value={theme ?? "system"} onValueChange={setTheme}>
+                  <DropdownMenuRadioItem value="system">
+                    <Monitor className="mr-2 h-4 w-4" />
+                    System
+                  </DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value="light">
+                    <Sun className="mr-2 h-4 w-4" />
+                    Light
+                  </DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value="dark">
+                    <Moon className="mr-2 h-4 w-4" />
+                    Dark
+                  </DropdownMenuRadioItem>
+                </DropdownMenuRadioGroup>
+              </DropdownMenuGroup>
               <DropdownMenuSeparator />
               <DropdownMenuItem className="text-destructive" onClick={() => signOut()}>
                 <LogOut className="mr-2 h-4 w-4" />

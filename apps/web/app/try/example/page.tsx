@@ -43,7 +43,7 @@ export default function ExamplePage() {
         <div>
           <div className="flex items-center gap-3 mb-2">
             <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">MacBook Pro Refurbished</h1>
-            <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20">Active</Badge>
+            <Badge className="bg-emerald-500/10 text-success border-emerald-500/20">Active</Badge>
           </div>
           <p className="text-sm text-muted-foreground break-all">
             apple.com/shop/refurbished/mac/macbook-pro
@@ -65,7 +65,7 @@ export default function ExamplePage() {
           <Card className="ring-emerald-500/20 bg-emerald-500/5">
             <CardContent>
               <p className="text-xs text-muted-foreground mb-1">Matches</p>
-              <p className="text-2xl font-bold text-emerald-400">{EXAMPLE_MATCHES}</p>
+              <p className="text-2xl font-bold text-success">{EXAMPLE_MATCHES}</p>
             </CardContent>
           </Card>
           <Card>
@@ -77,7 +77,7 @@ export default function ExamplePage() {
           <Card>
             <CardContent>
               <p className="text-xs text-muted-foreground mb-1">AI confidence</p>
-              <p className="text-2xl font-bold text-emerald-400">92%</p>
+              <p className="text-2xl font-bold text-success">92%</p>
             </CardContent>
           </Card>
         </div>
@@ -85,9 +85,9 @@ export default function ExamplePage() {
         {/* Matched items */}
         <div>
           <h2 className="section-title mb-3 flex items-center gap-2">
-            <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+            <CheckCircle2 className="h-4 w-4 text-success" />
             Matched items
-            <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-xs">{EXAMPLE_MATCHES}</Badge>
+            <Badge className="bg-emerald-500/10 text-success border-emerald-500/20 text-xs">{EXAMPLE_MATCHES}</Badge>
           </h2>
           <div className="space-y-2">
             {ITEMS.filter((i) => i.matched).map((item, i) => (
@@ -95,7 +95,7 @@ export default function ExamplePage() {
                 <CardContent>
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                     <div className="flex items-center gap-2 min-w-0">
-                      <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
+                      <CheckCircle2 className="h-4 w-4 text-success shrink-0" />
                       <span className="text-sm font-medium truncate">{item.title}</span>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
@@ -104,7 +104,7 @@ export default function ExamplePage() {
                       )}
                       <span className="text-sm font-bold">${item.price.toLocaleString()}</span>
                       {item.oldPrice && (
-                        <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-xs gap-0.5">
+                        <Badge className="bg-emerald-500/10 text-success border-emerald-500/20 text-xs gap-0.5">
                           <TrendingDown className="h-3 w-3" />
                           {Math.round(((item.oldPrice - item.price) / item.oldPrice) * 100)}% off
                         </Badge>

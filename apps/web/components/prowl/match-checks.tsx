@@ -90,12 +90,12 @@ export function MatchChecks({
               <Icon
                 className={cn(
                   "h-4 w-4 shrink-0",
-                  state === "pass" ? "text-emerald-400" : state === "fail" ? "text-red-400" : "text-amber-400",
+                  state === "pass" ? "text-success" : state === "fail" ? "text-destructive" : "text-warning",
                 )}
               />
               <span>{conditionLabel(check, currency)}</span>
               {detail && (
-                <span className={cn("tabular-nums", state === "fail" ? "text-red-400" : "text-muted-foreground")}>
+                <span className={cn("tabular-nums", state === "fail" ? "text-destructive" : "text-muted-foreground")}>
                   · {detail}
                 </span>
               )}

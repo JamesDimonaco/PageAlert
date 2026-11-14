@@ -54,8 +54,8 @@ interface ItemsTabProps {
 /** Bands, not raw percentages — the judged score is the model's own estimate and is not calibrated. */
 function confidenceStyle(score: number): string {
   const band = matchConfidence(score);
-  if (band === "strong") return "bg-emerald-500/10 text-emerald-400 border-emerald-500/20";
-  if (band === "likely") return "bg-amber-500/10 text-amber-400 border-amber-500/20";
+  if (band === "strong") return "bg-emerald-500/10 text-success border-emerald-500/20";
+  if (band === "likely") return "bg-amber-500/10 text-warning border-amber-500/20";
   return "bg-muted text-muted-foreground border-border";
 }
 
@@ -261,7 +261,7 @@ export function ItemsTab({ monitorId, allItems, schema, blacklist, scores, showF
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="flex items-center gap-3">
           <Badge variant="outline" className="text-xs">{filteredItems.length}{filteredItems.length !== allItems.length ? ` of ${allItems.length}` : ""} items</Badge>
-          <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-xs">
+          <Badge className="bg-emerald-500/10 text-success border-emerald-500/20 text-xs">
             {matches.length} match{matches.length !== 1 ? "es" : ""}
           </Badge>
         </div>
@@ -290,7 +290,7 @@ export function ItemsTab({ monitorId, allItems, schema, blacklist, scores, showF
       {/* Quick filters */}
       <div className="flex flex-wrap items-center gap-2">
         <Select items={STATUS_FILTERS} value={statusFilter} onValueChange={(v) => v && setStatusFilter(v as StatusFilter)}>
-          <SelectTrigger size="sm" className="w-[140px] text-xs">
+          <SelectTrigger size="sm" aria-label="Filter items" className="w-[140px] text-xs">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -300,7 +300,7 @@ export function ItemsTab({ monitorId, allItems, schema, blacklist, scores, showF
           </SelectContent>
         </Select>
         <Select items={SORT_OPTIONS} value={sortBy} onValueChange={(v) => v && setSortBy(v as SortOption)}>
-          <SelectTrigger size="sm" className="w-[150px] text-xs">
+          <SelectTrigger size="sm" aria-label="Sort items" className="w-[150px] text-xs">
             <ArrowUpDown className="h-3 w-3 mr-1.5" />
             <SelectValue />
           </SelectTrigger>
@@ -405,7 +405,7 @@ export function ItemsTab({ monitorId, allItems, schema, blacklist, scores, showF
               }`}
             >
               <div className="flex-1 min-w-0 flex items-center gap-2">
-                {isMatch && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400 shrink-0" />}
+                {isMatch && <CheckCircle2 className="h-3.5 w-3.5 text-success shrink-0" />}
                 {score != null && (
                   <Badge variant="outline" className={`text-xs shrink-0 ${confidenceStyle(score)}`}>
                     {MATCH_CONFIDENCE_LABEL[matchConfidence(score)]}
@@ -448,7 +448,7 @@ export function ItemsTab({ monitorId, allItems, schema, blacklist, scores, showF
                   <div className="flex items-center gap-0.5" title={reason || undefined}>
                     <Button
                       variant="ghost" size="sm"
-                      className={`h-6 w-6 p-0 ${verdict === "good" ? "text-emerald-400" : "text-muted-foreground"}`}
+                      className={`h-6 w-6 p-0 ${verdict === "good" ? "text-success" : "text-muted-foreground"}`}
                       aria-label="Good match" aria-pressed={verdict === "good"}
                       onClick={() => rate(item, "good")}
                     >
@@ -456,7 +456,7 @@ export function ItemsTab({ monitorId, allItems, schema, blacklist, scores, showF
                     </Button>
                     <Button
                       variant="ghost" size="sm"
-                      className={`h-6 w-6 p-0 ${verdict === "bad" ? "text-red-400" : "text-muted-foreground"}`}
+                      className={`h-6 w-6 p-0 ${verdict === "bad" ? "text-destructive" : "text-muted-foreground"}`}
                       aria-label="Bad match" aria-pressed={verdict === "bad"}
                       onClick={() => rate(item, "bad")}
                     >

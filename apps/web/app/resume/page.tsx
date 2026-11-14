@@ -88,7 +88,7 @@ export default function ResumePage() {
           {result.status === "working" ? (
             <Loader2 className="h-7 w-7 animate-spin text-primary/60" />
           ) : result.status === "ok" ? (
-            <CheckCircle2 className="h-7 w-7 text-emerald-500" />
+            <CheckCircle2 className="h-7 w-7 text-success" />
           ) : (
             <Radar className="h-7 w-7 text-primary/60" />
           )}
