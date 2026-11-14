@@ -875,14 +875,15 @@ test("a search blocked for the day says retry, not invalid_url", async () => {
   vi.unstubAllEnvs();
 });
 
-// Costco answers a direct read with an empty page. A monitor created over MCP
-// has no proxy first scan, so the failed direct one must hand it to the
-// scheduler, which reads proxy-first sites through the proxy.
-test("a failed first scan on a proxy-first site retries instead of stopping", async () => {
+// Costco answers a direct read with an empty page. Over MCP, as on the
+// dashboard, a known proxy site's first scan goes straight to the proxy.
+test("a first scan over MCP claims the proxy only for a site known to need it", async () => {
   const t = setup();
   const { key } = await seedUser(t, "a@example.com");
-  const id = await t.mutation(api.mcp.createMonitor, { apiKey: key, ...MONITOR, url: "https://www.costco.com/bose.html" });
-  await t.mutation(api.mcp.saveScanError, { apiKey: key, id, error: "Page appears inaccessible - no data could be extracted" });
-  const monitor = await t.run((ctx) => ctx.db.get(id));
-  expect(monitor).toMatchObject({ status: "active", retryCount: 1 });
+  const costco = await t.mutation(api.mcp.createMonitor, { apiKey: key, ...MONITOR, url: "https://www.costco.com/bose.html" });
+  const plain = await t.mutation(api.mcp.createMonitor, { apiKey: key, ...MONITOR });
+  expect(await t.mutation(api.mcp.claimFirstScanProxy, { apiKey: key, id: costco })).toBe("https://www.costco.com/bose.html");
+  // One claim per monitor ever.
+  expect(await t.mutation(api.mcp.claimFirstScanProxy, { apiKey: key, id: costco })).toBeNull();
+  expect(await t.mutation(api.mcp.claimFirstScanProxy, { apiKey: key, id: plain })).toBeNull();
 });

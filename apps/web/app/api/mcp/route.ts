@@ -103,8 +103,8 @@ const prompt = z
   .describe("What to look for on the page, in plain words, e.g. 'any hut booking in February under $100'.");
 
 /** What saveScanError will have done with the monitor, in words for the agent. */
-function afterFailedScan(error: string, url: string) {
-  return isBlockedError(error) || isProxyFirstHost(url)
+function afterFailedScan(error: string) {
+  return isBlockedError(error)
     ? { status: "retrying", next: "The site blocked the first scan. The monitor is kept and will retry through a proxy." }
     : { status: "error", next: "The first scan failed. The user can fix the monitor or retry it from the dashboard." };
 }
@@ -125,13 +125,14 @@ function registerTools(server: McpServer, convex: ConvexHttpClient, apiKey: stri
       const rejection = await urlRejection(args.url);
       if (rejection) return fail(invalidUrl(rejection));
       const deadline = Date.now() + PREVIEW_BUDGET_MS;
-      // A proxy-first site's direct read is wasted: it comes back empty, often
-      // without an error, so it goes straight to the proxy.
-      let outcome = isProxyFirstHost(args.url)
+      // A proxy-first site's direct read comes back empty, often without an
+      // error, so it goes straight to the proxy.
+      const proxyFirst = isProxyFirstHost(args.url);
+      let outcome = proxyFirst
         ? ({ ok: false, error: "This site only answers through a proxy" } as const)
         : await extractPage({ url: args.url, prompt: args.prompt, userId }, PREVIEW_BUDGET_MS);
       let usedProxy = false;
-      if (!outcome.ok && (isBlockedError(outcome.error) || isProxyFirstHost(args.url))) {
+      if (!outcome.ok && (proxyFirst || isBlockedError(outcome.error))) {
         if (deadline - Date.now() < MIN_PROXY_READ_MS) {
           return fail({ code: "blocked", message: `${outcome.error}. There was no time left to try the proxy.`, retry: true });
         }
@@ -194,11 +195,16 @@ function registerTools(server: McpServer, convex: ConvexHttpClient, apiKey: stri
       }
       const dashboardUrl = `${SITE_URL}/dashboard/monitors/${monitorId}`;
 
-      const outcome = await extractPage({ url: args.url, prompt: args.prompt, name: args.name, userId }, FIRST_SCAN_TIMEOUT_MS);
+      // A failed claim only costs the proxy: the direct scan still runs.
+      const proxyUrl = await convex.mutation(api.mcp.claimFirstScanProxy, { apiKey, id: monitorId }).catch(() => null);
+      const outcome = await extractPage(
+        { url: args.url, prompt: args.prompt, name: args.name, userId, ...(proxyUrl ? { useProxy: true } : {}) },
+        FIRST_SCAN_TIMEOUT_MS
+      );
       try {
         if (!outcome.ok) {
           await convex.mutation(api.mcp.saveScanError, { apiKey, id: monitorId, error: outcome.error });
-          const { status, next } = afterFailedScan(outcome.error, args.url);
+          const { status, next } = afterFailedScan(outcome.error);
           return ok({ monitorId, dashboardUrl, status, firstScan: { error: outcome.error, next } });
         }
 
@@ -206,7 +212,7 @@ function registerTools(server: McpServer, convex: ConvexHttpClient, apiKey: stri
         if (!summary.readable) {
           const reason = summary.notices[0] ?? "Page appears inaccessible - no data could be extracted";
           await convex.mutation(api.mcp.saveScanError, { apiKey, id: monitorId, error: reason });
-          const { status, next } = afterFailedScan(reason, args.url);
+          const { status, next } = afterFailedScan(reason);
           return ok({ monitorId, dashboardUrl, status, firstScan: { ...summary, next } });
         }
 
