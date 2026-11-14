@@ -699,10 +699,10 @@ const paidTierValidator = v.union(v.literal("pro"), v.literal("max"));
  * plan are skipped so we never clobber a real subscription. A user already
  * on a higher live grant keeps that tier — this only extends grantUntil.
  */
-export const grantTrial = mutation({
-  args: { userIds: v.array(v.string()), tier: paidTierValidator, days: v.number() },
-  handler: async (ctx, args) => {
-    await requireAdmin(ctx);
+async function applyTrial(
+  ctx: MutationCtx,
+  args: { userIds: string[]; tier: "pro" | "max"; days: number }
+): Promise<{ granted: number; skippedPaying: number }> {
     if (!Number.isInteger(args.days) || args.days < 1 || args.days > 365) {
       throw new Error("Trial length must be between 1 and 365 days");
     }
@@ -747,6 +747,32 @@ export const grantTrial = mutation({
       granted++;
     }
     return { granted, skippedPaying };
+}
+
+export const grantTrial = mutation({
+  args: { userIds: v.array(v.string()), tier: paidTierValidator, days: v.number() },
+  handler: async (ctx, args) => {
+    await requireAdmin(ctx);
+    return await applyTrial(ctx, args);
+  },
+});
+
+/** grantTrial for the CLI, which has no admin session: `npx convex run --prod admin:grantTrialByEmail`. */
+export const grantTrialByEmail = internalMutation({
+  args: { emails: v.array(v.string()), tier: paidTierValidator, days: v.number() },
+  handler: async (ctx, args) => {
+    const userIds: string[] = [];
+    const notFound: string[] = [];
+    for (const email of args.emails) {
+      const user = (await ctx.runQuery(components.betterAuth.adapter.findOne, {
+        model: "user",
+        where: [{ field: "email", operator: "eq", value: email.toLowerCase() }],
+      })) as { _id: string } | null;
+      if (user) userIds.push(user._id);
+      else notFound.push(email);
+    }
+    const result = userIds.length > 0 ? await applyTrial(ctx, { ...args, userIds }) : { granted: 0, skippedPaying: 0 };
+    return { ...result, notFound };
   },
 });
 
