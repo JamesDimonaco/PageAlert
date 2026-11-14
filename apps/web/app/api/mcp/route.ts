@@ -15,7 +15,7 @@ import {
 } from "@prowl/shared";
 import { api } from "@/convex/_generated/api";
 import type { ToolError } from "@/convex/mcp";
-import { isBlockedError } from "@/convex/shared";
+import { isBlockedError, isProxyFirstHost } from "@/convex/shared";
 import { extractPage, urlRejection, type ExtractResponse } from "@/lib/scraper-server";
 import { logger } from "@/lib/server-logger";
 
@@ -125,9 +125,14 @@ function registerTools(server: McpServer, convex: ConvexHttpClient, apiKey: stri
       const rejection = await urlRejection(args.url);
       if (rejection) return fail(invalidUrl(rejection));
       const deadline = Date.now() + PREVIEW_BUDGET_MS;
-      let outcome = await extractPage({ url: args.url, prompt: args.prompt, userId }, PREVIEW_BUDGET_MS);
+      // A proxy-first site's direct read comes back empty, often without an
+      // error, so it goes straight to the proxy.
+      const proxyFirst = isProxyFirstHost(args.url);
+      let outcome = proxyFirst
+        ? ({ ok: false, error: "This site only answers through a proxy" } as const)
+        : await extractPage({ url: args.url, prompt: args.prompt, userId }, PREVIEW_BUDGET_MS);
       let usedProxy = false;
-      if (!outcome.ok && isBlockedError(outcome.error)) {
+      if (!outcome.ok && (proxyFirst || isBlockedError(outcome.error))) {
         if (deadline - Date.now() < MIN_PROXY_READ_MS) {
           return fail({ code: "blocked", message: `${outcome.error}. There was no time left to try the proxy.`, retry: true });
         }
@@ -190,7 +195,12 @@ function registerTools(server: McpServer, convex: ConvexHttpClient, apiKey: stri
       }
       const dashboardUrl = `${SITE_URL}/dashboard/monitors/${monitorId}`;
 
-      const outcome = await extractPage({ url: args.url, prompt: args.prompt, name: args.name, userId }, FIRST_SCAN_TIMEOUT_MS);
+      // A failed claim only costs the proxy: the direct scan still runs.
+      const proxyUrl = await convex.mutation(api.mcp.claimFirstScanProxy, { apiKey, id: monitorId }).catch(() => null);
+      const outcome = await extractPage(
+        { url: args.url, prompt: args.prompt, name: args.name, userId, ...(proxyUrl ? { useProxy: true } : {}) },
+        FIRST_SCAN_TIMEOUT_MS
+      );
       try {
         if (!outcome.ok) {
           await convex.mutation(api.mcp.saveScanError, { apiKey, id: monitorId, error: outcome.error });

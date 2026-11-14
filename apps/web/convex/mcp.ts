@@ -17,6 +17,7 @@ import {
 import { reserveFallback, scraperDown } from "./admin";
 import { requireKeyOwner } from "./apiKeys";
 import {
+  claimFirstScanProxyForUser,
   createMonitorForUser,
   removeMonitorsForUser,
   saveScanErrorForUser,
@@ -458,6 +459,20 @@ export const saveScanResult = mutation({
     return wantsProductAlerts(monitor.alertOn) && !isProductMonitor({ ...monitor, schema: args.schema })
       ? { note: NOT_A_PRODUCT_NOTE }
       : {};
+  },
+});
+
+/**
+ * The dashboard's knownHost claim: a site known to need the proxy (Costco, or
+ * one other live monitors read through it) skips a direct first scan that
+ * would only come back empty or blocked.
+ */
+export const claimFirstScanProxy = mutation({
+  args: { apiKey: v.string(), id: v.id("monitors") },
+  handler: async (ctx, { apiKey, id }) => {
+    const { userId } = await requireKeyOwner(ctx, apiKey);
+    await ownedMonitor(ctx, userId, id);
+    return await claimFirstScanProxyForUser(ctx, userId, { id, knownHost: true }).catch(asToolError);
   },
 });
 

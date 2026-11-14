@@ -509,16 +509,25 @@ export const claimFirstScanProxy = mutation({
     const userId = await getAuthUserId(ctx);
     if (await isBanned(ctx, userId)) throw new Error("This account has been suspended.");
     await requireLiveAccount(ctx, userId);
-    const monitor = await ctx.db.get(id);
-    if (!monitor || monitor.userId !== userId) throw new Error("Monitor not found");
-    if (monitor.status !== "scanning" || monitor.checkCount || monitor.firstScanProxyAt) return null;
-    if (knownHost && !(await hostNeedsProxy(ctx, monitor))) return null;
-    if (await scraperDown(ctx)) return null;
-    if (!(await reserveFallback(ctx, false))) return null;
-    await ctx.db.patch(id, { firstScanProxyAt: Date.now() });
-    return monitor.url;
+    return await claimFirstScanProxyForUser(ctx, userId, { id, knownHost });
   },
 });
+
+/** claimFirstScanProxy after auth, shared with the MCP route. */
+export async function claimFirstScanProxyForUser(
+  ctx: MutationCtx,
+  userId: string,
+  { id, knownHost }: { id: Id<"monitors">; knownHost?: boolean }
+): Promise<string | null> {
+  const monitor = await ctx.db.get(id);
+  if (!monitor || monitor.userId !== userId) throw new Error("Monitor not found");
+  if (monitor.status !== "scanning" || monitor.checkCount || monitor.firstScanProxyAt) return null;
+  if (knownHost && !(await hostNeedsProxy(ctx, monitor))) return null;
+  if (await scraperDown(ctx)) return null;
+  if (!(await reserveFallback(ctx, false))) return null;
+  await ctx.db.patch(id, { firstScanProxyAt: Date.now() });
+  return monitor.url;
+}
 
 /**
  * Whether another monitor on this site needs the proxy and is still being

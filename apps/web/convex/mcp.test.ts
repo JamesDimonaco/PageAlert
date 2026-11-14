@@ -874,3 +874,16 @@ test("a search blocked for the day says retry, not invalid_url", async () => {
   });
   vi.unstubAllEnvs();
 });
+
+// Costco answers a direct read with an empty page. Over MCP, as on the
+// dashboard, a known proxy site's first scan goes straight to the proxy.
+test("a first scan over MCP claims the proxy only for a site known to need it", async () => {
+  const t = setup();
+  const { key } = await seedUser(t, "a@example.com");
+  const costco = await t.mutation(api.mcp.createMonitor, { apiKey: key, ...MONITOR, url: "https://www.costco.com/bose.html" });
+  const plain = await t.mutation(api.mcp.createMonitor, { apiKey: key, ...MONITOR });
+  expect(await t.mutation(api.mcp.claimFirstScanProxy, { apiKey: key, id: costco })).toBe("https://www.costco.com/bose.html");
+  // One claim per monitor ever.
+  expect(await t.mutation(api.mcp.claimFirstScanProxy, { apiKey: key, id: costco })).toBeNull();
+  expect(await t.mutation(api.mcp.claimFirstScanProxy, { apiKey: key, id: plain })).toBeNull();
+});
