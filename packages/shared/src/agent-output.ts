@@ -1,3 +1,5 @@
+import { toMinorUnits } from "./money";
+
 /**
  * What the MCP tools hand back to an agent. Every field below came from a page
  * someone else controls, so only short structured fields pass, never page text
@@ -19,7 +21,11 @@ const UNREADABLE_CONFIDENCE = 10;
 
 export type AgentItem = {
   title?: string;
-  price?: string | number;
+  /** Minor units of `currency`: 30935 for NZ$309.35. */
+  price?: number;
+  currency?: string;
+  /** The price as the page wrote it, when its currency is not known. */
+  priceText?: string;
   url?: string;
   status?: string;
   /** The stock read. Null means the page did not show stock. */
@@ -45,8 +51,14 @@ export function toAgentItem(item: unknown): AgentItem | null {
   const raw = item as Record<string, unknown>;
   const out: AgentItem = {};
   if (typeof raw.title === "string") out.title = cap(raw.title, MAX_FIELD_CHARS);
-  if (typeof raw.price === "number") out.price = raw.price;
-  else if (typeof raw.price === "string") out.price = cap(raw.price, MAX_FIELD_CHARS);
+  const currency = typeof raw.currency === "string" ? raw.currency.toUpperCase() : null;
+  const minor = typeof raw.price === "number" && currency ? toMinorUnits(raw.price, currency) : null;
+  if (minor !== null) {
+    out.price = minor;
+    out.currency = currency!;
+  } else if (typeof raw.price === "number" || typeof raw.price === "string") {
+    out.priceText = cap(String(raw.price), MAX_FIELD_CHARS);
+  }
   const url = httpUrl(raw.url);
   if (url) out.url = url;
   const status = typeof raw.status === "string" ? raw.status : raw.availability;

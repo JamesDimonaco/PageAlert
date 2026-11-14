@@ -401,18 +401,23 @@ export const deleteMonitor = mutation({
   },
 });
 
+/** A search result as an agent sees it: price and stock named as read from search. */
+type SearchedListing = Omit<ProductListing, "price" | "inStock"> & { searchPrice: number | null; searchInStock: boolean | null };
+
 /**
  * Search shops for a product, as the web app's "Find a product" does: the
  * same daily allowance, and a failed search is given back.
  */
 export const findProduct = action({
   args: { apiKey: v.string(), query: v.string(), region: v.string() },
-  handler: async (ctx, { apiKey, ...args }): Promise<ProductListing[]> => {
+  handler: async (ctx, { apiKey, ...args }): Promise<SearchedListing[]> => {
     const owner = await ctx.runMutation(api.apiKeys.verify, { key: apiKey });
     if (!owner) throw new ConvexError("Invalid API key");
     // The region is not saved as the user's default: that is what they last picked by hand.
     const { listings } = await findListings(ctx, owner.userId, { ...args, saveRegion: false }).catch(asToolError);
-    return listings;
+    // Read from search results, not the page, and sometimes from another
+    // listing on it. The names say so, so an agent checks before it trusts them.
+    return listings.map(({ price, inStock, ...listing }: ProductListing) => ({ ...listing, searchPrice: price, searchInStock: inStock }));
   },
 });
 

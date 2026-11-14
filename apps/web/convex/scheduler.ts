@@ -143,6 +143,9 @@ function truncateForPush(body: string): string {
   return body.length <= MAX_PUSH_BODY ? body : `${body.slice(0, MAX_PUSH_BODY - 1)}…`;
 }
 
+/** After a product's first full read, how soon its first price and stock read runs. */
+const FIRST_PRODUCT_READ_DELAY_MS = 60_000;
+
 // How long a monitor's schema is trusted before the AI re-reads the page to
 // catch its structure drifting away from what the schema was built from
 const AI_REEXTRACT_AFTER_MS = 14 * 24 * 60 * 60 * 1000;
@@ -384,6 +387,12 @@ export const recordCheckResult = internalMutation({
 
     if (args.schema) {
       updates.schema = args.schema;
+    }
+
+    // A full read records no price or stock: only a quick check's product read
+    // does. With none yet, that read comes next, not a whole interval later.
+    if (args.aiExtracted && monitor.lastSeen === undefined && wantsProductRead({ ...monitor, schema: args.schema ?? monitor.schema })) {
+      updates.nextCheckAt = now + FIRST_PRODUCT_READ_DELAY_MS;
     }
 
     if (args.contentFingerprint) {

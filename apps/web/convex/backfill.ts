@@ -79,3 +79,54 @@ export const markReReadDue = internalMutation({
     return { dryRun, marked: live.length };
   },
 });
+
+/**
+ * One-off: make the given monitors due now. A dry run unless dryRun is false.
+ * For product listings whose first price and stock read was a whole interval away.
+ */
+export const checkNow = internalMutation({
+  args: { monitorIds: v.array(v.id("monitors")), dryRun: v.optional(v.boolean()) },
+  handler: async (ctx, { monitorIds, dryRun = true }) => {
+    const monitors = (await Promise.all(monitorIds.map((id) => ctx.db.get(id)))).filter((m) => m !== null);
+    if (!dryRun) for (const m of monitors) await ctx.db.patch(m._id, { nextCheckAt: Date.now() });
+    return { dryRun, marked: monitors.length };
+  },
+});
+
+/**
+ * One-off: remove matches the AI would now reject from a monitor's history,
+ * so get_matches and get_recent_matches stop returning them. Matched by
+ * matchKey. A dry run unless dryRun is false. Reads at most 500 rows, newest
+ * first, which covers the history the match tools read.
+ */
+export const dropMatches = internalMutation({
+  args: { monitorId: v.id("monitors"), keys: v.array(v.string()), dryRun: v.optional(v.boolean()) },
+  handler: async (ctx, { monitorId, keys, dryRun = true }) => {
+    const drop = new Set(keys);
+    const rows = (
+      await ctx.db
+        .query("scrapeResults")
+        .withIndex("by_monitorId_scrapedAt", (q) => q.eq("monitorId", monitorId))
+        .order("desc")
+        .take(500)
+    ).filter((r) => r.matches.some((m) => drop.has(matchKey(m))));
+    if (!dryRun) {
+      for (const row of rows) {
+        const matches = row.matches.filter((m) => !drop.has(matchKey(m)));
+        await ctx.db.patch(row._id, {
+          matches,
+          hasNewMatches: matches.length > 0 && row.hasNewMatches,
+          ...(row.newMatchKeys ? { newMatchKeys: row.newMatchKeys.filter((k) => !drop.has(k)) } : {}),
+        });
+      }
+      const monitor = await ctx.db.get(monitorId);
+      if (monitor) {
+        await ctx.db.patch(monitorId, {
+          ...(monitor.matchedKeys ? { matchedKeys: monitor.matchedKeys.filter((k) => !drop.has(k)) } : {}),
+          ...(monitor.passedKeys ? { passedKeys: monitor.passedKeys.filter((k) => !drop.has(k)) } : {}),
+        });
+      }
+    }
+    return { dryRun, rows: rows.length };
+  },
+});

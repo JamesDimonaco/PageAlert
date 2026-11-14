@@ -1156,3 +1156,26 @@ test("an entry in the sold-out queue is not judged again as repriced", async () 
   expect(judged[0]).toHaveLength(5);
   expect((await t.run((ctx) => ctx.db.get(id)))?.lastMatchAt).toBeUndefined();
 });
+
+// Prod, 14/11/2026: a product's first read is a full read, which records no
+// price or stock. Only a quick check's product read does, and on a 24h
+// interval that was a day away, so get_product showed nulls all day.
+test("a product monitor's first full read brings its first price and stock read forward", async () => {
+  const { t, id } = await seedProductMonitor(undefined);
+  await t.run((ctx) => ctx.db.patch(id, { checkInterval: "24h" }));
+  const now = Date.now();
+  await t.mutation(internal.scheduler.recordCheckResult, {
+    monitorId: id, hasNewMatches: false, matchCount: 0, totalItems: 1, matches: [], aiExtracted: true, trackMatchKeys: true,
+    schema: { items: [{ title: "Sony WH-1000XM5" }] },
+  });
+  const read = await t.run((ctx) => ctx.db.get(id));
+  expect(read?.nextCheckAt).toBeGreaterThanOrEqual(now + 60_000);
+  expect(read?.nextCheckAt).toBeLessThan(now + 120_000);
+
+  // Once it has a reading, the interval applies as usual.
+  await t.run((ctx) => ctx.db.patch(id, { lastSeen: { inStock: true } }));
+  await t.mutation(internal.scheduler.recordCheckResult, {
+    monitorId: id, hasNewMatches: false, matchCount: 0, totalItems: 1, matches: [], aiExtracted: true, trackMatchKeys: true,
+  });
+  expect((await t.run((ctx) => ctx.db.get(id)))?.nextCheckAt).toBeGreaterThan(now + 23 * 3_600_000);
+});
