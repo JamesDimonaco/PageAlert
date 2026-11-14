@@ -144,7 +144,8 @@ export function Navbar() {
               <DropdownMenuSeparator />
               <DropdownMenuGroup>
                 <DropdownMenuLabel>Theme</DropdownMenuLabel>
-                <DropdownMenuRadioGroup value={theme} onValueChange={setTheme}>
+                {/* theme is undefined until next-themes mounts; "system" is its default. */}
+                <DropdownMenuRadioGroup value={theme ?? "system"} onValueChange={setTheme}>
                   <DropdownMenuRadioItem value="system">
                     <Monitor className="mr-2 h-4 w-4" />
                     System

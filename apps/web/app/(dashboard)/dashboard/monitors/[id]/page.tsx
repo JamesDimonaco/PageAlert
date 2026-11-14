@@ -291,7 +291,7 @@ export default function MonitorDetailPage({
               <button
                 type="button"
                 onClick={openSettings}
-                className="inline-flex items-center gap-1 text-warning hover:text-warning/80"
+                className="inline-flex items-center gap-1 text-warning hover:underline"
               >
                 <BellOff className="h-3 w-3" />
                 no alerts

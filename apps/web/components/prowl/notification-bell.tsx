@@ -34,11 +34,10 @@ export function NotificationBell() {
           <p className="text-sm font-semibold">Notifications</p>
           {(unreadCount ?? 0) > 0 && (
             <DropdownMenuItem
-              closeOnClick={false}
               onClick={() => markAllRead()}
               className="text-xs text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1"
             >
-              <Check className="h-3 w-3" />
+              <Check className="size-3" />
               Mark all read
             </DropdownMenuItem>
           )}
