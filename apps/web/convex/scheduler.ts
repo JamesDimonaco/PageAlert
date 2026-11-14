@@ -410,11 +410,14 @@ export const recordCheckResult = internalMutation({
       const currentKeys = (args.matches as Record<string, unknown>[]).map(matchKey);
       newKeys = newMatchKeys(monitor.matchedKeys, currentKeys);
       // A product page with a stock alert reports its restock through it.
-      // Announced as a match too, one restock would alert twice, whichever
-      // read saw it first. Price alerts alone report no restock, so then the
-      // match is kept: a price drop may alert twice, but no restock is lost.
+      // Under "in stock only" the restock is also a new match, so announced
+      // as one it would alert twice, whichever read saw it first. Otherwise
+      // a new product match is a price change, and price alerts alone report
+      // no restock, so the match is kept: a price drop may alert twice, but
+      // no alert is lost.
       const page = { ...monitor, schema: args.schema ?? monitor.schema };
-      const stockAlerted = wantsProductRead(page) && monitor.alertOn?.backInStock === true;
+      const stockAlerted =
+        wantsProductRead(page) && monitor.alertOn?.backInStock === true && page.schema?.matchConditions?.inStockOnly === true;
       const product = stockAlerted ? productItem(page.schema, monitor.url) : null;
       if (product) newKeys = newKeys.filter((k) => k !== matchKey(product as Record<string, unknown>));
       updates.matchedKeys = [...new Set(currentKeys.filter(Boolean))];
