@@ -207,7 +207,8 @@ async function datedMatches(ctx: QueryCtx, monitorId: Id<"monitors">): Promise<(
     for (const raw of result.matches) {
       const item = toAgentItem(raw);
       if (!item) continue;
-      const key = itemIdentity(item);
+      // From the raw item: a price given as text would key on title alone.
+      const key = itemIdentity(raw as { url?: unknown; title?: unknown; price?: unknown });
       const seen = byIdentity.get(key);
       if (seen) seen.matchedAt = result.scrapedAt;
       else byIdentity.set(key, { ...item, matchedAt: result.scrapedAt });
@@ -236,7 +237,8 @@ async function alertedSince(ctx: QueryCtx, monitorId: Id<"monitors">, from: numb
       if (fresh && !fresh.has(matchKey(raw))) continue;
       const item = toAgentItem(raw);
       if (!item) continue;
-      const key = itemIdentity(item);
+      // From the raw item: a price given as text would key on title alone.
+      const key = itemIdentity(raw as { url?: unknown; title?: unknown; price?: unknown });
       // Newest row first, so the first sighting is the latest alert.
       if (!byIdentity.has(key)) byIdentity.set(key, { ...item, matchedAt: result.scrapedAt });
     }

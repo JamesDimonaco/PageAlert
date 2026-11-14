@@ -1,4 +1,4 @@
-import { toMinorUnits } from "./money";
+import { currencyExponent, toMinorUnits } from "./money";
 
 /**
  * What the MCP tools hand back to an agent. Every field below came from a page
@@ -24,7 +24,7 @@ export type AgentItem = {
   /** Minor units of `currency`: 30935 for NZ$309.35. */
   price?: number;
   currency?: string;
-  /** The price as the page wrote it, when its currency is not known. */
+  /** The price as the page wrote it, when it could not be read into minor units. */
   priceText?: string;
   url?: string;
   status?: string;
@@ -46,18 +46,32 @@ function httpUrl(value: unknown): string | undefined {
   }
 }
 
+/** An ISO 4217 code we know the minor units of, upper-cased, or null. */
+function knownCurrency(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const code = value.toUpperCase();
+  return currencyExponent(code) === null ? null : code;
+}
+
 export function toAgentItem(item: unknown): AgentItem | null {
   if (typeof item !== "object" || item === null || Array.isArray(item)) return null;
   const raw = item as Record<string, unknown>;
   const out: AgentItem = {};
   if (typeof raw.title === "string") out.title = cap(raw.title, MAX_FIELD_CHARS);
-  const currency = typeof raw.currency === "string" ? raw.currency.toUpperCase() : null;
+  // A quick check's stock read has the price in minor units already.
+  const stock = typeof raw.stock === "object" && raw.stock !== null ? (raw.stock as Record<string, unknown>) : null;
+  const stockCurrency = knownCurrency(stock?.currency);
+  const currency = knownCurrency(raw.currency);
   const minor = typeof raw.price === "number" && currency ? toMinorUnits(raw.price, currency) : null;
-  if (minor !== null) {
+  if (typeof stock?.price === "number" && stockCurrency) {
+    out.price = stock.price;
+    out.currency = stockCurrency;
+  } else if (minor !== null) {
     out.price = minor;
     out.currency = currency!;
   } else if (typeof raw.price === "number" || typeof raw.price === "string") {
     out.priceText = cap(String(raw.price), MAX_FIELD_CHARS);
+    if (currency) out.currency = currency;
   }
   const url = httpUrl(raw.url);
   if (url) out.url = url;

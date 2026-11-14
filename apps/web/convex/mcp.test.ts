@@ -1115,3 +1115,31 @@ test("find_product names its price and stock as read from search", async () => {
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
 });
+
+// A page with no item links and no currency lists two huts by title. Keyed on
+// title and price, they stay two matches.
+test("get_matches keeps apart same-titled items whose price is text", async () => {
+  const t = setup();
+  const { key } = await seedUser(t, "a@example.com");
+  const id = await t.mutation(api.mcp.createMonitor, { apiKey: key, ...MONITOR });
+  const huts = [{ title: "Milford Track", price: 92 }, { title: "Milford Track", price: 130 }];
+  await t.mutation(api.mcp.saveScanResult, { apiKey: key, id, schema: { items: huts }, matches: huts });
+  expect((await t.query(api.mcp.getMatches, { apiKey: key, monitorId: id })).map((m) => m.priceText)).toEqual(["92", "130"]);
+});
+
+// Prod, 14/11/2026: a product watched from its first scan had no price or
+// stock until a whole interval later.
+test("a first scan of a product page with stock or price alerts brings its first product read forward", async () => {
+  const t = setup();
+  const { key } = await seedUser(t, "a@example.com");
+  const id = await t.mutation(api.mcp.createMonitor, {
+    apiKey: key, url: "https://shop.test/xm5", prompt: "in stock", name: "XM5", checkInterval: "24h", alertOn: { backInStock: true },
+  });
+  await t.mutation(api.mcp.saveScanResult, { apiKey: key, id, schema: { items: [{ title: "Sony WH-1000XM5" }] }, matches: [] });
+  expect((await t.run((ctx) => ctx.db.get(id)))?.nextCheckAt).toBe(NOW + 60_000);
+
+  // A listing gets no product read, so it keeps its interval.
+  const listing = await t.mutation(api.mcp.createMonitor, { apiKey: key, ...MONITOR, checkInterval: "24h", alertOn: { backInStock: true } });
+  await t.mutation(api.mcp.saveScanResult, { apiKey: key, id: listing, schema: { items: [{ title: "a" }, { title: "b" }] }, matches: [] });
+  expect((await t.run((ctx) => ctx.db.get(listing)))?.nextCheckAt).toBeGreaterThan(NOW + 60_000);
+});

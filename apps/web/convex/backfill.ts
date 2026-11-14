@@ -81,13 +81,16 @@ export const markReReadDue = internalMutation({
 });
 
 /**
- * One-off: make the given monitors due now. A dry run unless dryRun is false.
- * For product listings whose first price and stock read was a whole interval away.
+ * One-off: make the given live monitors due now. A dry run unless dryRun is
+ * false. For product listings, which markReReadDue leaves out, whose first
+ * price and stock read was a whole interval away.
  */
 export const checkNow = internalMutation({
   args: { monitorIds: v.array(v.id("monitors")), dryRun: v.optional(v.boolean()) },
   handler: async (ctx, { monitorIds, dryRun = true }) => {
-    const monitors = (await Promise.all(monitorIds.map((id) => ctx.db.get(id)))).filter((m) => m !== null);
+    const monitors = (await Promise.all(monitorIds.map((id) => ctx.db.get(id))))
+      .filter((m) => m !== null)
+      .filter((m) => LIVE.has(m.status));
     if (!dryRun) for (const m of monitors) await ctx.db.patch(m._id, { nextCheckAt: Date.now() });
     return { dryRun, marked: monitors.length };
   },

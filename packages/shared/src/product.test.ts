@@ -122,7 +122,6 @@ describe("isArticlePage", () => {
       "https://www.box.co.uk/blog/steam-machine-release-date",
       "https://www.currys.co.uk/techtalk/news/1",
       "https://shop.test/reviews/sony-xm5",
-      "https://shop.test/en/guides/best-gpus",
       "https://shop.test/articles/x",
     ]) {
       expect(isArticlePage(url), url).toBe(true);
@@ -130,7 +129,15 @@ describe("isArticlePage", () => {
   });
 
   test("leaves product pages alone, including ones whose slug holds such a word", () => {
-    for (const url of ["https://www.pbtech.co.nz/product/VGA1/x", "https://shop.test/products/news-print-paper", "https://shop.test/p/review-kit", "nope"]) {
+    for (const url of [
+      "https://www.pbtech.co.nz/product/VGA1/x",
+      "https://shop.test/products/news-print-paper",
+      "https://shop.test/p/review-kit",
+      // Shops that sell magazines and printed guides file them so.
+      "https://shop.test/magazine/issue-12",
+      "https://shop.test/guides/lonely-planet-nz",
+      "nope",
+    ]) {
       expect(isArticlePage(url), url).toBe(false);
     }
   });

@@ -122,7 +122,7 @@ function registerTools(server: McpServer, convex: ConvexHttpClient, apiKey: stri
         "Read a page once and show what PageAlert would match on it for this prompt. Saves nothing. " +
         "Use it to check a page is readable and the prompt picks out the right items before creating a monitor. " +
         "product is the page's own product on a product page, else null. Prices are in minor units of currency; " +
-        "priceText is a price whose currency is not known. " +
+        "priceText is a price as the page wrote it, when it could not be read. " +
         "If the site blocks the read, it tries once through a proxy, up to 5 times a day per user, " +
         "while the service's hourly proxy allowance lasts.",
       inputSchema: z.object({ url, prompt }),
@@ -271,7 +271,7 @@ function registerTools(server: McpServer, convex: ConvexHttpClient, apiKey: stri
       title: "Get matches",
       description:
         "The most recent items that matched a monitor's prompt, newest first, with when each matched. " +
-        "Prices are in minor units of currency; priceText is a price whose currency is not known.",
+        "Prices are in minor units of currency; priceText is a price as the page wrote it, when it could not be read.",
       inputSchema: z.object({
         monitorId,
         limit: z
@@ -358,7 +358,7 @@ function registerTools(server: McpServer, convex: ConvexHttpClient, apiKey: stri
       title: "Find a product",
       description:
         "Search shops in one country for a product by name. Returns up to 8 shop pages, each labelled same, " +
-        "similar or accessory, with price in minor units and stock where known. Counts against the user's " +
+        "similar or accessory. Counts against the user's " +
         "daily searches, as in the web app; a search that fails or finds nothing is not counted. " +
         "searchPrice (minor units) and searchInStock come from search results, not the page, and can be another " +
         "listing's: check with preview_page before relying on them. Price comparison sites and articles are left out. " +

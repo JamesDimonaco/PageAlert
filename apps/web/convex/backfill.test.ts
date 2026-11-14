@@ -193,6 +193,10 @@ test("checkNow makes given monitors due now, and is a dry run unless told otherw
   expect((await t.run((ctx) => ctx.db.get(id)))?.nextCheckAt).toBe(NOW + 3_600_000);
   await t.mutation(internal.backfill.checkNow, { monitorIds: [id], dryRun: false });
   expect((await t.run((ctx) => ctx.db.get(id)))?.nextCheckAt).toBeLessThanOrEqual(Date.now());
+
+  // The scheduler never picks up a paused monitor, so it is not counted.
+  const paused = await insert(t, "paused", { status: "paused" });
+  expect(await t.mutation(internal.backfill.checkNow, { monitorIds: [paused] })).toEqual({ dryRun: true, marked: 0 });
 });
 
 // Prod, 12/11/2026: unscored first scans matched a sold-out RAM kit and a

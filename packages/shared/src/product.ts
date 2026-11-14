@@ -39,9 +39,12 @@ export function isComparisonSite(url: string): boolean {
 }
 
 /** Path segments of editorial pages, which shops publish beside their products. */
-const ARTICLE_SEGMENT = /^(blog|blogs|news|article|articles|review|reviews|guide|guides|magazine)$/i;
+const ARTICLE_SEGMENT = /^(blog|blogs|news|article|articles|review|reviews)$/i;
 
-/** A blog post, news story, review or guide: a page about a product, not one selling it. */
+/**
+ * A blog post, news story or review: a page about a product, not one selling
+ * it. Guides and magazines are left out: shops sell both under those paths.
+ */
 export function isArticlePage(url: string): boolean {
   try {
     return new URL(url).pathname.split("/").some((segment) => ARTICLE_SEGMENT.test(segment));

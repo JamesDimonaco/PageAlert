@@ -1,7 +1,18 @@
 import { ConvexError } from "convex/values";
-import { applyMatchConditions, canonicalUrl, DAY_MS, type ExtractedItem, type MatchConditions } from "@prowl/shared";
+import { applyMatchConditions, canonicalUrl, DAY_MS, isProductMonitor, type ExtractedItem, type MatchConditions } from "@prowl/shared";
+import type { Doc } from "./_generated/dataModel";
 
 export { MATCH_SCORE_THRESHOLD, alertsOnScore, matchConfidence, MATCH_CONFIDENCE_LABEL, canonicalUrl } from "@prowl/shared";
+
+/** A product monitor whose owner wants a stock or price alert. */
+export function wantsProductRead(monitor: Pick<Doc<"monitors">, "alertOn" | "schema" | "groupId" | "url">): boolean {
+  const on = monitor.alertOn;
+  const wanted = on?.backInStock === true || on?.priceDrop === true || on?.priceBelow !== undefined;
+  return wanted && isProductMonitor(monitor);
+}
+
+/** After a product's first full read, how soon its first price and stock read runs. */
+export const FIRST_PRODUCT_READ_DELAY_MS = 60_000;
 
 /** Longest message the feedback dialog accepts. */
 export const FEEDBACK_MAX = 2000;

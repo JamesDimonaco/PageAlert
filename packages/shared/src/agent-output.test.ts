@@ -71,6 +71,16 @@ describe("toAgentItem", () => {
     expect(toAgentItem({ price: 1500, currency: "JPY" })).toEqual({ price: 1500, currency: "JPY" });
   });
 
+  // A quick check's match holds the page's raw price, and its stock read holds
+  // the same price in minor units with a currency. The read is the one to give.
+  it("gives a stock read's price, which is already in minor units", () => {
+    expect(toAgentItem({ price: 309.35, stock: { inStock: true, price: 30935, currency: "NZD" } })).toEqual({ price: 30935, currency: "NZD" });
+  });
+
+  it("keeps a known currency with a price written as text", () => {
+    expect(toAgentItem({ price: "1,299.99", currency: "GBP" })).toEqual({ priceText: "1,299.99", currency: "GBP" });
+  });
+
   // The extractor leaves currency out on some pages. A guessed currency would
   // be a wrong number, so the price goes out as the page wrote it.
   it("gives a price with no known currency as text", () => {

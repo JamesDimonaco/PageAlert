@@ -27,6 +27,8 @@ import {
   alertsOnScore,
   canonicalUrl,
   PROXY_REPROBE_EVERY,
+  wantsProductRead,
+  FIRST_PRODUCT_READ_DELAY_MS,
 } from "./shared";
 
 /** The fields both check paths agree on. Everything item-shaped in here satisfies it. */
@@ -115,13 +117,6 @@ const PRODUCT_SCAN_WATCHED_MS = 15 * 60 * 1000;
 /** Reads that may try to confirm a held price before it is dropped. Each one is paid for. */
 const MAX_CONFIRM_ATTEMPTS = 3;
 
-/** A product monitor whose owner wants a stock or price alert. */
-function wantsProductRead(monitor: Pick<Doc<"monitors">, "alertOn" | "schema" | "groupId" | "url">): boolean {
-  const on = monitor.alertOn;
-  const wanted = on?.backInStock === true || on?.priceDrop === true || on?.priceBelow !== undefined;
-  return wanted && isProductMonitor(monitor);
-}
-
 /** The scraper rejects longer titles with a 400, which would fail every check until the monitor parks. */
 const MAX_PRODUCT_TITLE = 500;
 
@@ -142,9 +137,6 @@ const MAX_PUSH_BODY = 500;
 function truncateForPush(body: string): string {
   return body.length <= MAX_PUSH_BODY ? body : `${body.slice(0, MAX_PUSH_BODY - 1)}…`;
 }
-
-/** After a product's first full read, how soon its first price and stock read runs. */
-const FIRST_PRODUCT_READ_DELAY_MS = 60_000;
 
 // How long a monitor's schema is trusted before the AI re-reads the page to
 // catch its structure drifting away from what the schema was built from
@@ -391,6 +383,8 @@ export const recordCheckResult = internalMutation({
 
     // A full read records no price or stock: only a quick check's product read
     // does. With none yet, that read comes next, not a whole interval later.
+    // On a proxy-first site that is one proxy fetch earlier than the floor
+    // allows, once per product.
     if (args.aiExtracted && monitor.lastSeen === undefined && wantsProductRead({ ...monitor, schema: args.schema ?? monitor.schema })) {
       updates.nextCheckAt = now + FIRST_PRODUCT_READ_DELAY_MS;
     }
