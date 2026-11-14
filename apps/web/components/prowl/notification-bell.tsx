@@ -33,13 +33,14 @@ export function NotificationBell() {
         <div className="flex items-center justify-between px-3 py-2 border-b border-border/30">
           <p className="text-sm font-semibold">Notifications</p>
           {(unreadCount ?? 0) > 0 && (
-            <button
+            <DropdownMenuItem
+              closeOnClick={false}
               onClick={() => markAllRead()}
               className="text-xs text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1"
             >
               <Check className="h-3 w-3" />
               Mark all read
-            </button>
+            </DropdownMenuItem>
           )}
         </div>
         <div className="max-h-80 overflow-y-auto">
@@ -72,7 +73,7 @@ export function NotificationBell() {
                   <div className={!notif.read ? "" : "ml-4"}>
                     <p className="text-sm font-medium leading-snug">{notif.title}</p>
                     <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{notif.message}</p>
-                    <p className="text-[10px] text-muted-foreground/60 mt-1">
+                    <p className="text-[10px] text-muted-foreground mt-1">
                       {formatDistanceToNow(notif.sentAt, { addSuffix: true })}
                     </p>
                   </div>

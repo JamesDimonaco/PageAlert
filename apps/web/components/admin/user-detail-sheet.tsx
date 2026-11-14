@@ -199,7 +199,7 @@ function Empty({ children }: { children: React.ReactNode }) {
 function StatusBadge({ status }: { status: string }) {
   const colour =
     status === "active" || status === "success"
-      ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+      ? "bg-emerald-500/10 text-success border-emerald-500/20"
       : status === "error" || status === "timeout"
         ? "bg-destructive/10 text-destructive border-destructive/20"
         : "bg-muted text-muted-foreground border-border";

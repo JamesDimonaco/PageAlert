@@ -144,7 +144,7 @@ export function AdminEmailComposer({
                       {formatDate(h.sentAt)} · {h.recipientCount} recipient{h.recipientCount === 1 ? "" : "s"}
                     </p>
                     {h.failedRecipients.length > 0 && (
-                      <p className="text-xs text-red-400 mt-0.5">
+                      <p className="text-xs text-destructive mt-0.5">
                         {h.failedRecipients.length} failed: {h.failedRecipients.slice(0, 5).join(", ")}
                         {h.failedRecipients.length > 5 ? "…" : ""}
                       </p>

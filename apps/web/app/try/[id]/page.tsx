@@ -112,9 +112,9 @@ export default function TryResultPage({
           <Card className="ring-red-500/30 bg-red-500/5">
             <CardContent>
               <div className="flex items-start gap-3">
-                <AlertTriangle className="h-5 w-5 text-red-400 shrink-0 mt-0.5" />
+                <AlertTriangle className="h-5 w-5 text-destructive shrink-0 mt-0.5" />
                 <div>
-                  <p className="text-sm font-semibold text-red-400">Scan failed</p>
+                  <p className="text-sm font-semibold text-destructive">Scan failed</p>
                   <p className="text-sm text-muted-foreground mt-1">{monitor.lastError ?? "Something went wrong"}</p>
                   <Link href="/" className="text-xs text-primary underline underline-offset-2 mt-2 inline-block">Try a different URL</Link>
                 </div>
@@ -157,7 +157,7 @@ export default function TryResultPage({
                 <Card>
                   <CardContent>
                     <p className="text-xs text-muted-foreground mb-1">AI confidence</p>
-                    <p className={`text-2xl font-bold ${confidence >= 80 ? "text-emerald-400" : confidence >= 50 ? "text-amber-400" : "text-red-400"}`}>
+                    <p className={`text-2xl font-bold ${confidence >= 80 ? "text-success" : confidence >= 50 ? "text-warning" : "text-destructive"}`}>
                       {confidence}%
                     </p>
                   </CardContent>
@@ -168,7 +168,7 @@ export default function TryResultPage({
             {/* Items list */}
             <div>
               <h2 className="section-title mb-3 flex items-center gap-2">
-                <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+                <CheckCircle2 className="h-4 w-4 text-success" />
                 Extracted Items
                 <Badge variant="outline" className="text-xs">{items.length}</Badge>
               </h2>
@@ -262,9 +262,9 @@ export default function TryResultPage({
         {hasClaimed && (
           <Card className="ring-emerald-500/30 bg-emerald-500/5">
             <CardContent className="flex items-center gap-3">
-              <CheckCircle2 className="h-5 w-5 text-emerald-400" />
+              <CheckCircle2 className="h-5 w-5 text-success" />
               <div>
-                <p className="text-sm font-semibold text-emerald-400">You&apos;ll be notified!</p>
+                <p className="text-sm font-semibold text-success">You&apos;ll be notified!</p>
                 <p className="text-xs text-muted-foreground">We&apos;re checking this page every 24 hours. Create an account to manage your monitor and check faster.</p>
               </div>
             </CardContent>

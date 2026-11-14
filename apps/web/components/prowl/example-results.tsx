@@ -24,7 +24,7 @@ export function ExampleResults() {
             <div>
               <div className="flex items-center gap-2 mb-1">
                 <h3 className="font-bold">MacBook Pro Refurbished</h3>
-                <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-xs">{EXAMPLE_MATCHES} matches</Badge>
+                <Badge className="bg-emerald-500/10 text-success border-emerald-500/20 text-xs">{EXAMPLE_MATCHES} matches</Badge>
               </div>
               <p className="text-xs text-muted-foreground">
                 &ldquo;MacBook Pro under $1500&rdquo;
@@ -55,7 +55,7 @@ export function ExampleResults() {
           </div>
           <div className="py-3">
             <p className="text-lg font-bold flex items-center justify-center gap-1">
-              <TrendingDown className="h-4 w-4 text-emerald-400" />{EXAMPLE_PRICE_DROPS}
+              <TrendingDown className="h-4 w-4 text-success" />{EXAMPLE_PRICE_DROPS}
             </p>
             <p className="text-xs text-muted-foreground">Price drops</p>
           </div>
@@ -73,12 +73,12 @@ export function ExampleResults() {
               }`}
             >
               <div className="flex items-center gap-2 min-w-0 flex-1">
-                {item.matched && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400 shrink-0" />}
+                {item.matched && <CheckCircle2 className="h-3.5 w-3.5 text-success shrink-0" />}
                 <span className={`truncate text-xs sm:text-sm ${item.matched ? "font-medium" : "text-muted-foreground"}`}>
                   {item.title}
                 </span>
               </div>
-              <span className={`text-xs sm:text-sm font-bold shrink-0 ${item.matched ? "text-emerald-400" : ""}`}>
+              <span className={`text-xs sm:text-sm font-bold shrink-0 ${item.matched ? "text-success" : ""}`}>
                 ${item.price.toLocaleString()}
               </span>
             </div>

@@ -23,7 +23,7 @@ export function ScanStep({ status, label, detail, elapsed }: ScanStepProps) {
       <div className="mt-0.5 shrink-0">
         {status === "done" && (
           <div className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500/10">
-            <Check className="h-3 w-3 text-emerald-400" />
+            <Check className="h-3 w-3 text-success" />
           </div>
         )}
         {status === "active" && (
@@ -44,7 +44,7 @@ export function ScanStep({ status, label, detail, elapsed }: ScanStepProps) {
               status === "active"
                 ? "font-semibold text-foreground"
                 : status === "done"
-                  ? "font-medium text-emerald-400"
+                  ? "font-medium text-success"
                   : "text-muted-foreground"
             }`}
           >

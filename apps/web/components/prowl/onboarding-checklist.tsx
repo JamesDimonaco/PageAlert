@@ -65,9 +65,9 @@ export function OnboardingChecklist() {
       <Card className="bg-emerald-500/5 ring-emerald-500/20">
         <CardContent className="flex items-center gap-3">
           <div className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-500/10 shrink-0">
-            <Check className="h-4 w-4 text-emerald-400" />
+            <Check className="h-4 w-4 text-success" />
           </div>
-          <p className="text-sm font-medium text-emerald-400">
+          <p className="text-sm font-medium text-success">
             You&apos;re all set! Your monitors are running and notifications are configured.
           </p>
         </CardContent>
@@ -153,7 +153,7 @@ export function OnboardingChecklist() {
                 }`}
               >
                 {item.checked ? (
-                  <Check className="h-3 w-3 text-emerald-400" />
+                  <Check className="h-3 w-3 text-success" />
                 ) : null}
               </div>
               <span className={item.checked ? "line-through" : ""}>

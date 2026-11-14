@@ -106,11 +106,11 @@ export function HistoryTab({ results }: HistoryTabProps) {
                           : "bg-muted/50"
                   }`}>
                     {result.error ? (
-                      <XCircle className="h-4 w-4 text-red-400" />
+                      <XCircle className="h-4 w-4 text-destructive" />
                     ) : result.hasNewMatches ? (
-                      <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+                      <CheckCircle2 className="h-4 w-4 text-success" />
                     ) : hasChanges ? (
-                      <TrendingDown className="h-4 w-4 text-blue-400" />
+                      <TrendingDown className="h-4 w-4 text-info" />
                     ) : (
                       <Clock className="h-4 w-4 text-muted-foreground" />
                     )}
@@ -144,19 +144,19 @@ export function HistoryTab({ results }: HistoryTabProps) {
                             </p>
                             {/* Change badges */}
                             {hasChanges && result.changes!.added.length > 0 && (
-                              <Badge variant="outline" className="text-xs bg-emerald-500/10 text-emerald-400 border-emerald-500/20 gap-1">
+                              <Badge variant="outline" className="text-xs bg-emerald-500/10 text-success border-emerald-500/20 gap-1">
                                 <Plus className="h-3 w-3" />
                                 {result.changes!.added.length} new
                               </Badge>
                             )}
                             {hasChanges && result.changes!.removed.length > 0 && (
-                              <Badge variant="outline" className="text-xs bg-red-500/10 text-red-400 border-red-500/20 gap-1">
+                              <Badge variant="outline" className="text-xs bg-red-500/10 text-destructive border-red-500/20 gap-1">
                                 <Minus className="h-3 w-3" />
                                 {result.changes!.removed.length} gone
                               </Badge>
                             )}
                             {hasChanges && result.changes!.priceChanges.length > 0 && (
-                              <Badge variant="outline" className="text-xs bg-blue-500/10 text-blue-400 border-blue-500/20 gap-1">
+                              <Badge variant="outline" className="text-xs bg-blue-500/10 text-info border-blue-500/20 gap-1">
                                 {result.changes!.priceChanges.some((p) => p.change < 0)
                                   ? <><TrendingDown className="h-3 w-3" /> Price drops</>
                                   : <><TrendingUp className="h-3 w-3" /> Price changes</>
@@ -164,7 +164,7 @@ export function HistoryTab({ results }: HistoryTabProps) {
                               </Badge>
                             )}
                             {result.error && (
-                              <Badge variant="outline" className="text-xs bg-red-500/10 text-red-400 border-red-500/20">
+                              <Badge variant="outline" className="text-xs bg-red-500/10 text-destructive border-red-500/20">
                                 Error
                               </Badge>
                             )}
@@ -173,7 +173,7 @@ export function HistoryTab({ results }: HistoryTabProps) {
                             <span>{timeAgo(result.scrapedAt)}</span>
                             <span className="hidden sm:inline">{formatDate(result.scrapedAt)}</span>
                             {result.totalItems > 0 && <span>{result.totalItems} items</span>}
-                            {result.matches.length > 0 && <span className="text-emerald-400">{result.matches.length} matches</span>}
+                            {result.matches.length > 0 && <span className="text-success">{result.matches.length} matches</span>}
                           </div>
                         </div>
                         {(hasChanges || result.error) && (
@@ -190,7 +190,7 @@ export function HistoryTab({ results }: HistoryTabProps) {
                         {/* Error */}
                         {result.error && (
                           <div className="rounded-lg bg-red-500/5 border border-red-500/10 p-3">
-                            <p className="text-xs font-medium text-red-400 mb-1">Error</p>
+                            <p className="text-xs font-medium text-destructive mb-1">Error</p>
                             <p className="text-sm text-muted-foreground">{result.error}</p>
                           </div>
                         )}
@@ -202,8 +202,8 @@ export function HistoryTab({ results }: HistoryTabProps) {
                             {result.changes.added.length > 0 && (
                               <div>
                                 <div className="flex items-center gap-1.5 mb-2">
-                                  <Plus className="h-3.5 w-3.5 text-emerald-400" />
-                                  <p className="text-xs font-semibold text-emerald-400">
+                                  <Plus className="h-3.5 w-3.5 text-success" />
+                                  <p className="text-xs font-semibold text-success">
                                     {result.changes.added.length} new item{result.changes.added.length !== 1 ? "s" : ""}
                                   </p>
                                 </div>
@@ -231,8 +231,8 @@ export function HistoryTab({ results }: HistoryTabProps) {
                             {result.changes.removed.length > 0 && (
                               <div>
                                 <div className="flex items-center gap-1.5 mb-2">
-                                  <Minus className="h-3.5 w-3.5 text-red-400" />
-                                  <p className="text-xs font-semibold text-red-400">
+                                  <Minus className="h-3.5 w-3.5 text-destructive" />
+                                  <p className="text-xs font-semibold text-destructive">
                                     {result.changes.removed.length} removed
                                   </p>
                                 </div>
@@ -255,8 +255,8 @@ export function HistoryTab({ results }: HistoryTabProps) {
                             {result.changes.priceChanges.length > 0 && (
                               <div>
                                 <div className="flex items-center gap-1.5 mb-2">
-                                  <TrendingDown className="h-3.5 w-3.5 text-blue-400" />
-                                  <p className="text-xs font-semibold text-blue-400">
+                                  <TrendingDown className="h-3.5 w-3.5 text-info" />
+                                  <p className="text-xs font-semibold text-info">
                                     {result.changes.priceChanges.length} price change{result.changes.priceChanges.length !== 1 ? "s" : ""}
                                   </p>
                                 </div>
@@ -267,7 +267,7 @@ export function HistoryTab({ results }: HistoryTabProps) {
                                       <div className="flex items-center gap-2 shrink-0">
                                         <span className="text-muted-foreground line-through">${pc.oldPrice.toLocaleString()}</span>
                                         <span className="font-semibold">${pc.newPrice.toLocaleString()}</span>
-                                        <span className={`font-semibold ${pc.change < 0 ? "text-emerald-400" : "text-red-400"}`}>
+                                        <span className={`font-semibold ${pc.change < 0 ? "text-success" : "text-destructive"}`}>
                                           {pc.change < 0 ? (
                                             <span className="flex items-center gap-0.5">
                                               <TrendingDown className="h-3 w-3" />

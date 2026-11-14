@@ -227,7 +227,7 @@ export default function MonitorDetailPage({
             <h1 className="page-title line-clamp-3">{monitor.name}</h1>
             <StatusBadge status={monitor.status} />
             {m.muted && (
-              <Badge variant="outline" className="gap-1 bg-amber-500/10 text-amber-400 border-amber-500/20">
+              <Badge variant="outline" className="gap-1 bg-amber-500/10 text-warning border-amber-500/20">
                 <BellOff className="h-3 w-3" />
                 Muted
               </Badge>
@@ -291,7 +291,7 @@ export default function MonitorDetailPage({
               <button
                 type="button"
                 onClick={openSettings}
-                className="inline-flex items-center gap-1 text-amber-400 hover:text-amber-300"
+                className="inline-flex items-center gap-1 text-warning hover:text-warning/80"
               >
                 <BellOff className="h-3 w-3" />
                 no alerts

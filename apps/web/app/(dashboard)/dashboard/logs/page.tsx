@@ -36,9 +36,9 @@ function formatDuration(ms: number): string {
 }
 
 const statusConfig = {
-  success: { icon: CheckCircle2, color: "text-emerald-400", bg: "bg-emerald-500/10", label: "Success" },
-  error: { icon: XCircle, color: "text-red-400", bg: "bg-red-500/10", label: "Error" },
-  timeout: { icon: AlertTriangle, color: "text-amber-400", bg: "bg-amber-500/10", label: "Timeout" },
+  success: { icon: CheckCircle2, color: "text-success", bg: "bg-emerald-500/10", label: "Success" },
+  error: { icon: XCircle, color: "text-destructive", bg: "bg-red-500/10", label: "Error" },
+  timeout: { icon: AlertTriangle, color: "text-warning", bg: "bg-amber-500/10", label: "Timeout" },
 };
 
 const PAGE_SIZE = 25;
@@ -199,14 +199,14 @@ export default function LogsPage() {
           />
           <StatChip
             label={`${counts.success}${atLeast} ok`}
-            tone="text-emerald-400"
+            tone="text-success"
             active={statusFilter === "success"}
             onClick={() => { setStatusFilter("success"); resetPaging(); }}
           />
           {counts.error > 0 && (
             <StatChip
               label={`${counts.error}${atLeast} error${counts.error === 1 ? "" : "s"}`}
-              tone="text-red-400"
+              tone="text-destructive"
               active={statusFilter === "error"}
               onClick={() => { setStatusFilter("error"); resetPaging(); }}
             />
@@ -214,7 +214,7 @@ export default function LogsPage() {
           {counts.timeout > 0 && (
             <StatChip
               label={`${counts.timeout}${atLeast} timeout${counts.timeout === 1 ? "" : "s"}`}
-              tone="text-amber-400"
+              tone="text-warning"
               active={statusFilter === "timeout"}
               onClick={() => { setStatusFilter("timeout"); resetPaging(); }}
             />
@@ -222,7 +222,7 @@ export default function LogsPage() {
           {counts.blocked > 0 && (
             <StatChip
               label={`${counts.blocked}${atLeast} blocked`}
-              tone="text-red-400"
+              tone="text-destructive"
               icon={Ban}
               active={statusFilter === "blocked"}
               onClick={() => { setStatusFilter("blocked"); resetPaging(); }}
@@ -425,8 +425,8 @@ function MonitorGroup({
         </div>
         <div className="flex items-center gap-3 text-xs text-muted-foreground shrink-0">
           <span>{logs.length} log{logs.length !== 1 ? "s" : ""}</span>
-          {successCount > 0 && <span className="text-emerald-400">{successCount} ok</span>}
-          {errorCount > 0 && <span className="text-red-400">{errorCount} failed</span>}
+          {successCount > 0 && <span className="text-success">{successCount} ok</span>}
+          {errorCount > 0 && <span className="text-destructive">{errorCount} failed</span>}
         </div>
       </button>
       {!collapsed && (
@@ -493,10 +493,10 @@ function LogEntry({ log }: { log: Log }) {
                     variant="outline"
                     className={`text-xs ${
                       log.status === "success"
-                        ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                        ? "bg-emerald-500/10 text-success border-emerald-500/20"
                         : log.status === "timeout"
-                          ? "bg-amber-500/10 text-amber-400 border-amber-500/20"
-                          : "bg-red-500/10 text-red-400 border-red-500/20"
+                          ? "bg-amber-500/10 text-warning border-amber-500/20"
+                          : "bg-red-500/10 text-destructive border-red-500/20"
                     }`}
                   >
                     {config.label}
@@ -505,12 +505,12 @@ function LogEntry({ log }: { log: Log }) {
                     {strat.label}
                   </Badge>
                   {log.blocked && (
-                    <Badge className="bg-red-500/10 text-red-400 border-red-500/20 text-xs">
+                    <Badge className="bg-red-500/10 text-destructive border-red-500/20 text-xs">
                       Blocked
                     </Badge>
                   )}
                   {log.retryAttempt != null && log.retryAttempt > 0 && (
-                    <Badge variant="outline" className="text-xs bg-amber-500/10 text-amber-400 border-amber-500/20">
+                    <Badge variant="outline" className="text-xs bg-amber-500/10 text-warning border-amber-500/20">
                       Retry {log.retryAttempt}/3
                     </Badge>
                   )}
@@ -521,7 +521,7 @@ function LogEntry({ log }: { log: Log }) {
                   {log.itemCount != null && <span>{log.itemCount} items</span>}
                   {log.matchCount != null && <span>{log.matchCount} match{log.matchCount !== 1 ? "es" : ""}</span>}
                   {log.error && (
-                    <span className="text-red-400 truncate max-w-xs">{log.error}</span>
+                    <span className="text-destructive truncate max-w-xs">{log.error}</span>
                   )}
                 </div>
               </div>

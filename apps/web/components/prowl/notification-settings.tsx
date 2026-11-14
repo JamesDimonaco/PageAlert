@@ -204,7 +204,7 @@ export function NotificationSettings() {
                 <div className="flex items-center gap-2 flex-wrap">
                   <p className="text-sm font-medium">{c.name}</p>
                   {c.ready ? (
-                    <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-xs">Ready</Badge>
+                    <Badge className="bg-emerald-500/10 text-success border-emerald-500/20 text-xs">Ready</Badge>
                   ) : null}
                 </div>
                 <p className="text-sm text-muted-foreground mt-0.5 [overflow-wrap:anywhere]">{c.status ?? c.blurb}</p>
@@ -307,7 +307,7 @@ export function NotificationSettings() {
                 If it lands in spam, mark it as &ldquo;Not Spam&rdquo; and add <strong>alerts@pagealert.io</strong> to your contacts.
               </p>
               {testEmailSent ? (
-                <div className="flex items-center gap-2 text-sm text-emerald-400">
+                <div className="flex items-center gap-2 text-sm text-success">
                   <CheckCircle2 className="h-4 w-4" />
                   Test email sent to {email} — check your inbox
                 </div>
@@ -361,7 +361,7 @@ export function NotificationSettings() {
             ) : connected("sms") ? (
               <>
                 <div className="flex items-center gap-2 flex-wrap">
-                  <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-xs">
+                  <Badge className="bg-emerald-500/10 text-success border-emerald-500/20 text-xs">
                     ••• ••• {smsTarget?.slice(-4)}
                   </Badge>
                   <Button
@@ -599,7 +599,7 @@ export function NotificationSettings() {
             </Dialog>
             {notifSettings?.find((s) => s.channel === "telegram")?.enabled ? (
               <div className="flex items-center gap-2 flex-wrap">
-                <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-xs">Connected</Badge>
+                <Badge className="bg-emerald-500/10 text-success border-emerald-500/20 text-xs">Connected</Badge>
                 <Button
                   variant="outline"
                   size="sm"
@@ -746,7 +746,7 @@ export function NotificationSettings() {
               <>
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div className="flex items-center gap-2">
-                    <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
+                    <CheckCircle2 className="h-4 w-4 text-success shrink-0" />
                     <p className="text-sm">
                       On for this device
                       {push.deviceCount > 1 && (
@@ -910,7 +910,7 @@ export function NotificationSettings() {
             <>
             {notifSettings?.find((s) => s.channel === "discord")?.enabled ? (
               <div className="flex items-center gap-2 flex-wrap">
-                <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-xs">Connected</Badge>
+                <Badge className="bg-emerald-500/10 text-success border-emerald-500/20 text-xs">Connected</Badge>
                 <Button
                   variant="ghost"
                   size="sm"

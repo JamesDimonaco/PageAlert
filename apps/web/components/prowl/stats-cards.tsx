@@ -15,7 +15,7 @@ export function StatsCards({ monitors }: { monitors: Doc<"monitors">[] }) {
       label: "Active",
       value: active,
       icon: Activity,
-      color: "text-emerald-400",
+      color: "text-success",
       bg: "bg-emerald-500/10",
     },
     {
@@ -29,14 +29,14 @@ export function StatsCards({ monitors }: { monitors: Doc<"monitors">[] }) {
       label: "Checks",
       value: totalChecks,
       icon: Clock,
-      color: "text-blue-400",
+      color: "text-info",
       bg: "bg-blue-500/10",
     },
     {
       label: "Errors",
       value: errors,
       icon: AlertTriangle,
-      color: "text-red-400",
+      color: "text-destructive",
       bg: "bg-red-500/10",
     },
   ];

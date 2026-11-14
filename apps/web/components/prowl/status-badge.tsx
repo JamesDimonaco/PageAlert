@@ -5,22 +5,22 @@ const statusConfig = {
   scanning: {
     label: "Scanning",
     icon: Loader2,
-    className: "bg-blue-500/10 text-blue-400 border-blue-500/20 hover:bg-blue-500/15 [&_svg]:animate-spin",
+    className: "bg-blue-500/10 text-info border-blue-500/20 hover:bg-blue-500/15 [&_svg]:animate-spin",
   },
   active: {
     label: "Active",
     icon: Activity,
-    className: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/15",
+    className: "bg-emerald-500/10 text-success border-emerald-500/20 hover:bg-emerald-500/15",
   },
   paused: {
     label: "Paused",
     icon: Pause,
-    className: "bg-amber-500/10 text-amber-400 border-amber-500/20 hover:bg-amber-500/15",
+    className: "bg-amber-500/10 text-warning border-amber-500/20 hover:bg-amber-500/15",
   },
   error: {
     label: "Error",
     icon: AlertTriangle,
-    className: "bg-red-500/10 text-red-400 border-red-500/20 hover:bg-red-500/15",
+    className: "bg-red-500/10 text-destructive border-red-500/20 hover:bg-red-500/15",
   },
 };
 

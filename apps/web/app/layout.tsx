@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import { Analytics } from "@vercel/analytics/next";
 import { SpeedInsights } from "@vercel/speed-insights/next";
+import { ThemeProvider } from "next-themes";
 import { Toaster } from "@/components/ui/sonner";
 import { ConvexClientProvider } from "@/components/convex-provider";
 import { PostHogProvider } from "@/components/posthog-provider";
@@ -166,7 +167,9 @@ export default async function RootLayout({
   return (
     <html
       lang="en"
-      className={`${inter.variable} ${jetbrainsMono.variable} h-full antialiased dark`}
+      className={`${inter.variable} ${jetbrainsMono.variable} h-full antialiased`}
+      // next-themes sets the theme class on <html> before React hydrates.
+      suppressHydrationWarning
     >
       <head>
         <script
@@ -189,14 +192,16 @@ export default async function RootLayout({
         >
           Skip to content
         </a>
-        <Suspense fallback={null}>
-          <PostHogProvider>
-            <ConvexClientProvider initialToken={token}>
-              {children}
-            </ConvexClientProvider>
-          </PostHogProvider>
-        </Suspense>
-        <Toaster />
+        <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
+          <Suspense fallback={null}>
+            <PostHogProvider>
+              <ConvexClientProvider initialToken={token}>
+                {children}
+              </ConvexClientProvider>
+            </PostHogProvider>
+          </Suspense>
+          <Toaster />
+        </ThemeProvider>
         <Analytics />
         <SpeedInsights />
       </body>

@@ -200,7 +200,7 @@ export function OverviewTab({ monitorId, monitor, matches, items, conditions, re
       const isDrop = pc.change < 0;
       const Icon = isDrop ? TrendingDown : TrendingUp;
       return (
-        <span className={cn("text-xs inline-flex items-center gap-0.5", isDrop ? "text-emerald-400" : "text-red-400")}>
+        <span className={cn("text-xs inline-flex items-center gap-0.5", isDrop ? "text-success" : "text-destructive")}>
           <Icon className="h-3 w-3" />
           {Math.abs(pc.changePercent)}% <s className="text-muted-foreground">{formatPrice(pc.oldPrice, item.currency)}</s>
         </span>
@@ -282,9 +282,9 @@ export function OverviewTab({ monitorId, monitor, matches, items, conditions, re
           <CardContent>
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-3">
-                <BellOff className="h-5 w-5 text-amber-400 shrink-0" />
+                <BellOff className="h-5 w-5 text-warning shrink-0" />
                 <div>
-                  <p className="text-sm font-semibold text-amber-400">Notifications muted</p>
+                  <p className="text-sm font-semibold text-warning">Notifications muted</p>
                   <p className="text-sm text-muted-foreground">This monitor is still scanning but won't send any alerts.</p>
                 </div>
               </div>
@@ -314,9 +314,9 @@ export function OverviewTab({ monitorId, monitor, matches, items, conditions, re
         <Card className="ring-amber-500/30 bg-amber-500/5">
           <CardContent>
             <div className="flex items-start gap-3">
-              <RotateCw className="h-5 w-5 text-amber-400 shrink-0 mt-0.5 animate-spin" />
+              <RotateCw className="h-5 w-5 text-warning shrink-0 mt-0.5 animate-spin" />
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-semibold text-amber-400 mb-1">
+                <p className="text-sm font-semibold text-warning mb-1">
                   Retrying automatically ({monitor.retryCount} of 3)
                 </p>
                 <p className="text-sm text-muted-foreground break-words">{monitor.lastError}</p>
@@ -344,9 +344,9 @@ export function OverviewTab({ monitorId, monitor, matches, items, conditions, re
         <Card className="ring-red-500/30 bg-red-500/5">
           <CardContent>
             <div className="flex items-start gap-3">
-              <AlertTriangle className="h-5 w-5 text-red-400 shrink-0 mt-0.5" />
+              <AlertTriangle className="h-5 w-5 text-destructive shrink-0 mt-0.5" />
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-semibold text-red-400 mb-1">
+                <p className="text-sm font-semibold text-destructive mb-1">
                   {isParked ? "Checks stopped" : isBlocked ? "This site blocked us" : "Monitor failed"}
                 </p>
                 <p className="text-sm text-muted-foreground break-words">{monitor.lastError}</p>
@@ -385,9 +385,9 @@ export function OverviewTab({ monitorId, monitor, matches, items, conditions, re
         <Card className="ring-amber-500/30 bg-amber-500/5">
           <CardContent>
             <div className="flex items-start gap-3 flex-wrap">
-              <AlertTriangle className="h-5 w-5 text-amber-400 shrink-0 mt-0.5" />
+              <AlertTriangle className="h-5 w-5 text-warning shrink-0 mt-0.5" />
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-semibold text-amber-400 mb-1">
+                <p className="text-sm font-semibold text-warning mb-1">
                   The AI wasn&apos;t sure what you meant ({insights.confidence}% confidence)
                 </p>
                 <p className="text-sm text-muted-foreground">
@@ -419,11 +419,11 @@ export function OverviewTab({ monitorId, monitor, matches, items, conditions, re
           <div className="flex items-baseline gap-2">
             <h2 className="section-title flex items-center gap-2">
               {/* Green only once something matched: a green 0 read as success. */}
-              <CheckCircle2 className={cn("h-4 w-4", matches.length > 0 ? "text-emerald-400" : "text-muted-foreground")} />
+              <CheckCircle2 className={cn("h-4 w-4", matches.length > 0 ? "text-success" : "text-muted-foreground")} />
               Matches
               <Badge
                 variant={matches.length > 0 ? "default" : "outline"}
-                className={cn("text-xs", matches.length > 0 && "bg-emerald-500/10 text-emerald-400 border-emerald-500/20")}
+                className={cn("text-xs", matches.length > 0 && "bg-emerald-500/10 text-success border-emerald-500/20")}
               >
                 {matches.length}
               </Badge>
@@ -436,7 +436,7 @@ export function OverviewTab({ monitorId, monitor, matches, items, conditions, re
         </div>
 
         {isFirstScan && matches.length > 0 && (
-          <p className="mb-2 text-xs text-emerald-400">First scan — all of these are new to you.</p>
+          <p className="mb-2 text-xs text-success">First scan — all of these are new to you.</p>
         )}
 
         <MatchChecks
@@ -481,7 +481,7 @@ export function OverviewTab({ monitorId, monitor, matches, items, conditions, re
                   {/* col 1: title + sub-line */}
                   <div className="min-w-0">
                     <p className="text-sm font-medium leading-snug line-clamp-2 sm:line-clamp-1">
-                      {isNew && <Badge className="mr-1.5 align-middle bg-emerald-500/15 text-emerald-400 border-emerald-500/20">New</Badge>}
+                      {isNew && <Badge className="mr-1.5 align-middle bg-emerald-500/15 text-success border-emerald-500/20">New</Badge>}
                       {title}
                     </p>
                     {(band || reason) && (
@@ -554,8 +554,8 @@ export function OverviewTab({ monitorId, monitor, matches, items, conditions, re
             {(schema.insights.confidence ?? 100) < 80 && (
               <Badge variant="outline" className={`text-xs ml-1 ${
                 (schema.insights.confidence ?? 0) >= 50
-                  ? "bg-amber-500/10 text-amber-400 border-amber-500/20"
-                  : "bg-red-500/10 text-red-400 border-red-500/20"
+                  ? "bg-amber-500/10 text-warning border-amber-500/20"
+                  : "bg-red-500/10 text-destructive border-red-500/20"
               }`}>
                 {schema.insights.confidence}%
               </Badge>
