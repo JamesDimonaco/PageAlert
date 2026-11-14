@@ -24,8 +24,8 @@ export const parkedMonitors = query({
     // every number in the index — the same fact getMonitorsDue relies on, so
     // parked monitors come first.
     //
-    // Anonymous scans sit in that same block: saveAnonymousError marks them
-    // "error" and they never had a nextCheckAt. Excluding them in the query
+    // Anonymous scans sit in that same block: they were marked "error" and
+    // never had a nextCheckAt. Excluding them in the query
     // rather than afterwards matters, because a scraper outage can leave
     // hundreds of them and they would otherwise consume the whole take budget
     // and hide the real parks — exactly when this page is worth opening.

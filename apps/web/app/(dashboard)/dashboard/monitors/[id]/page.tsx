@@ -1,11 +1,12 @@
 "use client";
 
-import { use, useState } from "react";
+import { use, useEffect, useState } from "react";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { StatusBadge } from "@/components/prowl/status-badge";
 import { AutoPauseNote } from "@/components/prowl/auto-pause-note";
+import { SpeedUpsell } from "@/components/prowl/speed-upsell";
 import { DeleteDialog } from "@/components/prowl/delete-dialog";
 import { OverviewTab } from "@/components/prowl/monitor-tabs/overview-tab";
 import { ItemsTab } from "@/components/prowl/monitor-tabs/items-tab";
@@ -35,11 +36,12 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { BackLink } from "@/components/prowl/back-link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useMonitor, useMonitorResults, useMonitors } from "@/hooks/use-monitors";
 import { useTier } from "@/hooks/use-tier";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
+import { isProxyFirstHost } from "@/convex/shared";
 import { applyMatchConditions, getItemKey } from "@prowl/shared";
 import type { Id } from "@/convex/_generated/dataModel";
 import type { ExtractedItem, ExtractionSchema } from "@prowl/shared";
@@ -63,7 +65,11 @@ export default function MonitorDetailPage({
   const monitor = useMonitor(monitorId);
   const results = useMonitorResults(monitorId);
   const { monitors, togglePause, deleteMonitor, updateMonitor, toggleMute } = useMonitors();
-  const { maxMonitors } = useTier();
+  const { maxMonitors, tier, resolved: tierResolved } = useTier();
+  // Set by the create sheet when a first scan lands here. Read once, then
+  // cleared from the URL, so a reload or bookmark doesn't show the offer again.
+  const searchParams = useSearchParams();
+  const [justCreated] = useState(() => searchParams.get("new") === "1");
   const atLimit = monitors.length >= maxMonitors;
   const scanBudget = useQuery(api.tiers.canScan);
   const scores = useQuery(api.monitors.latestScores, { monitorId }) ?? {};
@@ -73,6 +79,9 @@ export default function MonitorDetailPage({
   const saveScanError = useMutation(api.monitors.saveScanError);
   const createLog = useMutation(api.logs.create);
   const router = useRouter();
+  useEffect(() => {
+    if (justCreated) router.replace(`/dashboard/monitors/${id}`, { scroll: false });
+  }, [justCreated, id, router]);
 
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [tab, setTab] = useState<"overview" | "items" | "history">("overview");
@@ -205,6 +214,13 @@ export default function MonitorDetailPage({
     <div className="space-y-6">
       {/* Header */}
       <BackLink href="/dashboard">Back to dashboard</BackLink>
+      {justCreated && (
+        <SpeedUpsell
+          tier={tier}
+          tierResolved={tierResolved}
+          proxyOnly={monitor.proxyPreferred === true || isProxyFirstHost(monitor.url)}
+        />
+      )}
       <div className="flex items-start gap-3 overflow-hidden">
         <div className="flex-1 min-w-0">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1">

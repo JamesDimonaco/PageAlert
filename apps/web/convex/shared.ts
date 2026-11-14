@@ -57,8 +57,8 @@ export const ERROR_RECOVERY_INTERVAL_MS = 6 * 60 * 60 * 1000;
  * worked even once is exempt by construction (checkCount counts successes
  * only), so this never decides anything for a working monitor.
  *
- * Counted in `retryCount`. A success resets it, and so do the manual retry
- * paths (monitors.ts saveScanError, admin.ts rerunNeverScanned), which rewrite
+ * Counted in `retryCount`. A success resets it, and so does the manual retry
+ * path (monitors.ts saveScanError), which rewrites
  * it to a small number. So pressing Retry on a parked monitor deliberately
  * buys it the better part of another budget — an explicit "I have fixed it,
  * try again" is worth more than a scheduled attempt.
@@ -100,7 +100,30 @@ export const PARK_REASON_NEVER_SUCCEEDED =
  */
 export const PROXY_REPROBE_EVERY = 8;
 
-/** One classifier for "the site refused us" across scheduler, scan errors, and operator tooling. */
+/**
+ * Sites that block every direct fetch, so their checks always go through the
+ * proxy, with no direct re-probe. Costco serves an empty page rather than a
+ * challenge, so it never read as blocked and every retry failed the same way.
+ * Matches the domain and its subdomains.
+ */
+const PROXY_FIRST_DOMAINS = ["costco.com"];
+
+export function isProxyFirstHost(url: string): boolean {
+  let host: string;
+  try {
+    host = new URL(url).hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+  return PROXY_FIRST_DOMAINS.some((d) => host === d || host.endsWith(`.${d}`));
+}
+
+/**
+ * One classifier for "the site refused us" across scheduler, scan errors, and
+ * operator tooling. An empty page does not count: a page can be briefly empty,
+ * and a block moves a monitor onto the proxy's 6-hour floor and towards a park.
+ * Sites that block with an empty page go on PROXY_FIRST_DOMAINS instead.
+ */
 export function isBlockedError(message: string): boolean {
   return /blocking automated access|anti-bot|CAPTCHA|Cloudflare|Access denied|blocked/i.test(message);
 }
@@ -292,6 +315,18 @@ export function effectiveIntervalMs(monitor: {
 }): number {
   const base = intervalToMs(monitor.checkInterval);
   return monitor.proxyPreferred === true ? Math.max(base, PROXY_MIN_INTERVAL_MS) : base;
+}
+
+/**
+ * The match email's Sprint offer, as sendMatchAlert args: only for Free users,
+ * and never on a proxy-only site, which checks every 6 hours on any plan.
+ */
+export function sprintOfferTo(
+  tier: string,
+  monitor: { userId: string; url: string; proxyPreferred?: boolean }
+): { offerSprintTo?: string } {
+  const proxyOnly = monitor.proxyPreferred === true || isProxyFirstHost(monitor.url);
+  return tier === "free" && !proxyOnly ? { offerSprintTo: monitor.userId } : {};
 }
 
 /** Escape text for HTML element content and quoted attributes. */

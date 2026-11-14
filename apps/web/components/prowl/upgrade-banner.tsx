@@ -6,7 +6,7 @@ import { Sparkles, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { TIER_LIMITS, type Tier } from "@/hooks/use-tier";
 import { PLANS } from "@/lib/plans";
-import { trackUpgradeBanner } from "@/lib/posthog";
+import { trackUpgradePrompt } from "@/lib/posthog";
 
 const DISMISSED_KEY = "pagealert_upgrade_banner_dismissed_at";
 const HIDE_FOR_MS = 7 * 24 * 60 * 60 * 1000;
@@ -44,7 +44,7 @@ export function UpgradeBanner({ tier, tierResolved, atLimit }: {
     }
     if (trackedRef.current || !next) return;
     trackedRef.current = true;
-    trackUpgradeBanner("shown", { currentTier: tier, nextTier: next });
+    trackUpgradePrompt("shown", { placement: "limit_banner", currentTier: tier, targetPlan: next });
   }, [visible, tier, next]);
 
   if (!visible || !next) return null;
@@ -67,8 +67,8 @@ export function UpgradeBanner({ tier, tierResolved, atLimit }: {
       <p className="flex-1 text-muted-foreground">
         You&apos;ve reached your plan&apos;s limit of {TIER_LIMITS[tier].maxMonitors} monitors. {nextName} gives you {nextLimit}.{" "}
         <Link
-          href="/dashboard/settings?tab=billing"
-          onClick={() => trackUpgradeBanner("clicked", { currentTier: tier, nextTier: next })}
+          href="/dashboard/settings?tab=billing&from=limit_banner"
+          onClick={() => trackUpgradePrompt("clicked", { placement: "limit_banner", currentTier: tier, targetPlan: next })}
           className="font-medium text-primary hover:underline"
         >
           See plans

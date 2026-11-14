@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -27,8 +27,10 @@ import { authClient } from "@/lib/auth-client";
 import { toast } from "sonner";
 import {
   POSTHOG_KEY,
-  trackUpgradePromptClicked,
+  trackCheckoutStarted,
+  trackUpgradePrompt,
 } from "@/lib/posthog";
+import { PLANS } from "@/lib/plans";
 import { AnalyticsToggle } from "@/components/prowl/analytics-toggle";
 import { ApiKeysCard } from "@/components/prowl/api-keys-card";
 import { NotificationSettings } from "@/components/prowl/notification-settings";
@@ -80,12 +82,24 @@ export default function SettingsPage() {
     }
   }, [refetchTier]);
 
+  // An email link can't fire a click event, so arriving from one counts as the click.
+  const emailClickTrackedRef = useRef(false);
+  useEffect(() => {
+    if (tierLoading || emailClickTrackedRef.current || searchParams.get("from") !== "match_email") return;
+    emailClickTrackedRef.current = true;
+    trackUpgradePrompt("clicked", { placement: "match_email", currentTier: tier, targetPlan: "sprint" });
+  }, [tierLoading, searchParams, tier]);
+
   const [isCheckingOut, setIsCheckingOut] = useState(false);
 
   async function handleCheckout(slug: "sprint" | "pro" | "max") {
     if (isCheckingOut) return;
     setIsCheckingOut(true);
-    trackUpgradePromptClicked({ plan: slug, currentTier: tier });
+    trackCheckoutStarted({
+      plan: slug,
+      price: PLANS.find((p) => p.slug === slug)?.price ?? 0,
+      from: searchParams.get("from"),
+    });
     try {
       await authClient.checkout({ slug });
     } catch {
@@ -399,7 +413,7 @@ export default function SettingsPage() {
                     </p>
                     <ul className="mt-4 space-y-2 text-sm text-muted-foreground">
                       <li>10 monitors</li>
-                      <li>30 minute checks</li>
+                      <li>15 minute checks</li>
                       <li>30 days, then it stops</li>
                     </ul>
                     <Button

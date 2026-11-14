@@ -3,7 +3,7 @@ import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import schema from "./schema";
 import betterAuthSchema from "./betterAuth/schema";
-import { api, components } from "./_generated/api";
+import { api, components, internal } from "./_generated/api";
 import { authComponent } from "./betterAuth/auth";
 
 const modules = import.meta.glob("./**/*.*s");
@@ -116,5 +116,46 @@ describe("admin.listUsers", () => {
     const users = await t.query(api.admin.listUsers, {});
 
     expect(users.find((u) => u.userId === target)?.lastActiveAt).toBe(NOW - 30 * DAY);
+  });
+});
+
+// Thank-you grants for interviewees are run from the CLI, which has no admin
+// session, so they go by email. A paying customer must never be overwritten.
+describe("grantTrialByEmail", () => {
+  it("gives a free user 30 days of Pro and leaves a paying user alone", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+    const t = harness();
+    const free = await seedUser(t, "free@example.com");
+    const paying = await seedUser(t, "paying@example.com");
+    await t.run((ctx) =>
+      ctx.db.insert("userTiers", { userId: paying, tier: "max", polarSubscriptionId: "sub_1", updatedAt: NOW })
+    );
+
+    const result = await t.mutation(internal.admin.grantTrialByEmail, {
+      emails: ["Free@Example.com", "paying@example.com", "nobody@example.com"],
+      tier: "pro",
+      days: 30,
+    });
+
+    expect(result).toEqual({ granted: 1, skippedPaying: 1, notFound: ["nobody@example.com"] });
+    const tiers = await t.run((ctx) => ctx.db.query("userTiers").collect());
+    // grantSource "admin" is what lets a later subscription count as a converted sale.
+    expect(tiers.find((r) => r.userId === free)).toMatchObject({ tier: "pro", grantUntil: NOW + 30 * DAY, grantSource: "admin" });
+    expect(tiers.find((r) => r.userId === paying)).toMatchObject({ tier: "max" });
+    expect(tiers.find((r) => r.userId === paying)?.grantUntil).toBeUndefined();
+    vi.useRealTimers();
+  });
+
+  it("grants a person listed twice only once", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+    const t = harness();
+    const id = await seedUser(t, "jo@example.com");
+    const result = await t.mutation(internal.admin.grantTrialByEmail, { emails: ["Jo@example.com", "jo@example.com"], tier: "pro", days: 30 });
+    expect(result.granted).toBe(1);
+    const row = await t.run((ctx) => ctx.db.query("userTiers").withIndex("by_userId", (q) => q.eq("userId", id)).unique());
+    expect(row?.grantUntil).toBe(NOW + 30 * DAY);
+    vi.useRealTimers();
   });
 });

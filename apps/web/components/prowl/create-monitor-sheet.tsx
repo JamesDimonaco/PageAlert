@@ -232,7 +232,7 @@ export function CreateMonitorSheet({
     const id = activeMonitorId;
     if (open) {
       onConfirm();
-      router.push(`/dashboard/monitors/${id}`);
+      router.push(`/dashboard/monitors/${id}?new=1`);
     } else if (!toastedRef.current) {
       toastedRef.current = true;
       toast.success("Scan complete", {
@@ -241,7 +241,7 @@ export function CreateMonitorSheet({
           label: "View monitor",
           onClick: () => {
             onConfirm();
-            router.push(`/dashboard/monitors/${id}`);
+            router.push(`/dashboard/monitors/${id}?new=1`);
           },
         },
         // onConfirm clears activeMonitorId, which is what retires the pill

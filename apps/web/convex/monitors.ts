@@ -2,7 +2,7 @@ import { ConvexError, v, type Infer, type ObjectType } from "convex/values";
 import { mutation, query, internalAction, internalMutation, internalQuery, type MutationCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
-import { displayHost, effectiveIntervalMs, ERROR_RECOVERY_INTERVAL_MS, intervalToMs, isBlockedError, MAX_RETRIES, soldOutKeysOf, validateMonitorUrl } from "./shared";
+import { displayHost, effectiveIntervalMs, ERROR_RECOVERY_INTERVAL_MS, intervalToMs, isBlockedError, isProxyFirstHost, MAX_RETRIES, soldOutKeysOf, validateMonitorUrl } from "./shared";
 import { currencyExponent, itemIdentity, RESUME_TOKEN_TTL_MS, stockNotShownNote, type ExtractedItem, type MatchConditions } from "@prowl/shared";
 import { effectiveTier, type Tier } from "./tiers";
 import { drain, isBanned, requireLiveAccount, spent, SWEEP_BUDGET_BYTES, SWEEP_BUDGET_ROWS, type Allowance } from "./account";
@@ -17,7 +17,7 @@ const MAX_RESULTS_LIMIT = 100;
 
 const TIER_LIMITS: Record<Tier, { maxMonitors: number; allowedIntervals: string[] }> = {
   free: { maxMonitors: 3, allowedIntervals: ["1h", "6h", "24h"] },
-  sprint: { maxMonitors: 10, allowedIntervals: ["30m", "1h", "6h", "24h"] },
+  sprint: { maxMonitors: 10, allowedIntervals: ["15m", "30m", "1h", "6h", "24h"] },
   pro: { maxMonitors: 25, allowedIntervals: ["15m", "30m", "1h", "6h", "24h"] },
   max: { maxMonitors: 9999, allowedIntervals: ["5m", "15m", "30m", "1h", "6h", "24h"] },
 };
@@ -522,12 +522,14 @@ export const claimFirstScanProxy = mutation({
 
 /**
  * Whether another monitor on this site needs the proxy and is still being
- * checked. Read from the fleet rather than kept as a list: the scheduler
+ * checked, or the site is on the proxy-first list (see isProxyFirstHost).
+ * Otherwise read from the fleet rather than kept as a list: the scheduler
  * re-probes a direct fetch every PROXY_REPROBE_EVERY checks and clears
  * proxyPreferred when it works, so a site that drops its protection leaves by
  * itself. A parked monitor is never re-probed, so its flag proves nothing.
  */
 async function hostNeedsProxy(ctx: MutationCtx, monitor: Doc<"monitors">): Promise<boolean> {
+  if (isProxyFirstHost(monitor.url)) return true;
   const flagged = await ctx.db
     .query("monitors")
     .withIndex("by_host_proxyPreferred", (q) =>
