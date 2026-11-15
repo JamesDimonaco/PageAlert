@@ -3,6 +3,7 @@ import { PostHog } from "posthog-node";
 import { Anthropic as PostHogAnthropic } from "@posthog/ai";
 import type { ExtractionSchema, ExtractedItem } from "@prowl/shared";
 import { applyMatchConditions, toMinorUnits } from "@prowl/shared";
+import { DEFAULT_MODEL, SCORER_MODEL, modelSettings, type ClaudeModel } from "./model-settings.js";
 
 // PostHog LLM observability — tracks token usage, cost, latency per generation
 const posthogKey = process.env.POSTHOG_KEY;
@@ -98,7 +99,7 @@ Rules for extraction:
 - Keep item data concise: title, price, url, currency, inStock, and 1-2 other relevant fields
 - "inStock" on every item: true if it can be bought now, false if it is sold out, unavailable, on backorder or pre-order only, null if the page does not say for that item.
 - Prices MUST be the actual price shown for that specific item. Be very careful with sites like Amazon where prices are split across HTML elements.
-- Price should be a number (no currency symbols). Include a separate "currency" field (e.g. "USD", "GBP", "EUR") if the page shows a non-USD currency.
+- Price should be a number (no currency symbols). Include a separate "currency" field on every item with a price: its three-letter ISO 4217 code (e.g. "USD", "GBP", "EUR", "NZD"), never a symbol. Use null if the page does not say which currency.
 - matchConditions should reflect ONLY the user's stated criteria — these are used to highlight which items match
 - matchConditions.mustInclude: keywords that must appear ANYWHERE in the item
 - matchConditions.mustExclude: keywords that must NOT appear anywhere
@@ -112,7 +113,8 @@ export async function extractWithAI(
   prompt: string,
   baseUrl?: string,
   monitorName?: string,
-  userId?: string
+  userId?: string,
+  model: ClaudeModel = DEFAULT_MODEL
 ): Promise<{ schema: ExtractionSchema; matches: ExtractedItem[] }> {
   const client = getClient();
 
@@ -120,12 +122,11 @@ export async function extractWithAI(
   const truncatedText = pageText.length > 100000 ? pageText.slice(0, 100000) + "\n...[truncated]" : pageText;
 
   const message = await client.messages.create({
-    model: "claude-sonnet-5",
+    // As little reasoning as the model allows: on Sonnet 5 its tokens came out
+    // of max_tokens and cut a big listing page's JSON off. This is a one-shot
+    // JSON task.
+    ...modelSettings(model),
     max_tokens: 16384,
-    // Sonnet 5 thinks by default and those tokens come out of max_tokens, so
-    // a big listing page got its JSON cut off. This is a one-shot JSON task;
-    // it does not need the reasoning.
-    thinking: { type: "disabled" },
     messages: [
       {
         role: "user",
@@ -385,7 +386,8 @@ export async function scoreCandidates(
   prompt: string,
   monitorName?: string,
   userId?: string,
-  readStock = false
+  readStock = false,
+  model: ClaudeModel = SCORER_MODEL
 ): Promise<ScoredCandidate[]> {
   if (candidates.length === 0) return [];
 
@@ -398,12 +400,12 @@ export async function scoreCandidates(
 
   const client = getClient();
   const message = await client.messages.create({
-    model: "claude-sonnet-5",
-    // 25 entries with stock, price and currency each run near 2,000 tokens.
-    // A cut-off answer parses as nothing, and every entry then alerts unscored.
-    max_tokens: 4096,
-    // A short judging task; the reasoning tokens would come out of max_tokens.
-    thinking: { type: "disabled" },
+    // As little reasoning as the model allows: it would come out of max_tokens.
+    ...modelSettings(model),
+    // 25 entries with stock, price and currency each run near 2,000 tokens,
+    // and Opus thinks a little even at low effort. A cut-off answer parses as
+    // nothing, and every entry then alerts unscored.
+    max_tokens: 8192,
     system: readStock ? SCORING_PROMPT + STOCK_PROMPT : SCORING_PROMPT,
     ...trackingParams(userId),
     messages: [
@@ -413,6 +415,11 @@ export async function scoreCandidates(
       },
     ],
   });
+
+  if (message.stop_reason === "max_tokens") {
+    // The cut-off JSON parses as nothing, and every entry goes back unscored.
+    console.warn(`[extractor] Scoring ${candidates.length} entries hit max_tokens on ${model}`);
+  }
 
   const responseText = message.content
     .filter((block): block is AnthropicOriginal.TextBlock => block.type === "text")

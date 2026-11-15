@@ -2,6 +2,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import { SEARCH_REGIONS, toMinorUnits, type ProductListing, type SearchRegion } from "@prowl/shared";
 import { getClient, trackingParams } from "./extractor.js";
+import { DEFAULT_MODEL, modelSettings, type ClaudeModel } from "./model-settings.js";
 
 export const MAX_LISTINGS = 8;
 const MAX_SEARCHES = 5;
@@ -161,6 +162,7 @@ export async function findListings(
   region: SearchRegion,
   userId?: string,
   tool: WebSearchTool = "web_search_20250305",
+  model: ClaudeModel = DEFAULT_MODEL,
 ): Promise<ProductListing[]> {
   const country = SEARCH_REGIONS.find((r) => r.code === region)?.name ?? region;
   const client = getClient();
@@ -172,12 +174,11 @@ export async function findListings(
   let message: Anthropic.Message | undefined;
   for (let call = 0; call <= MAX_RESUMES; call++) {
     message = await client.messages.create({
-      model: "claude-sonnet-5",
+      // As little reasoning as the model allows: its tokens come out of
+      // max_tokens, shared here with the search results the model reads.
+      // Finding and labelling pages does not need it; the answer needs the room.
+      ...modelSettings(model),
       max_tokens: 16000,
-      // Sonnet 5 thinks by default and those tokens come out of max_tokens,
-      // shared here with the search results the model reads. Finding pages and
-      // labelling them does not need the reasoning; the answer needs the room.
-      thinking: { type: "disabled" },
       system: FIND_PROMPT,
       tools: [
         {

@@ -89,6 +89,34 @@ function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/** Fewer title words than this could all sit in a navigation bar. */
+const MIN_SPAN_WORDS = 3;
+
+/**
+ * Where every word of the title appears within a short span, for a shop that
+ * words the title its own way: an extra word such as "AMD", or punctuation.
+ * Words match whole, one-letter ones too, so "11" is not found inside
+ * "$1,119" and "Series X" does not match "Series S". A span starts at the
+ * title's first word and ends before its next one, so it cannot take words
+ * from two neighbouring products. -1 when no span holds them all: a false
+ * match is worse than none, because the caller then hashes the wrong slice.
+ */
+function wordsTogether(flat: string, needle: string): number {
+  const words = needle
+    .split(" ")
+    .map((w) => w.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, ""))
+    .filter(Boolean)
+    .map((w) => new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(w)}(?![\\p{L}\\p{N}])`, "iu"));
+  if (words.length < MIN_SPAN_WORDS) return -1;
+  const span = needle.length * 2;
+  const starts = [...flat.matchAll(new RegExp(words[0]!.source, "giu"))].map((hit) => hit.index);
+  for (const [i, start] of starts.entries()) {
+    const window = flat.slice(start, Math.min(start + span, starts[i + 1] ?? Infinity));
+    if (words.every((w) => w.test(window))) return start;
+  }
+  return -1;
+}
+
 /**
  * The part of a product page that describes the product.
  *
@@ -98,7 +126,8 @@ function escapeRegExp(text: string): string {
  * re-read. Link targets are dropped because tracking tokens in them change
  * on every load.
  *
- * When the title is not on the page, `matched` is false and the excerpt is
+ * When the title is not on the page, even as its words close together,
+ * `matched` is false and the excerpt is
  * taken around the first price instead, or from the top of the page. The
  * caller should then re-read on any page change, so the alert still works.
  */
@@ -107,7 +136,8 @@ export function productExcerpt(text: string, title: string): { excerpt: string; 
   const needle = normaliseForMatch(title);
   // A case-insensitive search on the string being sliced, so the index lines
   // up. Lowercasing a copy can change its length.
-  const at = needle ? flat.search(new RegExp(escapeRegExp(needle), "i")) : -1;
+  const exact = needle ? flat.search(new RegExp(escapeRegExp(needle), "i")) : -1;
+  const at = exact !== -1 ? exact : wordsTogether(flat, needle);
   if (at !== -1) {
     return { excerpt: flat.slice(Math.max(0, at - EXCERPT_BEFORE), at + EXCERPT_AFTER).trim(), matched: true };
   }

@@ -28,6 +28,53 @@ describe("productExcerpt", () => {
       .toBe("Sony WH-1000XM5 [Add to basket]");
   });
 
+  // Prod, 15/11/2026: the search's title was "PowerColor Reaper Radeon RX
+  // 9060 XT 16GB"; PB Tech writes "Powercolor Reaper AMD Radeon RX 9060 XT
+  // 16GB GDDR6". The exact search missed, the fallback found the empty cart's
+  // $0.00, and every product read came back with no price or stock.
+  test("finds a title whose words appear together in another order or with extra words", () => {
+    const page = `Brands PowerColor Cart $0.00 ${"nav ".repeat(100)}Powercolor Reaper AMD Radeon RX 9060 XT 16GB GDDR6 $799.00 Out of stock`;
+    const { excerpt, matched } = productExcerpt(page, "PowerColor Reaper Radeon RX 9060 XT 16GB");
+    expect(matched).toBe(true);
+    expect(excerpt).toContain("$799.00 Out of stock");
+  });
+
+  // A short word must not match inside another, such as "11" in "$1,119".
+  test("matches title words whole, not inside other words or prices", () => {
+    const page = `Apple iPad Air 13 M2 $1,119 ${"z ".repeat(200)} Apple iPad Air M2 11-inch $899 In stock`;
+    const { excerpt, matched } = productExcerpt(page, "Apple iPad Air 11 M2");
+    expect(matched).toBe(true);
+    expect(excerpt).toContain("$899 In stock");
+    expect(excerpt.startsWith("Apple iPad Air 13")).toBe(false);
+  });
+
+  // A false match is worse than a miss: the monitor then hashes only the
+  // wrong slice and stops re-reading on page changes. Found in review, 15/11/2026.
+  test("does not match a short title on navigation", () => {
+    const page = `Sony Bose | Headphones Speakers ${"nav ".repeat(300)} Sony WH-1000XM5 Wireless Headphones $299`;
+    expect(productExcerpt(page, "Sony headphones").matched).toBe(false);
+  });
+
+  test("does not take a title's words from two neighbouring products", () => {
+    const page = "Apple iPad Air 11 M3 $999 | Apple iPad Air 13 M2 $1,119";
+    expect(productExcerpt(page, "Apple iPad Air 11 M2").matched).toBe(false);
+  });
+
+  test("keeps one-letter words, so Series X does not match Series S", () => {
+    const page = "Microsoft Xbox Series S 1TB Console $499 In stock";
+    expect(productExcerpt(page, "Microsoft Xbox Series X 1TB Console").matched).toBe(false);
+  });
+
+  test("ignores punctuation stuck to a title word", () => {
+    const page = `${"nav ".repeat(100)}Sony WH-1000XM5 Headphones (Black) $299 In stock`;
+    expect(productExcerpt(page, "Sony WH-1000XM5, Black").matched).toBe(true);
+  });
+
+  test("does not match title words scattered across the page", () => {
+    const page = `PowerColor ${"x ".repeat(400)} Reaper ${"y ".repeat(400)} Radeon RX 9060 XT 16GB $10`;
+    expect(productExcerpt(page, "PowerColor Reaper Radeon RX 9060 XT 16GB").matched).toBe(false);
+  });
+
   // An unmatched title must still give the reader something with a price in
   // it, and say so, so the caller can fall back to whole-page changes.
   test("without the title, says so and starts near the first price", () => {
