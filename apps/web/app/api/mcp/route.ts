@@ -20,7 +20,7 @@ import { isBlockedError, isProxyFirstHost } from "@/convex/shared";
 import { extractPage, urlRejection, type ExtractResponse } from "@/lib/scraper-server";
 import { logger } from "@/lib/server-logger";
 
-// A first scan (scrape plus AI extract) takes about 25s.
+// A first scan (scrape, AI extract, then scoring its matches) takes about 25-40s.
 export const maxDuration = 120;
 /**
  * create_monitor has already inserted the monitor when the scan starts, and a

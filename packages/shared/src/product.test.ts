@@ -48,6 +48,28 @@ describe("productExcerpt", () => {
     expect(excerpt.startsWith("Apple iPad Air 13")).toBe(false);
   });
 
+  // A false match is worse than a miss: the monitor then hashes only the
+  // wrong slice and stops re-reading on page changes. Found in review, 15/11/2026.
+  test("does not match a short title on navigation", () => {
+    const page = `Sony Bose | Headphones Speakers ${"nav ".repeat(300)} Sony WH-1000XM5 Wireless Headphones $299`;
+    expect(productExcerpt(page, "Sony headphones").matched).toBe(false);
+  });
+
+  test("does not take a title's words from two neighbouring products", () => {
+    const page = "Apple iPad Air 11 M3 $999 | Apple iPad Air 13 M2 $1,119";
+    expect(productExcerpt(page, "Apple iPad Air 11 M2").matched).toBe(false);
+  });
+
+  test("keeps one-letter words, so Series X does not match Series S", () => {
+    const page = "Microsoft Xbox Series S 1TB Console $499 In stock";
+    expect(productExcerpt(page, "Microsoft Xbox Series X 1TB Console").matched).toBe(false);
+  });
+
+  test("ignores punctuation stuck to a title word", () => {
+    const page = `${"nav ".repeat(100)}Sony WH-1000XM5 Headphones (Black) $299 In stock`;
+    expect(productExcerpt(page, "Sony WH-1000XM5, Black").matched).toBe(true);
+  });
+
   test("does not match title words scattered across the page", () => {
     const page = `PowerColor ${"x ".repeat(400)} Reaper ${"y ".repeat(400)} Radeon RX 9060 XT 16GB $10`;
     expect(productExcerpt(page, "PowerColor Reaper Radeon RX 9060 XT 16GB").matched).toBe(false);

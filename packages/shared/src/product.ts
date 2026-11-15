@@ -89,23 +89,30 @@ function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/** Fewer title words than this could all sit in a navigation bar. */
+const MIN_SPAN_WORDS = 3;
+
 /**
  * Where every word of the title appears within a short span, for a shop that
- * words the title its own way: another order, or an extra word such as
- * "AMD". Words match whole, so "11" is not found inside "$1,119". -1 when no
- * span holds them all.
+ * words the title its own way: an extra word such as "AMD", or punctuation.
+ * Words match whole, one-letter ones too, so "11" is not found inside
+ * "$1,119" and "Series X" does not match "Series S". A span starts at the
+ * title's first word and ends before its next one, so it cannot take words
+ * from two neighbouring products. -1 when no span holds them all: a false
+ * match is worse than none, because the caller then hashes the wrong slice.
  */
 function wordsTogether(flat: string, needle: string): number {
   const words = needle
     .split(" ")
-    .filter((w) => w.length > 1)
+    .map((w) => w.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, ""))
+    .filter(Boolean)
     .map((w) => new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(w)}(?![\\p{L}\\p{N}])`, "iu"));
-  if (words.length < 2) return -1;
+  if (words.length < MIN_SPAN_WORDS) return -1;
   const span = needle.length * 2;
-  const first = new RegExp(words[0]!.source, "giu");
-  for (const hit of flat.matchAll(first)) {
-    const window = flat.slice(Math.max(0, hit.index - span / 2), hit.index + span);
-    if (words.every((w) => w.test(window))) return hit.index;
+  const starts = [...flat.matchAll(new RegExp(words[0]!.source, "giu"))].map((hit) => hit.index);
+  for (const [i, start] of starts.entries()) {
+    const window = flat.slice(start, Math.min(start + span, starts[i + 1] ?? Infinity));
+    if (words.every((w) => w.test(window))) return start;
   }
   return -1;
 }
