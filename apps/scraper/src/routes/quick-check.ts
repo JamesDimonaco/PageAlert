@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { matchPageSegments, productExcerpt, segmentPage } from "@prowl/shared";
-import { FALLBACK_PROVIDER_ERROR, scrapeUrl } from "../services/scraper.js";
+import { FALLBACK_PROVIDER_ERROR, PAGE_NOT_FOUND, scrapeUrl } from "../services/scraper.js";
 import { MAX_URL_LENGTH } from "../utils/url-validation.js";
 import { hashContent } from "../utils/content-hash.js";
 
@@ -122,6 +122,9 @@ quickCheckRoutes.post("/", zValidator("json", quickCheckSchema), async (c) => {
       // can contain words the branches below match on.
       userMessage = message;
       statusCode = message.startsWith(FALLBACK_PROVIDER_ERROR) ? 502 : 500;
+    } else if (message.startsWith(PAGE_NOT_FOUND)) {
+      userMessage = message;
+      statusCode = 404;
     } else if (isValidationError) {
       userMessage = message;
       statusCode = 400;
@@ -141,6 +144,6 @@ quickCheckRoutes.post("/", zValidator("json", quickCheckSchema), async (c) => {
       userMessage = "Check failed — please try again later.";
     }
 
-    return c.json({ error: "check_failed", message: userMessage }, statusCode as 400 | 429 | 500 | 502 | 504);
+    return c.json({ error: "check_failed", message: userMessage }, statusCode as 400 | 404 | 429 | 500 | 502 | 504);
   }
 });

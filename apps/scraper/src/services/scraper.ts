@@ -104,6 +104,9 @@ const UNBLOCKER_TIMEOUT_MS = 45_000;
 /** Prefix for failures of the fallback provider itself, as opposed to the site blocking us. */
 export const FALLBACK_PROVIDER_ERROR = "Fallback provider error";
 
+/** Prefix for a page the shop says no longer exists. */
+export const PAGE_NOT_FOUND = "Page not found";
+
 type ScrapflyResponse = {
   result?: {
     content?: string;
@@ -144,6 +147,10 @@ async function fetchViaUnblocker(url: string): Promise<string | null> {
     // (bad key, no credits, outage) and must not be blamed on the site.
     if (result?.error?.code?.startsWith("ERR::ASP")) {
       throw new Error(`Site is blocking automated access: ${reason}`);
+    }
+    // Scrapfly got through and the shop answered "gone". Not a provider fault.
+    if (result?.status_code === 404 || result?.status_code === 410) {
+      throw new Error(`${PAGE_NOT_FOUND} (HTTP ${result.status_code}). The shop may have removed or moved it.`);
     }
     throw new Error(`${FALLBACK_PROVIDER_ERROR}: ${reason}`);
   }

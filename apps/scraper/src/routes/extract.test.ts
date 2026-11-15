@@ -5,6 +5,7 @@ const wanted = { title: "Corsair Vengeance 16GB", price: 179, url: "https://shop
 
 vi.mock("../services/scraper.js", () => ({
   FALLBACK_PROVIDER_ERROR: "Fallback provider",
+  PAGE_NOT_FOUND: "Page not found",
   scrapeUrl: vi.fn(async () => ({ text: "page", scrapedAt: "2026-11-14T00:00:00.000Z", blocked: false })),
 }));
 vi.mock("../services/extractor.js", () => ({
@@ -23,6 +24,7 @@ vi.mock("../services/extractor.js", () => ({
 }));
 
 const { extractRoutes } = await import("./extract.js");
+const { scrapeUrl } = await import("../services/scraper.js");
 
 describe("extract route", () => {
   // Every first scan, preview and full re-read comes through here, so the
@@ -37,5 +39,18 @@ describe("extract route", () => {
     expect(res.status).toBe(200);
     expect(body.matches.map((m) => m.title)).toEqual([wanted.title]);
     expect(body.schema.items.map((i) => i.inStock)).toEqual([false, true]);
+  });
+
+  // The scheduler shows this message as the monitor's error. "Extraction
+  // failed" would hide that the listing was removed.
+  it("passes a gone page's message through as a 404", async () => {
+    vi.mocked(scrapeUrl).mockRejectedValueOnce(new Error("Page not found (HTTP 404). The shop may have removed or moved it."));
+    const res = await extractRoutes.request("/", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url: "https://shop.test/gone", prompt: "in stock" }),
+    });
+    expect(res.status).toBe(404);
+    expect(((await res.json()) as { message: string }).message).toMatch(/^Page not found \(HTTP 404\)/);
   });
 });
