@@ -39,6 +39,15 @@ describe("productExcerpt", () => {
     expect(excerpt).toContain("$799.00 Out of stock");
   });
 
+  // A short word must not match inside another, such as "11" in "$1,119".
+  test("matches title words whole, not inside other words or prices", () => {
+    const page = `Apple iPad Air 13 M2 $1,119 ${"z ".repeat(200)} Apple iPad Air M2 11-inch $899 In stock`;
+    const { excerpt, matched } = productExcerpt(page, "Apple iPad Air 11 M2");
+    expect(matched).toBe(true);
+    expect(excerpt).toContain("$899 In stock");
+    expect(excerpt.startsWith("Apple iPad Air 13")).toBe(false);
+  });
+
   test("does not match title words scattered across the page", () => {
     const page = `PowerColor ${"x ".repeat(400)} Reaper ${"y ".repeat(400)} Radeon RX 9060 XT 16GB $10`;
     expect(productExcerpt(page, "PowerColor Reaper Radeon RX 9060 XT 16GB").matched).toBe(false);

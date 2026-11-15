@@ -174,9 +174,9 @@ export async function findListings(
   let message: Anthropic.Message | undefined;
   for (let call = 0; call <= MAX_RESUMES; call++) {
     message = await client.messages.create({
-      // Sonnet 5 thinks by default and those tokens come out of max_tokens,
-      // shared here with the search results the model reads. Finding pages and
-      // labelling them does not need the reasoning; the answer needs the room.
+      // As little reasoning as the model allows: its tokens come out of
+      // max_tokens, shared here with the search results the model reads.
+      // Finding and labelling pages does not need it; the answer needs the room.
       ...modelSettings(model),
       max_tokens: 16000,
       system: FIND_PROMPT,

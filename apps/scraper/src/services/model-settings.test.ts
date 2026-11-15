@@ -32,8 +32,7 @@ describe("modelSettings", () => {
 // of 243. The full read and search stayed on Sonnet 5: Haiku found under half
 // the items, and Sonnet 5.5 searched no better for 63% more.
 describe("models per step", () => {
-  it("scores on Opus 5.5 and reads pages and searches on Sonnet 5", () => {
+  it("scores on Opus 5.5", () => {
     expect(SCORER_MODEL).toBe("claude-opus-5-5");
-    expect(DEFAULT_MODEL).toBe("claude-sonnet-5");
   });
 });

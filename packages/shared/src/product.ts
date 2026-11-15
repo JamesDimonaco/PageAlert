@@ -90,6 +90,27 @@ function escapeRegExp(text: string): string {
 }
 
 /**
+ * Where every word of the title appears within a short span, for a shop that
+ * words the title its own way: another order, or an extra word such as
+ * "AMD". Words match whole, so "11" is not found inside "$1,119". -1 when no
+ * span holds them all.
+ */
+function wordsTogether(flat: string, needle: string): number {
+  const words = needle
+    .split(" ")
+    .filter((w) => w.length > 1)
+    .map((w) => new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(w)}(?![\\p{L}\\p{N}])`, "iu"));
+  if (words.length < 2) return -1;
+  const span = needle.length * 2;
+  const first = new RegExp(words[0]!.source, "giu");
+  for (const hit of flat.matchAll(first)) {
+    const window = flat.slice(Math.max(0, hit.index - span / 2), hit.index + span);
+    if (words.every((w) => w.test(window))) return hit.index;
+  }
+  return -1;
+}
+
+/**
  * The part of a product page that describes the product.
  *
  * Most product pages change on most checks (ticket 01 measured a median of
@@ -98,27 +119,11 @@ function escapeRegExp(text: string): string {
  * re-read. Link targets are dropped because tracking tokens in them change
  * on every load.
  *
- * When the title is not on the page, `matched` is false and the excerpt is
+ * When the title is not on the page, even as its words close together,
+ * `matched` is false and the excerpt is
  * taken around the first price instead, or from the top of the page. The
  * caller should then re-read on any page change, so the alert still works.
  */
-/**
- * Where every word of the title appears within a short span, for a shop that
- * words the title its own way: another order, or an extra word such as
- * "AMD". -1 when no span holds them all.
- */
-function wordsTogether(flat: string, needle: string): number {
-  const words = needle.split(" ").filter((w) => w.length > 1);
-  if (words.length < 2) return -1;
-  const span = needle.length * 2;
-  const first = new RegExp(escapeRegExp(words[0]!), "gi");
-  for (const hit of flat.matchAll(first)) {
-    const window = flat.slice(Math.max(0, hit.index - span / 2), hit.index + span);
-    if (words.every((w) => new RegExp(escapeRegExp(w), "i").test(window))) return hit.index;
-  }
-  return -1;
-}
-
 export function productExcerpt(text: string, title: string): { excerpt: string; matched: boolean } {
   const flat = normaliseForMatch(text.replace(/\]\([^)\s]*\)/g, "]"));
   const needle = normaliseForMatch(title);

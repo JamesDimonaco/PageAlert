@@ -4,7 +4,9 @@
  * Patches the SDK's messages.create so every call, whichever service made it,
  * is priced from its own `usage` and appended to a JSONL ledger. The ledger
  * is shared across scripts, and a call that would start with the total at or
- * past SPEND_CAP_USD throws instead of running.
+ * past SPEND_CAP_USD throws instead of running. The total moves when a call
+ * returns, so calls already in flight can carry it past the cap. Each process
+ * reads the ledger once at start, so run one script at a time.
  *
  * Needs a plain client: run with POSTHOG_KEY unset, or getClient() returns
  * the PostHog wrapper, which bundles its own SDK copy this patch misses.

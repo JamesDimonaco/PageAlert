@@ -122,9 +122,9 @@ export async function extractWithAI(
   const truncatedText = pageText.length > 100000 ? pageText.slice(0, 100000) + "\n...[truncated]" : pageText;
 
   const message = await client.messages.create({
-    // Sonnet 5 thinks by default and those tokens come out of max_tokens, so
-    // a big listing page got its JSON cut off. This is a one-shot JSON task;
-    // it does not need the reasoning.
+    // As little reasoning as the model allows: on Sonnet 5 its tokens came out
+    // of max_tokens and cut a big listing page's JSON off. This is a one-shot
+    // JSON task.
     ...modelSettings(model),
     max_tokens: 16384,
     messages: [
@@ -415,6 +415,11 @@ export async function scoreCandidates(
       },
     ],
   });
+
+  if (message.stop_reason === "max_tokens") {
+    // The cut-off JSON parses as nothing, and every entry goes back unscored.
+    console.warn(`[extractor] Scoring ${candidates.length} entries hit max_tokens on ${model}`);
+  }
 
   const responseText = message.content
     .filter((block): block is AnthropicOriginal.TextBlock => block.type === "text")

@@ -1281,7 +1281,9 @@ async function scoreQuickCheckCandidates(
         candidates,
         ...(readStock ? { readStock: true } : {}),
       }),
-      signal: AbortSignal.timeout(60_000),
+      // Opus scores with a little thinking: about 9s at p90 in the 15/11/2026
+      // eval. A timeout leaves every entry unscored, so the margin is wide.
+      signal: AbortSignal.timeout(90_000),
     });
     if (!res.ok) {
       console.warn(`[scheduler] Scoring failed for ${monitor._id} (${res.status}) — alerting unscored`);
