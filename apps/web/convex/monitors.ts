@@ -2,7 +2,7 @@ import { ConvexError, v, type Infer, type ObjectType } from "convex/values";
 import { mutation, query, internalAction, internalMutation, internalQuery, type MutationCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
-import { displayHost, effectiveIntervalMs, ERROR_RECOVERY_INTERVAL_MS, intervalToMs, isBlockedError, isProxyFirstHost, matchKey, MAX_RETRIES, soldOutKeysOf, validateMonitorUrl } from "./shared";
+import { displayHost, effectiveIntervalMs, ERROR_RECOVERY_INTERVAL_MS, intervalToMs, isBlockedError, isProxyFirstHost, matchKey, MAX_RETRIES, soldOutKeysOf, validateMonitorUrl, wantsProductRead, FIRST_PRODUCT_READ_DELAY_MS } from "./shared";
 import { currencyExponent, itemIdentity, RESUME_TOKEN_TTL_MS, stockNotShownNote, type ExtractedItem, type MatchConditions } from "@prowl/shared";
 import { effectiveTier, type Tier } from "./tiers";
 import { drain, isBanned, requireLiveAccount, spent, SWEEP_BUDGET_BYTES, SWEEP_BUDGET_ROWS, type Allowance } from "./account";
@@ -350,7 +350,11 @@ export async function saveScanResultForUser(
     lastCheckedAt: now,
     lastMatchAt: matchCount > 0 ? now : undefined,
     lastAiExtractAt: now,
-    nextCheckAt: now + effectiveIntervalMs(monitor),
+    // A scan records no price or stock. See FIRST_PRODUCT_READ_DELAY_MS.
+    nextCheckAt:
+      monitor.lastSeen === undefined && wantsProductRead({ ...monitor, schema: schema as Doc<"monitors">["schema"] })
+        ? now + FIRST_PRODUCT_READ_DELAY_MS
+        : now + effectiveIntervalMs(monitor),
     // A scan reports its own matches to the user. Drop the baseline so the next scheduled extract
     // re-seeds it silently rather than re-announcing what the scan just
     // showed. The cost is the other half of that trade: anything appearing

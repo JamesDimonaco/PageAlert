@@ -10,6 +10,7 @@ import {
   SEARCH_REGIONS,
   formatToolResult,
   isUnreadableScan,
+  productItem,
   toAgentItem,
   toAgentNotices,
 } from "@prowl/shared";
@@ -62,11 +63,14 @@ function invalidUrl(message: string): ToolError {
   return { code: "invalid_url", message, retry: false };
 }
 
-function scanSummary(data: ExtractResponse) {
+function scanSummary(data: ExtractResponse, pageUrl: string) {
   const totalItems = data.totalItems ?? data.schema?.items?.length ?? 0;
   return {
     readable: !isUnreadableScan({ confidence: data.schema?.insights?.confidence, totalItems }),
     totalItems,
+    // The page's own product, when it is a product page, so an agent can read
+    // its price and stock without parsing the notices.
+    product: toAgentItem(productItem(data.schema, pageUrl)),
     matches: (data.matches ?? [])
       .slice(0, MAX_SCAN_MATCHES)
       .map(toAgentItem)
@@ -117,6 +121,8 @@ function registerTools(server: McpServer, convex: ConvexHttpClient, apiKey: stri
       description:
         "Read a page once and show what PageAlert would match on it for this prompt. Saves nothing. " +
         "Use it to check a page is readable and the prompt picks out the right items before creating a monitor. " +
+        "product is the page's own product on a product page, else null. Prices are in minor units of currency; " +
+        "priceText is a price as the page wrote it, when it could not be read. " +
         "If the site blocks the read, it tries once through a proxy, up to 5 times a day per user, " +
         "while the service's hourly proxy allowance lasts.",
       inputSchema: z.object({ url, prompt }),
@@ -161,7 +167,7 @@ function registerTools(server: McpServer, convex: ConvexHttpClient, apiKey: stri
             : { code: "failed", message: outcome.error, retry: !usedProxy }
         );
       }
-      return ok(scanSummary(outcome.data));
+      return ok(scanSummary(outcome.data, args.url));
     }
   );
 
@@ -208,7 +214,7 @@ function registerTools(server: McpServer, convex: ConvexHttpClient, apiKey: stri
           return ok({ monitorId, dashboardUrl, status, firstScan: { error: outcome.error, next } });
         }
 
-        const summary = scanSummary(outcome.data);
+        const summary = scanSummary(outcome.data, args.url);
         if (!summary.readable) {
           const reason = summary.notices[0] ?? "Page appears inaccessible - no data could be extracted";
           await convex.mutation(api.mcp.saveScanError, { apiKey, id: monitorId, error: reason });
@@ -263,7 +269,9 @@ function registerTools(server: McpServer, convex: ConvexHttpClient, apiKey: stri
     "get_matches",
     {
       title: "Get matches",
-      description: "The most recent items that matched a monitor's prompt, newest first, with when each matched.",
+      description:
+        "The most recent items that matched a monitor's prompt, newest first, with when each matched. " +
+        "Prices are in minor units of currency; priceText is a price as the page wrote it, when it could not be read.",
       inputSchema: z.object({
         monitorId,
         limit: z
@@ -350,9 +358,10 @@ function registerTools(server: McpServer, convex: ConvexHttpClient, apiKey: stri
       title: "Find a product",
       description:
         "Search shops in one country for a product by name. Returns up to 8 shop pages, each labelled same, " +
-        "similar or accessory, with price in minor units and stock where known. Counts against the user's " +
+        "similar or accessory. Counts against the user's " +
         "daily searches, as in the web app; a search that fails or finds nothing is not counted. " +
-        "Price and stock come from the search, not from reading the page. Price comparison sites are left out. " +
+        "searchPrice (minor units) and searchInStock come from search results, not the page, and can be another " +
+        "listing's: check with preview_page before relying on them. Price comparison sites and articles are left out. " +
         "Pass the pages you pick to create_product.",
       inputSchema: z.object({
         query: z.string().min(2).max(200).describe("The product's name, e.g. 'Sony WH-1000XM5'."),
@@ -379,7 +388,8 @@ function registerTools(server: McpServer, convex: ConvexHttpClient, apiKey: stri
         "Watch one product across several shop pages, with one set of stock and price alerts. A product " +
         "alerts only on stock and price, never on other items on its pages. Each page becomes a monitor " +
         "and is first read on the server within a minute. Counts against the plan's monitor limits. " +
-        "Shops' own pages only: a price comparison site is refused. To watch one, use create_monitor with a prompt.",
+        "Shops' own product pages only: a price comparison site or an article is refused. " +
+        "To watch a comparison page, use create_monitor with a prompt.",
       inputSchema: z.object({
         title: z.string().min(1).max(200).describe("The product's name, used to find it on each page."),
         region: region.describe("The country the shops are in."),

@@ -27,6 +27,8 @@ import {
   alertsOnScore,
   canonicalUrl,
   PROXY_REPROBE_EVERY,
+  wantsProductRead,
+  FIRST_PRODUCT_READ_DELAY_MS,
 } from "./shared";
 
 /** The fields both check paths agree on. Everything item-shaped in here satisfies it. */
@@ -114,13 +116,6 @@ const PRODUCT_SCAN_WATCHED_MS = 15 * 60 * 1000;
 
 /** Reads that may try to confirm a held price before it is dropped. Each one is paid for. */
 const MAX_CONFIRM_ATTEMPTS = 3;
-
-/** A product monitor whose owner wants a stock or price alert. */
-function wantsProductRead(monitor: Pick<Doc<"monitors">, "alertOn" | "schema" | "groupId" | "url">): boolean {
-  const on = monitor.alertOn;
-  const wanted = on?.backInStock === true || on?.priceDrop === true || on?.priceBelow !== undefined;
-  return wanted && isProductMonitor(monitor);
-}
 
 /** The scraper rejects longer titles with a 400, which would fail every check until the monitor parks. */
 const MAX_PRODUCT_TITLE = 500;
@@ -384,6 +379,14 @@ export const recordCheckResult = internalMutation({
 
     if (args.schema) {
       updates.schema = args.schema;
+    }
+
+    // A full read records no price or stock: only a quick check's product read
+    // does. With none yet, that read comes next, not a whole interval later.
+    // On a proxy-first site that is one proxy fetch earlier than the floor
+    // allows, once per product.
+    if (args.aiExtracted && monitor.lastSeen === undefined && wantsProductRead({ ...monitor, schema: args.schema ?? monitor.schema })) {
+      updates.nextCheckAt = now + FIRST_PRODUCT_READ_DELAY_MS;
     }
 
     if (args.contentFingerprint) {

@@ -1,7 +1,7 @@
 import { ConvexError, v, type Infer, type ObjectType } from "convex/values";
 import { internalMutation, internalQuery, mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
-import { canonicalUrl, isComparisonSite, isSearchRegion, SEARCH_REGIONS } from "@prowl/shared";
+import { canonicalUrl, isArticlePage, isComparisonSite, isSearchRegion, SEARCH_REGIONS } from "@prowl/shared";
 import {
   allowedChannels,
   clampInterval,
@@ -162,6 +162,12 @@ export async function createProductForUser(
     if (isComparisonSite(found.url)) {
       if (watch) {
         throw new ConvexError(`${displayHost(found.url)} is a price comparison site. Add each shop's own link instead.`);
+      }
+      continue;
+    }
+    if (isArticlePage(found.url)) {
+      if (watch) {
+        throw new ConvexError(`${displayHost(found.url)} gave an article link, not a shop's product page. Add the shop's product page instead.`);
       }
       continue;
     }

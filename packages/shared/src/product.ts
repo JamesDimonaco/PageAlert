@@ -24,12 +24,30 @@ export function productItem(schema: unknown, pageUrl: string): ExtractedItem | n
 }
 
 /** Price comparison sites in the search regions, matched on the site name in the hostname. */
-const COMPARISON_SITE = /(^|\.)(pricespy|priceme|pricerunner|idealo|staticice|getprice|shopbot)\./;
+const COMPARISON_SITE =
+  /(^|\.)(pricespy|priceme|pricerunner|pcpartpicker|idealo|kelkoo|geizhals|billiger|guenstiger|ledenicheur|trovaprezzi|kieskeurig|tweakers|beslist|staticice|getprice|shopbot|pricehipster|pricegrabber)\./;
 
 /** A page listing one product's offers from many shops, rather than a shop's own page. */
 export function isComparisonSite(url: string): boolean {
   try {
-    return COMPARISON_SITE.test(new URL(url).hostname);
+    const { hostname, pathname } = new URL(url);
+    const googleShopping = /(^|\.)google\./.test(hostname) && (hostname.startsWith("shopping.") || pathname.startsWith("/shopping"));
+    return COMPARISON_SITE.test(hostname) || googleShopping;
+  } catch {
+    return false;
+  }
+}
+
+/** Path segments of editorial pages, which shops publish beside their products. */
+const ARTICLE_SEGMENT = /^(blog|blogs|news|article|articles|review|reviews)$/i;
+
+/**
+ * A blog post, news story or review: a page about a product, not one selling
+ * it. Guides and magazines are left out: shops sell both under those paths.
+ */
+export function isArticlePage(url: string): boolean {
+  try {
+    return new URL(url).pathname.split("/").some((segment) => ARTICLE_SEGMENT.test(segment));
   } catch {
     return false;
   }

@@ -182,8 +182,9 @@ test("a saved first scan makes the monitor active and its matches readable", asy
   });
 
   // Only the match, not every item on the page, and only its structured fields.
+  // No currency on the page, so the price goes out as written.
   expect(await t.query(api.mcp.getMatches, { apiKey: key, monitorId: id })).toEqual([
-    { ...hut, matchedAt: new Date(NOW).toISOString() },
+    { title: hut.title, priceText: "92", url: hut.url, status: hut.status, matchedAt: new Date(NOW).toISOString() },
   ]);
 });
 
@@ -440,6 +441,9 @@ const LISTING = {
   label: "same",
 };
 
+/** LISTING as find_product hands it to an agent. */
+const SEARCHED = { site: LISTING.site, url: LISTING.url, title: LISTING.title, label: LISTING.label, searchPrice: 27999, currency: "GBP", searchInStock: true };
+
 async function searchesUsed(t: T, userId: string) {
   const row = await t.run((ctx) => ctx.db.query("userTiers").withIndex("by_userId", (q) => q.eq("userId", userId)).unique());
   return row?.productSearchCount ?? 0;
@@ -453,7 +457,7 @@ test("an agent's product search counts against the user's daily searches", async
   const t = setup();
   const { key, userId } = await seedUser(t, "a@example.com");
 
-  expect(await t.action(api.mcp.findProduct, { apiKey: key, query: "Sony WH-1000XM5", region: "GB" })).toEqual([LISTING]);
+  expect(await t.action(api.mcp.findProduct, { apiKey: key, query: "Sony WH-1000XM5", region: "GB" })).toEqual([SEARCHED]);
   expect(await searchesUsed(t, userId)).toBe(1);
 
   for (let i = 0; i < 4; i++) await t.action(api.mcp.findProduct, { apiKey: key, query: "Sony WH-1000XM5", region: "GB" });
@@ -1030,7 +1034,7 @@ test("find_product leaves out price comparison sites", async () => {
   vi.stubGlobal("fetch", async () => Response.json({ listings: [priceme, LISTING] }));
   const t = setup();
   const { key } = await seedUser(t, "a@example.com");
-  expect(await t.action(api.mcp.findProduct, { apiKey: key, query: "Sony WH-1000XM5", region: "GB" })).toEqual([LISTING]);
+  expect(await t.action(api.mcp.findProduct, { apiKey: key, query: "Sony WH-1000XM5", region: "GB" })).toEqual([SEARCHED]);
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
 });
@@ -1076,4 +1080,66 @@ test("a first scan saved without its matches leaves passedKeys unset", async () 
   const id = await asUser.mutation(api.monitors.create, { ...MONITOR, checkInterval: "1h" });
   await asUser.mutation(api.monitors.saveScanResult, { id, schema: { items: [{ title: "one" }] }, matchCount: 1 });
   expect((await t.run((ctx) => ctx.db.get(id)))?.passedKeys).toBeUndefined();
+});
+
+// Prod, 14/11/2026: a Steam Machine product had a box.co.uk blog post as a shop page.
+test("create_product refuses an article, and find_product leaves articles out", async () => {
+  vi.stubEnv("SCRAPER_URL", "https://scraper.test");
+  vi.stubEnv("SCRAPER_API_KEY", "key");
+  const blog = { ...LISTING, site: "box.co.uk", url: "https://www.box.co.uk/blog/steam-machine-release-date" };
+  vi.stubGlobal("fetch", async () => Response.json({ listings: [blog, LISTING] }));
+  const t = setup();
+  const { key } = await seedUser(t, "a@example.com");
+  expect((await t.action(api.mcp.findProduct, { apiKey: key, query: "Steam Machine", region: "GB" })).map((l) => l.url)).toEqual([LISTING.url]);
+  expect(
+    await toolErrorOf(
+      t.mutation(api.mcp.createProduct, { apiKey: key, title: "Steam Machine", region: "GB", urls: [blog.url], alertOn: { backInStock: true } })
+    )
+  ).toEqual({ code: "invalid_url", message: expect.stringMatching(/box\.co\.uk.*article.*shop's product page/), retry: false });
+  vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
+});
+
+// Prod, 14/11/2026: find_product said PB Tech had it in stock at NZ$793.94.
+// The page said out of stock, and the price was another shop's. These come
+// from search results, and the field names have to say so.
+test("find_product names its price and stock as read from search", async () => {
+  vi.stubEnv("SCRAPER_URL", "https://scraper.test");
+  vi.stubEnv("SCRAPER_API_KEY", "key");
+  vi.stubGlobal("fetch", async () => Response.json({ listings: [LISTING] }));
+  const t = setup();
+  const { key } = await seedUser(t, "a@example.com");
+  expect(await t.action(api.mcp.findProduct, { apiKey: key, query: "Sony WH-1000XM5", region: "GB" })).toEqual([
+    { site: "argos.co.uk", url: LISTING.url, title: LISTING.title, label: "same", searchPrice: 27999, currency: "GBP", searchInStock: true },
+  ]);
+  vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
+});
+
+// A page with no item links and no currency lists two huts by title. Keyed on
+// title and price, they stay two matches.
+test("get_matches keeps apart same-titled items whose price is text", async () => {
+  const t = setup();
+  const { key } = await seedUser(t, "a@example.com");
+  const id = await t.mutation(api.mcp.createMonitor, { apiKey: key, ...MONITOR });
+  const huts = [{ title: "Milford Track", price: 92 }, { title: "Milford Track", price: 130 }];
+  await t.mutation(api.mcp.saveScanResult, { apiKey: key, id, schema: { items: huts }, matches: huts });
+  expect((await t.query(api.mcp.getMatches, { apiKey: key, monitorId: id })).map((m) => m.priceText)).toEqual(["92", "130"]);
+});
+
+// Prod, 14/11/2026: a product watched from its first scan had no price or
+// stock until a whole interval later.
+test("a first scan of a product page with stock or price alerts brings its first product read forward", async () => {
+  const t = setup();
+  const { key } = await seedUser(t, "a@example.com");
+  const id = await t.mutation(api.mcp.createMonitor, {
+    apiKey: key, url: "https://shop.test/xm5", prompt: "in stock", name: "XM5", checkInterval: "24h", alertOn: { backInStock: true },
+  });
+  await t.mutation(api.mcp.saveScanResult, { apiKey: key, id, schema: { items: [{ title: "Sony WH-1000XM5" }] }, matches: [] });
+  expect((await t.run((ctx) => ctx.db.get(id)))?.nextCheckAt).toBe(NOW + 60_000);
+
+  // A listing gets no product read, so it keeps its interval.
+  const listing = await t.mutation(api.mcp.createMonitor, { apiKey: key, ...MONITOR, checkInterval: "24h", alertOn: { backInStock: true } });
+  await t.mutation(api.mcp.saveScanResult, { apiKey: key, id: listing, schema: { items: [{ title: "a" }, { title: "b" }] }, matches: [] });
+  expect((await t.run((ctx) => ctx.db.get(listing)))?.nextCheckAt).toBeGreaterThan(NOW + 60_000);
 });

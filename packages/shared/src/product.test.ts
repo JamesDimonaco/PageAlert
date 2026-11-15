@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { isComparisonSite, isProductMonitor, productExcerpt, productItem } from "./product";
+import { isArticlePage, isComparisonSite, isProductMonitor, productExcerpt, productItem } from "./product";
 
 describe("productExcerpt", () => {
   // Churn outside the buy box must not change the excerpt, or every check
@@ -95,14 +95,50 @@ describe("isComparisonSite", () => {
       "https://www.pricerunner.com/pl/1-2/x",
       "https://www.idealo.de/preisvergleich/OffersOfProduct/1.html",
       "https://www.staticice.com.au/cgi-bin/search.cgi?q=x",
+      "https://nz.pcpartpicker.com/product/abc/gigabyte-b650i-ax",
+      "https://www.geizhals.de/a123.html",
+      "https://www.kelkoo.co.uk/c-1-x",
+      "https://www.ledenicheur.fr/product.php?p=1",
+      "https://www.trovaprezzi.it/prezzo_x.aspx",
+      "https://tweakers.net/pricewatch/1/x.html",
+      "https://www.google.com/shopping/product/1",
+      "https://shopping.google.co.uk/x",
     ]) {
       expect(isComparisonSite(url), url).toBe(true);
     }
   });
 
   test("leaves shops alone, including ones whose name contains a comparison site's", () => {
-    for (const url of ["https://www.pbtech.co.nz/product/1", "https://notpricespy.com/x", "not a url"]) {
+    for (const url of ["https://www.pbtech.co.nz/product/1", "https://notpricespy.com/x", "https://shopping.example.com/p/1", "https://www.google.com/search?q=x", "not a url"]) {
       expect(isComparisonSite(url), url).toBe(false);
+    }
+  });
+});
+
+describe("isArticlePage", () => {
+  // Prod, 14/11/2026: a product got box.co.uk/blog/... as a shop page.
+  test("knows blog, news, review and guide pages by their path", () => {
+    for (const url of [
+      "https://www.box.co.uk/blog/steam-machine-release-date",
+      "https://www.currys.co.uk/techtalk/news/1",
+      "https://shop.test/reviews/sony-xm5",
+      "https://shop.test/articles/x",
+    ]) {
+      expect(isArticlePage(url), url).toBe(true);
+    }
+  });
+
+  test("leaves product pages alone, including ones whose slug holds such a word", () => {
+    for (const url of [
+      "https://www.pbtech.co.nz/product/VGA1/x",
+      "https://shop.test/products/news-print-paper",
+      "https://shop.test/p/review-kit",
+      // Shops that sell magazines and printed guides file them so.
+      "https://shop.test/magazine/issue-12",
+      "https://shop.test/guides/lonely-planet-nz",
+      "nope",
+    ]) {
+      expect(isArticlePage(url), url).toBe(false);
     }
   });
 });
