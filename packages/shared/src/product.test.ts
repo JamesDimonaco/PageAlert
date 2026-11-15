@@ -28,6 +28,22 @@ describe("productExcerpt", () => {
       .toBe("Sony WH-1000XM5 [Add to basket]");
   });
 
+  // Prod, 15/11/2026: the search's title was "PowerColor Reaper Radeon RX
+  // 9060 XT 16GB"; PB Tech writes "Powercolor Reaper AMD Radeon RX 9060 XT
+  // 16GB GDDR6". The exact search missed, the fallback found the empty cart's
+  // $0.00, and every product read came back with no price or stock.
+  test("finds a title whose words appear together in another order or with extra words", () => {
+    const page = `Brands PowerColor Cart $0.00 ${"nav ".repeat(100)}Powercolor Reaper AMD Radeon RX 9060 XT 16GB GDDR6 $799.00 Out of stock`;
+    const { excerpt, matched } = productExcerpt(page, "PowerColor Reaper Radeon RX 9060 XT 16GB");
+    expect(matched).toBe(true);
+    expect(excerpt).toContain("$799.00 Out of stock");
+  });
+
+  test("does not match title words scattered across the page", () => {
+    const page = `PowerColor ${"x ".repeat(400)} Reaper ${"y ".repeat(400)} Radeon RX 9060 XT 16GB $10`;
+    expect(productExcerpt(page, "PowerColor Reaper Radeon RX 9060 XT 16GB").matched).toBe(false);
+  });
+
   // An unmatched title must still give the reader something with a price in
   // it, and say so, so the caller can fall back to whole-page changes.
   test("without the title, says so and starts near the first price", () => {

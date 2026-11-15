@@ -102,12 +102,30 @@ function escapeRegExp(text: string): string {
  * taken around the first price instead, or from the top of the page. The
  * caller should then re-read on any page change, so the alert still works.
  */
+/**
+ * Where every word of the title appears within a short span, for a shop that
+ * words the title its own way: another order, or an extra word such as
+ * "AMD". -1 when no span holds them all.
+ */
+function wordsTogether(flat: string, needle: string): number {
+  const words = needle.split(" ").filter((w) => w.length > 1);
+  if (words.length < 2) return -1;
+  const span = needle.length * 2;
+  const first = new RegExp(escapeRegExp(words[0]!), "gi");
+  for (const hit of flat.matchAll(first)) {
+    const window = flat.slice(Math.max(0, hit.index - span / 2), hit.index + span);
+    if (words.every((w) => new RegExp(escapeRegExp(w), "i").test(window))) return hit.index;
+  }
+  return -1;
+}
+
 export function productExcerpt(text: string, title: string): { excerpt: string; matched: boolean } {
   const flat = normaliseForMatch(text.replace(/\]\([^)\s]*\)/g, "]"));
   const needle = normaliseForMatch(title);
   // A case-insensitive search on the string being sliced, so the index lines
   // up. Lowercasing a copy can change its length.
-  const at = needle ? flat.search(new RegExp(escapeRegExp(needle), "i")) : -1;
+  const exact = needle ? flat.search(new RegExp(escapeRegExp(needle), "i")) : -1;
+  const at = exact !== -1 ? exact : wordsTogether(flat, needle);
   if (at !== -1) {
     return { excerpt: flat.slice(Math.max(0, at - EXCERPT_BEFORE), at + EXCERPT_AFTER).trim(), matched: true };
   }
