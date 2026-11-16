@@ -5,7 +5,7 @@ import schema from "./schema";
 import betterAuthSchema from "./betterAuth/schema";
 import { api, components, internal } from "./_generated/api";
 import { authComponent } from "./betterAuth/auth";
-import { ANNOUNCEMENT_BATCH_SIZE } from "./announcements";
+import { ANNOUNCEMENT_BATCH_SIZE, MAX_SEND_LIMIT } from "./announcements";
 import { verifyUnsubscribeToken } from "./unsubscribe";
 
 const modules = import.meta.glob("./**/*.*s");
@@ -13,6 +13,7 @@ const betterAuthModules = import.meta.glob("./betterAuth/**/*.*s");
 
 const KEY = "sms-alerts-2026-10";
 const NOW = 1_700_000_000_000;
+const DAY = 24 * 60 * 60 * 1000;
 
 type Payload = { to: string[]; subject: string; html: string; text: string; headers: Record<string, string> };
 
@@ -310,6 +311,108 @@ describe("Find a product, split by whether someone has made a monitor", () => {
     const [p] = sentPayloads();
     expect(p.html).toContain("/dashboard?find=Nintendo%20Switch%202");
     expect(p.text).toContain("Nintendo Switch 2: https://pagealert.io/dashboard?find=Nintendo%20Switch%202");
+  });
+});
+
+describe("Black Friday offer", () => {
+  const BF = "black-friday-2026-11";
+
+  it("goes only to people on Free, so nobody paying or on a live grant is offered a discount", async () => {
+    const t = harness();
+    await seedUser(t, "free@example.com");
+    const lapsed = await seedUser(t, "lapsed@example.com");
+    const paying = await seedUser(t, "paying@example.com");
+    const granted = await seedUser(t, "granted@example.com");
+    await t.run(async (ctx) => {
+      await ctx.db.insert("userTiers", { userId: lapsed, tier: "pro", grantUntil: Date.now() - 1000, grantSource: "admin", updatedAt: NOW });
+      await ctx.db.insert("userTiers", { userId: paying, tier: "pro", polarSubscriptionId: "sub_1", updatedAt: NOW });
+      await ctx.db.insert("userTiers", { userId: granted, tier: "pro", grantUntil: Date.now() + DAY, grantSource: "admin", updatedAt: NOW });
+    });
+
+    // Signed up yesterday: the offer ends in days, so new sign-ups get it too, onboarding or not.
+    await seedUser(t, "new@example.com", true, Date.now() - DAY);
+
+    expect(await t.action(internal.announcements.send, { key: BF })).toMatchObject({ wouldSend: 3 });
+    await t.action(internal.announcements.send, { key: BF, dryRun: false });
+    expect(sentPayloads().map((p) => p.to[0]).sort()).toEqual(["free@example.com", "lapsed@example.com", "new@example.com"]);
+  });
+
+  it("names the code and the deadline that match the Polar discount", async () => {
+    const t = harness();
+    await seedUser(t, "free@example.com");
+
+    await t.action(internal.announcements.send, { key: BF, dryRun: false });
+
+    const [p] = sentPayloads();
+    for (const body of [p.html, p.text]) {
+      expect(body).toContain("BLACKFRIDAY50");
+      expect(body).toContain("30 November");
+    }
+  });
+});
+
+describe("limit", () => {
+  async function addMonitors(t: T, userId: string, count: number, status: "active" | "paused" = "active", lastMatchAt?: number) {
+    await t.run(async (ctx) => {
+      for (let i = 0; i < count; i++) {
+        await ctx.db.insert("monitors", {
+          userId, name: "M", url: "https://shop.test/m", prompt: "x", status, checkInterval: "1h",
+          matchCount: 0, createdAt: 0, updatedAt: 0, lastMatchAt,
+        });
+      }
+    });
+  }
+
+  // Busiest first: people near the Free monitor limit are the likeliest to upgrade.
+  async function seedByActivity(t: T) {
+    await addMonitors(t, await seedUser(t, "one@example.com"), 1);
+    await addMonitors(t, await seedUser(t, "three@example.com"), 3);
+    const paused = await seedUser(t, "paused@example.com");
+    await addMonitors(t, paused, 5, "paused");
+    await addMonitors(t, await seedUser(t, "two-old@example.com"), 2, "active", NOW);
+    await addMonitors(t, await seedUser(t, "two-recent@example.com"), 2, "active", NOW + DAY);
+    await seedUser(t, "none@example.com");
+  }
+
+  it("sends to the most active people first, and the next run picks up the next most active", async () => {
+    const t = harness();
+    await seedByActivity(t);
+
+    expect(await t.action(internal.announcements.send, { key: KEY, limit: 2 })).toMatchObject({ wouldSend: 2 });
+    await t.action(internal.announcements.send, { key: KEY, dryRun: false, limit: 2 });
+    expect(sentPayloads().map((p) => p.to[0])).toEqual(["three@example.com", "two-recent@example.com"]);
+
+    fetchMock.mockClear();
+    await t.action(internal.announcements.send, { key: KEY, dryRun: false, limit: 2 });
+    expect(sentPayloads().map((p) => p.to[0])).toEqual(["two-old@example.com", "one@example.com"]);
+
+    fetchMock.mockClear();
+    await t.action(internal.announcements.send, { key: KEY, dryRun: false, limit: 2 });
+    expect(sentPayloads().map((p) => p.to[0]).sort()).toEqual(["none@example.com", "paused@example.com"]);
+  });
+
+  // slice(0, -1) keeps everyone but one, so a typo would mail the whole list at once.
+  it.each([0, -1, 2.5, MAX_SEND_LIMIT + 1])("refuses limit %s before sending anything", async (limit) => {
+    const t = harness();
+    await seedUser(t, "a@example.com");
+    await expect(t.action(internal.announcements.send, { key: KEY, dryRun: false, limit })).rejects.toThrow(/limit/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("pins the cap low enough that one run finishes inside the action time limit", () => {
+    expect(MAX_SEND_LIMIT).toBe(200);
+  });
+
+  it("refuses a cursor with a limit, since a limited run always ranks everyone", async () => {
+    const t = harness();
+    await expect(t.action(internal.announcements.send, { key: KEY, limit: 2, cursor: "x" })).rejects.toThrow(/cursor/);
+  });
+
+  it("reports stranded pending rows in a limited dry run", async () => {
+    const t = harness();
+    const a = await seedUser(t, "a@example.com");
+    await t.run((ctx) => ctx.db.insert("announcementSends", { key: KEY, userId: a, status: "pending", updatedAt: NOW }));
+    expect(await t.action(internal.announcements.send, { key: KEY, limit: 2 })).toMatchObject({ wouldSend: 0, pending: 1 });
   });
 });
 
