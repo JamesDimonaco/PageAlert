@@ -181,7 +181,7 @@ export function NotificationSettings() {
 
   const emailTypes: Array<{ id: "tips" | "updates"; name: string; blurb: string }> = [
     { id: "tips", name: "Tips", blurb: "Getting-started emails and ideas for monitors" },
-    { id: "updates", name: "Product updates", blurb: "New features, now and then" },
+    { id: "updates", name: "Product updates", blurb: "New features and the odd offer, now and then" },
   ];
 
   return (

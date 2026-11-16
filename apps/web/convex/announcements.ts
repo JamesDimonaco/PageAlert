@@ -6,6 +6,7 @@ import { components, internal } from "./_generated/api";
 import { APP_URL, HELLO_FROM_EMAIL, RESEND_TIMEOUT } from "./emails";
 import { esc } from "./shared";
 import { isBanned } from "./account";
+import { effectiveTier } from "./tiers";
 import { isOptedOut, unsubscribeHeaders, unsubscribeUrl } from "./unsubscribe";
 
 /**
@@ -38,6 +39,8 @@ type Audience = {
    * onboarding sequence (day 0 to day 7), which already covers the same ground.
    */
   minAccountAgeDays?: number;
+  /** Only people on Free right now, so an offer never reaches someone already paying or on a live grant. */
+  freeOnly?: boolean;
 };
 
 type Announcement = {
@@ -177,10 +180,39 @@ const findAProductFirstMonitor: Announcement = {
   }),
 };
 
+/** Matches the BLACKFRIDAY50 discount in Polar: 50% off the first payment, one use per customer. */
+const blackFriday: Announcement = {
+  subject: "Four Black Friday tips, and half off PageAlert",
+  audience: { freeOnly: true },
+  render: announcementEmail({
+    heading: "Get ready for Black Friday",
+    paragraphs: [
+      "Black Friday is on 27 November. Four things worth doing this week:",
+      "1. Set your monitors now. Then you know the normal price before the sales start, and a made-up \"was\" price won't fool you.",
+      "2. Watch the same item at two or three shops. Retailers undercut each other, and deals often start early in the week.",
+      "3. Set a target price. You only hear when it drops below what you'd pay.",
+      "4. Turn on push or Telegram. The best deals sell out in minutes, and an email is easy to miss. Sold out anyway? Leave the monitor on, stock often comes back.",
+      "The free plan checks every hour, which can be too slow that week. Paid plans check every 15 minutes, or every 5 on Max.",
+      "So every paid plan is half price for the first month with code BLACKFRIDAY50. Sprint is the one I'd pick — $2 for 30 days, and it ends on its own, so there's nothing to cancel. The code works until Monday 30 November.",
+      "Pick one to start. Each opens with the search ready to go:",
+    ],
+    examples: [
+      { label: "PlayStation 5", href: findHref("PlayStation 5") },
+      { label: "AirPods Pro 3", href: findHref("AirPods Pro 3") },
+      { label: "LG OLED TV", href: findHref("LG OLED TV") },
+      { label: "Roborock robot vacuum", href: findHref("Roborock robot vacuum") },
+    ],
+    button: "Get half off",
+    buttonHint: "Use code BLACKFRIDAY50 at checkout.",
+    href: `${APP_URL}/dashboard/settings?tab=billing`,
+  }),
+};
+
 const ANNOUNCEMENTS: Record<string, Announcement> = {
   "sms-alerts-2026-10": smsAlerts,
   "find-a-product-2026-11": findAProduct,
   "find-a-product-first-monitor-2026-11": findAProductFirstMonitor,
+  "black-friday-2026-11": blackFriday,
 };
 
 const recipientValidator = v.object({ userId: v.string(), email: v.string() });
@@ -197,11 +229,19 @@ async function eligible(
   key: string,
   users: Recipient[]
 ): Promise<{ out: Recipient[]; pending: number }> {
-  const wanted = ANNOUNCEMENTS[key]?.audience?.monitors;
+  const audience = ANNOUNCEMENTS[key]?.audience;
+  const wanted = audience?.monitors;
   const out: Recipient[] = [];
   let pending = 0;
   for (const user of users) {
     if ((await isOptedOut(ctx, user.userId, "updates")) || (await isBanned(ctx, user.userId))) continue;
+    if (audience?.freeOnly) {
+      const tier = await ctx.db
+        .query("userTiers")
+        .withIndex("by_userId", (q) => q.eq("userId", user.userId))
+        .unique();
+      if (effectiveTier(tier) !== "free") continue;
+    }
     if (wanted) {
       // monitorCreations outlives a deleted monitor, so someone who tried it once still counts as started.
       const created = await ctx.db
@@ -220,6 +260,27 @@ async function eligible(
   }
   return { out, pending };
 }
+
+/**
+ * Eligible users, busiest first: most active monitors, then the most recent
+ * match. People near the Free monitor limit are the likeliest to upgrade.
+ */
+export const rankEligible = internalQuery({
+  args: { key: v.string(), users: v.array(recipientValidator) },
+  handler: async (ctx, { key, users }) => {
+    const { out } = await eligible(ctx, key, users);
+    const ranked = [];
+    for (const user of out) {
+      const monitors = await ctx.db
+        .query("monitors")
+        .withIndex("by_userId_status", (q) => q.eq("userId", user.userId).eq("status", "active"))
+        .collect();
+      const lastMatchAt = Math.max(0, ...monitors.map((m) => m.lastMatchAt ?? 0));
+      ranked.push({ ...user, activeMonitors: monitors.length, lastMatchAt });
+    }
+    return ranked;
+  },
+});
 
 export const countEligible = internalQuery({
   args: { key: v.string(), users: v.array(recipientValidator) },
@@ -369,6 +430,73 @@ async function sendTest(announcement: Announcement, email: string, ctx: ActionCt
   return { testSent: true, to: email.toLowerCase() };
 }
 
+/** Verified users old enough for this announcement. Opt-outs, tiers and past sends are eligible()'s job. */
+function reachable(page: Record<string, unknown>[], announcement: Announcement, now: number): Recipient[] {
+  const minAgeDays = announcement.audience?.minAccountAgeDays;
+  // An account with no readable sign-up time is treated as old enough.
+  const oldEnough = (createdAt: unknown): boolean =>
+    minAgeDays === undefined || typeof createdAt !== "number" || now - createdAt >= minAgeDays * DAY_MS;
+  // Better Auth takes emailVerified from the provider for Google and GitHub
+  // sign-ups, so requiring it also keeps typo'd password sign-ups out.
+  return page
+    .filter((u) => u.emailVerified === true && typeof u.email === "string" && u.email.length > 0)
+    .filter((u) => oldEnough(u.createdAt))
+    .map((u) => ({ userId: String(u._id), email: String(u.email) }));
+}
+
+/**
+ * Ranks everyone eligible, then sends to the top `limit`. Already-sent rows
+ * drop out of eligible(), so the next run reaches the next busiest people.
+ * Every user is ranked in one run; fine at today's few hundred accounts.
+ */
+async function sendBusiestFirst(
+  ctx: ActionCtx,
+  key: string,
+  announcement: Announcement,
+  limit: number,
+  dryRun: boolean,
+  apiKey: string | undefined,
+  replyTo: string | undefined
+) {
+  const now = Date.now();
+  type Ranked = Recipient & { activeMonitors: number; lastMatchAt: number };
+  const ranked: Ranked[] = [];
+  let cursor: string | null = null;
+  for (;;) {
+    const page: PaginationResult<Record<string, unknown>> = await ctx.runQuery(
+      components.betterAuth.adapter.findMany,
+      { model: "user", paginationOpts: { numItems: ANNOUNCEMENT_BATCH_SIZE, cursor } }
+    );
+    const users = reachable(page.page, announcement, now);
+    ranked.push(...(await ctx.runQuery(internal.announcements.rankEligible, { key, users })));
+    if (page.isDone) break;
+    cursor = page.continueCursor;
+  }
+  ranked.sort((a, b) => b.activeMonitors - a.activeMonitors || b.lastMatchAt - a.lastMatchAt);
+  const chosen: Recipient[] = ranked.slice(0, limit).map(({ userId, email }) => ({ userId, email }));
+
+  if (dryRun) {
+    console.log(`[announcements] ${key} dry run, limit ${limit}`, { wouldSend: chosen.length, eligible: ranked.length });
+    return { dryRun, wouldSend: chosen.length, eligible: ranked.length };
+  }
+
+  const totals: Totals = { sent: 0, failed: 0, unsure: 0 };
+  for (let i = 0; i < chosen.length; i += ANNOUNCEMENT_BATCH_SIZE) {
+    const batch = await ctx.runMutation(internal.announcements.claim, {
+      key,
+      users: chosen.slice(i, i + ANNOUNCEMENT_BATCH_SIZE),
+    });
+    if (batch.length === 0) continue;
+    const result = await sendBatch(ctx, key, announcement, batch, apiKey!, replyTo!);
+    totals.sent += result.sent;
+    totals.failed += result.failed;
+    totals.unsure += result.unsure;
+    await new Promise((resolve) => setTimeout(resolve, BATCH_SPACING_MS));
+  }
+  console.log(`[announcements] ${key} done, limit ${limit}`, totals);
+  return { dryRun, ...totals, continued: false };
+}
+
 export const send = internalAction({
   args: {
     key: v.string(),
@@ -376,6 +504,8 @@ export const send = internalAction({
     // Sends the real email to this one address, whatever dryRun says, and records nothing.
     testTo: v.optional(v.string()),
     cursor: v.optional(v.union(v.string(), v.null())),
+    // Send to only this many people, busiest first, so a list can go out over several days.
+    limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const dryRun = args.dryRun ?? true;
@@ -394,11 +524,9 @@ export const send = internalAction({
 
     if (args.testTo !== undefined) return sendTest(announcement, args.testTo, ctx, apiKey!, replyTo!);
 
+    if (args.limit !== undefined) return sendBusiestFirst(ctx, args.key, announcement, args.limit, dryRun, apiKey, replyTo);
+
     const started = Date.now();
-    const minAgeDays = announcement.audience?.minAccountAgeDays;
-    // An account with no readable sign-up time is treated as old enough.
-    const oldEnough = (createdAt: unknown): boolean =>
-      minAgeDays === undefined || typeof createdAt !== "number" || started - createdAt >= minAgeDays * DAY_MS;
     let cursor = args.cursor ?? null;
     let wouldSend = 0;
     let pending = 0;
@@ -409,12 +537,7 @@ export const send = internalAction({
         components.betterAuth.adapter.findMany,
         { model: "user", paginationOpts: { numItems: ANNOUNCEMENT_BATCH_SIZE, cursor } }
       );
-      // Better Auth takes emailVerified from the provider for Google and GitHub
-      // sign-ups, so requiring it also keeps typo'd password sign-ups out.
-      const users: Recipient[] = page.page
-        .filter((u) => u.emailVerified === true && typeof u.email === "string" && u.email.length > 0)
-        .filter((u) => oldEnough(u.createdAt))
-        .map((u) => ({ userId: String(u._id), email: String(u.email) }));
+      const users = reachable(page.page, announcement, started);
 
       if (dryRun) {
         const counts = await ctx.runQuery(internal.announcements.countEligible, { key: args.key, users });
