@@ -1179,3 +1179,16 @@ test("a product monitor's first full read brings its first price and stock read 
   });
   expect((await t.run((ctx) => ctx.db.get(id)))?.nextCheckAt).toBeGreaterThan(now + 23 * 3_600_000);
 });
+
+// Prod, 15/11/2026: a dead Warehouse listing never got a reading, so every
+// forced full read booked another early read. It looped every 14 minutes on
+// a 24h interval: 119 checks in 12 hours, each a Scrapfly call and an AI read.
+test("only a product monitor's first full read brings a price and stock read forward", async () => {
+  const { t, id } = await seedProductMonitor(undefined);
+  await t.run((ctx) => ctx.db.patch(id, { checkInterval: "24h", lastAiExtractAt: Date.now() - 3_600_000 }));
+  const now = Date.now();
+  await t.mutation(internal.scheduler.recordCheckResult, {
+    monitorId: id, hasNewMatches: false, matchCount: 0, totalItems: 1, matches: [], aiExtracted: true, trackMatchKeys: true,
+  });
+  expect((await t.run((ctx) => ctx.db.get(id)))?.nextCheckAt).toBeGreaterThan(now + 23 * 3_600_000);
+});

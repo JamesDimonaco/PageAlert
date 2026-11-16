@@ -90,6 +90,43 @@ describe("scrapeUrl block detection by HTTP status", () => {
   });
 });
 
+// Prod, 15/11/2026: a removed Warehouse listing came back from Scrapfly as
+// "Fallback provider error". That pinged "Scrapfly is failing" every hour,
+// and the owner was told the proxy broke rather than that the page is gone.
+describe("scrapeUrl through the fallback proxy", () => {
+  it.each([404, 410])("names a page the shop says is gone (%i), not the provider", async (status) => {
+    vi.stubEnv("SCRAPFLY_API_KEY", "test");
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({
+      result: {
+        success: false,
+        status_code: status,
+        content: "<title>404 Page Not Found</title>",
+        error: { code: "ERR::SCRAPE::BAD_UPSTREAM_RESPONSE", message: `The website you target respond with an unexpected status code (>400) - respond with ${status}` },
+      },
+    }, { status: 422 })));
+    try {
+      const failure = scrapeUrl("https://shop.test/gone", { useProxy: true });
+      await expect(failure).rejects.toThrow(`Page not found (HTTP ${status})`);
+      await expect(failure).rejects.not.toThrow("Fallback provider error");
+    } finally {
+      vi.unstubAllGlobals();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  // Any other upstream status is still Scrapfly's problem to report.
+  it("keeps other provider failures as provider errors", async () => {
+    vi.stubEnv("SCRAPFLY_API_KEY", "test");
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ result: { success: false, status_code: 500, error: { code: "ERR::SCRAPE::BAD_UPSTREAM_RESPONSE", message: "respond with 500" } } }, { status: 422 })));
+    try {
+      await expect(scrapeUrl("https://shop.test/down", { useProxy: true })).rejects.toThrow("Fallback provider error: respond with 500");
+    } finally {
+      vi.unstubAllGlobals();
+      vi.unstubAllEnvs();
+    }
+  });
+});
+
 describe("scrapeUrl block detection by page content", () => {
   // Matching "captcha" anywhere in the source failed real shops in seconds
   // and parked monitors that would have worked.

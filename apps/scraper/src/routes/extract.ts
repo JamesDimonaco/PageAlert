@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
-import { FALLBACK_PROVIDER_ERROR, scrapeUrl } from "../services/scraper.js";
+import { FALLBACK_PROVIDER_ERROR, PAGE_NOT_FOUND, scrapeUrl } from "../services/scraper.js";
 import { extractWithAI, scoreCandidates } from "../services/extractor.js";
 import { judgeMatches } from "../services/judge-matches.js";
 import { MAX_URL_LENGTH } from "../utils/url-validation.js";
@@ -89,6 +89,9 @@ extractRoutes.post("/", zValidator("json", extractSchema), async (c) => {
       // Checked before the billing branch: Scrapfly's reason can say "credits"
       clientMessage = message;
       statusCode = 502;
+    } else if (message.startsWith(PAGE_NOT_FOUND)) {
+      clientMessage = message;
+      statusCode = 404;
     } else if (message.includes("URL") || message.includes("hostname") || message.includes("not allowed")) {
       clientMessage = message; // URL validation errors are safe to return
       statusCode = 400;
@@ -117,6 +120,6 @@ extractRoutes.post("/", zValidator("json", extractSchema), async (c) => {
       clientMessage = `AI service error ${(error as { status: number }).status}: ${message}`;
     }
 
-    return c.json({ error: "extract_failed", message: clientMessage }, statusCode as 400 | 403 | 429 | 500 | 502 | 504);
+    return c.json({ error: "extract_failed", message: clientMessage }, statusCode as 400 | 403 | 404 | 429 | 500 | 502 | 504);
   }
 });

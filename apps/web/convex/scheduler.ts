@@ -385,7 +385,9 @@ export const recordCheckResult = internalMutation({
     // does. With none yet, that read comes next, not a whole interval later.
     // On a proxy-first site that is one proxy fetch earlier than the floor
     // allows, once per product.
-    if (args.aiExtracted && monitor.lastSeen === undefined && wantsProductRead({ ...monitor, schema: args.schema ?? monitor.schema })) {
+    // First full read only: a page that never yields a reading would
+    // otherwise book an early check after every full read, forever.
+    if (args.aiExtracted && !monitor.lastAiExtractAt && monitor.lastSeen === undefined && wantsProductRead({ ...monitor, schema: args.schema ?? monitor.schema })) {
       updates.nextCheckAt = now + FIRST_PRODUCT_READ_DELAY_MS;
     }
 
