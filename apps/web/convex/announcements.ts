@@ -188,7 +188,8 @@ const findAProductFirstMonitor: Announcement = {
 /** Matches the BLACKFRIDAY50 discount in Polar: 50% off the first payment, one use per customer. */
 const blackFriday: Announcement = {
   subject: "Four Black Friday tips, and half off PageAlert",
-  audience: { freeOnly: true, minAccountAgeDays: PAST_ONBOARDING_DAYS },
+  // No minimum account age: the offer ends in days, so this week's sign-ups get it too.
+  audience: { freeOnly: true },
   render: announcementEmail({
     heading: "Get ready for Black Friday",
     paragraphs: [

@@ -329,12 +329,12 @@ describe("Black Friday offer", () => {
       await ctx.db.insert("userTiers", { userId: granted, tier: "pro", grantUntil: Date.now() + DAY, grantSource: "admin", updatedAt: NOW });
     });
 
-    // Signed up yesterday: still in onboarding, which already covers setting up monitors.
+    // Signed up yesterday: the offer ends in days, so new sign-ups get it too, onboarding or not.
     await seedUser(t, "new@example.com", true, Date.now() - DAY);
 
-    expect(await t.action(internal.announcements.send, { key: BF })).toMatchObject({ wouldSend: 2 });
+    expect(await t.action(internal.announcements.send, { key: BF })).toMatchObject({ wouldSend: 3 });
     await t.action(internal.announcements.send, { key: BF, dryRun: false });
-    expect(sentPayloads().map((p) => p.to[0]).sort()).toEqual(["free@example.com", "lapsed@example.com"]);
+    expect(sentPayloads().map((p) => p.to[0]).sort()).toEqual(["free@example.com", "lapsed@example.com", "new@example.com"]);
   });
 
   it("names the code and the deadline that match the Polar discount", async () => {
