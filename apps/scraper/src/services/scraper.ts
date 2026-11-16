@@ -1,5 +1,5 @@
 import { chromium, type Browser, type Page } from "playwright";
-import type { ScrapeResponse } from "@prowl/shared";
+import { PAGE_NOT_FOUND, type ScrapeResponse } from "@prowl/shared";
 import { validateUrlForScraping } from "../utils/url-validation.js";
 
 type LaunchedBrowser = { instance: Browser; userAgent: string };
@@ -104,9 +104,6 @@ const UNBLOCKER_TIMEOUT_MS = 45_000;
 /** Prefix for failures of the fallback provider itself, as opposed to the site blocking us. */
 export const FALLBACK_PROVIDER_ERROR = "Fallback provider error";
 
-/** Prefix for a page the shop says no longer exists. */
-export const PAGE_NOT_FOUND = "Page not found";
-
 function isGoneStatus(status: number | undefined): status is 404 | 410 {
   return status === 404 || status === 410;
 }
@@ -148,6 +145,9 @@ async function fetchViaUnblocker(url: string): Promise<string | null> {
   });
   const body = (await res.json().catch(() => null)) as ScrapflyResponse | null;
   const result = body?.result;
+  // Scrapfly got through and the shop answered "gone", whether Scrapfly
+  // calls that a failure or passes the page on. Not a provider fault.
+  if (isGoneStatus(result?.status_code)) throw pageGone(result.status_code);
   if (!res.ok || !result || result.success === false || !result.content) {
     const reason = result?.error?.message ?? body?.message ?? (result ? "empty page" : `HTTP ${res.status}`);
     // ERR::ASP::* means Scrapfly reached the site and could not get past its
@@ -156,8 +156,6 @@ async function fetchViaUnblocker(url: string): Promise<string | null> {
     if (result?.error?.code?.startsWith("ERR::ASP")) {
       throw new Error(`Site is blocking automated access: ${reason}`);
     }
-    // Scrapfly got through and the shop answered "gone". Not a provider fault.
-    if (isGoneStatus(result?.status_code)) throw pageGone(result.status_code);
     throw new Error(`${FALLBACK_PROVIDER_ERROR}: ${reason}`);
   }
   console.log(`[scraper] Fallback fetch ${url}: upstream ${result.status_code}, ${body?.context?.cost?.total ?? "?"} credits`);

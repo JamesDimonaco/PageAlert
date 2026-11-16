@@ -260,10 +260,11 @@ export const recordCheckResult = internalMutation({
       // before getMonitorsDue's .gte("nextCheckAt", 0) bound, so the monitor is
       // left alone until the user retries it by hand. They differ only in the
       // reason, which travels with the park so every channel tells one story.
-      // Two "gone" answers in a row, the second ending the retry ladder: a
-      // removed listing does not come back, and on a shop that blocks us
-      // each recovery check would be a paid proxy call.
-      const pageGone = isPageGoneError(args.error) && isPageGoneError(monitor.lastError ?? "") && retryCount >= MAX_RETRIES;
+      // Still "gone" on the 6h recovery check, after the retry ladder ended
+      // on it: a removed listing does not come back, and on a shop that
+      // blocks us each recovery check would be a paid proxy call. Not on the
+      // ladder itself, which is 10 minutes end to end.
+      const pageGone = isPageGoneError(args.error) && isPageGoneError(monitor.lastError ?? "") && retryCount > MAX_RETRIES;
       const parkReason = pageGone
         ? PARK_REASON_PAGE_GONE
         : args.confirmedProxyBlock && proxyBlockCount >= MAX_PROXY_BLOCKS

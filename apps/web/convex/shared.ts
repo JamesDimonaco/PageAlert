@@ -1,5 +1,5 @@
 import { ConvexError } from "convex/values";
-import { applyMatchConditions, canonicalUrl, DAY_MS, isProductMonitor, type ExtractedItem, type MatchConditions } from "@prowl/shared";
+import { applyMatchConditions, canonicalUrl, DAY_MS, isProductMonitor, PAGE_NOT_FOUND, type ExtractedItem, type MatchConditions } from "@prowl/shared";
 import type { Doc } from "./_generated/dataModel";
 
 export { MATCH_SCORE_THRESHOLD, alertsOnScore, matchConfidence, MATCH_CONFIDENCE_LABEL, canonicalUrl } from "@prowl/shared";
@@ -143,10 +143,10 @@ export function isBlockedError(message: string): boolean {
 
 /** The scraper's error for a page the shop answered 404 or 410 for. */
 export function isPageGoneError(message: string): boolean {
-  return message.startsWith("Page not found");
+  return message.startsWith(PAGE_NOT_FOUND);
 }
 
-export type CheckFailureKind = "proxy_provider" | "ai_billing" | "timeout" | "blocked" | "other";
+export type CheckFailureKind = "proxy_provider" | "ai_billing" | "timeout" | "blocked" | "page_gone" | "other";
 
 /** What a failed check ran into, for the check_failed event. */
 export function checkFailureKind(message: string, isTimeout: boolean): CheckFailureKind {
@@ -154,6 +154,7 @@ export function checkFailureKind(message: string, isTimeout: boolean): CheckFail
   if (/AI service error 40[01]|authentication error|credit balance|billing/i.test(message)) return "ai_billing";
   if (isTimeout) return "timeout";
   if (isBlockedError(message)) return "blocked";
+  if (isPageGoneError(message)) return "page_gone";
   return "other";
 }
 

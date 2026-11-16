@@ -120,6 +120,19 @@ describe("scrapeUrl through the fallback proxy", () => {
     }
   });
 
+  // Scrapfly can pass the shop's answer through as a success. Read as a
+  // page, a 404 is an empty success, which is the bug this guards.
+  it("names a gone page that Scrapfly returns as a success", async () => {
+    vi.stubEnv("SCRAPFLY_API_KEY", "test");
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ result: { success: true, status_code: 404, content: "<title>404</title>" } })));
+    try {
+      await expect(scrapeUrl("https://shop.test/gone", { useProxy: true })).rejects.toThrow("Page not found (HTTP 404)");
+    } finally {
+      vi.unstubAllGlobals();
+      vi.unstubAllEnvs();
+    }
+  });
+
   // Any other upstream status is still Scrapfly's problem to report.
   it("keeps other provider failures as provider errors", async () => {
     vi.stubEnv("SCRAPFLY_API_KEY", "test");

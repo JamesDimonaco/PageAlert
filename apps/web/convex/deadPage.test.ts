@@ -37,10 +37,10 @@ async function setup(extra: Partial<Doc<"monitors">> = {}) {
 const fail = (error: string) => ({ hasNewMatches: false, matchCount: 0, totalItems: 0, matches: [], error });
 
 // Prod, 15/11/2026: a removed Warehouse listing cost a Scrapfly call and an
-// AI read every few minutes and never told its owner. A shop that answers
-// "gone" twice in a row, at the end of the retry ladder, will not come back.
-test("parks a monitor whose retry ladder ends on two page-not-founds in a row", async () => {
-  const { t, id } = await setup({ retryCount: MAX_RETRIES - 1, lastError: GONE });
+// AI read every few minutes and never told its owner. Still gone on the 6h
+// recovery check, after the retry ladder ended on it, it will not come back.
+test("parks a monitor still gone on its recovery check", async () => {
+  const { t, id } = await setup({ status: "error", retryCount: MAX_RETRIES, lastError: GONE });
   const outcome = await t.mutation(internal.scheduler.recordCheckResult, { monitorId: id, ...fail(GONE) });
   expect(outcome).toMatchObject({ parked: true, parkReason: PARK_REASON_PAGE_GONE });
   const monitor = await t.run((ctx) => ctx.db.get(id));
@@ -51,17 +51,18 @@ test("parks a monitor whose retry ladder ends on two page-not-founds in a row", 
 
 // One 404 after a block could be a shop's glitch. It takes two.
 test("does not park on a single page-not-found", async () => {
-  const { t, id } = await setup({ retryCount: MAX_RETRIES - 1, lastError: BLOCKED });
+  const { t, id } = await setup({ status: "error", retryCount: MAX_RETRIES, lastError: BLOCKED });
   const outcome = await t.mutation(internal.scheduler.recordCheckResult, { monitorId: id, ...fail(GONE) });
   expect(outcome).toMatchObject({ parked: false });
   expect((await t.run((ctx) => ctx.db.get(id)))?.nextCheckAt).toBeGreaterThan(NOW);
 });
 
-// The early retries are 2 and 8 minutes apart. Parking there would stop a
-// monitor inside one bad deploy at the shop.
-test("does not park before the retry ladder ends", async () => {
-  const { t, id } = await setup({ retryCount: MAX_RETRIES - 2, lastError: GONE });
+// The retry ladder is 10 minutes end to end. Parking on it would stop a
+// monitor for good inside one bad deploy at the shop.
+test("does not park on the retry ladder, however many 404s it gets", async () => {
+  const { t, id } = await setup({ retryCount: MAX_RETRIES - 1, lastError: GONE });
   expect(await t.mutation(internal.scheduler.recordCheckResult, { monitorId: id, ...fail(GONE) })).toMatchObject({ parked: false });
+  expect((await t.run((ctx) => ctx.db.get(id)))?.status).toBe("error");
 });
 
 // The forced full read skips the block check, so on a shop that blocks us it
