@@ -79,9 +79,15 @@ describe("scrapeUrl block detection by HTTP status", () => {
   // spends proxy credits that cannot fix it. A 429 is usually our own burst
   // being rate limited, and one success through the proxy marks the monitor
   // proxy-preferred, moving it to the 6h interval.
-  it.each([200, 404, 429, 500, 503])("does not flag a %i response", async (status) => {
+  it.each([200, 429, 500, 503])("does not flag a %i response", async (status) => {
     const result = await scrapeUrl(`${base}/status/${status}`);
     expect(result.blocked).toBeUndefined();
+  });
+
+  // Prod, 15/11/2026: a removed listing's 404 page was handed to the AI,
+  // which found nothing and called it a success. The owner was never told.
+  it.each([404, 410])("fails a %i as a page the shop says is gone", async (status) => {
+    await expect(scrapeUrl(`${base}/status/${status}`)).rejects.toThrow(`Page not found (HTTP ${status})`);
   });
 
   it("judges the page it ended on, not a challenge it passed through", async () => {

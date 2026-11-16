@@ -97,6 +97,8 @@ export const NEVER_SUCCEEDED_RETRY_DAYS = Math.round(
  */
 export const PARK_REASON_PROXY_BLOCKED =
   "This site blocks automated access even through our proxy, so every attempt was turned away.";
+export const PARK_REASON_PAGE_GONE =
+  "The shop says this page no longer exists, so the listing may have been removed or moved.";
 export const PARK_REASON_NEVER_SUCCEEDED =
   "We have never managed to read this page since you set the monitor up, so it is worth checking the URL and the prompt.";
 
@@ -137,6 +139,11 @@ export function isProxyFirstHost(url: string): boolean {
  */
 export function isBlockedError(message: string): boolean {
   return /blocking automated access|anti-bot|CAPTCHA|Cloudflare|Access denied|blocked/i.test(message);
+}
+
+/** The scraper's error for a page the shop answered 404 or 410 for. */
+export function isPageGoneError(message: string): boolean {
+  return message.startsWith("Page not found");
 }
 
 export type CheckFailureKind = "proxy_provider" | "ai_billing" | "timeout" | "blocked" | "other";

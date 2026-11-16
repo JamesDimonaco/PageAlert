@@ -24,6 +24,8 @@ import {
   MAX_NEVER_SUCCEEDED_RETRIES,
   PARK_REASON_PROXY_BLOCKED,
   PARK_REASON_NEVER_SUCCEEDED,
+  PARK_REASON_PAGE_GONE,
+  isPageGoneError,
   alertsOnScore,
   canonicalUrl,
   PROXY_REPROBE_EVERY,
@@ -254,12 +256,17 @@ export const recordCheckResult = internalMutation({
       const aiStamp = args.aiExtracted ? { lastAiExtractAt: now } : {};
       const proxyBlockCount = (monitor.proxyBlockCount ?? 0) + (args.confirmedProxyBlock ? 1 : 0);
 
-      // Both parks stop rescheduling the same way: nextCheckAt: undefined sorts
+      // Every park stops rescheduling the same way: nextCheckAt: undefined sorts
       // before getMonitorsDue's .gte("nextCheckAt", 0) bound, so the monitor is
       // left alone until the user retries it by hand. They differ only in the
       // reason, which travels with the park so every channel tells one story.
-      const parkReason =
-        args.confirmedProxyBlock && proxyBlockCount >= MAX_PROXY_BLOCKS
+      // Two "gone" answers in a row, the second ending the retry ladder: a
+      // removed listing does not come back, and on a shop that blocks us
+      // each recovery check would be a paid proxy call.
+      const pageGone = isPageGoneError(args.error) && isPageGoneError(monitor.lastError ?? "") && retryCount >= MAX_RETRIES;
+      const parkReason = pageGone
+        ? PARK_REASON_PAGE_GONE
+        : args.confirmedProxyBlock && proxyBlockCount >= MAX_PROXY_BLOCKS
           ? PARK_REASON_PROXY_BLOCKED
           // Never worked once, and has had long enough to. checkCount counts
           // successes only, so this cannot reach a monitor that has ever
@@ -528,10 +535,13 @@ export const runScheduledChecks = internalAction({
         // the alert. Probe direct occasionally in case the site drops its WAF.
         const proxyFirst = isProxyFirstHost(monitor.url);
         const reprobeDirect = ((monitor.checkCount ?? 0) + 1) % PROXY_REPROBE_EVERY === 0;
+        // A "gone" answer may have come through the proxy from a shop that
+        // blocks us, so the retry that confirms it goes the same way.
+        const lastGone = isPageGoneError(monitor.lastError ?? "");
         const wantProxy =
           proxyFirst ||
           (monitor.proxyPreferred === true && !reprobeDirect) ||
-          (retryCount >= 1 && isBlockedError(monitor.lastError ?? ""));
+          (retryCount >= 1 && (isBlockedError(monitor.lastError ?? "") || lastGone));
 
         // A fleet-wide failure is ours, not the sites'. Escalating during a
         // scraper outage bought 113 proxy calls in one hour on 2026-09-05 and
@@ -557,7 +567,9 @@ export const runScheduledChecks = internalAction({
           // Paid tiers only; free stays on the deterministic path with proxy.
           // Not on the 6h recovery lane (retryCount above that), or a dead URL
           // would cost an AI call four times a day forever.
-          const forceFullExtract = retryCount === 2 && tier !== "free";
+          // Nor after a "gone" answer: it skips the block check, so it reads a
+          // 403 or 404 page, finds nothing, and calls that a success.
+          const forceFullExtract = retryCount === 2 && tier !== "free" && !lastGone;
 
           let checkResult: CheckOutcome;
 

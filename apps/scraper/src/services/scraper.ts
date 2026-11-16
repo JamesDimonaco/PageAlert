@@ -107,6 +107,14 @@ export const FALLBACK_PROVIDER_ERROR = "Fallback provider error";
 /** Prefix for a page the shop says no longer exists. */
 export const PAGE_NOT_FOUND = "Page not found";
 
+function isGoneStatus(status: number | undefined): status is 404 | 410 {
+  return status === 404 || status === 410;
+}
+
+function pageGone(status: 404 | 410): Error {
+  return new Error(`${PAGE_NOT_FOUND} (HTTP ${status}). The shop may have removed or moved it.`);
+}
+
 type ScrapflyResponse = {
   result?: {
     content?: string;
@@ -149,9 +157,7 @@ async function fetchViaUnblocker(url: string): Promise<string | null> {
       throw new Error(`Site is blocking automated access: ${reason}`);
     }
     // Scrapfly got through and the shop answered "gone". Not a provider fault.
-    if (result?.status_code === 404 || result?.status_code === 410) {
-      throw new Error(`${PAGE_NOT_FOUND} (HTTP ${result.status_code}). The shop may have removed or moved it.`);
-    }
+    if (isGoneStatus(result?.status_code)) throw pageGone(result.status_code);
     throw new Error(`${FALLBACK_PROVIDER_ERROR}: ${reason}`);
   }
   console.log(`[scraper] Fallback fetch ${url}: upstream ${result.status_code}, ${body?.context?.cost?.total ?? "?"} credits`);
@@ -250,6 +256,9 @@ export async function scrapeUrl(
         // Let JS frameworks render — wait longer on retries to give anti-bot challenges time to resolve
         await page.waitForTimeout(retry >= 1 ? 5000 : 3000);
       }
+
+      // Read as a page, a 404 is a quiet success with nothing on it.
+      if (unblockedHtml === null && isGoneStatus(documentStatus)) throw pageGone(documentStatus);
 
       const title = (await page.title()).slice(0, 500);
 
