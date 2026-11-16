@@ -25,6 +25,11 @@ import { isOptedOut, unsubscribeHeaders, unsubscribeUrl } from "./unsubscribe";
 
 /** Resend's batch endpoint takes at most 100 emails per call. */
 export const ANNOUNCEMENT_BATCH_SIZE = 100;
+/**
+ * The most one limited run sends. It ranks and sends in a single action with no
+ * hand-off, and two batches finish far inside the 10-minute action limit.
+ */
+export const MAX_SEND_LIMIT = 200;
 // One batch call per interval is well inside Resend's default 10 requests a
 // second, and matches the pace admin.sendBulkEmail already runs at.
 const BATCH_SPACING_MS = 600;
@@ -96,7 +101,7 @@ function announcementEmail({
       <div style="padding:16px 32px;background:#f9fafb;border-top:1px solid #eee">
         <p style="margin:0;color:#999;font-size:12px">
           You are getting this because you have a PageAlert account.
-          <a href="${esc(unsubscribeLink)}" style="color:#999">Unsubscribe from product updates</a>
+          <a href="${esc(unsubscribeLink)}" style="color:#999">Unsubscribe from product updates and offers</a>
         </p>
       </div>
     </div>
@@ -110,7 +115,7 @@ ${button}${buttonHint ? ` (${buttonHint.replace(/\.$/, "")})` : ""}:
 ${href}
 
 You are getting this because you have a PageAlert account.
-Unsubscribe from product updates: ${unsubscribeLink}`;
+Unsubscribe from product updates and offers: ${unsubscribeLink}`;
     return { html, text };
   };
 }
@@ -183,7 +188,7 @@ const findAProductFirstMonitor: Announcement = {
 /** Matches the BLACKFRIDAY50 discount in Polar: 50% off the first payment, one use per customer. */
 const blackFriday: Announcement = {
   subject: "Four Black Friday tips, and half off PageAlert",
-  audience: { freeOnly: true },
+  audience: { freeOnly: true, minAccountAgeDays: PAST_ONBOARDING_DAYS },
   render: announcementEmail({
     heading: "Get ready for Black Friday",
     paragraphs: [
@@ -265,11 +270,13 @@ async function eligible(
  * Eligible users, busiest first: most active monitors, then the most recent
  * match. People near the Free monitor limit are the likeliest to upgrade.
  */
+type Ranked = Recipient & { activeMonitors: number; lastMatchAt: number };
+
 export const rankEligible = internalQuery({
   args: { key: v.string(), users: v.array(recipientValidator) },
-  handler: async (ctx, { key, users }) => {
-    const { out } = await eligible(ctx, key, users);
-    const ranked = [];
+  handler: async (ctx, { key, users }): Promise<{ ranked: Ranked[]; pending: number }> => {
+    const { out, pending } = await eligible(ctx, key, users);
+    const ranked: Ranked[] = [];
     for (const user of out) {
       const monitors = await ctx.db
         .query("monitors")
@@ -278,7 +285,7 @@ export const rankEligible = internalQuery({
       const lastMatchAt = Math.max(0, ...monitors.map((m) => m.lastMatchAt ?? 0));
       ranked.push({ ...user, activeMonitors: monitors.length, lastMatchAt });
     }
-    return ranked;
+    return { ranked, pending };
   },
 });
 
@@ -430,6 +437,25 @@ async function sendTest(announcement: Announcement, email: string, ctx: ActionCt
   return { testSent: true, to: email.toLowerCase() };
 }
 
+/** Claims these users, sends to the ones still unclaimed, then waits out the batch spacing. */
+async function claimAndSend(
+  ctx: ActionCtx,
+  key: string,
+  announcement: Announcement,
+  users: Recipient[],
+  apiKey: string,
+  replyTo: string,
+  totals: Totals
+): Promise<void> {
+  const batch = await ctx.runMutation(internal.announcements.claim, { key, users });
+  if (batch.length === 0) return;
+  const result = await sendBatch(ctx, key, announcement, batch, apiKey, replyTo);
+  totals.sent += result.sent;
+  totals.failed += result.failed;
+  totals.unsure += result.unsure;
+  await new Promise((resolve) => setTimeout(resolve, BATCH_SPACING_MS));
+}
+
 /** Verified users old enough for this announcement. Opt-outs, tiers and past sends are eligible()'s job. */
 function reachable(page: Record<string, unknown>[], announcement: Announcement, now: number): Recipient[] {
   const minAgeDays = announcement.audience?.minAccountAgeDays;
@@ -459,8 +485,8 @@ async function sendBusiestFirst(
   replyTo: string | undefined
 ) {
   const now = Date.now();
-  type Ranked = Recipient & { activeMonitors: number; lastMatchAt: number };
   const ranked: Ranked[] = [];
+  let pending = 0;
   let cursor: string | null = null;
   for (;;) {
     const page: PaginationResult<Record<string, unknown>> = await ctx.runQuery(
@@ -468,7 +494,9 @@ async function sendBusiestFirst(
       { model: "user", paginationOpts: { numItems: ANNOUNCEMENT_BATCH_SIZE, cursor } }
     );
     const users = reachable(page.page, announcement, now);
-    ranked.push(...(await ctx.runQuery(internal.announcements.rankEligible, { key, users })));
+    const result = await ctx.runQuery(internal.announcements.rankEligible, { key, users });
+    ranked.push(...result.ranked);
+    pending += result.pending;
     if (page.isDone) break;
     cursor = page.continueCursor;
   }
@@ -476,22 +504,14 @@ async function sendBusiestFirst(
   const chosen: Recipient[] = ranked.slice(0, limit).map(({ userId, email }) => ({ userId, email }));
 
   if (dryRun) {
-    console.log(`[announcements] ${key} dry run, limit ${limit}`, { wouldSend: chosen.length, eligible: ranked.length });
-    return { dryRun, wouldSend: chosen.length, eligible: ranked.length };
+    const counts = { wouldSend: chosen.length, eligible: ranked.length, pending };
+    console.log(`[announcements] ${key} dry run, limit ${limit}`, counts);
+    return { dryRun, ...counts };
   }
 
   const totals: Totals = { sent: 0, failed: 0, unsure: 0 };
   for (let i = 0; i < chosen.length; i += ANNOUNCEMENT_BATCH_SIZE) {
-    const batch = await ctx.runMutation(internal.announcements.claim, {
-      key,
-      users: chosen.slice(i, i + ANNOUNCEMENT_BATCH_SIZE),
-    });
-    if (batch.length === 0) continue;
-    const result = await sendBatch(ctx, key, announcement, batch, apiKey!, replyTo!);
-    totals.sent += result.sent;
-    totals.failed += result.failed;
-    totals.unsure += result.unsure;
-    await new Promise((resolve) => setTimeout(resolve, BATCH_SPACING_MS));
+    await claimAndSend(ctx, key, announcement, chosen.slice(i, i + ANNOUNCEMENT_BATCH_SIZE), apiKey!, replyTo!, totals);
   }
   console.log(`[announcements] ${key} done, limit ${limit}`, totals);
   return { dryRun, ...totals, continued: false };
@@ -511,6 +531,12 @@ export const send = internalAction({
     const dryRun = args.dryRun ?? true;
     const announcement = ANNOUNCEMENTS[args.key];
     if (!announcement) throw new Error(`Unknown announcement "${args.key}"`);
+    if (args.limit !== undefined) {
+      if (!Number.isInteger(args.limit) || args.limit < 1 || args.limit > MAX_SEND_LIMIT) {
+        throw new Error(`limit must be a whole number from 1 to ${MAX_SEND_LIMIT}`);
+      }
+      if (args.cursor != null) throw new Error("A limited run ranks everyone, so it takes no cursor");
+    }
 
     const apiKey = process.env.RESEND_API_KEY;
     // hello@ is send-only, so replies need somewhere real to land
@@ -544,14 +570,7 @@ export const send = internalAction({
         wouldSend += counts.wouldSend;
         pending += counts.pending;
       } else {
-        const batch = await ctx.runMutation(internal.announcements.claim, { key: args.key, users });
-        if (batch.length > 0) {
-          const result = await sendBatch(ctx, args.key, announcement, batch, apiKey!, replyTo!);
-          totals.sent += result.sent;
-          totals.failed += result.failed;
-          totals.unsure += result.unsure;
-          await new Promise((resolve) => setTimeout(resolve, BATCH_SPACING_MS));
-        }
+        await claimAndSend(ctx, args.key, announcement, users, apiKey!, replyTo!, totals);
       }
 
       if (page.isDone) break;

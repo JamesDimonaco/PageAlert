@@ -5,7 +5,7 @@ import schema from "./schema";
 import betterAuthSchema from "./betterAuth/schema";
 import { api, components, internal } from "./_generated/api";
 import { authComponent } from "./betterAuth/auth";
-import { ANNOUNCEMENT_BATCH_SIZE } from "./announcements";
+import { ANNOUNCEMENT_BATCH_SIZE, MAX_SEND_LIMIT } from "./announcements";
 import { verifyUnsubscribeToken } from "./unsubscribe";
 
 const modules = import.meta.glob("./**/*.*s");
@@ -329,6 +329,9 @@ describe("Black Friday offer", () => {
       await ctx.db.insert("userTiers", { userId: granted, tier: "pro", grantUntil: Date.now() + DAY, grantSource: "admin", updatedAt: NOW });
     });
 
+    // Signed up yesterday: still in onboarding, which already covers setting up monitors.
+    await seedUser(t, "new@example.com", true, Date.now() - DAY);
+
     expect(await t.action(internal.announcements.send, { key: BF })).toMatchObject({ wouldSend: 2 });
     await t.action(internal.announcements.send, { key: BF, dryRun: false });
     expect(sentPayloads().map((p) => p.to[0]).sort()).toEqual(["free@example.com", "lapsed@example.com"]);
@@ -386,6 +389,30 @@ describe("limit", () => {
     fetchMock.mockClear();
     await t.action(internal.announcements.send, { key: KEY, dryRun: false, limit: 2 });
     expect(sentPayloads().map((p) => p.to[0]).sort()).toEqual(["none@example.com", "paused@example.com"]);
+  });
+
+  // slice(0, -1) keeps everyone but one, so a typo would mail the whole list at once.
+  it.each([0, -1, 2.5, MAX_SEND_LIMIT + 1])("refuses limit %s before sending anything", async (limit) => {
+    const t = harness();
+    await seedUser(t, "a@example.com");
+    await expect(t.action(internal.announcements.send, { key: KEY, dryRun: false, limit })).rejects.toThrow(/limit/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("pins the cap low enough that one run finishes inside the action time limit", () => {
+    expect(MAX_SEND_LIMIT).toBe(200);
+  });
+
+  it("refuses a cursor with a limit, since a limited run always ranks everyone", async () => {
+    const t = harness();
+    await expect(t.action(internal.announcements.send, { key: KEY, limit: 2, cursor: "x" })).rejects.toThrow(/cursor/);
+  });
+
+  it("reports stranded pending rows in a limited dry run", async () => {
+    const t = harness();
+    const a = await seedUser(t, "a@example.com");
+    await t.run((ctx) => ctx.db.insert("announcementSends", { key: KEY, userId: a, status: "pending", updatedAt: NOW }));
+    expect(await t.action(internal.announcements.send, { key: KEY, limit: 2 })).toMatchObject({ wouldSend: 0, pending: 1 });
   });
 });
 
