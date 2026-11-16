@@ -13,6 +13,7 @@ test("a failed check is named by what went wrong", () => {
   expect(checkFailureKind("Site is blocking automated access: HTTP 403.", false)).toBe("blocked");
   expect(checkFailureKind("AI service error 401: authentication error", false)).toBe("ai_billing");
   expect(checkFailureKind("Page took too long to load", true)).toBe("timeout");
+  expect(checkFailureKind("Page not found (HTTP 404). The shop may have removed or moved it.", false)).toBe("page_gone");
   expect(checkFailureKind("Scraper error: HTTP 500", false)).toBe("other");
 });
 

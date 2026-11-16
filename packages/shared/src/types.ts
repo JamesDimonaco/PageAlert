@@ -1,5 +1,11 @@
 // ---- Scraper API Types ----
 
+/**
+ * Prefix of the scraper's error for a page the shop answered 404 or 410 for.
+ * The scheduler parks a monitor on it, so both sides read this one copy.
+ */
+export const PAGE_NOT_FOUND = "Page not found";
+
 export interface ScrapeResponse {
   url: string;
   html: string;

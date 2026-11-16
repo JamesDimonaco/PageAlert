@@ -2,7 +2,8 @@ import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { matchPageSegments, productExcerpt, segmentPage } from "@prowl/shared";
-import { FALLBACK_PROVIDER_ERROR, PAGE_NOT_FOUND, scrapeUrl } from "../services/scraper.js";
+import { PAGE_NOT_FOUND } from "@prowl/shared";
+import { FALLBACK_PROVIDER_ERROR, scrapeUrl } from "../services/scraper.js";
 import { MAX_URL_LENGTH } from "../utils/url-validation.js";
 import { hashContent } from "../utils/content-hash.js";
 

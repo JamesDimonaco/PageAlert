@@ -1,5 +1,5 @@
 import { ConvexError } from "convex/values";
-import { applyMatchConditions, canonicalUrl, DAY_MS, isProductMonitor, type ExtractedItem, type MatchConditions } from "@prowl/shared";
+import { applyMatchConditions, canonicalUrl, DAY_MS, isProductMonitor, PAGE_NOT_FOUND, type ExtractedItem, type MatchConditions } from "@prowl/shared";
 import type { Doc } from "./_generated/dataModel";
 
 export { MATCH_SCORE_THRESHOLD, alertsOnScore, matchConfidence, MATCH_CONFIDENCE_LABEL, canonicalUrl } from "@prowl/shared";
@@ -97,6 +97,8 @@ export const NEVER_SUCCEEDED_RETRY_DAYS = Math.round(
  */
 export const PARK_REASON_PROXY_BLOCKED =
   "This site blocks automated access even through our proxy, so every attempt was turned away.";
+export const PARK_REASON_PAGE_GONE =
+  "The shop says this page no longer exists, so the listing may have been removed or moved.";
 export const PARK_REASON_NEVER_SUCCEEDED =
   "We have never managed to read this page since you set the monitor up, so it is worth checking the URL and the prompt.";
 
@@ -139,7 +141,12 @@ export function isBlockedError(message: string): boolean {
   return /blocking automated access|anti-bot|CAPTCHA|Cloudflare|Access denied|blocked/i.test(message);
 }
 
-export type CheckFailureKind = "proxy_provider" | "ai_billing" | "timeout" | "blocked" | "other";
+/** The scraper's error for a page the shop answered 404 or 410 for. */
+export function isPageGoneError(message: string): boolean {
+  return message.startsWith(PAGE_NOT_FOUND);
+}
+
+export type CheckFailureKind = "proxy_provider" | "ai_billing" | "timeout" | "blocked" | "page_gone" | "other";
 
 /** What a failed check ran into, for the check_failed event. */
 export function checkFailureKind(message: string, isTimeout: boolean): CheckFailureKind {
@@ -147,6 +154,7 @@ export function checkFailureKind(message: string, isTimeout: boolean): CheckFail
   if (/AI service error 40[01]|authentication error|credit balance|billing/i.test(message)) return "ai_billing";
   if (isTimeout) return "timeout";
   if (isBlockedError(message)) return "blocked";
+  if (isPageGoneError(message)) return "page_gone";
   return "other";
 }
 

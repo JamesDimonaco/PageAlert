@@ -1,5 +1,5 @@
 import { chromium, type Browser, type Page } from "playwright";
-import type { ScrapeResponse } from "@prowl/shared";
+import { PAGE_NOT_FOUND, type ScrapeResponse } from "@prowl/shared";
 import { validateUrlForScraping } from "../utils/url-validation.js";
 
 type LaunchedBrowser = { instance: Browser; userAgent: string };
@@ -104,8 +104,13 @@ const UNBLOCKER_TIMEOUT_MS = 45_000;
 /** Prefix for failures of the fallback provider itself, as opposed to the site blocking us. */
 export const FALLBACK_PROVIDER_ERROR = "Fallback provider error";
 
-/** Prefix for a page the shop says no longer exists. */
-export const PAGE_NOT_FOUND = "Page not found";
+function isGoneStatus(status: number | undefined): status is 404 | 410 {
+  return status === 404 || status === 410;
+}
+
+function pageGone(status: 404 | 410): Error {
+  return new Error(`${PAGE_NOT_FOUND} (HTTP ${status}). The shop may have removed or moved it.`);
+}
 
 type ScrapflyResponse = {
   result?: {
@@ -140,6 +145,9 @@ async function fetchViaUnblocker(url: string): Promise<string | null> {
   });
   const body = (await res.json().catch(() => null)) as ScrapflyResponse | null;
   const result = body?.result;
+  // Scrapfly got through and the shop answered "gone", whether Scrapfly
+  // calls that a failure or passes the page on. Not a provider fault.
+  if (isGoneStatus(result?.status_code)) throw pageGone(result.status_code);
   if (!res.ok || !result || result.success === false || !result.content) {
     const reason = result?.error?.message ?? body?.message ?? (result ? "empty page" : `HTTP ${res.status}`);
     // ERR::ASP::* means Scrapfly reached the site and could not get past its
@@ -147,10 +155,6 @@ async function fetchViaUnblocker(url: string): Promise<string | null> {
     // (bad key, no credits, outage) and must not be blamed on the site.
     if (result?.error?.code?.startsWith("ERR::ASP")) {
       throw new Error(`Site is blocking automated access: ${reason}`);
-    }
-    // Scrapfly got through and the shop answered "gone". Not a provider fault.
-    if (result?.status_code === 404 || result?.status_code === 410) {
-      throw new Error(`${PAGE_NOT_FOUND} (HTTP ${result.status_code}). The shop may have removed or moved it.`);
     }
     throw new Error(`${FALLBACK_PROVIDER_ERROR}: ${reason}`);
   }
@@ -250,6 +254,9 @@ export async function scrapeUrl(
         // Let JS frameworks render — wait longer on retries to give anti-bot challenges time to resolve
         await page.waitForTimeout(retry >= 1 ? 5000 : 3000);
       }
+
+      // Read as a page, a 404 is a quiet success with nothing on it.
+      if (unblockedHtml === null && isGoneStatus(documentStatus)) throw pageGone(documentStatus);
 
       const title = (await page.title()).slice(0, 500);
 

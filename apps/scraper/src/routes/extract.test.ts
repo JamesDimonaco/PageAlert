@@ -5,7 +5,6 @@ const wanted = { title: "Corsair Vengeance 16GB", price: 179, url: "https://shop
 
 vi.mock("../services/scraper.js", () => ({
   FALLBACK_PROVIDER_ERROR: "Fallback provider",
-  PAGE_NOT_FOUND: "Page not found",
   scrapeUrl: vi.fn(async () => ({ text: "page", scrapedAt: "2026-11-14T00:00:00.000Z", blocked: false })),
 }));
 vi.mock("../services/extractor.js", () => ({
