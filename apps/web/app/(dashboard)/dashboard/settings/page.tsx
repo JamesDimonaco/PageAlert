@@ -270,7 +270,8 @@ export default function SettingsPage() {
         </TabsContent>
 
         <TabsContent value="billing" className="mt-8 space-y-8">
-          {tier === "free" && (
+          {/* useTier reports "free" while loading, so wait or paying users see a flash of the offer. */}
+          {!tierLoading && tier === "free" && (
             <div className="overflow-hidden rounded-lg">
               <BlackFridayBanner />
             </div>
