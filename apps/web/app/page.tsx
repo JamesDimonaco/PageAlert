@@ -8,10 +8,12 @@ import { HeroCTA } from "@/components/prowl/hero-cta";
 import { MonitorCountBadge } from "@/components/prowl/monitor-count-badge";
 import { ExampleResults } from "@/components/prowl/example-results";
 import { Testimonials } from "@/components/prowl/testimonials";
+import { BlackFridayBanner } from "@/components/prowl/black-friday-banner";
 
 export default function LandingPage() {
   return (
     <div className="flex min-h-screen flex-col">
+      <BlackFridayBanner href="/login" />
       {/* Nav (client — auth-aware) */}
       <LandingNav />
 
