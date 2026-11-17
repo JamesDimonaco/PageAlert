@@ -1,5 +1,6 @@
 "use client";
 
+import { BlackFridayBanner } from "@/components/prowl/black-friday-banner";
 import { useState, useEffect, useRef } from "react";
 import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
@@ -269,6 +270,11 @@ export default function SettingsPage() {
         </TabsContent>
 
         <TabsContent value="billing" className="mt-8 space-y-8">
+          {tier === "free" && (
+            <div className="overflow-hidden rounded-lg">
+              <BlackFridayBanner />
+            </div>
+          )}
           {tierLoading ? (
             <div className="flex items-center justify-center py-16">
               <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
