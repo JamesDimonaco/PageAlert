@@ -1041,18 +1041,36 @@ test("find_product leaves out price comparison sites", async () => {
 
 // A standalone comparison page keeps working on its prompt, which can ask for
 // "lowest in-stock price under $300". Its price alert would read a shop's
-// offer as the product, so it is off, and the agent is told why.
-test("a stock or price alert on a comparison page says only prompt alerts run there", async () => {
+// offer as the product, so it never runs. Prod, 19/11/2026: saving it anyway
+// left list_monitors showing alerts that never fire.
+const PRICESPY = { url: "https://pricespy.co.nz/product.php?p=7327471", prompt: "lowest in-stock price under $380", name: "Ryzen 5 7600" };
+
+test("stock and price alerts on a comparison page are refused, with what to do instead", async () => {
   const t = setup();
   const { key } = await seedUser(t, "a@example.com");
-  const id = await t.mutation(api.mcp.createMonitor, {
-    apiKey: key, url: "https://pricespy.co.nz/product.php?p=7327471", prompt: "lowest in-stock price under $380", name: "Ryzen 5 7600",
+  const alertOn = { priceBelow: { amount: 38000, currency: "NZD" } };
+  expect(await toolErrorOf(t.mutation(api.mcp.createMonitor, { apiKey: key, ...PRICESPY, alertOn }))).toEqual({
+    code: "failed",
+    message: expect.stringMatching(/price comparison page.*Put the target in the prompt/),
+    retry: false,
   });
-  await t.mutation(api.mcp.saveScanResult, { apiKey: key, id, schema: { items: [{ title: "AMD Ryzen 5 7600", price: 46198 }] }, matches: [] });
-  const result = await t.mutation(api.mcp.updateMonitor, {
-    apiKey: key, monitorId: id, alertOn: { priceBelow: { amount: 38000, currency: "NZD" } },
-  });
-  expect(result.note).toMatch(/price comparison page.*only prompt alerts/i);
+  const id = await t.mutation(api.mcp.createMonitor, { apiKey: key, ...PRICESPY });
+  expect(await errorOf(t.mutation(api.mcp.updateMonitor, { apiKey: key, monitorId: id, alertOn }))).toMatch(/price comparison page/);
+  // Not guessed from the prompt either.
+  expect((await t.run((ctx) => ctx.db.get(id)))?.alertOn).toBeUndefined();
+});
+
+test("updating a comparison page clears the stock and price alerts it was saved with, and says so", async () => {
+  const t = setup();
+  const { key } = await seedUser(t, "a@example.com");
+  const id = await t.mutation(api.mcp.createMonitor, { apiKey: key, ...PRICESPY });
+  await t.run((ctx) => ctx.db.patch(id, { status: "active", alertOn: { priceBelow: { amount: 38000, currency: "NZD" } } }));
+  const result = await t.mutation(api.mcp.updateMonitor, { apiKey: key, monitorId: id, checkInterval: "6h" });
+  expect(result.alertOn).toBeNull();
+  expect(result.note).toMatch(/Cleared its stock and price alerts/);
+  expect((await t.run((ctx) => ctx.db.get(id)))?.alertOn).toBeUndefined();
+  // Nothing left to clear, nothing to say.
+  expect((await t.mutation(api.mcp.updateMonitor, { apiKey: key, monitorId: id, name: "CPU" })).note).toBeUndefined();
 });
 
 // The quick checks that follow count what the first scan passed as matches.

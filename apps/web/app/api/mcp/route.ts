@@ -97,7 +97,7 @@ const alertOn = z
   })
   .describe(
     "Stock and price alerts. They run only on a product page; on a listing the result says so. " +
-      "Send {} to turn them off."
+      "Refused on a price comparison page: put the target in the prompt there. Send {} to turn them off."
   );
 const url = z.string().max(2048).describe("The full http(s) URL of the page to watch.");
 const prompt = z

@@ -92,13 +92,18 @@ function guessedAlertOn(prompt: string): AlertOn | undefined {
   return Object.keys(alertOn).length > 0 ? alertOn : undefined;
 }
 
-/** Said when stock or price alerts are on but the page is not a product page, so they will not run. */
-function notAProductNote(url: string): string {
-  return isComparisonSite(url)
-    ? "This is a price comparison page, so stock and price alerts don't run on it and only prompt alerts fire. " +
-        "Put the target in the prompt instead, e.g. 'lowest in-stock price under $300'."
-    : "Stock and price alerts only run on a product page. This page reads as a listing, so only match alerts will fire.";
-}
+/** Said when stock or price alerts are on but the page reads as a listing, so they will not run. */
+const NOT_A_PRODUCT_NOTE =
+  "Stock and price alerts only run on a product page. This page reads as a listing, so only match alerts will fire.";
+
+/**
+ * A comparison page lists shops' offers, so stock and price alerts never run
+ * on it. They are refused rather than saved, or list_monitors would show
+ * alerts that never fire.
+ */
+const COMPARISON_PAGE_ALERTS =
+  "This is a price comparison page, so stock and price alerts can't run on it. " +
+  "Put the target in the prompt instead, e.g. 'lowest in-stock price under $300'.";
 
 function wantsProductAlerts(alertOn: AlertOn | undefined): boolean {
   return alertOn?.backInStock === true || alertOn?.priceDrop === true || alertOn?.priceBelow !== undefined;
@@ -310,11 +315,13 @@ export const createMonitor = mutation({
   },
   handler: async (ctx, { apiKey, checkInterval, alertOn, folderId, ...args }): Promise<Id<"monitors">> => {
     const owner = await requireKeyOwner(ctx, apiKey);
+    const comparison = isComparisonSite(args.url);
+    if (comparison && wantsProductAlerts(alertOn)) throw new ConvexError(toolError(COMPARISON_PAGE_ALERTS));
     const id = await createMonitorForUser(ctx, owner, {
       ...args,
       // Same default as the web form.
       checkInterval: checkInterval ?? "1h",
-      alertOn: alertOn ?? guessedAlertOn(args.prompt),
+      alertOn: alertOn ?? (comparison ? undefined : guessedAlertOn(args.prompt)),
     }).catch(asToolError);
     // A throw here rolls back the monitor too.
     if (folderId !== undefined) await setMonitorFolder(ctx, owner.userId, id, folderId).catch(asToolError);
@@ -345,6 +352,8 @@ export const updateMonitor = mutation({
     if (monitor.groupId && (fields.alertOn !== undefined || fields.checkInterval !== undefined)) {
       throw new ConvexError(toolError("This monitor is part of a product, which sets its alerts and check interval."));
     }
+    const comparison = isComparisonSite(monitor.url);
+    if (comparison && wantsProductAlerts(fields.alertOn)) throw new ConvexError(toolError(COMPARISON_PAGE_ALERTS));
     if (url !== undefined) {
       throw new ConvexError<ToolError>({
         code: "invalid_url",
@@ -387,8 +396,16 @@ export const updateMonitor = mutation({
         : setMonitorFolder(ctx, userId, monitor._id, folderId);
       await filing.catch(asToolError);
     }
+    // Saved before such alerts were refused. Cleared on the next update, as
+    // the agent is already changing this monitor.
+    const cleared = comparison && wantsProductAlerts(monitor.alertOn);
+    if (cleared) await ctx.db.patch(monitor._id, { alertOn: undefined });
     const saved = (await ctx.db.get(monitor._id))!;
-    const note = wantsProductAlerts(saved.alertOn) && !isProductMonitor(saved) ? notAProductNote(saved.url) : null;
+    const note = cleared
+      ? `Cleared its stock and price alerts. ${COMPARISON_PAGE_ALERTS}`
+      : wantsProductAlerts(saved.alertOn) && !isProductMonitor(saved)
+        ? NOT_A_PRODUCT_NOTE
+        : null;
     return { ...agentMonitor(saved, await folderNameOf(ctx, saved)), ...(note ? { note } : {}) };
   },
 });
@@ -523,7 +540,7 @@ export const saveScanResult = mutation({
     const monitor = await ownedMonitor(ctx, userId, args.id);
     await saveScanResultForUser(ctx, userId, { ...args, matches, matchCount: matches.length }).catch(asToolError);
     return wantsProductAlerts(monitor.alertOn) && !isProductMonitor({ ...monitor, schema: args.schema })
-      ? { note: notAProductNote(monitor.url) }
+      ? { note: NOT_A_PRODUCT_NOTE }
       : {};
   },
 });
