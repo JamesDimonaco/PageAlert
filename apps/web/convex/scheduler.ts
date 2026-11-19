@@ -813,6 +813,13 @@ export const runScheduledChecks = internalAction({
                 ? `${productName} on ${displayHost(freshErrMonitor.url)}`
                 : freshErrMonitor.name;
               const shouldSend = (channel: string) => !quiet && channels.shouldSend(channel);
+              // When this was the product's last working page, nothing
+              // watches the product now, and the user should hear it.
+              const productDown =
+                groupId !== undefined && (await ctx.runQuery(internal.monitorGroups.workingListings, { id: groupId })) === 0
+                  ? ` None of ${productName ?? (await ctx.runQuery(internal.monitorGroups.nameOf, { id: groupId })) ?? "this product"}'s shop pages is working now.`
+                  : "";
+              const errorText = `${msg}${productDown}`;
 
               if (!parked && !quiet) {
                 await ctx.runMutation(internal.scheduler.markErrorAlertSent, {
@@ -826,7 +833,7 @@ export const runScheduledChecks = internalAction({
                 monitorId: freshErrMonitor._id,
                 channel: "in_app",
                 title: `${freshErrMonitor.name} — ${parked ? "Checks stopped" : "Error"}`,
-                message: parked ? (freshErrMonitor.lastError ?? msg) : msg,
+                message: parked ? `${freshErrMonitor.lastError ?? msg}${productDown}` : errorText,
               }).catch(() => {});
 
               // A park overrides channel selection on push for the same reason
@@ -837,7 +844,7 @@ export const runScheduledChecks = internalAction({
                   userId: freshErrMonitor.userId,
                   monitorId: freshErrMonitor._id,
                   title: `${alertName} — ${parked ? "Checks stopped" : "Error"}`,
-                  body: truncateForPush(parked ? (freshErrMonitor.lastError ?? msg) : msg),
+                  body: truncateForPush(parked ? `${freshErrMonitor.lastError ?? msg}${productDown}` : errorText),
                   kind: "error",
                 }).catch(() => {});
               }
@@ -862,7 +869,7 @@ export const runScheduledChecks = internalAction({
                     monitorName: alertName,
                     monitorId: freshErrMonitor._id,
                     url: freshErrMonitor.url,
-                    error: msg,
+                    error: errorText,
                   }).catch(() => {});
                 }
               }
@@ -883,7 +890,7 @@ export const runScheduledChecks = internalAction({
                     monitorName: alertName,
                     monitorId: freshErrMonitor._id,
                     url: freshErrMonitor.url,
-                    error: msg,
+                    error: errorText,
                   }).catch(() => {});
                 }
               }
@@ -909,7 +916,7 @@ export const runScheduledChecks = internalAction({
                       monitorName: alertName,
                       monitorId: freshErrMonitor._id,
                       url: freshErrMonitor.url,
-                      error: msg,
+                      error: errorText,
                     }).catch(() => {});
                   }
                 }

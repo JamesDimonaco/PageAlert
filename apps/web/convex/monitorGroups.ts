@@ -488,6 +488,15 @@ export const nameOf = internalQuery({
   handler: async (ctx, { id }): Promise<string | null> => (await ctx.db.get(id))?.name ?? null,
 });
 
+/** How many of a product's listings are being read without error. */
+export const workingListings = internalQuery({
+  args: { id: v.id("monitorGroups") },
+  handler: async (ctx, { id }): Promise<number> => {
+    const monitors = await ctx.db.query("monitors").withIndex("by_groupId", (q) => q.eq("groupId", id)).collect();
+    return monitors.filter((m) => m.status === "active" || m.status === "scanning").length;
+  },
+});
+
 async function ownedBy(ctx: QueryCtx, userId: string, id: Id<"monitorGroups">) {
   const group = await ctx.db.get(id);
   return group && group.userId === userId ? group : null;

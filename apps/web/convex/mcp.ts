@@ -643,3 +643,43 @@ export const saveScanError = mutation({
     await saveScanErrorForUser(ctx, userId, args).catch(asToolError);
   },
 });
+
+/**
+ * Notification rows one recent-alerts call reads at most. One alert writes
+ * one in-app row, plus one per other channel on older rows, so this covers
+ * a busy user's day.
+ */
+const MAX_ALERT_ROWS = 500;
+
+/**
+ * Every alert the user was sent since a time, newest first: new matches,
+ * product restocks and price moves, and errors. Read from the in-app copy
+ * each alert writes, which a user with every channel off does not get.
+ */
+export const getRecentAlerts = query({
+  args: { apiKey: v.string(), since: v.string(), limit: v.optional(v.number()) },
+  handler: async (ctx, { apiKey, since, limit }) => {
+    const { userId } = await requireKeyOwner(ctx, apiKey);
+    const max = Math.min(Math.max(Math.floor(limit ?? DEFAULT_AGENT_MATCHES), 1), MAX_AGENT_MATCHES);
+    const from = Date.parse(since);
+    if (Number.isNaN(from)) throw new ConvexError(toolError("since must be an ISO 8601 time, e.g. 2026-11-13T00:00:00Z."));
+    const alerts: Doc<"notifications">[] = [];
+    let read = 0;
+    // Newest first by creation, which is when sentAt was stamped, so the
+    // first older row ends the read.
+    for await (const row of ctx.db.query("notifications").withIndex("by_userId", (q) => q.eq("userId", userId)).order("desc")) {
+      if (row._creationTime < from || ++read > MAX_ALERT_ROWS) break;
+      if (row.channel === "in_app" && row.sentAt >= from) alerts.push(row);
+    }
+    const top = alerts.sort((a, b) => b.sentAt - a.sentAt).slice(0, max);
+    const monitors = new Map<Id<"monitors">, Doc<"monitors"> | null>();
+    for (const a of top) if (!monitors.has(a.monitorId)) monitors.set(a.monitorId, await ctx.db.get(a.monitorId));
+    return top.map((a) => ({
+      at: new Date(a.sentAt).toISOString(),
+      title: a.title,
+      message: a.message,
+      monitorId: a.monitorId,
+      productId: monitors.get(a.monitorId)?.groupId ?? null,
+    }));
+  },
+});

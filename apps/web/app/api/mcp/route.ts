@@ -300,7 +300,8 @@ function registerTools(server: McpServer, convex: ConvexHttpClient, apiKey: stri
       description:
         "New matches across all the user's monitors since a time, newest first, each with its monitor's id " +
         "and name and when it matched. Reads up to the 20 monitors that matched most recently. Use it to " +
-        "answer 'what's new?' in one call. A product's listings are not included: they alert on stock and price only.",
+        "list new items on monitors. A product's listings are not included: they alert on stock and price only. " +
+        "For every alert the user got, products and errors included, use get_recent_alerts.",
       inputSchema: z.object({
         since: z.string().describe("ISO 8601 time, e.g. 2026-11-13T00:00:00Z."),
         limit: z
@@ -316,6 +317,36 @@ function registerTools(server: McpServer, convex: ConvexHttpClient, apiKey: stri
     async (args) => {
       try {
         return ok(await convex.query(api.mcp.getRecentMatches, { apiKey, ...args }));
+      } catch (e) {
+        return fail(convexFailure(e));
+      }
+    }
+  );
+
+  server.registerTool(
+    "get_recent_alerts",
+    {
+      title: "Get recent alerts",
+      description:
+        "Every alert the user was sent since a time, newest first: new matches, a product back in stock or " +
+        "moving in price, and pages that stopped working. Each has its title and message as the user saw them, " +
+        "its monitorId, and its productId when the monitor is a product's shop page. Use it to answer " +
+        "'what's new?' in one call. Alerts are read from the in-app copy, so a user with every channel off has none.",
+      inputSchema: z.object({
+        since: z.string().describe("ISO 8601 time, e.g. 2026-11-13T00:00:00Z."),
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(MAX_AGENT_MATCHES)
+          .optional()
+          .describe(`How many to return. Defaults to ${DEFAULT_AGENT_MATCHES}.`),
+      }),
+      annotations: { readOnlyHint: true },
+    },
+    async (args) => {
+      try {
+        return ok(await convex.query(api.mcp.getRecentAlerts, { apiKey, ...args }));
       } catch (e) {
         return fail(convexFailure(e));
       }

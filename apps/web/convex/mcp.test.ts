@@ -1272,3 +1272,31 @@ test("update_product pauses and resumes every listing", async () => {
   const resumed = await t.mutation(api.mcp.updateProduct, { apiKey: key, productId, paused: false });
   expect(resumed.listings.map((l) => l.status)).toEqual(["active", "active"]);
 });
+
+// Prod, 19/11/2026: get_recent_matches leaves out products, and an agent
+// learned a product's shop page had died only by calling get_product. Every
+// alert the user got is already in their in-app notifications.
+test("get_recent_alerts returns the user's alerts since a time, products and errors included", async () => {
+  const t = setup();
+  const { key, userId } = await seedUser(t, "a@example.com");
+  const { productId, monitorIds } = await seedProduct(t, key);
+  const plain = await t.mutation(api.mcp.createMonitor, { apiKey: key, ...MONITOR });
+  const stranger = await seedUser(t, "b@example.com");
+  const theirs = await t.mutation(api.mcp.createMonitor, { apiKey: stranger.key, ...MONITOR });
+  const note = (monitorId: (typeof monitorIds)[number], owner: string, title: string, sentAt: number, channel: "in_app" | "email" = "in_app") =>
+    t.run((ctx) => ctx.db.insert("notifications", { userId: owner, monitorId, channel, title, message: `${title}.`, sentAt, read: false }));
+  await note(plain, userId, "Milford — too old", NOW - 3 * 60 * MINUTE);
+  await note(monitorIds[0]!, userId, "Reaper — back in stock", NOW - 2 * MINUTE);
+  await note(monitorIds[1]!, userId, "Reaper — Error", NOW - MINUTE);
+  await note(plain, userId, "Milford — 1 new match", NOW - 30 * MINUTE);
+  await note(plain, userId, "Milford — sent by email too", NOW - 5 * MINUTE, "email");
+  await note(theirs, stranger.userId, "Not theirs", NOW - MINUTE);
+
+  const since = new Date(NOW - 60 * MINUTE).toISOString();
+  expect(await t.query(api.mcp.getRecentAlerts, { apiKey: key, since })).toEqual([
+    { at: new Date(NOW - MINUTE).toISOString(), title: "Reaper — Error", message: "Reaper — Error.", monitorId: monitorIds[1], productId },
+    { at: new Date(NOW - 2 * MINUTE).toISOString(), title: "Reaper — back in stock", message: "Reaper — back in stock.", monitorId: monitorIds[0], productId },
+    { at: new Date(NOW - 30 * MINUTE).toISOString(), title: "Milford — 1 new match", message: "Milford — 1 new match.", monitorId: plain, productId: null },
+  ]);
+  expect(await t.query(api.mcp.getRecentAlerts, { apiKey: key, since, limit: 1 })).toHaveLength(1);
+});
