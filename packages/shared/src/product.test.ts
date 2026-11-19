@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { isArticlePage, isComparisonSite, isProductMonitor, productExcerpt, productItem } from "./product";
+import { isArticlePage, isComparisonSite, isProductMonitor, isTravellerOnlyShop, productExcerpt, productItem } from "./product";
 
 describe("productExcerpt", () => {
   // Churn outside the buy box must not change the excerpt, or every check
@@ -180,6 +180,12 @@ describe("isComparisonSite", () => {
       "https://tweakers.net/pricewatch/1/x.html",
       "https://www.google.com/shopping/product/1",
       "https://shopping.google.co.uk/x",
+      // Prod, 19/11/2026: find_product offered a cheapies.nz deal post as a shop.
+      "https://www.cheapies.nz/node/12345",
+      "https://www.ozbargain.com.au/node/1",
+      "https://www.hotukdeals.com/deals/x-1",
+      "https://slickdeals.net/f/1",
+      "https://www.mydealz.de/deals/x-1",
     ]) {
       expect(isComparisonSite(url), url).toBe(true);
     }
@@ -188,6 +194,26 @@ describe("isComparisonSite", () => {
   test("leaves shops alone, including ones whose name contains a comparison site's", () => {
     for (const url of ["https://www.pbtech.co.nz/product/1", "https://notpricespy.com/x", "https://shopping.example.com/p/1", "https://www.google.com/search?q=x", "not a url"]) {
       expect(isComparisonSite(url), url).toBe(false);
+    }
+  });
+});
+
+describe("isTravellerOnlyShop", () => {
+  // Prod, 19/11/2026: find_product offered Auckland Airport's duty-free shop.
+  test("knows airport and duty-free shops", () => {
+    for (const url of [
+      "https://themall.aucklandairport.co.nz/products/x",
+      "https://www.heinemann-dutyfree.com/x",
+      "https://www.aelia-dutyfree.co.nz/x",
+      "https://www.dubaidutyfree.com/x",
+    ]) {
+      expect(isTravellerOnlyShop(url), url).toBe(true);
+    }
+  });
+
+  test("leaves ordinary shops alone", () => {
+    for (const url of ["https://www.pbtech.co.nz/product/1", "https://www.thewarehouse.co.nz/p/x", "https://www.airportparking.com/x", "not a url"]) {
+      expect(isTravellerOnlyShop(url), url).toBe(false);
     }
   });
 });

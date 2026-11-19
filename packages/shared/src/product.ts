@@ -23,9 +23,12 @@ export function productItem(schema: unknown, pageUrl: string): ExtractedItem | n
   return null;
 }
 
-/** Price comparison sites in the search regions, matched on the site name in the hostname. */
+/**
+ * Price comparison and deal sites in the search regions, matched on the site
+ * name in the hostname. Both list other shops' offers and sell nothing.
+ */
 const COMPARISON_SITE =
-  /(^|\.)(pricespy|priceme|pricerunner|pcpartpicker|idealo|kelkoo|geizhals|billiger|guenstiger|ledenicheur|trovaprezzi|kieskeurig|tweakers|beslist|staticice|getprice|shopbot|pricehipster|pricegrabber)\./;
+  /(^|\.)(pricespy|priceme|pricerunner|pcpartpicker|idealo|kelkoo|geizhals|billiger|guenstiger|ledenicheur|trovaprezzi|kieskeurig|tweakers|beslist|staticice|getprice|shopbot|pricehipster|pricegrabber|cheapies|ozbargain|hotukdeals|slickdeals|mydealz)\./;
 
 /** A page listing one product's offers from many shops, rather than a shop's own page. */
 export function isComparisonSite(url: string): boolean {
@@ -33,6 +36,19 @@ export function isComparisonSite(url: string): boolean {
     const { hostname, pathname } = new URL(url);
     const googleShopping = /(^|\.)google\./.test(hostname) && (hostname.startsWith("shopping.") || pathname.startsWith("/shopping"));
     return COMPARISON_SITE.test(hostname) || googleShopping;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * An airport or duty-free shop, which sells only to travellers. Matched on a
+ * hostname label ending in "airport" ("aucklandairport", not
+ * "airportparking") or holding "dutyfree".
+ */
+export function isTravellerOnlyShop(url: string): boolean {
+  try {
+    return new URL(url).hostname.split(".").some((label) => /airport$|duty-?free/.test(label));
   } catch {
     return false;
   }
