@@ -328,10 +328,11 @@ function registerTools(server: McpServer, convex: ConvexHttpClient, apiKey: stri
     {
       title: "Get recent alerts",
       description:
-        "Every alert the user was sent since a time, newest first: new matches, a product back in stock or " +
+        "Every alert in the user's in-app list since a time, newest first: new matches, a product back in stock or " +
         "moving in price, and pages that stopped working. Each has its title and message as the user saw them, " +
         "its monitorId, and its productId when the monitor is a product's shop page. Use it to answer " +
-        "'what's new?' in one call. Alerts are read from the in-app copy, so a user with every channel off has none.",
+        "'what's new?' in one call. A user with every channel off has none. A repeat error within a week is listed " +
+          "but was not sent to their other channels.",
       inputSchema: z.object({
         since: z.string().describe("ISO 8601 time, e.g. 2026-11-13T00:00:00Z."),
         limit: z
@@ -471,13 +472,18 @@ function registerTools(server: McpServer, convex: ConvexHttpClient, apiKey: stri
       title: "Update a product",
       description:
         "Change a product's stock and price alerts or check interval on all its shop pages, pause or resume it, " +
-        "file it in a folder, or add and remove shop pages. Send only what changes. Added pages count against the " +
+        "file it in a folder, or add and remove shop pages. Send only the fields that change. Added pages count against the " +
         "plan's monitor limits and are first read within a minute. A faster interval than the plan allows is " +
         "lowered to the fastest it does. Returns the product as get_product does.",
       inputSchema: z.object({
         productId: z.string().describe("The productId from create_product or list_monitors."),
         checkInterval: intervals.optional(),
-        alertOn: alertOn.optional(),
+        alertOn: alertOn
+          .describe(
+            "Stock and price alerts for every shop page. Replaces the product's alerts, so include the ones to keep. " +
+              "A product needs at least one: to stop alerts, pause it."
+          )
+          .optional(),
         paused: z.boolean().optional().describe("true pauses checks and alerts on every page; false resumes them."),
         folderId: folderId.nullable().optional().describe("A folder id from create_folder, or null to take it out of its folder."),
         addUrls: z.array(url).max(8).optional().describe("Shop pages to add. One already in the product is left as it is."),

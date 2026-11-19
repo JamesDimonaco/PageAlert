@@ -405,6 +405,26 @@ test("a first scan says when the stock and price alerts it was given cannot run 
   expect(result).toEqual({ note: expect.stringMatching(/only run on a product page/) });
 });
 
+// Comparison monitors saved before alerts were refused there still have them.
+// The scan note is the agent's one chance to learn what to do instead.
+test("a first scan of a comparison page saved with stock alerts says to put the target in the prompt", async () => {
+  const t = setup();
+  const { key, userId } = await seedUser(t, "a@example.com");
+  const id = await t.run((ctx) =>
+    ctx.db.insert("monitors", {
+      userId, name: "CPU", url: "https://pricespy.co.nz/product.php?p=1", prompt: "in stock", status: "scanning", checkInterval: "24h",
+      matchCount: 0, createdAt: NOW, updatedAt: NOW, alertOn: { backInStock: true },
+    })
+  );
+  const result = await t.mutation(api.mcp.saveScanResult, {
+    apiKey: key,
+    id,
+    schema: { items: [{ title: "PB Tech", url: "https://example.com/1" }, { title: "Mighty Ape", url: "https://example.com/2" }] },
+    matches: [],
+  });
+  expect(result).toEqual({ note: expect.stringMatching(/price comparison page.*Put the target in the prompt/) });
+});
+
 // Proxy reads cost credit. An agent retrying blocked shops in a loop must hit
 // a wall at 5 a day per user, and the answer must say so.
 test("preview gets 5 proxy attempts per user per day", async () => {
@@ -1327,4 +1347,45 @@ test("get_product gives each shop page's price range over 30 and 90 days", async
   });
   // Never read a price: no history.
   expect(listings[1]!.priceHistory).toBeNull();
+});
+
+// Setting a price alert clears the last price read, so the currency is gone
+// until the next read. The stored history is still there.
+test("get_product keeps a shop page's price history while its last read has no price", async () => {
+  const t = setup();
+  const { key } = await seedUser(t, "a@example.com");
+  const { productId, monitorIds } = await seedProduct(t, key);
+  await t.run(async (ctx) => {
+    await ctx.db.patch(monitorIds[0]!, { status: "active", lastSeen: { inStock: true } });
+    await ctx.db.insert("priceReads", { monitorId: monitorIds[0]!, price: 30000, currency: "NZD", readAt: NOW - MINUTE });
+  });
+  const { listings } = await t.query(api.mcp.getProduct, { apiKey: key, productId });
+  expect(listings[0]!.priceHistory).toMatchObject({ last30Days: { min: 30000, max: 30000 } });
+});
+
+// A page whose price flips on every read writes a row each time. Reading them
+// all for 24 listings would pass Convex's read limit and break get_product.
+test("get_product's price range covers at most the newest 300 price changes of a page", async () => {
+  const t = setup();
+  const { key } = await seedUser(t, "a@example.com");
+  const { productId, monitorIds } = await seedProduct(t, key);
+  await t.run(async (ctx) => {
+    await ctx.db.patch(monitorIds[0]!, { status: "active", lastSeen: { inStock: true, price: 30000, currency: "NZD" } });
+    // The oldest of 301 changes is the lowest price, and is left out.
+    for (let i = 0; i < 301; i++) {
+      const price = i === 300 ? 100 : 30000 + (i % 2);
+      await ctx.db.insert("priceReads", { monitorId: monitorIds[0]!, price, currency: "NZD", readAt: NOW - (i + 1) * MINUTE });
+    }
+  });
+  const { listings } = await t.query(api.mcp.getProduct, { apiKey: key, productId });
+  expect(listings[0]!.priceHistory).toMatchObject({ last30Days: { min: 30000, max: 30001 }, last90Days: { min: 30000, max: 30001 } });
+});
+
+test("update_product removes a listing named twice once, and keeps the rest of the update", async () => {
+  const t = setup();
+  const { key } = await seedUser(t, "a@example.com");
+  const { productId, monitorIds } = await seedProduct(t, key);
+  const saved = await t.mutation(api.mcp.updateProduct, { apiKey: key, productId, checkInterval: "6h", removeMonitorIds: [monitorIds[1]!, monitorIds[1]!] });
+  expect(saved).toMatchObject({ checkInterval: "6h", listings: [{ monitorId: monitorIds[0] }] });
+  expect(await t.run((ctx) => ctx.db.get(monitorIds[1]!))).toBeNull();
 });

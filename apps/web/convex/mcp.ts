@@ -3,6 +3,7 @@ import { action, mutation, query, type QueryCtx } from "./_generated/server";
 import { api } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import {
+  DAY_MS,
   DEFAULT_AGENT_MATCHES,
   MAX_AGENT_MATCHES,
   MAX_AGENT_MONITORS,
@@ -177,35 +178,51 @@ export const getProduct = query({
   },
 });
 
-const DAY_MS = 24 * 60 * 60 * 1000;
-/** The windows a listing's price range is given over. */
+/** The windows a listing's price range is given over, the longest last. */
 const PRICE_WINDOWS = [
   ["last30Days", 30],
   ["last90Days", 90],
 ] as const;
 
 /**
+ * Price changes one listing's range is worked out from at most. A page whose
+ * price flips on every read writes a row each time, and get_product reads up
+ * to 24 listings in one transaction, so past this only the newest count.
+ */
+const MAX_PRICE_ROWS = 300;
+
+/**
  * A listing's lowest and highest price over the last 30 and 90 days, in its
  * current currency, and when its history starts. Null with no price read.
  * Rows are changes, so the price on a window's first day is the last row
- * before it, and the read is two index ranges per window, not every row.
+ * before it.
  */
 async function priceHistory(ctx: QueryCtx, m: Doc<"monitors">) {
-  const currency = m.lastSeen?.currency;
-  if (currency === undefined) return null;
   const rows = () => ctx.db.query("priceReads");
   const first = await rows().withIndex("by_monitorId", (q) => q.eq("monitorId", m._id)).first();
   if (!first) return null;
   const now = Date.now();
-  const ranges = await Promise.all(
-    PRICE_WINDOWS.map(async ([name, days]) => {
-      const start = now - days * DAY_MS;
-      const before = await rows().withIndex("by_monitorId", (q) => q.eq("monitorId", m._id).lt("readAt", start)).order("desc").first();
-      const within = await rows().withIndex("by_monitorId", (q) => q.eq("monitorId", m._id).gte("readAt", start)).collect();
-      const prices = [...(before ? [before] : []), ...within].filter((r) => r.currency === currency).map((r) => r.price);
-      return [name, prices.length > 0 ? { min: Math.min(...prices), max: Math.max(...prices) } : null] as const;
-    })
-  );
+  const longest = now - PRICE_WINDOWS[PRICE_WINDOWS.length - 1]![1] * DAY_MS;
+  const recent = await rows()
+    .withIndex("by_monitorId", (q) => q.eq("monitorId", m._id).gte("readAt", longest))
+    .order("desc")
+    .take(MAX_PRICE_ROWS);
+  const before =
+    recent.length < MAX_PRICE_ROWS
+      ? await rows().withIndex("by_monitorId", (q) => q.eq("monitorId", m._id).lt("readAt", longest)).order("desc").first()
+      : null;
+  // Newest first. Setting a price alert clears the last read's currency, so
+  // the newest row stands in for it until the next read.
+  const newest = [...recent, ...(before ? [before] : [])];
+  const currency = m.lastSeen?.currency ?? newest[0]?.currency;
+  const ranges = PRICE_WINDOWS.map(([name, days]) => {
+    const end = newest.findIndex((r) => r.readAt < now - days * DAY_MS);
+    const prices = newest
+      .slice(0, end === -1 ? undefined : end + 1)
+      .filter((r) => r.currency === currency)
+      .map((r) => r.price);
+    return [name, prices.length > 0 ? { min: Math.min(...prices), max: Math.max(...prices) } : null] as const;
+  });
   return { since: new Date(first.readAt).toISOString(), ...Object.fromEntries(ranges) };
 }
 
@@ -560,7 +577,7 @@ export const updateProduct = mutation({
     }
     if (removeMonitorIds?.length) {
       const listed = new Set(product.listings.map((l) => l.monitorId).filter((id) => id !== undefined));
-      const ids = removeMonitorIds.map((raw) => {
+      const ids = [...new Set(removeMonitorIds)].map((raw) => {
         const id = ctx.db.normalizeId("monitors", raw);
         if (!id || !listed.has(id)) throw new ConvexError(toolError(`Monitor ${raw} not found in this product`));
         return id;
@@ -649,7 +666,7 @@ export const saveScanResult = mutation({
     const monitor = await ownedMonitor(ctx, userId, args.id);
     await saveScanResultForUser(ctx, userId, { ...args, matches, matchCount: matches.length }).catch(asToolError);
     return wantsProductAlerts(monitor.alertOn) && !isProductMonitor({ ...monitor, schema: args.schema })
-      ? { note: NOT_A_PRODUCT_NOTE }
+      ? { note: isComparisonSite(monitor.url) ? COMPARISON_PAGE_ALERTS : NOT_A_PRODUCT_NOTE }
       : {};
   },
 });
@@ -685,9 +702,10 @@ export const saveScanError = mutation({
 const MAX_ALERT_ROWS = 500;
 
 /**
- * Every alert the user was sent since a time, newest first: new matches,
- * product restocks and price moves, and errors. Read from the in-app copy
- * each alert writes, which a user with every channel off does not get.
+ * Every alert in the user's in-app list since a time, newest first: new
+ * matches, product restocks and price moves, and errors. Each alert writes
+ * one, but so does an error the cooldown kept off the other channels, and a
+ * user with every channel off gets none.
  */
 export const getRecentAlerts = query({
   args: { apiKey: v.string(), since: v.string(), limit: v.optional(v.number()) },
