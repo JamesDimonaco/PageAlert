@@ -5,8 +5,9 @@ import type { ActionCtx } from "../_generated/server";
 import type { BetterAuthOptions } from "better-auth";
 import { betterAuth } from "better-auth";
 import { admin } from "better-auth/plugins";
+import { oauthProvider } from "@better-auth/oauth-provider";
 import { polar, checkout, portal, webhooks } from "@polar-sh/better-auth";
-import { grantsAccess, periodEndMs, productTier, TIER_RANK } from "@prowl/shared";
+import { grantsAccess, hashApiKey, periodEndMs, productTier, TIER_RANK } from "@prowl/shared";
 
 // Polyfill Buffer for Convex runtime — @polar-sh/sdk/webhooks uses
 // Buffer.from() for webhook signature verification which isn't available
@@ -213,6 +214,35 @@ async function grantFromSubscription(ctx: GenericCtx<DataModel>, sub: Subscripti
   }
 }
 
+/** The MCP endpoint, as the user pastes it into an AI app. Tokens are issued for this URL only. */
+export function mcpResource(): string {
+  return `${process.env.SITE_URL ?? "https://pagealert.io"}/api/mcp`;
+}
+
+type AuthAdapterFactory = ReturnType<typeof authComponent.adapter>;
+
+/**
+ * Writes `revoked: null` on each new refresh token. The provider rotates one
+ * by updating the row "where revoked is null", and the Convex adapter in
+ * @convex-dev/better-auth 0.12 does not match an unset field against null, so
+ * without this every refresh fails and an app is cut off after an hour.
+ * 0.13 fixes the match but needs Better Auth 1.7: drop this with that upgrade.
+ */
+export function withRevocableRefreshTokens(factory: AuthAdapterFactory): AuthAdapterFactory {
+  return (options) => {
+    const adapter = factory(options);
+    const create = adapter.create;
+    adapter.create = ((input) =>
+      create(
+        input.model === "oauthRefreshToken" ? { ...input, data: { ...input.data, revoked: null } } : input
+      )) as typeof create;
+    return adapter;
+  };
+}
+
+/** How an OAuth token is stored. Shared with the lookup in mcpAuth.ts, so the two cannot drift. */
+export const hashOAuthToken = (token: string): Promise<string> => hashApiKey(token);
+
 export const createAuthOptions = (ctx: GenericCtx<DataModel>) => {
   const plugins: BetterAuthOptions["plugins"] = [
     convex({ authConfig }),
@@ -221,6 +251,24 @@ export const createAuthOptions = (ctx: GenericCtx<DataModel>) => {
     // SUPER_ADMIN_EMAILS; unset means nobody.
     admin({
       adminUserIds: (process.env.SUPER_ADMIN_USER_IDS ?? "").split(",").map((id) => id.trim()).filter(Boolean),
+    }),
+    // Lets the Claude and ChatGPT apps connect to /api/mcp: they cannot send
+    // a pasted key, so they register themselves and the user signs in.
+    oauthProvider({
+      loginPage: "/login",
+      consentPage: "/oauth/consent",
+      allowDynamicClientRegistration: true,
+      // Those apps register before anyone has signed in. Such a client is
+      // public: it gets no secret and must use PKCE.
+      allowUnauthenticatedClientRegistration: true,
+      grantTypes: ["authorization_code", "refresh_token"],
+      // No identity scopes: a token is only good for the MCP tools.
+      scopes: ["offline_access"],
+      validAudiences: [mcpResource()],
+      // Tokens stay opaque rows, so convex/mcpAuth.ts can check each call
+      // against the table and a revoked one stops at once.
+      disableJwtPlugin: true,
+      storeTokens: { hash: hashOAuthToken },
     }),
   ];
 
@@ -384,7 +432,7 @@ export const createAuthOptions = (ctx: GenericCtx<DataModel>) => {
     appName: "PageAlert",
     baseURL: process.env.SITE_URL,
     secret: process.env.BETTER_AUTH_SECRET,
-    database: authComponent.adapter(ctx),
+    database: withRevocableRefreshTokens(authComponent.adapter(ctx)),
     emailAndPassword: {
       enabled: true,
     },

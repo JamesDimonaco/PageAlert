@@ -39,7 +39,7 @@ export const FAQ: FaqEntry[] = [
   },
   {
     q: "Can my AI assistant set up monitors for me?",
-    a: "Yes. PageAlert has an MCP server, the standard way AI tools connect to apps. Generate a key in Settings under Connect AI, then add it to Claude Code, Claude Desktop or Cursor. Your assistant can then create and change monitors, find a product across shops and read your matches.",
+    a: "Yes. PageAlert has an MCP server, the standard way AI tools connect to apps. In the Claude or ChatGPT app, add https://pagealert.io/api/mcp as a custom connector and sign in. For Claude Code or Cursor, generate a key in Settings under Connect AI. Your assistant can then create and change monitors, find a product across shops and read your matches.",
   },
   {
     q: "What do you do with my data?",

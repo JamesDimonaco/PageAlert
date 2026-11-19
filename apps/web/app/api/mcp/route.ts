@@ -1,5 +1,5 @@
 import { after } from "next/server";
-import { createMcpHandler } from "mcp-handler";
+import { createMcpHandler, getPublicOrigin } from "mcp-handler";
 import type { McpServer } from "@modelcontextprotocol/server";
 import { ConvexHttpClient } from "convex/browser";
 import { ConvexError } from "convex/values";
@@ -554,9 +554,16 @@ async function handler(request: Request): Promise<Response> {
   const apiKey = bearerToken(request);
   const owner = apiKey ? await convex.mutation(api.apiKeys.verify, { key: apiKey }) : null;
   if (!apiKey || !owner) {
+    // The Claude and ChatGPT apps start their sign-in from this header. It
+    // has to come on a 401.
+    const metadata = `${getPublicOrigin(request)}/.well-known/oauth-protected-resource/api/mcp`;
     return Response.json(
-      { error: "Send a PageAlert API key as 'Authorization: Bearer pa_live_…'. Create one in Settings → Connect AI." },
-      { status: 401, headers: { "WWW-Authenticate": 'Bearer realm="pagealert"' } }
+      {
+        error:
+          "Sign in through your AI app, or send a PageAlert API key as 'Authorization: Bearer pa_live_…'. " +
+          "Settings → Connect AI has both.",
+      },
+      { status: 401, headers: { "WWW-Authenticate": `Bearer realm="pagealert", resource_metadata="${metadata}"` } }
     );
   }
 

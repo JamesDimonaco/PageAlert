@@ -39,6 +39,9 @@ export default function LoginPage() {
   const searchParams = useSearchParams();
   const nextUrl = safeNext(searchParams.get("next"));
   const [isSignUp, setIsSignUp] = useState(searchParams.get("mode") === "signup");
+  // An AI app sent the user here to connect. Better Auth signs that request
+  // into the URL, and after sign-in it sends the browser on to the approval page.
+  const connectingApp = searchParams.has("sig") && searchParams.has("client_id");
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -72,7 +75,7 @@ export default function LoginPage() {
       }
       if (isSignUp) trackSignUp({ method: "email" });
       else trackSignIn({ method: "email" });
-      router.push(nextUrl);
+      if (!connectingApp) router.push(nextUrl);
     } catch {
       setFormError("We couldn't reach the server. Check your connection and try again.");
     } finally {
@@ -118,7 +121,11 @@ export default function LoginPage() {
           <CardHeader className="text-center pb-2 px-8 pt-8">
             <h1 className="text-xl font-bold tracking-tight">{isSignUp ? "Create account" : "Welcome back"}</h1>
             <CardDescription className="mt-1.5 text-sm">
-              {isSignUp ? "Sign up to start monitoring" : "Sign in to your account"}
+              {connectingApp
+                ? "Sign in to connect your AI app to PageAlert"
+                : isSignUp
+                  ? "Sign up to start monitoring"
+                  : "Sign in to your account"}
             </CardDescription>
           </CardHeader>
           <CardContent className="px-8 pb-8 pt-6 space-y-6">

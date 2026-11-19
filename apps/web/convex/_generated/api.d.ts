@@ -18,6 +18,7 @@ import type * as announcements from "../announcements.js";
 import type * as anonymous from "../anonymous.js";
 import type * as apiKeys from "../apiKeys.js";
 import type * as backfill from "../backfill.js";
+import type * as connectedApps from "../connectedApps.js";
 import type * as contact from "../contact.js";
 import type * as crons from "../crons.js";
 import type * as discord from "../discord.js";
@@ -67,6 +68,7 @@ declare const fullApi: ApiFromModules<{
   anonymous: typeof anonymous;
   apiKeys: typeof apiKeys;
   backfill: typeof backfill;
+  connectedApps: typeof connectedApps;
   contact: typeof contact;
   crons: typeof crons;
   discord: typeof discord;

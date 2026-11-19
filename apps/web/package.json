@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@base-ui/react": "^1.9.0",
+    "@better-auth/oauth-provider": "1.6.34",
     "@convex-dev/better-auth": "^0.12.7",
     "@modelcontextprotocol/server": "2.4.0",
     "@opentelemetry/api": "1.9.1",

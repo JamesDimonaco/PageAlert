@@ -72,7 +72,7 @@ export function buildLlmsTxt(): string {
       `- [Pricing](${SITE_URL}/pricing): plans and limits`,
       `- [Example monitor](${SITE_URL}/try/example): what a scan returns`,
       `- [Changelog](${SITE_URL}/changelog): new features, newest first`,
-      `- [MCP server](${SITE_URL}/api/mcp): tools to preview pages, create, edit and delete monitors, find products, group them in folders, and read matches; authenticate with a PageAlert API key from Settings → Connect AI as \`Authorization: Bearer pa_live_…\``,
+      `- [MCP server](${SITE_URL}/api/mcp): tools to preview pages, create, edit and delete monitors, find products, group them in folders, and read matches; authenticate by signing in over OAuth (the Claude and ChatGPT apps do this when you add the URL as a custom connector), or with a PageAlert API key from Settings → Connect AI as \`Authorization: Bearer pa_live_…\``,
       "- [Source code](https://github.com/JamesDimonaco/prowl): PageAlert is open source",
     ].join("\n"),
   ];

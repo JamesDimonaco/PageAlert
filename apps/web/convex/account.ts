@@ -3,6 +3,7 @@ import { internalMutation, mutation, query, type MutationCtx, type QueryCtx } fr
 import { components, internal } from "./_generated/api";
 import { DAY_MS } from "@prowl/shared";
 import { feedbackSlotKey, previewUserPrefix } from "./shared";
+import { deleteOAuthRows } from "./connectedApps";
 import type { Id, TableNames } from "./_generated/dataModel";
 
 /** Is this user currently banned? Shared by every mutation that gates on ban status. */
@@ -74,7 +75,8 @@ async function deleteAllAuthRows(
 
 /**
  * Removes the Better Auth identity behind a userId: every session, every
- * linked provider account, then the user row carrying the name and email.
+ * linked provider account, every connected AI app's tokens, then the user row
+ * carrying the name and email.
  *
  * This does NOT cut off access straight away, and it is worth being exact
  * about why. Convex authenticates a call by verifying a JWT against the JWKS
@@ -92,6 +94,7 @@ export async function deleteAuthIdentity(ctx: MutationCtx, userId: string): Prom
   const where: UserIdRow[] = [{ field: "userId", operator: "eq", value: userId }];
   await deleteAllAuthRows(ctx, { model: "session", where });
   await deleteAllAuthRows(ctx, { model: "account", where });
+  await deleteOAuthRows(ctx, userId);
   await ctx.runMutation(components.betterAuth.adapter.deleteOne, {
     input: { model: "user", where: [{ field: "_id", operator: "eq", value: userId }] },
   });

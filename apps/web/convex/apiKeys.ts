@@ -2,6 +2,7 @@ import { ConvexError, v } from "convex/values";
 import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { apiKeyHint, formatApiKey, hashApiKey, looksLikeApiKey } from "@prowl/shared";
 import { isBanned, requireLiveAccount } from "./account";
+import { findTokenOwner } from "./connectedApps";
 
 const MAX_NAME_LENGTH = 100;
 /** Every key has to fit on the Settings page, since that is the only place to revoke one. */
@@ -9,7 +10,7 @@ const MAX_KEYS_PER_USER = 20;
 /** lastUsedAt is for "is this key still in use?", so hourly is plenty and saves a write per call. */
 const LAST_USED_RESOLUTION_MS = 60 * 60 * 1000;
 
-export type KeyOwner = { keyId: string; userId: string; userEmail: string | undefined };
+export type KeyOwner = { userId: string; userEmail: string | undefined };
 
 async function findKey(ctx: QueryCtx, key: string) {
   if (!looksLikeApiKey(key)) return null;
@@ -22,14 +23,26 @@ async function findKey(ctx: QueryCtx, key: string) {
   return row;
 }
 
+/** A pasted key, or the OAuth token of a connected app. */
+async function findOwner(ctx: QueryCtx, credential: string): Promise<KeyOwner | null> {
+  if (looksLikeApiKey(credential)) {
+    const row = await findKey(ctx, credential);
+    return row && { userId: row.userId, userEmail: row.userEmail };
+  }
+  const owner = await findTokenOwner(ctx, credential);
+  if (!owner || (await isBanned(ctx, owner.userId))) return null;
+  return owner;
+}
+
 /**
- * The account an MCP call acts for. The key is the whole credential, the same
- * way a session is for the web app, so every MCP function starts here.
+ * The account an MCP call acts for. The credential is the whole proof, the
+ * same way a session is for the web app, so every MCP function starts here
+ * and none takes a user id from its caller.
  */
-export async function requireKeyOwner(ctx: QueryCtx, key: string): Promise<KeyOwner> {
-  const row = await findKey(ctx, key);
-  if (!row) throw new ConvexError("Invalid API key");
-  return { keyId: row._id, userId: row.userId, userEmail: row.userEmail };
+export async function requireKeyOwner(ctx: QueryCtx, credential: string): Promise<KeyOwner> {
+  const owner = await findOwner(ctx, credential);
+  if (!owner) throw new ConvexError("Invalid API key");
+  return owner;
 }
 
 async function requireUser(ctx: QueryCtx) {
@@ -96,12 +109,16 @@ export const listMine = query({
 });
 
 /**
- * Checks a key for the MCP route before it runs any tool, and records that the
- * key was used. Null for anything that is not a live key.
+ * Checks a credential for the MCP route before it runs any tool, and records
+ * that a key was used. Null for anything that is not a live key or token.
  */
 export const verify = mutation({
   args: { key: v.string() },
   handler: async (ctx, { key }) => {
+    if (!looksLikeApiKey(key)) {
+      const owner = await findOwner(ctx, key);
+      return owner && { userId: owner.userId };
+    }
     const row = await findKey(ctx, key);
     if (!row) return null;
     const now = Date.now();
