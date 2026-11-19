@@ -75,6 +75,36 @@ describe("productExcerpt", () => {
     expect(productExcerpt(page, "PowerColor Reaper Radeon RX 9060 XT 16GB").matched).toBe(false);
   });
 
+  // Prod, 19/11/2026: Extreme PC prints the title in the breadcrumb, then in
+  // the heading, then a hidden review form. The window from the breadcrumb
+  // ended at "Now:", so every read found stock but never the price.
+  test("starts at the title that has the price after it, not an earlier mention", () => {
+    const form = "Rating Required Select Rating 1 star (worst) 5 stars (best) Name Email Required ".repeat(8);
+    const title = "Kingston NV3 1TB M.2 NVMe Internal SSD-PCIe Gen 4";
+    const page = `Menu [Home] [${title}] [Kingston] ${title} (No reviews yet) ${form}${title} Auckland Stock: 5+ in stock Now: $319.00`;
+    for (const search of [title, "Kingston NV3 1TB M.2 NVMe SSD PCIe Gen 4"]) {
+      const { excerpt, matched } = productExcerpt(page, search);
+      expect(matched).toBe(true);
+      expect(excerpt).toContain("Now: $319.00");
+    }
+  });
+
+  // "$31" read from a cut "$319.00" is a wrong price, worse than none.
+  test("does not count a price cut off at the window's edge", () => {
+    const title = "Sony WH-1000XM5";
+    const pad = "x".repeat(700 - title.length - 1 - "$31".length);
+    const page = `${title} ${pad}$319.00 Out of stock`.replace(`${pad}$319`, `${pad.slice(0, -title.length - 1)}${title} $319`);
+    expect(page.indexOf("$319") + "$31".length).toBe(700);
+    expect(productExcerpt(page, title).excerpt).toContain("$319.00");
+  });
+
+  // A page with no price near any mention keeps today's excerpt, so its hash
+  // does not move and buy a re-read.
+  test("falls back to the first mention when none has a price after it", () => {
+    const page = `Sony WH-1000XM5 ${"x ".repeat(500)} Sony WH-1000XM5 Out of stock`;
+    expect(productExcerpt(page, "Sony WH-1000XM5").excerpt.startsWith("Sony WH-1000XM5 x")).toBe(true);
+  });
+
   // An unmatched title must still give the reader something with a price in
   // it, and say so, so the caller can fall back to whole-page changes.
   test("without the title, says so and starts near the first price", () => {
