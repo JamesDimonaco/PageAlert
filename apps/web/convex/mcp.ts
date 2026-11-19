@@ -27,7 +27,7 @@ import {
   updateMonitorForUser,
 } from "./monitors";
 import { createFolderForUser, setMonitorFolder, setProductFolder } from "./folders";
-import { createProductForUser } from "./monitorGroups";
+import { addListingsForUser, createProductForUser, setPausedForUser, updateCriteriaForUser } from "./monitorGroups";
 import { findListings } from "./productSearch";
 import { alertOnValidator, checkIntervalValidator } from "./schema";
 import { displayHost, matchKey, previewUserPrefix } from "./shared";
@@ -161,57 +161,66 @@ export const listMonitors = query({
   },
 });
 
+async function ownedProduct(ctx: QueryCtx, userId: string, productId: string) {
+  const id = ctx.db.normalizeId("monitorGroups", productId);
+  const product = id ? await ctx.db.get(id) : null;
+  if (!product || product.userId !== userId) throw new ConvexError(toolError("Product not found"));
+  return product;
+}
+
 /** A product and what each of its watched shop pages last read. */
 export const getProduct = query({
   args: { apiKey: v.string(), productId: v.string() },
   handler: async (ctx, { apiKey, productId }) => {
     const { userId } = await requireKeyOwner(ctx, apiKey);
-    const id = ctx.db.normalizeId("monitorGroups", productId);
-    const product = id ? await ctx.db.get(id) : null;
-    if (!product || product.userId !== userId) throw new ConvexError(toolError("Product not found"));
-    const folder = product.folderId ? ((await ctx.db.get(product.folderId))?.name ?? null) : null;
-    // Listings are capped (see monitorGroups.ts), so this read is too.
-    const watched = (await Promise.all(product.listings.map((l) => (l.monitorId ? ctx.db.get(l.monitorId) : null)))).filter(
-      (m) => m !== null
-    );
-    // A listing in error or paused is not being read, so its last stock and
-    // price are stale and left out of the summary.
-    const working = watched.filter((m) => m.status === "active" || m.status === "scanning");
-    const inStock = working.filter((m) => m.lastSeen?.inStock === true);
-    // A price in another currency than the region's cannot be compared.
-    const currency = SEARCH_REGIONS.find((r) => r.code === product.region)?.currency;
-    const cheapest = inStock
-      .filter((m) => m.lastSeen?.price !== undefined && m.lastSeen.currency === currency)
-      .sort((x, y) => x.lastSeen!.price! - y.lastSeen!.price!)[0];
-    return {
-      id: product._id,
-      name: product.name,
-      region: product.region,
-      alertOn: product.alertOn,
-      checkInterval: product.checkInterval,
-      folder,
-      summary: {
-        listings: watched.length,
-        working: working.length,
-        inStock: inStock.length,
-        cheapestInStock: cheapest
-          ? { price: cheapest.lastSeen!.price!, currency: cheapest.lastSeen!.currency!, shop: displayHost(cheapest.url), url: cheapest.url }
-          : null,
-      },
-      listings: watched.map((m) => ({
-        monitorId: m._id,
-        shop: displayHost(m.url),
-        url: m.url,
-        status: m.status,
-        inStock: m.lastSeen?.inStock ?? null,
-        price: m.lastSeen?.price ?? null,
-        currency: m.lastSeen?.currency ?? null,
-        lastCheckedAt: isoOrNull(m.lastCheckedAt),
-        lastError: m.lastError ?? null,
-      })),
-    };
+    return agentProduct(ctx, await ownedProduct(ctx, userId, productId));
   },
 });
+
+/** A product as get_product and update_product show it. */
+async function agentProduct(ctx: QueryCtx, product: Doc<"monitorGroups">) {
+  const folder = product.folderId ? ((await ctx.db.get(product.folderId))?.name ?? null) : null;
+  // Listings are capped (see monitorGroups.ts), so this read is too.
+  const watched = (await Promise.all(product.listings.map((l) => (l.monitorId ? ctx.db.get(l.monitorId) : null)))).filter(
+    (m) => m !== null
+  );
+  // A listing in error or paused is not being read, so its last stock and
+  // price are stale and left out of the summary.
+  const working = watched.filter((m) => m.status === "active" || m.status === "scanning");
+  const inStock = working.filter((m) => m.lastSeen?.inStock === true);
+  // A price in another currency than the region's cannot be compared.
+  const currency = SEARCH_REGIONS.find((r) => r.code === product.region)?.currency;
+  const cheapest = inStock
+    .filter((m) => m.lastSeen?.price !== undefined && m.lastSeen.currency === currency)
+    .sort((x, y) => x.lastSeen!.price! - y.lastSeen!.price!)[0];
+  return {
+    id: product._id,
+    name: product.name,
+    region: product.region,
+    alertOn: product.alertOn,
+    checkInterval: product.checkInterval,
+    folder,
+    summary: {
+      listings: watched.length,
+      working: working.length,
+      inStock: inStock.length,
+      cheapestInStock: cheapest
+        ? { price: cheapest.lastSeen!.price!, currency: cheapest.lastSeen!.currency!, shop: displayHost(cheapest.url), url: cheapest.url }
+        : null,
+    },
+    listings: watched.map((m) => ({
+      monitorId: m._id,
+      shop: displayHost(m.url),
+      url: m.url,
+      status: m.status,
+      inStock: m.lastSeen?.inStock ?? null,
+      price: m.lastSeen?.price ?? null,
+      currency: m.lastSeen?.currency ?? null,
+      lastCheckedAt: isoOrNull(m.lastCheckedAt),
+      lastError: m.lastError ?? null,
+    })),
+  };
+}
 
 /**
  * A monitor's matched items, newest first, each dated from the oldest row it
@@ -368,7 +377,9 @@ export const updateMonitor = mutation({
     // A product's listings share its alerts and interval. One changed alone
     // would alert unlike the rest, and the product page would not show it.
     if (monitor.groupId && (fields.alertOn !== undefined || fields.checkInterval !== undefined)) {
-      throw new ConvexError(toolError("This monitor is part of a product, which sets its alerts and check interval."));
+      throw new ConvexError(
+        toolError(`This monitor is part of a product, which sets its alerts and check interval. Use update_product on ${monitor.groupId}.`)
+      );
     }
     const comparison = isComparisonSite(monitor.url);
     if (comparison && wantsProductAlerts(fields.alertOn)) throw new ConvexError(toolError(COMPARISON_PAGE_ALERTS));
@@ -407,8 +418,8 @@ export const updateMonitor = mutation({
       });
     }
     if (folderId !== undefined) {
-      // A product's listings are filed with the product, and agents have no
-      // tool to move a product, so filing a listing files its product.
+      // A product's listings are filed with the product, so filing a listing
+      // files its product.
       const filing = monitor.groupId
         ? setProductFolder(ctx, userId, monitor.groupId, folderId)
         : setMonitorFolder(ctx, userId, monitor._id, folderId);
@@ -483,6 +494,51 @@ export const createProduct = mutation({
     }).catch(asToolError);
     if (folderId !== undefined) await setProductFolder(ctx, owner.userId, groupId, folderId).catch(asToolError);
     return { productId: groupId, monitorIds };
+  },
+});
+
+/**
+ * Change a product as the web app's product page does: its alerts and
+ * interval on every listing, pause, folder, and which shop pages it watches.
+ * Removals go first, so they free room for additions.
+ */
+export const updateProduct = mutation({
+  args: {
+    apiKey: v.string(),
+    productId: v.string(),
+    checkInterval: v.optional(checkIntervalValidator),
+    alertOn: v.optional(alertOnValidator),
+    paused: v.optional(v.boolean()),
+    /** Null takes the product out of its folder. */
+    folderId: v.optional(v.union(v.string(), v.null())),
+    addUrls: v.optional(v.array(v.string())),
+    removeMonitorIds: v.optional(v.array(v.string())),
+  },
+  handler: async (ctx, { apiKey, productId, checkInterval, alertOn, paused, folderId, addUrls, removeMonitorIds }) => {
+    const owner = await requireKeyOwner(ctx, apiKey);
+    const { userId } = owner;
+    const product = await ownedProduct(ctx, userId, productId);
+    if (checkInterval !== undefined || alertOn !== undefined) {
+      await updateCriteriaForUser(ctx, userId, product, {
+        alertOn: alertOn ?? product.alertOn,
+        notificationChannels: product.notificationChannels,
+        checkInterval: checkInterval ?? product.checkInterval,
+      }).catch(asToolError);
+    }
+    if (removeMonitorIds?.length) {
+      const listed = new Set(product.listings.map((l) => l.monitorId).filter((id) => id !== undefined));
+      const ids = removeMonitorIds.map((raw) => {
+        const id = ctx.db.normalizeId("monitors", raw);
+        if (!id || !listed.has(id)) throw new ConvexError(toolError(`Monitor ${raw} not found in this product`));
+        return id;
+      });
+      await removeMonitorsForUser(ctx, userId, ids).catch(asToolError);
+    }
+    if (addUrls?.length) await addListingsForUser(ctx, owner, product._id, addUrls).catch(asToolError);
+    // After additions, so new listings pause too.
+    if (paused !== undefined) await setPausedForUser(ctx, userId, product._id, paused).catch(asToolError);
+    if (folderId !== undefined) await setProductFolder(ctx, userId, product._id, folderId).catch(asToolError);
+    return agentProduct(ctx, (await ctx.db.get(product._id))!);
   },
 });
 

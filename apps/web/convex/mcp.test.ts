@@ -1197,3 +1197,78 @@ test("a first scan of a product page with stock or price alerts brings its first
   await t.mutation(api.mcp.saveScanResult, { apiKey: key, id: listing, schema: { items: [{ title: "a" }, { title: "b" }] }, matches: [] });
   expect((await t.run((ctx) => ctx.db.get(listing)))?.nextCheckAt).toBeGreaterThan(NOW + 60_000);
 });
+
+// Prod, 19/11/2026: an agent could not move a GPU product to 6h checks for
+// Black Friday. update_monitor refuses a product's listings, and there was no
+// tool for the product itself.
+async function seedProduct(t: T, key: string, urls = ["https://www.pbtech.co.nz/product/1", "https://www.thewarehouse.co.nz/p/2"]) {
+  return t.mutation(api.mcp.createProduct, {
+    apiKey: key,
+    title: "PowerColor Reaper RX 9060 XT",
+    region: "NZ",
+    urls,
+    alertOn: { backInStock: true },
+  });
+}
+
+test("update_product changes alerts and interval on every listing, and files the product", async () => {
+  const t = setup();
+  const { key } = await seedUser(t, "a@example.com");
+  const { productId, monitorIds } = await seedProduct(t, key);
+  const { folderId } = await t.mutation(api.mcp.createFolder, { apiKey: key, name: "PC build" });
+  const alertOn = { backInStock: true, priceBelow: { amount: 70000, currency: "NZD" } };
+  const saved = await t.mutation(api.mcp.updateProduct, { apiKey: key, productId, checkInterval: "6h", alertOn, folderId });
+  expect(saved).toMatchObject({ id: productId, checkInterval: "6h", alertOn, folder: "PC build" });
+  for (const id of monitorIds) {
+    expect(await t.run((ctx) => ctx.db.get(id))).toMatchObject({ checkInterval: "6h", alertOn, prompt: expect.stringMatching(/price and stock/) });
+  }
+  // Out of the folder again, leaving the rest as it is.
+  expect(await t.mutation(api.mcp.updateProduct, { apiKey: key, productId, folderId: null })).toMatchObject({ folder: null, checkInterval: "6h" });
+});
+
+test("update_product adds shop pages as listings with the product's alerts, and removes listings", async () => {
+  const t = setup();
+  const { key, userId } = await seedUser(t, "a@example.com");
+  await t.run((ctx) => ctx.db.insert("userTiers", { userId, tier: "max", updatedAt: NOW }));
+  const { productId, monitorIds } = await seedProduct(t, key);
+  const saved = await t.mutation(api.mcp.updateProduct, {
+    apiKey: key,
+    productId,
+    // Already watched, with a tracking parameter: not added twice.
+    addUrls: ["https://www.computerlounge.co.nz/p/3", "https://www.pbtech.co.nz/product/1?utm_source=x"],
+    removeMonitorIds: [monitorIds[1]!],
+  });
+  expect(saved.listings.map((l) => l.shop)).toEqual(["pbtech.co.nz", "computerlounge.co.nz"]);
+  // The page already watched keeps its monitor, with no second one beside it.
+  expect(saved.listings[0]!.monitorId).toBe(monitorIds[0]);
+  expect(await t.run((ctx) => ctx.db.query("monitors").withIndex("by_groupId", (q) => q.eq("groupId", productId)).collect())).toHaveLength(2);
+  const added = await t.run((ctx) => ctx.db.get(saved.listings[1]!.monitorId));
+  expect(added).toMatchObject({ groupId: productId, alertOn: { backInStock: true }, productTitle: "PowerColor Reaper RX 9060 XT" });
+  expect(await t.run((ctx) => ctx.db.get(monitorIds[1]!))).toBeNull();
+});
+
+test("update_product refuses a comparison page, another product's listing and another account's product", async () => {
+  const t = setup();
+  const { key } = await seedUser(t, "a@example.com");
+  const { productId } = await seedProduct(t, key, ["https://www.pbtech.co.nz/product/1"]);
+  expect(await errorOf(t.mutation(api.mcp.updateProduct, { apiKey: key, productId, addUrls: ["https://pricespy.co.nz/product.php?p=1"] })))
+    .toMatch(/price comparison site/);
+  const other = await t.mutation(api.mcp.createMonitor, { apiKey: key, ...MONITOR });
+  expect(await toolErrorOf(t.mutation(api.mcp.updateProduct, { apiKey: key, productId, removeMonitorIds: [other] }))).toMatchObject({
+    code: "not_found",
+  });
+  const stranger = await seedUser(t, "b@example.com");
+  expect(await toolErrorOf(t.mutation(api.mcp.updateProduct, { apiKey: stranger.key, productId, checkInterval: "6h" }))).toMatchObject({
+    code: "not_found",
+  });
+});
+
+test("update_product pauses and resumes every listing", async () => {
+  const t = setup();
+  const { key } = await seedUser(t, "a@example.com");
+  const { productId } = await seedProduct(t, key);
+  const paused = await t.mutation(api.mcp.updateProduct, { apiKey: key, productId, paused: true });
+  expect(paused.listings.map((l) => l.status)).toEqual(["paused", "paused"]);
+  const resumed = await t.mutation(api.mcp.updateProduct, { apiKey: key, productId, paused: false });
+  expect(resumed.listings.map((l) => l.status)).toEqual(["active", "active"]);
+});

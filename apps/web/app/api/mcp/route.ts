@@ -433,13 +433,45 @@ function registerTools(server: McpServer, convex: ConvexHttpClient, apiKey: stri
   );
 
   server.registerTool(
+    "update_product",
+    {
+      title: "Update a product",
+      description:
+        "Change a product's stock and price alerts or check interval on all its shop pages, pause or resume it, " +
+        "file it in a folder, or add and remove shop pages. Send only what changes. Added pages count against the " +
+        "plan's monitor limits and are first read within a minute. A faster interval than the plan allows is " +
+        "lowered to the fastest it does. Returns the product as get_product does.",
+      inputSchema: z.object({
+        productId: z.string().describe("The productId from create_product or list_monitors."),
+        checkInterval: intervals.optional(),
+        alertOn: alertOn.optional(),
+        paused: z.boolean().optional().describe("true pauses checks and alerts on every page; false resumes them."),
+        folderId: folderId.nullable().optional().describe("A folder id from create_folder, or null to take it out of its folder."),
+        addUrls: z.array(url).max(8).optional().describe("Shop pages to add. One already in the product is left as it is."),
+        removeMonitorIds: z.array(z.string()).max(24).optional().describe("Listings to stop watching, by monitorId from get_product."),
+      }),
+      annotations: { idempotentHint: true },
+    },
+    async (args) => {
+      const rejections = await Promise.all((args.addUrls ?? []).map(urlRejection));
+      const bad = rejections.findIndex((r) => r !== null);
+      if (bad !== -1) return fail(invalidUrl(`${args.addUrls![bad]}: ${rejections[bad]}`));
+      try {
+        return ok(await convex.mutation(api.mcp.updateProduct, { apiKey, ...args }));
+      } catch (e) {
+        return fail(convexFailure(e));
+      }
+    }
+  );
+
+  server.registerTool(
     "create_folder",
     {
       title: "Create a folder",
       description:
         "A named folder, such as 'PC build', to file monitors and products under on the user's dashboard. " +
         "If the user already has a folder with this name, returns that one. Pass its id as folderId to " +
-        "create_monitor, create_product or update_monitor. A folder holds no settings.",
+        "create_monitor, create_product, update_monitor or update_product. A folder holds no settings.",
       inputSchema: z.object({ name: z.string().min(1).max(100) }),
       annotations: { idempotentHint: true },
     },
