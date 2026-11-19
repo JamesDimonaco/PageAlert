@@ -442,7 +442,7 @@ const LISTING = {
 };
 
 /** LISTING as find_product hands it to an agent. */
-const SEARCHED = { site: LISTING.site, url: LISTING.url, title: LISTING.title, label: LISTING.label, searchPrice: 27999, currency: "GBP", searchInStock: true };
+const SEARCHED = { site: LISTING.site, url: LISTING.url, title: LISTING.title, label: LISTING.label };
 
 async function searchesUsed(t: T, userId: string) {
   const row = await t.run((ctx) => ctx.db.query("userTiers").withIndex("by_userId", (q) => q.eq("userId", userId)).unique());
@@ -1119,16 +1119,17 @@ test("create_product refuses an article, and find_product leaves articles out", 
 });
 
 // Prod, 14/11/2026: find_product said PB Tech had it in stock at NZ$793.94.
-// The page said out of stock, and the price was another shop's. These come
-// from search results, and the field names have to say so.
-test("find_product names its price and stock as read from search", async () => {
+// The page said out of stock, and the price was another shop's. Renamed to
+// searchPrice, it still misled: on 19/11/2026 it gave PB Tech's SSD at NZ$239
+// against NZ$320.85 on the page. A product's first read is the price to trust.
+test("find_product returns no price or stock, which search results get wrong", async () => {
   vi.stubEnv("SCRAPER_URL", "https://scraper.test");
   vi.stubEnv("SCRAPER_API_KEY", "key");
   vi.stubGlobal("fetch", async () => Response.json({ listings: [LISTING] }));
   const t = setup();
   const { key } = await seedUser(t, "a@example.com");
   expect(await t.action(api.mcp.findProduct, { apiKey: key, query: "Sony WH-1000XM5", region: "GB" })).toEqual([
-    { site: "argos.co.uk", url: LISTING.url, title: LISTING.title, label: "same", searchPrice: 27999, currency: "GBP", searchInStock: true },
+    { site: "argos.co.uk", url: LISTING.url, title: LISTING.title, label: "same" },
   ]);
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();

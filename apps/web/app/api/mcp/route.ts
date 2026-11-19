@@ -360,8 +360,8 @@ function registerTools(server: McpServer, convex: ConvexHttpClient, apiKey: stri
         "Search shops in one country for a product by name. Returns up to 8 shop pages, each labelled same, " +
         "similar or accessory. Counts against the user's " +
         "daily searches, as in the web app; a search that fails or finds nothing is not counted. " +
-        "searchPrice (minor units) and searchInStock come from search results, not the page, and can be another " +
-        "listing's: check with preview_page before relying on them. Price comparison sites and articles are left out. " +
+        "No prices or stock: search results get them wrong. get_product has each page's own once it is read, " +
+        "within a minute of create_product. Price comparison and deal sites, duty-free shops and articles are left out. " +
         "Pass the pages you pick to create_product.",
       inputSchema: z.object({
         query: z.string().min(2).max(200).describe("The product's name, e.g. 'Sony WH-1000XM5'."),

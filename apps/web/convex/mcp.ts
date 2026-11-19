@@ -420,8 +420,12 @@ export const deleteMonitor = mutation({
   },
 });
 
-/** A search result as an agent sees it: price and stock named as read from search. */
-type SearchedListing = Omit<ProductListing, "price" | "inStock"> & { searchPrice: number | null; searchInStock: boolean | null };
+/**
+ * A search result as an agent sees it. Price and stock are left out: read
+ * from search results, they are often another listing's, and agents trusted
+ * them even when named searchPrice. A product's first read is the one to trust.
+ */
+type SearchedListing = Omit<ProductListing, "price" | "currency" | "inStock">;
 
 /**
  * Search shops for a product, as the web app's "Find a product" does: the
@@ -434,9 +438,7 @@ export const findProduct = action({
     if (!owner) throw new ConvexError("Invalid API key");
     // The region is not saved as the user's default: that is what they last picked by hand.
     const { listings } = await findListings(ctx, owner.userId, { ...args, saveRegion: false }).catch(asToolError);
-    // Read from search results, not the page, and sometimes from another
-    // listing on it. The names say so, so an agent checks before it trusts them.
-    return listings.map(({ price, inStock, ...listing }: ProductListing) => ({ ...listing, searchPrice: price, searchInStock: inStock }));
+    return listings.map(({ site, url, title, label }: ProductListing) => ({ site, url, title, label }));
   },
 });
 
