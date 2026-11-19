@@ -1649,6 +1649,22 @@ export const recordProductRead = internalMutation({
       }
     }
 
+    // A held price is not accepted yet, so priceFields still has the old one.
+    if (priceFields.price !== undefined && priceFields.currency !== undefined) {
+      const changed = priceFields.price !== previous.price || priceFields.currency !== previous.currency;
+      const first =
+        !changed &&
+        (await ctx.db.query("priceReads").withIndex("by_monitorId", (q) => q.eq("monitorId", args.monitorId)).first()) === null;
+      if (changed || first) {
+        await ctx.db.insert("priceReads", {
+          monitorId: args.monitorId,
+          price: priceFields.price,
+          currency: priceFields.currency,
+          readAt: Date.now(),
+        });
+      }
+    }
+
     const inStock = args.inStock ?? previous.inStock;
     await ctx.db.patch(args.monitorId, {
       // A held price or currency needs a confirming read. Keeping the old

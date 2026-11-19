@@ -177,6 +177,38 @@ export const getProduct = query({
   },
 });
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+/** The windows a listing's price range is given over. */
+const PRICE_WINDOWS = [
+  ["last30Days", 30],
+  ["last90Days", 90],
+] as const;
+
+/**
+ * A listing's lowest and highest price over the last 30 and 90 days, in its
+ * current currency, and when its history starts. Null with no price read.
+ * Rows are changes, so the price on a window's first day is the last row
+ * before it, and the read is two index ranges per window, not every row.
+ */
+async function priceHistory(ctx: QueryCtx, m: Doc<"monitors">) {
+  const currency = m.lastSeen?.currency;
+  if (currency === undefined) return null;
+  const rows = () => ctx.db.query("priceReads");
+  const first = await rows().withIndex("by_monitorId", (q) => q.eq("monitorId", m._id)).first();
+  if (!first) return null;
+  const now = Date.now();
+  const ranges = await Promise.all(
+    PRICE_WINDOWS.map(async ([name, days]) => {
+      const start = now - days * DAY_MS;
+      const before = await rows().withIndex("by_monitorId", (q) => q.eq("monitorId", m._id).lt("readAt", start)).order("desc").first();
+      const within = await rows().withIndex("by_monitorId", (q) => q.eq("monitorId", m._id).gte("readAt", start)).collect();
+      const prices = [...(before ? [before] : []), ...within].filter((r) => r.currency === currency).map((r) => r.price);
+      return [name, prices.length > 0 ? { min: Math.min(...prices), max: Math.max(...prices) } : null] as const;
+    })
+  );
+  return { since: new Date(first.readAt).toISOString(), ...Object.fromEntries(ranges) };
+}
+
 /** A product as get_product and update_product show it. */
 async function agentProduct(ctx: QueryCtx, product: Doc<"monitorGroups">) {
   const folder = product.folderId ? ((await ctx.db.get(product.folderId))?.name ?? null) : null;
@@ -208,7 +240,7 @@ async function agentProduct(ctx: QueryCtx, product: Doc<"monitorGroups">) {
         ? { price: cheapest.lastSeen!.price!, currency: cheapest.lastSeen!.currency!, shop: displayHost(cheapest.url), url: cheapest.url }
         : null,
     },
-    listings: watched.map((m) => ({
+    listings: await Promise.all(watched.map(async (m) => ({
       monitorId: m._id,
       shop: displayHost(m.url),
       url: m.url,
@@ -218,7 +250,8 @@ async function agentProduct(ctx: QueryCtx, product: Doc<"monitorGroups">) {
       currency: m.lastSeen?.currency ?? null,
       lastCheckedAt: isoOrNull(m.lastCheckedAt),
       lastError: m.lastError ?? null,
-    })),
+      priceHistory: await priceHistory(ctx, m),
+    }))),
   };
 }
 

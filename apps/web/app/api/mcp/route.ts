@@ -450,6 +450,8 @@ function registerTools(server: McpServer, convex: ConvexHttpClient, apiKey: stri
         "A product's alerts and, for each shop page it watches, the price and stock PageAlert last read and when. " +
         "summary counts the pages being read without error (working) and those in stock, and gives the cheapest " +
         "in-stock price. A page in error or paused is left out of it, as its last reading is stale. " +
+        "Each page's priceHistory gives its lowest and highest price over the last 30 and 90 days, and since " +
+        "when PageAlert has its prices: a range covers only that time. " +
         "Prices are in minor units. null means not read yet, or the page did not show it.",
       inputSchema: z.object({ productId: z.string().describe("The productId from create_product or list_monitors.") }),
       annotations: { readOnlyHint: true },

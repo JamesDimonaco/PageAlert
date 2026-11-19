@@ -340,10 +340,12 @@ test("deleting a monitor removes it and its history", async () => {
   const { key } = await seedUser(t, "a@example.com");
   const id = await t.mutation(api.mcp.createMonitor, { apiKey: key, ...MONITOR });
   await t.mutation(api.mcp.saveScanResult, { apiKey: key, id, schema: { items: [{ title: "x" }] }, matches: [] });
+  await t.run((ctx) => ctx.db.insert("priceReads", { monitorId: id, price: 27999, currency: "GBP", readAt: NOW }));
 
   await t.mutation(api.mcp.deleteMonitor, { apiKey: key, monitorId: id });
   expect(await t.run((ctx) => ctx.db.get(id))).toBeNull();
   expect(await t.run((ctx) => ctx.db.query("scrapeResults").collect())).toEqual([]);
+  expect(await t.run((ctx) => ctx.db.query("priceReads").collect())).toEqual([]);
 });
 
 test("an agent can set stock and price alerts, and is told when the page is not a product page", async () => {
@@ -975,6 +977,7 @@ test("get_product returns each shop's last price, stock and check time", async (
         currency: "NZD",
         lastCheckedAt: new Date(NOW - MINUTE).toISOString(),
         lastError: null,
+        priceHistory: null,
       },
       {
         monitorId: warehouse,
@@ -986,6 +989,7 @@ test("get_product returns each shop's last price, stock and check time", async (
         currency: null,
         lastCheckedAt: null,
         lastError: "Blocked by a bot check",
+        priceHistory: null,
       },
     ],
   });
@@ -1299,4 +1303,28 @@ test("get_recent_alerts returns the user's alerts since a time, products and err
     { at: new Date(NOW - 30 * MINUTE).toISOString(), title: "Milford — 1 new match", message: "Milford — 1 new match.", monitorId: plain, productId: null },
   ]);
   expect(await t.query(api.mcp.getRecentAlerts, { apiKey: key, since, limit: 1 })).toHaveLength(1);
+});
+
+test("get_product gives each shop page's price range over 30 and 90 days", async () => {
+  const t = setup();
+  const { key } = await seedUser(t, "a@example.com");
+  const { productId, monitorIds } = await seedProduct(t, key);
+  const [pbtech] = monitorIds;
+  const DAY = 24 * 60 * MINUTE;
+  await t.run(async (ctx) => {
+    await ctx.db.patch(pbtech!, { status: "active", lastSeen: { inStock: true, price: 30000, currency: "NZD" } });
+    // Each row is a change, so the price on the first day of a window is the
+    // last change before it.
+    for (const [daysAgo, price] of [[100, 40000], [60, 35000], [20, 28000], [1, 30000]] as const) {
+      await ctx.db.insert("priceReads", { monitorId: pbtech!, price, currency: "NZD", readAt: NOW - daysAgo * DAY });
+    }
+  });
+  const { listings } = await t.query(api.mcp.getProduct, { apiKey: key, productId });
+  expect(listings[0]!.priceHistory).toEqual({
+    since: new Date(NOW - 100 * DAY).toISOString(),
+    last30Days: { min: 28000, max: 35000 },
+    last90Days: { min: 28000, max: 40000 },
+  });
+  // Never read a price: no history.
+  expect(listings[1]!.priceHistory).toBeNull();
 });

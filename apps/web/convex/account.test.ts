@@ -168,6 +168,7 @@ const FIXTURES: { [T in TableNames]: (refs: Refs) => Row<T> } = {
     updatedAt: NOW,
   }),
   scrapeResults: ({ monitorId }) => resultRow(monitorId),
+  priceReads: ({ monitorId }) => ({ monitorId, price: 27999, currency: "GBP", readAt: NOW }),
   notifications: ({ userId, monitorId }) => ({
     userId,
     monitorId,
