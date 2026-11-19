@@ -6,6 +6,7 @@ import {
   DEFAULT_AGENT_MATCHES,
   MAX_AGENT_MATCHES,
   MAX_AGENT_MONITORS,
+  SEARCH_REGIONS,
   guessAlertOn,
   isComparisonSite,
   isProductMonitor,
@@ -170,7 +171,18 @@ export const getProduct = query({
     if (!product || product.userId !== userId) throw new ConvexError(toolError("Product not found"));
     const folder = product.folderId ? ((await ctx.db.get(product.folderId))?.name ?? null) : null;
     // Listings are capped (see monitorGroups.ts), so this read is too.
-    const monitors = await Promise.all(product.listings.map((l) => (l.monitorId ? ctx.db.get(l.monitorId) : null)));
+    const watched = (await Promise.all(product.listings.map((l) => (l.monitorId ? ctx.db.get(l.monitorId) : null)))).filter(
+      (m) => m !== null
+    );
+    // A listing in error or paused is not being read, so its last stock and
+    // price are stale and left out of the summary.
+    const working = watched.filter((m) => m.status === "active" || m.status === "scanning");
+    const inStock = working.filter((m) => m.lastSeen?.inStock === true);
+    // A price in another currency than the region's cannot be compared.
+    const currency = SEARCH_REGIONS.find((r) => r.code === product.region)?.currency;
+    const cheapest = inStock
+      .filter((m) => m.lastSeen?.price !== undefined && m.lastSeen.currency === currency)
+      .sort((x, y) => x.lastSeen!.price! - y.lastSeen!.price!)[0];
     return {
       id: product._id,
       name: product.name,
@@ -178,19 +190,25 @@ export const getProduct = query({
       alertOn: product.alertOn,
       checkInterval: product.checkInterval,
       folder,
-      listings: monitors
-        .filter((m) => m !== null)
-        .map((m) => ({
-          monitorId: m._id,
-          shop: displayHost(m.url),
-          url: m.url,
-          status: m.status,
-          inStock: m.lastSeen?.inStock ?? null,
-          price: m.lastSeen?.price ?? null,
-          currency: m.lastSeen?.currency ?? null,
-          lastCheckedAt: isoOrNull(m.lastCheckedAt),
-          lastError: m.lastError ?? null,
-        })),
+      summary: {
+        listings: watched.length,
+        working: working.length,
+        inStock: inStock.length,
+        cheapestInStock: cheapest
+          ? { price: cheapest.lastSeen!.price!, currency: cheapest.lastSeen!.currency!, shop: displayHost(cheapest.url), url: cheapest.url }
+          : null,
+      },
+      listings: watched.map((m) => ({
+        monitorId: m._id,
+        shop: displayHost(m.url),
+        url: m.url,
+        status: m.status,
+        inStock: m.lastSeen?.inStock ?? null,
+        price: m.lastSeen?.price ?? null,
+        currency: m.lastSeen?.currency ?? null,
+        lastCheckedAt: isoOrNull(m.lastCheckedAt),
+        lastError: m.lastError ?? null,
+      })),
     };
   },
 });

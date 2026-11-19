@@ -963,6 +963,7 @@ test("get_product returns each shop's last price, stock and check time", async (
     alertOn: { priceBelow: { amount: 80000, currency: "NZD" } },
     checkInterval: "1h",
     folder: "PC build",
+    summary: { listings: 2, working: 1, inStock: 0, cheapestInStock: null },
     listings: [
       {
         monitorId: pbtech,
@@ -987,6 +988,40 @@ test("get_product returns each shop's last price, stock and check time", async (
         lastError: "Blocked by a bot check",
       },
     ],
+  });
+});
+
+// Prod, 19/11/2026: to learn the Reaper was unsold everywhere, an agent had
+// to read every listing. The summary says it in one place.
+test("get_product sums up stock across shops and finds the cheapest in-stock price", async () => {
+  const t = setup();
+  const { key, userId } = await seedUser(t, "a@example.com");
+  // Five listings is past the free plan's creation limit.
+  await t.run((ctx) => ctx.db.insert("userTiers", { userId, tier: "max", updatedAt: NOW }));
+  const { productId, monitorIds } = await t.mutation(api.mcp.createProduct, {
+    apiKey: key,
+    title: "Kingston NV3 1TB",
+    region: "NZ",
+    urls: ["https://a.test/1", "https://b.test/1", "https://c.test/1", "https://d.test/1", "https://e.test/1"],
+    alertOn: { priceDrop: true },
+  });
+  const [a, b, c, d, e] = monitorIds;
+  await t.run(async (ctx) => {
+    // Cheapest, but sold out.
+    await ctx.db.patch(a!, { status: "active", lastSeen: { inStock: false, price: 20000, currency: "NZD" } });
+    await ctx.db.patch(b!, { status: "active", lastSeen: { inStock: true, price: 32085, currency: "NZD" } });
+    await ctx.db.patch(c!, { status: "active", lastSeen: { inStock: true, price: 31900, currency: "NZD" } });
+    // In stock with no price read: counted, never the cheapest.
+    await ctx.db.patch(d!, { status: "active", lastSeen: { inStock: true } });
+    // The page is gone, so its last reading is stale: not counted.
+    await ctx.db.patch(e!, { status: "error", lastSeen: { inStock: true, price: 10000, currency: "NZD" } });
+  });
+  const { summary } = await t.query(api.mcp.getProduct, { apiKey: key, productId });
+  expect(summary).toEqual({
+    listings: 5,
+    working: 4,
+    inStock: 3,
+    cheapestInStock: { price: 31900, currency: "NZD", shop: "c.test", url: "https://c.test/1" },
   });
 });
 
