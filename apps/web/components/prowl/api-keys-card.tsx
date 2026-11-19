@@ -16,13 +16,21 @@ const MCP_URL = "https://pagealert.io/api/mcp";
 
 const json = (value: unknown) => JSON.stringify(value, null, 2);
 
+// Stands in for the key in the setup text until one has just been generated,
+// so people who already hold a key can still read how to add it.
+const KEY_PLACEHOLDER = "YOUR_KEY";
+
+const MERGE_NOTE = "If the file already has an mcpServers section, add only the pagealert entry inside it.";
+
 // Claude Desktop only runs local servers from its config file, so it reaches
-// the remote endpoint through mcp-remote. The key rides in an env var because
-// a space inside an args entry breaks on some platforms.
+// the remote endpoint through mcp-remote. The version is pinned because that
+// package holds the key on every launch. The key rides in an env var because a
+// space inside an args entry breaks on some platforms.
 const SETUPS = [
   {
     id: "claude-code",
     label: "Claude Code",
+    copied: "Command",
     where: "Run this in your terminal:",
     text: (key: string) =>
       `claude mcp add --transport http pagealert ${MCP_URL} --header "Authorization: Bearer ${key}"`,
@@ -30,13 +38,14 @@ const SETUPS = [
   {
     id: "claude-desktop",
     label: "Claude Desktop",
-    where: "Add this to claude_desktop_config.json (Settings → Developer → Edit Config), then restart Claude:",
+    copied: "Config",
+    where: `Needs Node.js installed. In Claude, open Settings → Developer → Edit Config, add this to claude_desktop_config.json, then restart Claude. ${MERGE_NOTE}`,
     text: (key: string) =>
       json({
         mcpServers: {
           pagealert: {
             command: "npx",
-            args: ["mcp-remote", MCP_URL, "--header", "Authorization:${AUTH_HEADER}"],
+            args: ["-y", "mcp-remote@0.16.0", MCP_URL, "--header", "Authorization:${AUTH_HEADER}"],
             env: { AUTH_HEADER: `Bearer ${key}` },
           },
         },
@@ -45,13 +54,14 @@ const SETUPS = [
   {
     id: "cursor",
     label: "Cursor",
-    where: "Add this to ~/.cursor/mcp.json:",
+    copied: "Config",
+    where: `Add this to ~/.cursor/mcp.json. ${MERGE_NOTE}`,
     text: (key: string) =>
       json({ mcpServers: { pagealert: { url: MCP_URL, headers: { Authorization: `Bearer ${key}` } } } }),
   },
 ] as const;
 
-type SetupId = (typeof SETUPS)[number]["id"];
+type Setup = (typeof SETUPS)[number];
 
 async function copy(text: string, what: string) {
   try {
@@ -69,8 +79,8 @@ export function ApiKeysCard() {
   const [name, setName] = useState("");
   const [creating, setCreating] = useState(false);
   const [newKey, setNewKey] = useState<string | null>(null);
-  const [setupId, setSetupId] = useState<SetupId>("claude-code");
-  const setup = SETUPS.find((s) => s.id === setupId) ?? SETUPS[0];
+  const [setup, setSetup] = useState<Setup>(SETUPS[0]);
+  const setupText = setup.text(newKey ?? KEY_PLACEHOLDER);
 
   async function handleCreate() {
     setCreating(true);
@@ -98,7 +108,7 @@ export function ApiKeysCard() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-lg font-semibold">Connect your AI</CardTitle>
+        <CardTitle className="text-lg font-semibold">Connect AI</CardTitle>
         <CardDescription className="text-sm">
           Let Claude or Cursor set up monitors and read your matches for you. Ask it something like &quot;tell me when
           this GPU drops under $400&quot;. It connects over MCP, the standard way AI tools talk to apps. Generate a key,
@@ -115,28 +125,7 @@ export function ApiKeysCard() {
                 <Copy className="h-4 w-4" />
               </Button>
             </div>
-            <div className="flex flex-wrap gap-2">
-              {SETUPS.map((s) => (
-                <Button
-                  key={s.id}
-                  variant={s.id === setupId ? "secondary" : "ghost"}
-                  size="sm"
-                  aria-pressed={s.id === setupId}
-                  onClick={() => setSetupId(s.id)}
-                >
-                  {s.label}
-                </Button>
-              ))}
-            </div>
-            <p className="text-sm text-muted-foreground">{setup.where}</p>
-            <div className="flex items-start gap-2">
-              <pre className="min-w-0 flex-1 overflow-x-auto whitespace-pre-wrap break-all rounded bg-muted px-2 py-1.5 font-mono text-xs">
-                {setup.text(newKey)}
-              </pre>
-              <Button variant="outline" size="sm" onClick={() => copy(setup.text(newKey), "Setup")}>
-                <Copy className="h-4 w-4" />
-              </Button>
-            </div>
+            <p className="text-sm text-muted-foreground">The setup below already has it filled in.</p>
             <Button variant="ghost" size="sm" onClick={() => setNewKey(null)}>
               Done
             </Button>
@@ -159,6 +148,35 @@ export function ApiKeysCard() {
             </Button>
           </div>
         )}
+
+        <div className="space-y-3">
+          <div className="flex flex-wrap gap-2">
+            {SETUPS.map((s) => (
+              <Button
+                key={s.id}
+                variant={s.id === setup.id ? "secondary" : "ghost"}
+                size="sm"
+                aria-pressed={s.id === setup.id}
+                onClick={() => setSetup(s)}
+              >
+                {s.label}
+              </Button>
+            ))}
+          </div>
+          <p className="text-sm text-muted-foreground">
+            {setup.where}
+            {!newKey && ` Replace ${KEY_PLACEHOLDER} with your key.`}
+          </p>
+          <div className="flex items-start gap-2">
+            <pre className="min-w-0 flex-1 overflow-x-auto whitespace-pre rounded bg-muted px-2 py-1.5 font-mono text-xs">
+              {setupText}
+            </pre>
+            <Button variant="outline" size="sm" onClick={() => copy(setupText, setup.copied)}>
+              <Copy className="h-4 w-4" />
+              <span className="sr-only">Copy {setup.copied.toLowerCase()}</span>
+            </Button>
+          </div>
+        </div>
 
         {keys && keys.length > 0 && (
           <ul className="divide-y divide-border rounded-lg border border-border">

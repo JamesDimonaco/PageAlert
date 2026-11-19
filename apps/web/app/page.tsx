@@ -97,7 +97,10 @@ export default function LandingPage() {
               </p>
               <p className="mt-3 text-sm text-muted-foreground leading-relaxed">
                 Use Claude or Cursor? Connect PageAlert over MCP and just ask: &quot;tell me when
-                this drops under $400&quot;.
+                this drops under $400&quot;.{" "}
+                <Link href="/dashboard/settings?tab=api" className="text-primary underline-offset-4 hover:underline">
+                  Connect your AI
+                </Link>
               </p>
             </div>
 
