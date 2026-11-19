@@ -38,6 +38,10 @@ export const FAQ: FaqEntry[] = [
     a: "Your monitors stay where they are. You go back to free limits, so you can't create new monitors past the free cap or pick a faster check interval until you upgrade again, and the scrape log goes back to showing the last week. Older checks are hidden rather than removed, so upgrading again brings them back.",
   },
   {
+    q: "Can my AI assistant set up monitors for me?",
+    a: "Yes. PageAlert has an MCP server, the standard way AI tools connect to apps. Generate a key in Settings under Connect AI, then add it to Claude Code, Claude Desktop or Cursor. Your assistant can then create and change monitors, find a product across shops and read your matches.",
+  },
+  {
     q: "What do you do with my data?",
     a: "We store the data we extract from the pages you monitor, so we can tell what changed between checks, along with your email address and notification settings. We don't sell it and we don't use it for advertising. Delete a monitor and its history goes with it.",
   },

@@ -155,7 +155,7 @@ export default function SettingsPage() {
           </TabsTrigger>
           <TabsTrigger value="api">
             <KeyRound className="hidden sm:block" />
-            MCP
+            Connect AI
           </TabsTrigger>
         </TabsList>
 

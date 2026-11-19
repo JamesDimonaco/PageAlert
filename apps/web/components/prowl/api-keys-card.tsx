@@ -14,9 +14,44 @@ import { timeAgo } from "@/lib/time";
 
 const MCP_URL = "https://pagealert.io/api/mcp";
 
-function addCommand(key: string): string {
-  return `claude mcp add --transport http pagealert ${MCP_URL} --header "Authorization: Bearer ${key}"`;
-}
+const json = (value: unknown) => JSON.stringify(value, null, 2);
+
+// Claude Desktop only runs local servers from its config file, so it reaches
+// the remote endpoint through mcp-remote. The key rides in an env var because
+// a space inside an args entry breaks on some platforms.
+const SETUPS = [
+  {
+    id: "claude-code",
+    label: "Claude Code",
+    where: "Run this in your terminal:",
+    text: (key: string) =>
+      `claude mcp add --transport http pagealert ${MCP_URL} --header "Authorization: Bearer ${key}"`,
+  },
+  {
+    id: "claude-desktop",
+    label: "Claude Desktop",
+    where: "Add this to claude_desktop_config.json (Settings → Developer → Edit Config), then restart Claude:",
+    text: (key: string) =>
+      json({
+        mcpServers: {
+          pagealert: {
+            command: "npx",
+            args: ["mcp-remote", MCP_URL, "--header", "Authorization:${AUTH_HEADER}"],
+            env: { AUTH_HEADER: `Bearer ${key}` },
+          },
+        },
+      }),
+  },
+  {
+    id: "cursor",
+    label: "Cursor",
+    where: "Add this to ~/.cursor/mcp.json:",
+    text: (key: string) =>
+      json({ mcpServers: { pagealert: { url: MCP_URL, headers: { Authorization: `Bearer ${key}` } } } }),
+  },
+] as const;
+
+type SetupId = (typeof SETUPS)[number]["id"];
 
 async function copy(text: string, what: string) {
   try {
@@ -34,6 +69,8 @@ export function ApiKeysCard() {
   const [name, setName] = useState("");
   const [creating, setCreating] = useState(false);
   const [newKey, setNewKey] = useState<string | null>(null);
+  const [setupId, setSetupId] = useState<SetupId>("claude-code");
+  const setup = SETUPS.find((s) => s.id === setupId) ?? SETUPS[0];
 
   async function handleCreate() {
     setCreating(true);
@@ -61,10 +98,11 @@ export function ApiKeysCard() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-lg font-semibold">MCP keys</CardTitle>
+        <CardTitle className="text-lg font-semibold">Connect your AI</CardTitle>
         <CardDescription className="text-sm">
-          Connect PageAlert to an AI agent such as Claude over MCP. It can then create monitors and read matches for
-          you. Anyone with a key can do that as you, so treat it like a password.
+          Let Claude or Cursor set up monitors and read your matches for you. Ask it something like &quot;tell me when
+          this GPU drops under $400&quot;. It connects over MCP, the standard way AI tools talk to apps. Generate a key,
+          then paste it into your AI tool. Anyone with a key can act as you, so treat it like a password.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
@@ -77,12 +115,25 @@ export function ApiKeysCard() {
                 <Copy className="h-4 w-4" />
               </Button>
             </div>
-            <p className="text-sm text-muted-foreground">To add it to Claude Code, run:</p>
+            <div className="flex flex-wrap gap-2">
+              {SETUPS.map((s) => (
+                <Button
+                  key={s.id}
+                  variant={s.id === setupId ? "secondary" : "ghost"}
+                  size="sm"
+                  aria-pressed={s.id === setupId}
+                  onClick={() => setSetupId(s.id)}
+                >
+                  {s.label}
+                </Button>
+              ))}
+            </div>
+            <p className="text-sm text-muted-foreground">{setup.where}</p>
             <div className="flex items-start gap-2">
-              <code className="min-w-0 flex-1 break-all rounded bg-muted px-2 py-1.5 font-mono text-xs">
-                {addCommand(newKey)}
-              </code>
-              <Button variant="outline" size="sm" onClick={() => copy(addCommand(newKey), "Command")}>
+              <pre className="min-w-0 flex-1 overflow-x-auto whitespace-pre-wrap break-all rounded bg-muted px-2 py-1.5 font-mono text-xs">
+                {setup.text(newKey)}
+              </pre>
+              <Button variant="outline" size="sm" onClick={() => copy(setup.text(newKey), "Setup")}>
                 <Copy className="h-4 w-4" />
               </Button>
             </div>
@@ -96,7 +147,7 @@ export function ApiKeysCard() {
               <Label htmlFor="api-key-name">Name</Label>
               <Input
                 id="api-key-name"
-                placeholder="e.g. Claude Code on my laptop"
+                placeholder="e.g. Claude on my laptop"
                 value={name}
                 maxLength={100}
                 onChange={(e) => setName(e.target.value)}
