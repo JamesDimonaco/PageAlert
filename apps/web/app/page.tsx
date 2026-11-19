@@ -95,6 +95,10 @@ export default function LandingPage() {
                 plain English. No CSS selectors, no code, nothing that breaks when a site
                 redesigns. Alerts arrive by email, push or Telegram.
               </p>
+              <p className="mt-3 text-sm text-muted-foreground leading-relaxed">
+                Use Claude or Cursor? Connect PageAlert over MCP and just ask: &quot;tell me when
+                this drops under $400&quot;.
+              </p>
             </div>
 
             <div className="grid gap-8 md:grid-cols-3">
