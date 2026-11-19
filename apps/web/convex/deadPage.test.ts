@@ -82,3 +82,34 @@ test("retries a page-not-found with a quick check through the proxy, not a force
   expect(calls.map((c) => c.path)).toEqual(["/api/quick-check"]);
   expect(calls[0]!.body.useProxy).toBe(true);
 });
+
+// Prod, 19/11/2026: the Warehouse page of a GPU product died and an agent
+// found out only by reading the product. The alert for a product's last
+// working page says nothing is watching it now.
+async function productListingFails(otherStatus: Doc<"monitors">["status"]) {
+  const { t, id } = await setup({ retryCount: MAX_RETRIES - 1, lastError: GONE });
+  await t.run(async (ctx) => {
+    const groupId = await ctx.db.insert("monitorGroups", {
+      userId: "user_1", name: "Reaper", region: "NZ", alertOn: { backInStock: true }, checkInterval: "24h", listings: [], createdAt: NOW, updatedAt: NOW,
+    });
+    await ctx.db.patch(id, { groupId });
+    await ctx.db.insert("monitors", {
+      userId: "user_1", name: "Reaper", url: "https://other.test/gpu", prompt: "in stock", status: otherStatus, checkInterval: "24h",
+      matchCount: 0, createdAt: NOW, updatedAt: NOW, groupId,
+    });
+  });
+  vi.stubEnv("SCRAPER_URL", "https://scraper.test");
+  vi.stubEnv("SCRAPER_API_KEY", "key");
+  vi.stubGlobal("fetch", async () => Response.json({ error: "check_failed", message: GONE }, { status: 404 }));
+  await t.action(internal.scheduler.runScheduledChecks, {});
+  const [notification] = await t.run((ctx) => ctx.db.query("notifications").collect());
+  return notification!.message;
+}
+
+test("a product's last working page to fail says none of its pages is working", async () => {
+  expect(await productListingFails("error")).toMatch(/None of Reaper's shop pages is working now/);
+});
+
+test("a product page failing while another works says nothing more", async () => {
+  expect(await productListingFails("active")).not.toMatch(/None of/);
+});

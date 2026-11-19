@@ -1192,3 +1192,32 @@ test("only a product monitor's first full read brings a price and stock read for
   });
   expect((await t.run((ctx) => ctx.db.get(id)))?.nextCheckAt).toBeGreaterThan(now + 23 * 3_600_000);
 });
+
+// Prod, 19/11/2026: an agent asked "is this a good price?" and PageAlert kept
+// only the latest. Each accepted price change is kept, so get_product can
+// give the range over 30 and 90 days.
+describe("price history", () => {
+  const history = async (t: Awaited<ReturnType<typeof seedProductMonitor>>["t"], id: Doc<"monitors">["_id"]) =>
+    (await t.run((ctx) => ctx.db.query("priceReads").withIndex("by_monitorId", (q) => q.eq("monitorId", id)).collect())).map(
+      (r) => `${r.price} ${r.currency}`
+    );
+
+  test("records the first price read, then each change, never a repeat or a missing price", async () => {
+    const { t, id, read } = await seedProductMonitor({ inStock: true, price: 10000, currency: "GBP" });
+    await read(true, { price: 10000 });
+    await read(true, { price: 10000 });
+    await read(true, { price: 9000 });
+    await read(true);
+    expect(await history(t, id)).toEqual(["10000 GBP", "9000 GBP"]);
+  });
+
+  // A held fall of more than half is often a misread. Kept before it is
+  // confirmed, it would set the 90-day low.
+  test("records a big drop only once a second read confirms it", async () => {
+    const { t, id, read } = await seedProductMonitor({ inStock: true, price: 10000, currency: "GBP" });
+    await read(true, { price: 4000 });
+    expect(await history(t, id)).toEqual(["10000 GBP"]);
+    await read(true, { price: 4000 });
+    expect(await history(t, id)).toEqual(["10000 GBP", "4000 GBP"]);
+  });
+});

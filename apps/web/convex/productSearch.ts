@@ -4,7 +4,7 @@ import { action, internalMutation, query, type ActionCtx, type MutationCtx, type
 import { internal } from "./_generated/api";
 import { activityRow, requireLiveAccount } from "./account";
 import { effectiveTier, type Tier } from "./tiers";
-import { isArticlePage, isComparisonSite, isSearchRegion, type ProductListing } from "@prowl/shared";
+import { isArticlePage, isComparisonSite, isSearchRegion, isTravellerOnlyShop, type ProductListing } from "@prowl/shared";
 
 const DAILY_SEARCH_LIMITS: Record<Tier, number> = { free: 5, sprint: 15, pro: 30, max: 100 };
 
@@ -163,8 +163,10 @@ export async function findListings(
     reason = "bad_response";
     // The search is told to skip comparison sites and still returns some. Their
     // price and stock come from search snippets, not from any shop. Articles
-    // sell nothing.
-    listings = scraperResponse.parse(await res.json()).listings.filter((l) => !isComparisonSite(l.url) && !isArticlePage(l.url));
+    // sell nothing, and duty-free shops sell only to travellers.
+    listings = scraperResponse
+      .parse(await res.json())
+      .listings.filter((l) => !isComparisonSite(l.url) && !isArticlePage(l.url) && !isTravellerOnlyShop(l.url));
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error("[productSearch] Search failed:", message);

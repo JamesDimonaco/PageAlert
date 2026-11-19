@@ -97,7 +97,7 @@ const alertOn = z
   })
   .describe(
     "Stock and price alerts. They run only on a product page; on a listing the result says so. " +
-      "Send {} to turn them off."
+      "Refused on a price comparison page: put the target in the prompt there. Send {} to turn them off."
   );
 const url = z.string().max(2048).describe("The full http(s) URL of the page to watch.");
 const prompt = z
@@ -300,7 +300,8 @@ function registerTools(server: McpServer, convex: ConvexHttpClient, apiKey: stri
       description:
         "New matches across all the user's monitors since a time, newest first, each with its monitor's id " +
         "and name and when it matched. Reads up to the 20 monitors that matched most recently. Use it to " +
-        "answer 'what's new?' in one call. A product's listings are not included: they alert on stock and price only.",
+        "list new items on monitors. A product's listings are not included: they alert on stock and price only. " +
+        "For every alert the user got, products and errors included, use get_recent_alerts.",
       inputSchema: z.object({
         since: z.string().describe("ISO 8601 time, e.g. 2026-11-13T00:00:00Z."),
         limit: z
@@ -316,6 +317,37 @@ function registerTools(server: McpServer, convex: ConvexHttpClient, apiKey: stri
     async (args) => {
       try {
         return ok(await convex.query(api.mcp.getRecentMatches, { apiKey, ...args }));
+      } catch (e) {
+        return fail(convexFailure(e));
+      }
+    }
+  );
+
+  server.registerTool(
+    "get_recent_alerts",
+    {
+      title: "Get recent alerts",
+      description:
+        "Every alert in the user's in-app list since a time, newest first: new matches, a product back in stock or " +
+        "moving in price, and pages that stopped working. Each has its title and message as the user saw them, " +
+        "its monitorId, and its productId when the monitor is a product's shop page. Use it to answer " +
+        "'what's new?' in one call. A user with every channel off has none. A repeat error within a week is listed " +
+          "but was not sent to their other channels.",
+      inputSchema: z.object({
+        since: z.string().describe("ISO 8601 time, e.g. 2026-11-13T00:00:00Z."),
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(MAX_AGENT_MATCHES)
+          .optional()
+          .describe(`How many to return. Defaults to ${DEFAULT_AGENT_MATCHES}.`),
+      }),
+      annotations: { readOnlyHint: true },
+    },
+    async (args) => {
+      try {
+        return ok(await convex.query(api.mcp.getRecentAlerts, { apiKey, ...args }));
       } catch (e) {
         return fail(convexFailure(e));
       }
@@ -360,8 +392,8 @@ function registerTools(server: McpServer, convex: ConvexHttpClient, apiKey: stri
         "Search shops in one country for a product by name. Returns up to 8 shop pages, each labelled same, " +
         "similar or accessory. Counts against the user's " +
         "daily searches, as in the web app; a search that fails or finds nothing is not counted. " +
-        "searchPrice (minor units) and searchInStock come from search results, not the page, and can be another " +
-        "listing's: check with preview_page before relying on them. Price comparison sites and articles are left out. " +
+        "No prices or stock: search results get them wrong. get_product has each page's own once it is read, " +
+        "within a minute of create_product. Price comparison and deal sites, duty-free shops and articles are left out. " +
         "Pass the pages you pick to create_product.",
       inputSchema: z.object({
         query: z.string().min(2).max(200).describe("The product's name, e.g. 'Sony WH-1000XM5'."),
@@ -417,6 +449,10 @@ function registerTools(server: McpServer, convex: ConvexHttpClient, apiKey: stri
       title: "Get a product",
       description:
         "A product's alerts and, for each shop page it watches, the price and stock PageAlert last read and when. " +
+        "summary counts the pages being read without error (working) and those in stock, and gives the cheapest " +
+        "in-stock price. A page in error or paused is left out of it, as its last reading is stale. " +
+        "Each page's priceHistory gives its lowest and highest price over the last 30 and 90 days, and since " +
+        "when PageAlert has its prices: a range covers only that time. " +
         "Prices are in minor units. null means not read yet, or the page did not show it.",
       inputSchema: z.object({ productId: z.string().describe("The productId from create_product or list_monitors.") }),
       annotations: { readOnlyHint: true },
@@ -431,13 +467,50 @@ function registerTools(server: McpServer, convex: ConvexHttpClient, apiKey: stri
   );
 
   server.registerTool(
+    "update_product",
+    {
+      title: "Update a product",
+      description:
+        "Change a product's stock and price alerts or check interval on all its shop pages, pause or resume it, " +
+        "file it in a folder, or add and remove shop pages. Send only the fields that change. Added pages count against the " +
+        "plan's monitor limits and are first read within a minute. A faster interval than the plan allows is " +
+        "lowered to the fastest it does. Returns the product as get_product does.",
+      inputSchema: z.object({
+        productId: z.string().describe("The productId from create_product or list_monitors."),
+        checkInterval: intervals.optional(),
+        alertOn: alertOn
+          .describe(
+            "Stock and price alerts for every shop page. Replaces the product's alerts, so include the ones to keep. " +
+              "A product needs at least one: to stop alerts, pause it."
+          )
+          .optional(),
+        paused: z.boolean().optional().describe("true pauses checks and alerts on every page; false resumes them."),
+        folderId: folderId.nullable().optional().describe("A folder id from create_folder, or null to take it out of its folder."),
+        addUrls: z.array(url).max(8).optional().describe("Shop pages to add. One already in the product is left as it is."),
+        removeMonitorIds: z.array(z.string()).max(24).optional().describe("Listings to stop watching, by monitorId from get_product."),
+      }),
+      annotations: { idempotentHint: true },
+    },
+    async (args) => {
+      const rejections = await Promise.all((args.addUrls ?? []).map(urlRejection));
+      const bad = rejections.findIndex((r) => r !== null);
+      if (bad !== -1) return fail(invalidUrl(`${args.addUrls![bad]}: ${rejections[bad]}`));
+      try {
+        return ok(await convex.mutation(api.mcp.updateProduct, { apiKey, ...args }));
+      } catch (e) {
+        return fail(convexFailure(e));
+      }
+    }
+  );
+
+  server.registerTool(
     "create_folder",
     {
       title: "Create a folder",
       description:
         "A named folder, such as 'PC build', to file monitors and products under on the user's dashboard. " +
         "If the user already has a folder with this name, returns that one. Pass its id as folderId to " +
-        "create_monitor, create_product or update_monitor. A folder holds no settings.",
+        "create_monitor, create_product, update_monitor or update_product. A folder holds no settings.",
       inputSchema: z.object({ name: z.string().min(1).max(100) }),
       annotations: { idempotentHint: true },
     },

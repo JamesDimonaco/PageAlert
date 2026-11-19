@@ -3,9 +3,11 @@ import { action, mutation, query, type QueryCtx } from "./_generated/server";
 import { api } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import {
+  DAY_MS,
   DEFAULT_AGENT_MATCHES,
   MAX_AGENT_MATCHES,
   MAX_AGENT_MONITORS,
+  SEARCH_REGIONS,
   guessAlertOn,
   isComparisonSite,
   isProductMonitor,
@@ -26,7 +28,7 @@ import {
   updateMonitorForUser,
 } from "./monitors";
 import { createFolderForUser, setMonitorFolder, setProductFolder } from "./folders";
-import { createProductForUser } from "./monitorGroups";
+import { addListingsForUser, createProductForUser, setPausedForUser, updateCriteriaForUser } from "./monitorGroups";
 import { findListings } from "./productSearch";
 import { alertOnValidator, checkIntervalValidator } from "./schema";
 import { displayHost, matchKey, previewUserPrefix } from "./shared";
@@ -92,13 +94,18 @@ function guessedAlertOn(prompt: string): AlertOn | undefined {
   return Object.keys(alertOn).length > 0 ? alertOn : undefined;
 }
 
-/** Said when stock or price alerts are on but the page is not a product page, so they will not run. */
-function notAProductNote(url: string): string {
-  return isComparisonSite(url)
-    ? "This is a price comparison page, so stock and price alerts don't run on it and only prompt alerts fire. " +
-        "Put the target in the prompt instead, e.g. 'lowest in-stock price under $300'."
-    : "Stock and price alerts only run on a product page. This page reads as a listing, so only match alerts will fire.";
-}
+/** Said when stock or price alerts are on but the page reads as a listing, so they will not run. */
+const NOT_A_PRODUCT_NOTE =
+  "Stock and price alerts only run on a product page. This page reads as a listing, so only match alerts will fire.";
+
+/**
+ * A comparison page lists shops' offers, so stock and price alerts never run
+ * on it. They are refused rather than saved, or list_monitors would show
+ * alerts that never fire.
+ */
+const COMPARISON_PAGE_ALERTS =
+  "This is a price comparison page, so stock and price alerts can't run on it. " +
+  "Put the target in the prompt instead, e.g. 'lowest in-stock price under $300'.";
 
 function wantsProductAlerts(alertOn: AlertOn | undefined): boolean {
   return alertOn?.backInStock === true || alertOn?.priceDrop === true || alertOn?.priceBelow !== undefined;
@@ -155,40 +162,115 @@ export const listMonitors = query({
   },
 });
 
+async function ownedProduct(ctx: QueryCtx, userId: string, productId: string) {
+  const id = ctx.db.normalizeId("monitorGroups", productId);
+  const product = id ? await ctx.db.get(id) : null;
+  if (!product || product.userId !== userId) throw new ConvexError(toolError("Product not found"));
+  return product;
+}
+
 /** A product and what each of its watched shop pages last read. */
 export const getProduct = query({
   args: { apiKey: v.string(), productId: v.string() },
   handler: async (ctx, { apiKey, productId }) => {
     const { userId } = await requireKeyOwner(ctx, apiKey);
-    const id = ctx.db.normalizeId("monitorGroups", productId);
-    const product = id ? await ctx.db.get(id) : null;
-    if (!product || product.userId !== userId) throw new ConvexError(toolError("Product not found"));
-    const folder = product.folderId ? ((await ctx.db.get(product.folderId))?.name ?? null) : null;
-    // Listings are capped (see monitorGroups.ts), so this read is too.
-    const monitors = await Promise.all(product.listings.map((l) => (l.monitorId ? ctx.db.get(l.monitorId) : null)));
-    return {
-      id: product._id,
-      name: product.name,
-      region: product.region,
-      alertOn: product.alertOn,
-      checkInterval: product.checkInterval,
-      folder,
-      listings: monitors
-        .filter((m) => m !== null)
-        .map((m) => ({
-          monitorId: m._id,
-          shop: displayHost(m.url),
-          url: m.url,
-          status: m.status,
-          inStock: m.lastSeen?.inStock ?? null,
-          price: m.lastSeen?.price ?? null,
-          currency: m.lastSeen?.currency ?? null,
-          lastCheckedAt: isoOrNull(m.lastCheckedAt),
-          lastError: m.lastError ?? null,
-        })),
-    };
+    return agentProduct(ctx, await ownedProduct(ctx, userId, productId));
   },
 });
+
+/** The windows a listing's price range is given over, the longest last. */
+const PRICE_WINDOWS = [
+  ["last30Days", 30],
+  ["last90Days", 90],
+] as const;
+
+/**
+ * Price changes one listing's range is worked out from at most. A page whose
+ * price flips on every read writes a row each time, and get_product reads up
+ * to 24 listings in one transaction, so past this only the newest count.
+ */
+const MAX_PRICE_ROWS = 300;
+
+/**
+ * A listing's lowest and highest price over the last 30 and 90 days, in its
+ * current currency, and when its history starts. Null with no price read.
+ * Rows are changes, so the price on a window's first day is the last row
+ * before it.
+ */
+async function priceHistory(ctx: QueryCtx, m: Doc<"monitors">) {
+  const rows = () => ctx.db.query("priceReads");
+  const first = await rows().withIndex("by_monitorId", (q) => q.eq("monitorId", m._id)).first();
+  if (!first) return null;
+  const now = Date.now();
+  const longest = now - PRICE_WINDOWS[PRICE_WINDOWS.length - 1]![1] * DAY_MS;
+  const recent = await rows()
+    .withIndex("by_monitorId", (q) => q.eq("monitorId", m._id).gte("readAt", longest))
+    .order("desc")
+    .take(MAX_PRICE_ROWS);
+  const before =
+    recent.length < MAX_PRICE_ROWS
+      ? await rows().withIndex("by_monitorId", (q) => q.eq("monitorId", m._id).lt("readAt", longest)).order("desc").first()
+      : null;
+  // Newest first. Setting a price alert clears the last read's currency, so
+  // the newest row stands in for it until the next read.
+  const newest = [...recent, ...(before ? [before] : [])];
+  const currency = m.lastSeen?.currency ?? newest[0]?.currency;
+  const ranges = PRICE_WINDOWS.map(([name, days]) => {
+    const end = newest.findIndex((r) => r.readAt < now - days * DAY_MS);
+    const prices = newest
+      .slice(0, end === -1 ? undefined : end + 1)
+      .filter((r) => r.currency === currency)
+      .map((r) => r.price);
+    return [name, prices.length > 0 ? { min: Math.min(...prices), max: Math.max(...prices) } : null] as const;
+  });
+  return { since: new Date(first.readAt).toISOString(), ...Object.fromEntries(ranges) };
+}
+
+/** A product as get_product and update_product show it. */
+async function agentProduct(ctx: QueryCtx, product: Doc<"monitorGroups">) {
+  const folder = product.folderId ? ((await ctx.db.get(product.folderId))?.name ?? null) : null;
+  // Listings are capped (see monitorGroups.ts), so this read is too.
+  const watched = (await Promise.all(product.listings.map((l) => (l.monitorId ? ctx.db.get(l.monitorId) : null)))).filter(
+    (m) => m !== null
+  );
+  // A listing in error or paused is not being read, so its last stock and
+  // price are stale and left out of the summary.
+  const working = watched.filter((m) => m.status === "active" || m.status === "scanning");
+  const inStock = working.filter((m) => m.lastSeen?.inStock === true);
+  // A price in another currency than the region's cannot be compared.
+  const currency = SEARCH_REGIONS.find((r) => r.code === product.region)?.currency;
+  const cheapest = inStock
+    .filter((m) => m.lastSeen?.price !== undefined && m.lastSeen.currency === currency)
+    .sort((x, y) => x.lastSeen!.price! - y.lastSeen!.price!)[0];
+  return {
+    id: product._id,
+    name: product.name,
+    region: product.region,
+    alertOn: product.alertOn,
+    checkInterval: product.checkInterval,
+    folder,
+    summary: {
+      listings: watched.length,
+      working: working.length,
+      inStock: inStock.length,
+      cheapestInStock: cheapest
+        ? { price: cheapest.lastSeen!.price!, currency: cheapest.lastSeen!.currency!, shop: displayHost(cheapest.url), url: cheapest.url }
+        : null,
+    },
+    listings: await Promise.all(watched.map(async (m) => ({
+      monitorId: m._id,
+      shop: displayHost(m.url),
+      url: m.url,
+      status: m.status,
+      inStock: m.lastSeen?.inStock ?? null,
+      price: m.lastSeen?.price ?? null,
+      currency: m.lastSeen?.currency ?? null,
+      lastCheckedAt: isoOrNull(m.lastCheckedAt),
+      lastError: m.lastError ?? null,
+      priceHistory: await priceHistory(ctx, m),
+    }))),
+  };
+}
 
 /**
  * A monitor's matched items, newest first, each dated from the oldest row it
@@ -310,11 +392,13 @@ export const createMonitor = mutation({
   },
   handler: async (ctx, { apiKey, checkInterval, alertOn, folderId, ...args }): Promise<Id<"monitors">> => {
     const owner = await requireKeyOwner(ctx, apiKey);
+    const comparison = isComparisonSite(args.url);
+    if (comparison && wantsProductAlerts(alertOn)) throw new ConvexError(toolError(COMPARISON_PAGE_ALERTS));
     const id = await createMonitorForUser(ctx, owner, {
       ...args,
       // Same default as the web form.
       checkInterval: checkInterval ?? "1h",
-      alertOn: alertOn ?? guessedAlertOn(args.prompt),
+      alertOn: alertOn ?? (comparison ? undefined : guessedAlertOn(args.prompt)),
     }).catch(asToolError);
     // A throw here rolls back the monitor too.
     if (folderId !== undefined) await setMonitorFolder(ctx, owner.userId, id, folderId).catch(asToolError);
@@ -343,8 +427,12 @@ export const updateMonitor = mutation({
     // A product's listings share its alerts and interval. One changed alone
     // would alert unlike the rest, and the product page would not show it.
     if (monitor.groupId && (fields.alertOn !== undefined || fields.checkInterval !== undefined)) {
-      throw new ConvexError(toolError("This monitor is part of a product, which sets its alerts and check interval."));
+      throw new ConvexError(
+        toolError(`This monitor is part of a product, which sets its alerts and check interval. Use update_product on ${monitor.groupId}.`)
+      );
     }
+    const comparison = isComparisonSite(monitor.url);
+    if (comparison && wantsProductAlerts(fields.alertOn)) throw new ConvexError(toolError(COMPARISON_PAGE_ALERTS));
     if (url !== undefined) {
       throw new ConvexError<ToolError>({
         code: "invalid_url",
@@ -380,15 +468,23 @@ export const updateMonitor = mutation({
       });
     }
     if (folderId !== undefined) {
-      // A product's listings are filed with the product, and agents have no
-      // tool to move a product, so filing a listing files its product.
+      // A product's listings are filed with the product, so filing a listing
+      // files its product.
       const filing = monitor.groupId
         ? setProductFolder(ctx, userId, monitor.groupId, folderId)
         : setMonitorFolder(ctx, userId, monitor._id, folderId);
       await filing.catch(asToolError);
     }
+    // Saved before such alerts were refused. Cleared on the next update, as
+    // the agent is already changing this monitor.
+    const cleared = comparison && wantsProductAlerts(monitor.alertOn);
+    if (cleared) await ctx.db.patch(monitor._id, { alertOn: undefined });
     const saved = (await ctx.db.get(monitor._id))!;
-    const note = wantsProductAlerts(saved.alertOn) && !isProductMonitor(saved) ? notAProductNote(saved.url) : null;
+    const note = cleared
+      ? `Cleared its stock and price alerts. ${COMPARISON_PAGE_ALERTS}`
+      : wantsProductAlerts(saved.alertOn) && !isProductMonitor(saved)
+        ? NOT_A_PRODUCT_NOTE
+        : null;
     return { ...agentMonitor(saved, await folderNameOf(ctx, saved)), ...(note ? { note } : {}) };
   },
 });
@@ -403,8 +499,12 @@ export const deleteMonitor = mutation({
   },
 });
 
-/** A search result as an agent sees it: price and stock named as read from search. */
-type SearchedListing = Omit<ProductListing, "price" | "inStock"> & { searchPrice: number | null; searchInStock: boolean | null };
+/**
+ * A search result as an agent sees it. Price and stock are left out: read
+ * from search results, they are often another listing's, and agents trusted
+ * them even when named searchPrice. A product's first read is the one to trust.
+ */
+type SearchedListing = Omit<ProductListing, "price" | "currency" | "inStock">;
 
 /**
  * Search shops for a product, as the web app's "Find a product" does: the
@@ -417,9 +517,7 @@ export const findProduct = action({
     if (!owner) throw new ConvexError("Invalid API key");
     // The region is not saved as the user's default: that is what they last picked by hand.
     const { listings } = await findListings(ctx, owner.userId, { ...args, saveRegion: false }).catch(asToolError);
-    // Read from search results, not the page, and sometimes from another
-    // listing on it. The names say so, so an agent checks before it trusts them.
-    return listings.map(({ price, inStock, ...listing }: ProductListing) => ({ ...listing, searchPrice: price, searchInStock: inStock }));
+    return listings.map(({ site, url, title, label }: ProductListing) => ({ site, url, title, label }));
   },
 });
 
@@ -446,6 +544,51 @@ export const createProduct = mutation({
     }).catch(asToolError);
     if (folderId !== undefined) await setProductFolder(ctx, owner.userId, groupId, folderId).catch(asToolError);
     return { productId: groupId, monitorIds };
+  },
+});
+
+/**
+ * Change a product as the web app's product page does: its alerts and
+ * interval on every listing, pause, folder, and which shop pages it watches.
+ * Removals go first, so they free room for additions.
+ */
+export const updateProduct = mutation({
+  args: {
+    apiKey: v.string(),
+    productId: v.string(),
+    checkInterval: v.optional(checkIntervalValidator),
+    alertOn: v.optional(alertOnValidator),
+    paused: v.optional(v.boolean()),
+    /** Null takes the product out of its folder. */
+    folderId: v.optional(v.union(v.string(), v.null())),
+    addUrls: v.optional(v.array(v.string())),
+    removeMonitorIds: v.optional(v.array(v.string())),
+  },
+  handler: async (ctx, { apiKey, productId, checkInterval, alertOn, paused, folderId, addUrls, removeMonitorIds }) => {
+    const owner = await requireKeyOwner(ctx, apiKey);
+    const { userId } = owner;
+    const product = await ownedProduct(ctx, userId, productId);
+    if (checkInterval !== undefined || alertOn !== undefined) {
+      await updateCriteriaForUser(ctx, userId, product, {
+        alertOn: alertOn ?? product.alertOn,
+        notificationChannels: product.notificationChannels,
+        checkInterval: checkInterval ?? product.checkInterval,
+      }).catch(asToolError);
+    }
+    if (removeMonitorIds?.length) {
+      const listed = new Set(product.listings.map((l) => l.monitorId).filter((id) => id !== undefined));
+      const ids = [...new Set(removeMonitorIds)].map((raw) => {
+        const id = ctx.db.normalizeId("monitors", raw);
+        if (!id || !listed.has(id)) throw new ConvexError(toolError(`Monitor ${raw} not found in this product`));
+        return id;
+      });
+      await removeMonitorsForUser(ctx, userId, ids).catch(asToolError);
+    }
+    if (addUrls?.length) await addListingsForUser(ctx, owner, product._id, addUrls).catch(asToolError);
+    // After additions, so new listings pause too.
+    if (paused !== undefined) await setPausedForUser(ctx, userId, product._id, paused).catch(asToolError);
+    if (folderId !== undefined) await setProductFolder(ctx, userId, product._id, folderId).catch(asToolError);
+    return agentProduct(ctx, (await ctx.db.get(product._id))!);
   },
 });
 
@@ -523,7 +666,7 @@ export const saveScanResult = mutation({
     const monitor = await ownedMonitor(ctx, userId, args.id);
     await saveScanResultForUser(ctx, userId, { ...args, matches, matchCount: matches.length }).catch(asToolError);
     return wantsProductAlerts(monitor.alertOn) && !isProductMonitor({ ...monitor, schema: args.schema })
-      ? { note: notAProductNote(monitor.url) }
+      ? { note: isComparisonSite(monitor.url) ? COMPARISON_PAGE_ALERTS : NOT_A_PRODUCT_NOTE }
       : {};
   },
 });
@@ -548,5 +691,46 @@ export const saveScanError = mutation({
     const { userId } = await requireKeyOwner(ctx, apiKey);
     await ownedMonitor(ctx, userId, args.id);
     await saveScanErrorForUser(ctx, userId, args).catch(asToolError);
+  },
+});
+
+/**
+ * Notification rows one recent-alerts call reads at most. One alert writes
+ * one in-app row, plus one per other channel on older rows, so this covers
+ * a busy user's day.
+ */
+const MAX_ALERT_ROWS = 500;
+
+/**
+ * Every alert in the user's in-app list since a time, newest first: new
+ * matches, product restocks and price moves, and errors. Each alert writes
+ * one, but so does an error the cooldown kept off the other channels, and a
+ * user with every channel off gets none.
+ */
+export const getRecentAlerts = query({
+  args: { apiKey: v.string(), since: v.string(), limit: v.optional(v.number()) },
+  handler: async (ctx, { apiKey, since, limit }) => {
+    const { userId } = await requireKeyOwner(ctx, apiKey);
+    const max = Math.min(Math.max(Math.floor(limit ?? DEFAULT_AGENT_MATCHES), 1), MAX_AGENT_MATCHES);
+    const from = Date.parse(since);
+    if (Number.isNaN(from)) throw new ConvexError(toolError("since must be an ISO 8601 time, e.g. 2026-11-13T00:00:00Z."));
+    const alerts: Doc<"notifications">[] = [];
+    let read = 0;
+    // Newest first by creation, which is when sentAt was stamped, so the
+    // first older row ends the read.
+    for await (const row of ctx.db.query("notifications").withIndex("by_userId", (q) => q.eq("userId", userId)).order("desc")) {
+      if (row._creationTime < from || ++read > MAX_ALERT_ROWS) break;
+      if (row.channel === "in_app" && row.sentAt >= from) alerts.push(row);
+    }
+    const top = alerts.sort((a, b) => b.sentAt - a.sentAt).slice(0, max);
+    const monitors = new Map<Id<"monitors">, Doc<"monitors"> | null>();
+    for (const a of top) if (!monitors.has(a.monitorId)) monitors.set(a.monitorId, await ctx.db.get(a.monitorId));
+    return top.map((a) => ({
+      at: new Date(a.sentAt).toISOString(),
+      title: a.title,
+      message: a.message,
+      monitorId: a.monitorId,
+      productId: monitors.get(a.monitorId)?.groupId ?? null,
+    }));
   },
 });

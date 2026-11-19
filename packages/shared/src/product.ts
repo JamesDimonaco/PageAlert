@@ -23,9 +23,12 @@ export function productItem(schema: unknown, pageUrl: string): ExtractedItem | n
   return null;
 }
 
-/** Price comparison sites in the search regions, matched on the site name in the hostname. */
+/**
+ * Price comparison and deal sites in the search regions, matched on the site
+ * name in the hostname. Both list other shops' offers and sell nothing.
+ */
 const COMPARISON_SITE =
-  /(^|\.)(pricespy|priceme|pricerunner|pcpartpicker|idealo|kelkoo|geizhals|billiger|guenstiger|ledenicheur|trovaprezzi|kieskeurig|tweakers|beslist|staticice|getprice|shopbot|pricehipster|pricegrabber)\./;
+  /(^|\.)(pricespy|priceme|pricerunner|pcpartpicker|idealo|kelkoo|geizhals|billiger|guenstiger|ledenicheur|trovaprezzi|kieskeurig|tweakers|beslist|staticice|getprice|shopbot|pricehipster|pricegrabber|cheapies|ozbargain|hotukdeals|slickdeals|mydealz)\./;
 
 /** A page listing one product's offers from many shops, rather than a shop's own page. */
 export function isComparisonSite(url: string): boolean {
@@ -33,6 +36,19 @@ export function isComparisonSite(url: string): boolean {
     const { hostname, pathname } = new URL(url);
     const googleShopping = /(^|\.)google\./.test(hostname) && (hostname.startsWith("shopping.") || pathname.startsWith("/shopping"));
     return COMPARISON_SITE.test(hostname) || googleShopping;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * An airport or duty-free shop, which sells only to travellers. Matched on a
+ * hostname label ending in "airport" ("aucklandairport", not
+ * "airportparking") or holding "dutyfree".
+ */
+export function isTravellerOnlyShop(url: string): boolean {
+  try {
+    return new URL(url).hostname.split(".").some((label) => /airport$|duty-?free/.test(label));
   } catch {
     return false;
   }
@@ -98,24 +114,29 @@ const MIN_SPAN_WORDS = 3;
  * Words match whole, one-letter ones too, so "11" is not found inside
  * "$1,119" and "Series X" does not match "Series S". A span starts at the
  * title's first word and ends before its next one, so it cannot take words
- * from two neighbouring products. -1 when no span holds them all: a false
+ * from two neighbouring products. Empty when no span holds them all: a false
  * match is worse than none, because the caller then hashes the wrong slice.
  */
-function wordsTogether(flat: string, needle: string): number {
+function wordsTogether(flat: string, needle: string): number[] {
   const words = needle
     .split(" ")
     .map((w) => w.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, ""))
     .filter(Boolean)
     .map((w) => new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(w)}(?![\\p{L}\\p{N}])`, "iu"));
-  if (words.length < MIN_SPAN_WORDS) return -1;
+  if (words.length < MIN_SPAN_WORDS) return [];
   const span = needle.length * 2;
   const starts = [...flat.matchAll(new RegExp(words[0]!.source, "giu"))].map((hit) => hit.index);
-  for (const [i, start] of starts.entries()) {
+  return starts.filter((start, i) => {
     const window = flat.slice(start, Math.min(start + span, starts[i + 1] ?? Infinity));
-    if (words.every((w) => w.test(window))) return start;
-  }
-  return -1;
+    return words.every((w) => w.test(window));
+  });
 }
+
+/**
+ * A price followed by text that is not more of it, so a window cut
+ * mid-price ("$31" of "$319.00") does not count as holding one.
+ */
+const WHOLE_PRICE = /[$£€]\s?\d[\d,]*(\.\d\d)?(?=[.,]?[^\d.,])/;
 
 /**
  * The part of a product page that describes the product.
@@ -136,9 +157,15 @@ export function productExcerpt(text: string, title: string): { excerpt: string; 
   const needle = normaliseForMatch(title);
   // A case-insensitive search on the string being sliced, so the index lines
   // up. Lowercasing a copy can change its length.
-  const exact = needle ? flat.search(new RegExp(escapeRegExp(needle), "i")) : -1;
-  const at = exact !== -1 ? exact : wordsTogether(flat, needle);
-  if (at !== -1) {
+  const exact = needle ? [...flat.matchAll(new RegExp(escapeRegExp(needle), "gi"))].map((hit) => hit.index) : [];
+  const mentions = exact.length > 0 ? exact : wordsTogether(flat, needle);
+  // Shops repeat the title in breadcrumbs and review forms above the buy box.
+  // The first mention whose window reaches a price is the buy box; failing
+  // that, the first mention, as before.
+  // A window that reaches the end of the page is not cut, so the page's last price counts.
+  const holdsPrice = (m: number) => WHOLE_PRICE.test(m + EXCERPT_AFTER >= flat.length ? `${flat.slice(m)} ` : flat.slice(m, m + EXCERPT_AFTER));
+  const at = mentions.find(holdsPrice) ?? mentions[0];
+  if (at !== undefined) {
     return { excerpt: flat.slice(Math.max(0, at - EXCERPT_BEFORE), at + EXCERPT_AFTER).trim(), matched: true };
   }
   const price = Math.max(0, flat.search(/[$£€]\s?\d/));

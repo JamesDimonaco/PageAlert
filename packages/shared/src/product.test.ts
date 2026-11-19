@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { isArticlePage, isComparisonSite, isProductMonitor, productExcerpt, productItem } from "./product";
+import { isArticlePage, isComparisonSite, isProductMonitor, isTravellerOnlyShop, productExcerpt, productItem } from "./product";
 
 describe("productExcerpt", () => {
   // Churn outside the buy box must not change the excerpt, or every check
@@ -73,6 +73,36 @@ describe("productExcerpt", () => {
   test("does not match title words scattered across the page", () => {
     const page = `PowerColor ${"x ".repeat(400)} Reaper ${"y ".repeat(400)} Radeon RX 9060 XT 16GB $10`;
     expect(productExcerpt(page, "PowerColor Reaper Radeon RX 9060 XT 16GB").matched).toBe(false);
+  });
+
+  // Prod, 19/11/2026: Extreme PC prints the title in the breadcrumb, then in
+  // the heading, then a hidden review form. The window from the breadcrumb
+  // ended at "Now:", so every read found stock but never the price.
+  test("starts at the title that has the price after it, not an earlier mention", () => {
+    const form = "Rating Required Select Rating 1 star (worst) 5 stars (best) Name Email Required ".repeat(8);
+    const title = "Kingston NV3 1TB M.2 NVMe Internal SSD-PCIe Gen 4";
+    const page = `Menu [Home] [${title}] [Kingston] ${title} (No reviews yet) ${form}${title} Auckland Stock: 5+ in stock Now: $319.00`;
+    for (const search of [title, "Kingston NV3 1TB M.2 NVMe SSD PCIe Gen 4"]) {
+      const { excerpt, matched } = productExcerpt(page, search);
+      expect(matched).toBe(true);
+      expect(excerpt).toContain("Now: $319.00");
+    }
+  });
+
+  // "$31" read from a cut "$319.00" is a wrong price, worse than none.
+  test("does not count a price cut off at the window's edge", () => {
+    const title = "Sony WH-1000XM5";
+    const pad = "x".repeat(700 - title.length - 1 - "$31".length);
+    const page = `${title} ${pad}$319.00 Out of stock`.replace(`${pad}$319`, `${pad.slice(0, -title.length - 1)}${title} $319`);
+    expect(page.indexOf("$319") + "$31".length).toBe(700);
+    expect(productExcerpt(page, title).excerpt).toContain("$319.00");
+  });
+
+  // A page with no price near any mention keeps today's excerpt, so its hash
+  // does not move and buy a re-read.
+  test("falls back to the first mention when none has a price after it", () => {
+    const page = `Sony WH-1000XM5 ${"x ".repeat(500)} Sony WH-1000XM5 Out of stock`;
+    expect(productExcerpt(page, "Sony WH-1000XM5").excerpt.startsWith("Sony WH-1000XM5 x")).toBe(true);
   });
 
   // An unmatched title must still give the reader something with a price in
@@ -150,6 +180,12 @@ describe("isComparisonSite", () => {
       "https://tweakers.net/pricewatch/1/x.html",
       "https://www.google.com/shopping/product/1",
       "https://shopping.google.co.uk/x",
+      // Prod, 19/11/2026: find_product offered a cheapies.nz deal post as a shop.
+      "https://www.cheapies.nz/node/12345",
+      "https://www.ozbargain.com.au/node/1",
+      "https://www.hotukdeals.com/deals/x-1",
+      "https://slickdeals.net/f/1",
+      "https://www.mydealz.de/deals/x-1",
     ]) {
       expect(isComparisonSite(url), url).toBe(true);
     }
@@ -158,6 +194,26 @@ describe("isComparisonSite", () => {
   test("leaves shops alone, including ones whose name contains a comparison site's", () => {
     for (const url of ["https://www.pbtech.co.nz/product/1", "https://notpricespy.com/x", "https://shopping.example.com/p/1", "https://www.google.com/search?q=x", "not a url"]) {
       expect(isComparisonSite(url), url).toBe(false);
+    }
+  });
+});
+
+describe("isTravellerOnlyShop", () => {
+  // Prod, 19/11/2026: find_product offered Auckland Airport's duty-free shop.
+  test("knows airport and duty-free shops", () => {
+    for (const url of [
+      "https://themall.aucklandairport.co.nz/products/x",
+      "https://www.heinemann-dutyfree.com/x",
+      "https://www.aelia-dutyfree.co.nz/x",
+      "https://www.dubaidutyfree.com/x",
+    ]) {
+      expect(isTravellerOnlyShop(url), url).toBe(true);
+    }
+  });
+
+  test("leaves ordinary shops alone", () => {
+    for (const url of ["https://www.pbtech.co.nz/product/1", "https://www.thewarehouse.co.nz/p/x", "https://www.airportparking.com/x", "not a url"]) {
+      expect(isTravellerOnlyShop(url), url).toBe(false);
     }
   });
 });

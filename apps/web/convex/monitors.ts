@@ -639,6 +639,10 @@ export async function updateMonitorForUser(
     updates.productTitle = undefined;
     updates.groupId = undefined;
     await releaseListing(ctx, existing);
+    // The old page's prices. One row per price change, so few.
+    for (const row of await ctx.db.query("priceReads").withIndex("by_monitorId", (q) => q.eq("monitorId", id)).collect()) {
+      await ctx.db.delete(row._id);
+    }
   } else if (stockTurnedOn || priceChoiceSet) {
     const { inStock, ...priceState } = existing.lastSeen ?? {};
     updates.lastSeen = {
@@ -813,7 +817,7 @@ export async function removeMonitorsForUser(ctx: MutationCtx, userId: string, id
 async function sweepMonitorHistory(ctx: MutationCtx, ids: Id<"monitors">[]): Promise<void> {
   const left: Allowance = { bytes: SWEEP_BUDGET_BYTES, rows: SWEEP_BUDGET_ROWS };
   for (const [i, id] of ids.entries()) {
-    for (const table of ["scrapeResults", "notifications"] as const) {
+    for (const table of ["scrapeResults", "notifications", "priceReads"] as const) {
       await drain(ctx, ctx.db.query(table).withIndex("by_monitorId", (q) => q.eq("monitorId", id)), left);
       if (spent(left)) {
         await ctx.scheduler.runAfter(0, internal.monitors.sweepRemainingMonitorHistory, { ids: ids.slice(i) });

@@ -340,10 +340,12 @@ test("deleting a monitor removes it and its history", async () => {
   const { key } = await seedUser(t, "a@example.com");
   const id = await t.mutation(api.mcp.createMonitor, { apiKey: key, ...MONITOR });
   await t.mutation(api.mcp.saveScanResult, { apiKey: key, id, schema: { items: [{ title: "x" }] }, matches: [] });
+  await t.run((ctx) => ctx.db.insert("priceReads", { monitorId: id, price: 27999, currency: "GBP", readAt: NOW }));
 
   await t.mutation(api.mcp.deleteMonitor, { apiKey: key, monitorId: id });
   expect(await t.run((ctx) => ctx.db.get(id))).toBeNull();
   expect(await t.run((ctx) => ctx.db.query("scrapeResults").collect())).toEqual([]);
+  expect(await t.run((ctx) => ctx.db.query("priceReads").collect())).toEqual([]);
 });
 
 test("an agent can set stock and price alerts, and is told when the page is not a product page", async () => {
@@ -403,6 +405,26 @@ test("a first scan says when the stock and price alerts it was given cannot run 
   expect(result).toEqual({ note: expect.stringMatching(/only run on a product page/) });
 });
 
+// Comparison monitors saved before alerts were refused there still have them.
+// The scan note is the agent's one chance to learn what to do instead.
+test("a first scan of a comparison page saved with stock alerts says to put the target in the prompt", async () => {
+  const t = setup();
+  const { key, userId } = await seedUser(t, "a@example.com");
+  const id = await t.run((ctx) =>
+    ctx.db.insert("monitors", {
+      userId, name: "CPU", url: "https://pricespy.co.nz/product.php?p=1", prompt: "in stock", status: "scanning", checkInterval: "24h",
+      matchCount: 0, createdAt: NOW, updatedAt: NOW, alertOn: { backInStock: true },
+    })
+  );
+  const result = await t.mutation(api.mcp.saveScanResult, {
+    apiKey: key,
+    id,
+    schema: { items: [{ title: "PB Tech", url: "https://example.com/1" }, { title: "Mighty Ape", url: "https://example.com/2" }] },
+    matches: [],
+  });
+  expect(result).toEqual({ note: expect.stringMatching(/price comparison page.*Put the target in the prompt/) });
+});
+
 // Proxy reads cost credit. An agent retrying blocked shops in a loop must hit
 // a wall at 5 a day per user, and the answer must say so.
 test("preview gets 5 proxy attempts per user per day", async () => {
@@ -442,7 +464,7 @@ const LISTING = {
 };
 
 /** LISTING as find_product hands it to an agent. */
-const SEARCHED = { site: LISTING.site, url: LISTING.url, title: LISTING.title, label: LISTING.label, searchPrice: 27999, currency: "GBP", searchInStock: true };
+const SEARCHED = { site: LISTING.site, url: LISTING.url, title: LISTING.title, label: LISTING.label };
 
 async function searchesUsed(t: T, userId: string) {
   const row = await t.run((ctx) => ctx.db.query("userTiers").withIndex("by_userId", (q) => q.eq("userId", userId)).unique());
@@ -963,6 +985,7 @@ test("get_product returns each shop's last price, stock and check time", async (
     alertOn: { priceBelow: { amount: 80000, currency: "NZD" } },
     checkInterval: "1h",
     folder: "PC build",
+    summary: { listings: 2, working: 1, inStock: 0, cheapestInStock: null },
     listings: [
       {
         monitorId: pbtech,
@@ -974,6 +997,7 @@ test("get_product returns each shop's last price, stock and check time", async (
         currency: "NZD",
         lastCheckedAt: new Date(NOW - MINUTE).toISOString(),
         lastError: null,
+        priceHistory: null,
       },
       {
         monitorId: warehouse,
@@ -985,8 +1009,43 @@ test("get_product returns each shop's last price, stock and check time", async (
         currency: null,
         lastCheckedAt: null,
         lastError: "Blocked by a bot check",
+        priceHistory: null,
       },
     ],
+  });
+});
+
+// Prod, 19/11/2026: to learn the Reaper was unsold everywhere, an agent had
+// to read every listing. The summary says it in one place.
+test("get_product sums up stock across shops and finds the cheapest in-stock price", async () => {
+  const t = setup();
+  const { key, userId } = await seedUser(t, "a@example.com");
+  // Five listings is past the free plan's creation limit.
+  await t.run((ctx) => ctx.db.insert("userTiers", { userId, tier: "max", updatedAt: NOW }));
+  const { productId, monitorIds } = await t.mutation(api.mcp.createProduct, {
+    apiKey: key,
+    title: "Kingston NV3 1TB",
+    region: "NZ",
+    urls: ["https://a.test/1", "https://b.test/1", "https://c.test/1", "https://d.test/1", "https://e.test/1"],
+    alertOn: { priceDrop: true },
+  });
+  const [a, b, c, d, e] = monitorIds;
+  await t.run(async (ctx) => {
+    // Cheapest, but sold out.
+    await ctx.db.patch(a!, { status: "active", lastSeen: { inStock: false, price: 20000, currency: "NZD" } });
+    await ctx.db.patch(b!, { status: "active", lastSeen: { inStock: true, price: 32085, currency: "NZD" } });
+    await ctx.db.patch(c!, { status: "active", lastSeen: { inStock: true, price: 31900, currency: "NZD" } });
+    // In stock with no price read: counted, never the cheapest.
+    await ctx.db.patch(d!, { status: "active", lastSeen: { inStock: true } });
+    // The page is gone, so its last reading is stale: not counted.
+    await ctx.db.patch(e!, { status: "error", lastSeen: { inStock: true, price: 10000, currency: "NZD" } });
+  });
+  const { summary } = await t.query(api.mcp.getProduct, { apiKey: key, productId });
+  expect(summary).toEqual({
+    listings: 5,
+    working: 4,
+    inStock: 3,
+    cheapestInStock: { price: 31900, currency: "NZD", shop: "c.test", url: "https://c.test/1" },
   });
 });
 
@@ -1041,18 +1100,36 @@ test("find_product leaves out price comparison sites", async () => {
 
 // A standalone comparison page keeps working on its prompt, which can ask for
 // "lowest in-stock price under $300". Its price alert would read a shop's
-// offer as the product, so it is off, and the agent is told why.
-test("a stock or price alert on a comparison page says only prompt alerts run there", async () => {
+// offer as the product, so it never runs. Prod, 19/11/2026: saving it anyway
+// left list_monitors showing alerts that never fire.
+const PRICESPY = { url: "https://pricespy.co.nz/product.php?p=7327471", prompt: "lowest in-stock price under $380", name: "Ryzen 5 7600" };
+
+test("stock and price alerts on a comparison page are refused, with what to do instead", async () => {
   const t = setup();
   const { key } = await seedUser(t, "a@example.com");
-  const id = await t.mutation(api.mcp.createMonitor, {
-    apiKey: key, url: "https://pricespy.co.nz/product.php?p=7327471", prompt: "lowest in-stock price under $380", name: "Ryzen 5 7600",
+  const alertOn = { priceBelow: { amount: 38000, currency: "NZD" } };
+  expect(await toolErrorOf(t.mutation(api.mcp.createMonitor, { apiKey: key, ...PRICESPY, alertOn }))).toEqual({
+    code: "failed",
+    message: expect.stringMatching(/price comparison page.*Put the target in the prompt/),
+    retry: false,
   });
-  await t.mutation(api.mcp.saveScanResult, { apiKey: key, id, schema: { items: [{ title: "AMD Ryzen 5 7600", price: 46198 }] }, matches: [] });
-  const result = await t.mutation(api.mcp.updateMonitor, {
-    apiKey: key, monitorId: id, alertOn: { priceBelow: { amount: 38000, currency: "NZD" } },
-  });
-  expect(result.note).toMatch(/price comparison page.*only prompt alerts/i);
+  const id = await t.mutation(api.mcp.createMonitor, { apiKey: key, ...PRICESPY });
+  expect(await errorOf(t.mutation(api.mcp.updateMonitor, { apiKey: key, monitorId: id, alertOn }))).toMatch(/price comparison page/);
+  // Not guessed from the prompt either.
+  expect((await t.run((ctx) => ctx.db.get(id)))?.alertOn).toBeUndefined();
+});
+
+test("updating a comparison page clears the stock and price alerts it was saved with, and says so", async () => {
+  const t = setup();
+  const { key } = await seedUser(t, "a@example.com");
+  const id = await t.mutation(api.mcp.createMonitor, { apiKey: key, ...PRICESPY });
+  await t.run((ctx) => ctx.db.patch(id, { status: "active", alertOn: { priceBelow: { amount: 38000, currency: "NZD" } } }));
+  const result = await t.mutation(api.mcp.updateMonitor, { apiKey: key, monitorId: id, checkInterval: "6h" });
+  expect(result.alertOn).toBeNull();
+  expect(result.note).toMatch(/Cleared its stock and price alerts/);
+  expect((await t.run((ctx) => ctx.db.get(id)))?.alertOn).toBeUndefined();
+  // Nothing left to clear, nothing to say.
+  expect((await t.mutation(api.mcp.updateMonitor, { apiKey: key, monitorId: id, name: "CPU" })).note).toBeUndefined();
 });
 
 // The quick checks that follow count what the first scan passed as matches.
@@ -1101,16 +1178,17 @@ test("create_product refuses an article, and find_product leaves articles out", 
 });
 
 // Prod, 14/11/2026: find_product said PB Tech had it in stock at NZ$793.94.
-// The page said out of stock, and the price was another shop's. These come
-// from search results, and the field names have to say so.
-test("find_product names its price and stock as read from search", async () => {
+// The page said out of stock, and the price was another shop's. Renamed to
+// searchPrice, it still misled: on 19/11/2026 it gave PB Tech's SSD at NZ$239
+// against NZ$320.85 on the page. A product's first read is the price to trust.
+test("find_product returns no price or stock, which search results get wrong", async () => {
   vi.stubEnv("SCRAPER_URL", "https://scraper.test");
   vi.stubEnv("SCRAPER_API_KEY", "key");
   vi.stubGlobal("fetch", async () => Response.json({ listings: [LISTING] }));
   const t = setup();
   const { key } = await seedUser(t, "a@example.com");
   expect(await t.action(api.mcp.findProduct, { apiKey: key, query: "Sony WH-1000XM5", region: "GB" })).toEqual([
-    { site: "argos.co.uk", url: LISTING.url, title: LISTING.title, label: "same", searchPrice: 27999, currency: "GBP", searchInStock: true },
+    { site: "argos.co.uk", url: LISTING.url, title: LISTING.title, label: "same" },
   ]);
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
@@ -1142,4 +1220,172 @@ test("a first scan of a product page with stock or price alerts brings its first
   const listing = await t.mutation(api.mcp.createMonitor, { apiKey: key, ...MONITOR, checkInterval: "24h", alertOn: { backInStock: true } });
   await t.mutation(api.mcp.saveScanResult, { apiKey: key, id: listing, schema: { items: [{ title: "a" }, { title: "b" }] }, matches: [] });
   expect((await t.run((ctx) => ctx.db.get(listing)))?.nextCheckAt).toBeGreaterThan(NOW + 60_000);
+});
+
+// Prod, 19/11/2026: an agent could not move a GPU product to 6h checks for
+// Black Friday. update_monitor refuses a product's listings, and there was no
+// tool for the product itself.
+async function seedProduct(t: T, key: string, urls = ["https://www.pbtech.co.nz/product/1", "https://www.thewarehouse.co.nz/p/2"]) {
+  return t.mutation(api.mcp.createProduct, {
+    apiKey: key,
+    title: "PowerColor Reaper RX 9060 XT",
+    region: "NZ",
+    urls,
+    alertOn: { backInStock: true },
+  });
+}
+
+test("update_product changes alerts and interval on every listing, and files the product", async () => {
+  const t = setup();
+  const { key } = await seedUser(t, "a@example.com");
+  const { productId, monitorIds } = await seedProduct(t, key);
+  const { folderId } = await t.mutation(api.mcp.createFolder, { apiKey: key, name: "PC build" });
+  const alertOn = { backInStock: true, priceBelow: { amount: 70000, currency: "NZD" } };
+  const saved = await t.mutation(api.mcp.updateProduct, { apiKey: key, productId, checkInterval: "6h", alertOn, folderId });
+  expect(saved).toMatchObject({ id: productId, checkInterval: "6h", alertOn, folder: "PC build" });
+  for (const id of monitorIds) {
+    expect(await t.run((ctx) => ctx.db.get(id))).toMatchObject({ checkInterval: "6h", alertOn, prompt: expect.stringMatching(/price and stock/) });
+  }
+  // Out of the folder again, leaving the rest as it is.
+  expect(await t.mutation(api.mcp.updateProduct, { apiKey: key, productId, folderId: null })).toMatchObject({ folder: null, checkInterval: "6h" });
+});
+
+test("update_product adds shop pages as listings with the product's alerts, and removes listings", async () => {
+  const t = setup();
+  const { key, userId } = await seedUser(t, "a@example.com");
+  await t.run((ctx) => ctx.db.insert("userTiers", { userId, tier: "max", updatedAt: NOW }));
+  const { productId, monitorIds } = await seedProduct(t, key);
+  const saved = await t.mutation(api.mcp.updateProduct, {
+    apiKey: key,
+    productId,
+    // Already watched, with a tracking parameter: not added twice.
+    addUrls: ["https://www.computerlounge.co.nz/p/3", "https://www.pbtech.co.nz/product/1?utm_source=x"],
+    removeMonitorIds: [monitorIds[1]!],
+  });
+  expect(saved.listings.map((l) => l.shop)).toEqual(["pbtech.co.nz", "computerlounge.co.nz"]);
+  // The page already watched keeps its monitor, with no second one beside it.
+  expect(saved.listings[0]!.monitorId).toBe(monitorIds[0]);
+  expect(await t.run((ctx) => ctx.db.query("monitors").withIndex("by_groupId", (q) => q.eq("groupId", productId)).collect())).toHaveLength(2);
+  const added = await t.run((ctx) => ctx.db.get(saved.listings[1]!.monitorId));
+  expect(added).toMatchObject({ groupId: productId, alertOn: { backInStock: true }, productTitle: "PowerColor Reaper RX 9060 XT" });
+  expect(await t.run((ctx) => ctx.db.get(monitorIds[1]!))).toBeNull();
+});
+
+test("update_product refuses a comparison page, another product's listing and another account's product", async () => {
+  const t = setup();
+  const { key } = await seedUser(t, "a@example.com");
+  const { productId } = await seedProduct(t, key, ["https://www.pbtech.co.nz/product/1"]);
+  expect(await errorOf(t.mutation(api.mcp.updateProduct, { apiKey: key, productId, addUrls: ["https://pricespy.co.nz/product.php?p=1"] })))
+    .toMatch(/price comparison site/);
+  const other = await t.mutation(api.mcp.createMonitor, { apiKey: key, ...MONITOR });
+  expect(await toolErrorOf(t.mutation(api.mcp.updateProduct, { apiKey: key, productId, removeMonitorIds: [other] }))).toMatchObject({
+    code: "not_found",
+  });
+  const stranger = await seedUser(t, "b@example.com");
+  expect(await toolErrorOf(t.mutation(api.mcp.updateProduct, { apiKey: stranger.key, productId, checkInterval: "6h" }))).toMatchObject({
+    code: "not_found",
+  });
+});
+
+test("update_product pauses and resumes every listing", async () => {
+  const t = setup();
+  const { key } = await seedUser(t, "a@example.com");
+  const { productId } = await seedProduct(t, key);
+  const paused = await t.mutation(api.mcp.updateProduct, { apiKey: key, productId, paused: true });
+  expect(paused.listings.map((l) => l.status)).toEqual(["paused", "paused"]);
+  const resumed = await t.mutation(api.mcp.updateProduct, { apiKey: key, productId, paused: false });
+  expect(resumed.listings.map((l) => l.status)).toEqual(["active", "active"]);
+});
+
+// Prod, 19/11/2026: get_recent_matches leaves out products, and an agent
+// learned a product's shop page had died only by calling get_product. Every
+// alert the user got is already in their in-app notifications.
+test("get_recent_alerts returns the user's alerts since a time, products and errors included", async () => {
+  const t = setup();
+  const { key, userId } = await seedUser(t, "a@example.com");
+  const { productId, monitorIds } = await seedProduct(t, key);
+  const plain = await t.mutation(api.mcp.createMonitor, { apiKey: key, ...MONITOR });
+  const stranger = await seedUser(t, "b@example.com");
+  const theirs = await t.mutation(api.mcp.createMonitor, { apiKey: stranger.key, ...MONITOR });
+  const note = (monitorId: (typeof monitorIds)[number], owner: string, title: string, sentAt: number, channel: "in_app" | "email" = "in_app") =>
+    t.run((ctx) => ctx.db.insert("notifications", { userId: owner, monitorId, channel, title, message: `${title}.`, sentAt, read: false }));
+  await note(plain, userId, "Milford — too old", NOW - 3 * 60 * MINUTE);
+  await note(monitorIds[0]!, userId, "Reaper — back in stock", NOW - 2 * MINUTE);
+  await note(monitorIds[1]!, userId, "Reaper — Error", NOW - MINUTE);
+  await note(plain, userId, "Milford — 1 new match", NOW - 30 * MINUTE);
+  await note(plain, userId, "Milford — sent by email too", NOW - 5 * MINUTE, "email");
+  await note(theirs, stranger.userId, "Not theirs", NOW - MINUTE);
+
+  const since = new Date(NOW - 60 * MINUTE).toISOString();
+  expect(await t.query(api.mcp.getRecentAlerts, { apiKey: key, since })).toEqual([
+    { at: new Date(NOW - MINUTE).toISOString(), title: "Reaper — Error", message: "Reaper — Error.", monitorId: monitorIds[1], productId },
+    { at: new Date(NOW - 2 * MINUTE).toISOString(), title: "Reaper — back in stock", message: "Reaper — back in stock.", monitorId: monitorIds[0], productId },
+    { at: new Date(NOW - 30 * MINUTE).toISOString(), title: "Milford — 1 new match", message: "Milford — 1 new match.", monitorId: plain, productId: null },
+  ]);
+  expect(await t.query(api.mcp.getRecentAlerts, { apiKey: key, since, limit: 1 })).toHaveLength(1);
+});
+
+test("get_product gives each shop page's price range over 30 and 90 days", async () => {
+  const t = setup();
+  const { key } = await seedUser(t, "a@example.com");
+  const { productId, monitorIds } = await seedProduct(t, key);
+  const [pbtech] = monitorIds;
+  const DAY = 24 * 60 * MINUTE;
+  await t.run(async (ctx) => {
+    await ctx.db.patch(pbtech!, { status: "active", lastSeen: { inStock: true, price: 30000, currency: "NZD" } });
+    // Each row is a change, so the price on the first day of a window is the
+    // last change before it.
+    for (const [daysAgo, price] of [[100, 40000], [60, 35000], [20, 28000], [1, 30000]] as const) {
+      await ctx.db.insert("priceReads", { monitorId: pbtech!, price, currency: "NZD", readAt: NOW - daysAgo * DAY });
+    }
+  });
+  const { listings } = await t.query(api.mcp.getProduct, { apiKey: key, productId });
+  expect(listings[0]!.priceHistory).toEqual({
+    since: new Date(NOW - 100 * DAY).toISOString(),
+    last30Days: { min: 28000, max: 35000 },
+    last90Days: { min: 28000, max: 40000 },
+  });
+  // Never read a price: no history.
+  expect(listings[1]!.priceHistory).toBeNull();
+});
+
+// Setting a price alert clears the last price read, so the currency is gone
+// until the next read. The stored history is still there.
+test("get_product keeps a shop page's price history while its last read has no price", async () => {
+  const t = setup();
+  const { key } = await seedUser(t, "a@example.com");
+  const { productId, monitorIds } = await seedProduct(t, key);
+  await t.run(async (ctx) => {
+    await ctx.db.patch(monitorIds[0]!, { status: "active", lastSeen: { inStock: true } });
+    await ctx.db.insert("priceReads", { monitorId: monitorIds[0]!, price: 30000, currency: "NZD", readAt: NOW - MINUTE });
+  });
+  const { listings } = await t.query(api.mcp.getProduct, { apiKey: key, productId });
+  expect(listings[0]!.priceHistory).toMatchObject({ last30Days: { min: 30000, max: 30000 } });
+});
+
+// A page whose price flips on every read writes a row each time. Reading them
+// all for 24 listings would pass Convex's read limit and break get_product.
+test("get_product's price range covers at most the newest 300 price changes of a page", async () => {
+  const t = setup();
+  const { key } = await seedUser(t, "a@example.com");
+  const { productId, monitorIds } = await seedProduct(t, key);
+  await t.run(async (ctx) => {
+    await ctx.db.patch(monitorIds[0]!, { status: "active", lastSeen: { inStock: true, price: 30000, currency: "NZD" } });
+    // The oldest of 301 changes is the lowest price, and is left out.
+    for (let i = 0; i < 301; i++) {
+      const price = i === 300 ? 100 : 30000 + (i % 2);
+      await ctx.db.insert("priceReads", { monitorId: monitorIds[0]!, price, currency: "NZD", readAt: NOW - (i + 1) * MINUTE });
+    }
+  });
+  const { listings } = await t.query(api.mcp.getProduct, { apiKey: key, productId });
+  expect(listings[0]!.priceHistory).toMatchObject({ last30Days: { min: 30000, max: 30001 }, last90Days: { min: 30000, max: 30001 } });
+});
+
+test("update_product removes a listing named twice once, and keeps the rest of the update", async () => {
+  const t = setup();
+  const { key } = await seedUser(t, "a@example.com");
+  const { productId, monitorIds } = await seedProduct(t, key);
+  const saved = await t.mutation(api.mcp.updateProduct, { apiKey: key, productId, checkInterval: "6h", removeMonitorIds: [monitorIds[1]!, monitorIds[1]!] });
+  expect(saved).toMatchObject({ checkInterval: "6h", listings: [{ monitorId: monitorIds[0] }] });
+  expect(await t.run((ctx) => ctx.db.get(monitorIds[1]!))).toBeNull();
 });

@@ -93,3 +93,15 @@ test("a Sprint pass checks every 15 minutes at fastest", async () => {
   expect(clampInterval("5m", "sprint")).toBe("15m");
   expect(clampInterval("15m", "free")).toBe("1h");
 });
+
+// A new URL is a new page. The old page's prices would set its 90-day range.
+test("changing a monitor's URL forgets the old page's price history", async () => {
+  const t = setup();
+  const owner = await seedUser(t, "a@example.com");
+  const id = await owner.mutation(api.monitors.create, MONITOR);
+  await t.run((ctx) => ctx.db.insert("priceReads", { monitorId: id, price: 27999, currency: "GBP", readAt: Date.now() }));
+  await owner.mutation(api.monitors.update, { id, name: "Renamed" });
+  expect(await t.run((ctx) => ctx.db.query("priceReads").collect())).toHaveLength(1);
+  await owner.mutation(api.monitors.update, { id, url: "https://example.com/other" });
+  expect(await t.run((ctx) => ctx.db.query("priceReads").collect())).toEqual([]);
+});

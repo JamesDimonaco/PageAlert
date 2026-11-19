@@ -209,6 +209,16 @@ export default defineSchema({
     .index("by_userId", ["userId"])
     .index("by_folderId", ["folderId"]),
 
+  // Each price a product monitor accepted that differs from the one before,
+  // plus its first. The price on any day is the last row before it. Deleted
+  // with the monitor.
+  priceReads: defineTable({
+    monitorId: v.id("monitors"),
+    price: v.number(), // minor units of currency
+    currency: v.string(),
+    readAt: v.number(),
+  }).index("by_monitorId", ["monitorId", "readAt"]),
+
   // A name the user gives a set of monitors and products. One level, no settings.
   folders: defineTable({
     userId: v.string(),

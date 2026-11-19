@@ -253,6 +253,13 @@ async function sweepMonitors(ctx: MutationCtx, userId: string, left: Allowance):
     );
     if (spent(left)) return;
 
+    await drain(
+      ctx,
+      ctx.db.query("priceReads").withIndex("by_monitorId", (q) => q.eq("monitorId", monitor._id)),
+      left
+    );
+    if (spent(left)) return;
+
     await ctx.db.delete(monitor._id);
     left.rows -= 1;
     if (spent(left)) return;

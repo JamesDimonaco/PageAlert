@@ -114,6 +114,17 @@ function cleanListing(listing: FoundListing, fallbackTitle: string): FoundListin
   };
 }
 
+/**
+ * Why a page can't be one of a product's listings, or null. A product already
+ * compares shops: a comparison page in it reads another shop's offer, or a
+ * related item, as this product. An article sells nothing.
+ */
+function listingRefusal(url: string): string | null {
+  if (isComparisonSite(url)) return `${displayHost(url)} is a price comparison site. Add each shop's own link instead.`;
+  if (isArticlePage(url)) return `${displayHost(url)} gave an article link, not a shop's product page. Add the shop's product page instead.`;
+  return null;
+}
+
 const createArgs = {
   name: v.string(),
   region: v.string(),
@@ -157,18 +168,9 @@ export async function createProductForUser(
   const seen = new Set<string>();
   const listings: (GroupListing & { watch: boolean })[] = [];
   for (const { watch, ...found } of args.listings) {
-    // A product already compares shops. A comparison page in it reads another
-    // shop's offer, or a related item, as this product.
-    if (isComparisonSite(found.url)) {
-      if (watch) {
-        throw new ConvexError(`${displayHost(found.url)} is a price comparison site. Add each shop's own link instead.`);
-      }
-      continue;
-    }
-    if (isArticlePage(found.url)) {
-      if (watch) {
-        throw new ConvexError(`${displayHost(found.url)} gave an article link, not a shop's product page. Add the shop's product page instead.`);
-      }
+    const refusal = listingRefusal(found.url);
+    if (refusal) {
+      if (watch) throw new ConvexError(refusal);
       continue;
     }
     const listing = cleanListing(found, name);
@@ -294,39 +296,51 @@ export const updateCriteria = mutation({
     notificationChannels: notificationChannelsValidator,
     checkInterval: checkIntervalValidator,
   },
-  handler: async (ctx, args) => {
-    const { userId, group } = await ownedGroup(ctx, args.id);
-    requireCriteria(args.alertOn);
-    const plan = await readPlan(ctx, userId);
-    const checkInterval = clampInterval(args.checkInterval, plan.tier);
-    const notificationChannels = allowedChannels(plan, args.notificationChannels);
-    const monitors = await groupMonitors(ctx, group._id);
-    for (const m of monitors) {
-      const prompt = productPrompt(m.productTitle ?? m.name, args.alertOn);
-      await updateMonitorForUser(
-        ctx,
-        userId,
-        m._id,
-        {
-          alertOn: args.alertOn,
-          notificationChannels,
-          // Each is sent only when it changes: a new interval reschedules the
-          // check and resets its retries, and a new prompt re-arms error emails.
-          ...(m.checkInterval !== checkInterval ? { checkInterval } : {}),
-          ...(m.prompt !== prompt ? { prompt } : {}),
-        },
-        plan
-      );
-    }
-    await ctx.db.patch(group._id, {
-      alertOn: args.alertOn,
-      checkInterval,
-      notificationChannels,
-      updatedAt: Date.now(),
-    });
-    return { checkInterval, notificationChannels };
+  handler: async (ctx, { id, ...args }) => {
+    const { userId, group } = await ownedGroup(ctx, id);
+    const saved = await updateCriteriaForUser(ctx, userId, group, args);
+    // The form always sends channels, so the plan's cut of them comes back.
+    return { checkInterval: saved.checkInterval, notificationChannels: saved.notificationChannels ?? args.notificationChannels };
   },
 });
+
+export async function updateCriteriaForUser(
+  ctx: MutationCtx,
+  userId: string,
+  group: Doc<"monitorGroups">,
+  args: Pick<Doc<"monitorGroups">, "alertOn" | "notificationChannels" | "checkInterval">
+) {
+  requireCriteria(args.alertOn);
+  const plan = await readPlan(ctx, userId);
+  const checkInterval = clampInterval(args.checkInterval, plan.tier);
+  // None set means every channel the plan allows, which each monitor already has.
+  const notificationChannels = args.notificationChannels && allowedChannels(plan, args.notificationChannels);
+  const monitors = await groupMonitors(ctx, group._id);
+  for (const m of monitors) {
+    const prompt = productPrompt(m.productTitle ?? m.name, args.alertOn);
+    await updateMonitorForUser(
+      ctx,
+      userId,
+      m._id,
+      {
+        alertOn: args.alertOn,
+        notificationChannels,
+        // Each is sent only when it changes: a new interval reschedules the
+        // check and resets its retries, and a new prompt re-arms error emails.
+        ...(m.checkInterval !== checkInterval ? { checkInterval } : {}),
+        ...(m.prompt !== prompt ? { prompt } : {}),
+      },
+      plan
+    );
+  }
+  await ctx.db.patch(group._id, {
+    alertOn: args.alertOn,
+    checkInterval,
+    notificationChannels,
+    updatedAt: Date.now(),
+  });
+  return { checkInterval, notificationChannels };
+}
 
 /**
  * Watch a suggested listing. The plan's monitor limit and the creation rate
@@ -387,16 +401,52 @@ export const setPaused = mutation({
   args: { id: v.id("monitorGroups"), paused: v.boolean() },
   handler: async (ctx, { id, paused }) => {
     const { userId, group } = await ownedGroup(ctx, id);
-    const plan = await readPlan(ctx, userId);
-    let changed = 0;
-    for (const m of await groupMonitors(ctx, group._id)) {
-      if ((m.status === "paused") === paused) continue;
-      await updateMonitorForUser(ctx, userId, m._id, { status: paused ? "paused" : "active" }, plan);
-      changed++;
-    }
-    return changed;
+    return setPausedForUser(ctx, userId, group._id, paused);
   },
 });
+
+export async function setPausedForUser(ctx: MutationCtx, userId: string, groupId: Id<"monitorGroups">, paused: boolean) {
+  const plan = await readPlan(ctx, userId);
+  let changed = 0;
+  for (const m of await groupMonitors(ctx, groupId)) {
+    if ((m.status === "paused") === paused) continue;
+    await updateMonitorForUser(ctx, userId, m._id, { status: paused ? "paused" : "active" }, plan);
+    changed++;
+  }
+  return changed;
+}
+
+/**
+ * Watch shop pages an agent picked as more of a product's listings, with its
+ * criteria. A page already in the product, compared as canonical URLs, is
+ * watched if it was a suggestion and left alone if it is watched already.
+ * The plan's monitor limits apply, and a throw adds none of them.
+ */
+export async function addListingsForUser(
+  ctx: MutationCtx,
+  user: { userId: string; userEmail: string | undefined },
+  groupId: Id<"monitorGroups">,
+  urls: string[]
+): Promise<void> {
+  const group = (await ctx.db.get(groupId))!;
+  const listings = [...group.listings];
+  for (const raw of urls) {
+    const refusal = listingRefusal(raw);
+    if (refusal) throw new ConvexError(refusal);
+    const listing = cleanListing({ site: displayHost(raw), url: raw, title: group.name, label: "same" }, group.name);
+    if (!listing) throw new ConvexError(`We can't watch the link from ${displayHost(raw)}.`);
+    const at = listings.findIndex((l) => canonicalUrl(l.url) === canonicalUrl(listing.url));
+    if (at !== -1 && listings[at]!.state === "watching") continue;
+    if (at === -1 && listings.length >= MAX_PRODUCT_LISTINGS) {
+      throw new ConvexError(`This product already has ${MAX_PRODUCT_LISTINGS} listings, the most it can hold.`);
+    }
+    const kept = { ...(at === -1 ? listing : listings[at]!), state: "watching" as const };
+    const watched = { ...kept, monitorId: await watchListingMonitor(ctx, user, group, kept) };
+    if (at === -1) listings.push(watched);
+    else listings[at] = watched;
+  }
+  await ctx.db.patch(groupId, { listings, updatedAt: Date.now() });
+}
 
 /**
  * Claim the product's one error alert for the cooldown. Null if another
@@ -436,6 +486,15 @@ export const remove = mutation({
 export const nameOf = internalQuery({
   args: { id: v.id("monitorGroups") },
   handler: async (ctx, { id }): Promise<string | null> => (await ctx.db.get(id))?.name ?? null,
+});
+
+/** How many of a product's listings are being read without error. */
+export const workingListings = internalQuery({
+  args: { id: v.id("monitorGroups") },
+  handler: async (ctx, { id }): Promise<number> => {
+    const monitors = await ctx.db.query("monitors").withIndex("by_groupId", (q) => q.eq("groupId", id)).collect();
+    return monitors.filter((m) => m.status === "active" || m.status === "scanning").length;
+  },
 });
 
 async function ownedBy(ctx: QueryCtx, userId: string, id: Id<"monitorGroups">) {
