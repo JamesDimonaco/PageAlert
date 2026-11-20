@@ -191,7 +191,9 @@ export async function scrapeUrl(
   try {
     const b = await getBrowser();
 
-    const context = await b.instance.newContext({ userAgent: b.userAgent, viewport: { width: 1920, height: 1080 } });
+    // Service workers are blocked because their requests never reach the
+    // route handler below, so one could call addresses it would refuse.
+    const context = await b.instance.newContext({ userAgent: b.userAgent, viewport: { width: 1920, height: 1080 }, serviceWorkers: "block" });
 
     const page = await context.newPage();
 
