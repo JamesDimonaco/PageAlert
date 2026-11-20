@@ -113,9 +113,10 @@ test("changing a monitor's URL forgets what was learned about the old page", asy
   const t = setup();
   const owner = await seedUser(t, "a@example.com");
   const id = await owner.mutation(api.monitors.create, MONITOR);
-  await t.run((ctx) => ctx.db.patch(id, { pageEntries: 40, proxyRescuedOnce: true }));
+  await t.run((ctx) => ctx.db.patch(id, { pageEntries: 40, wrongPageSince: Date.now(), proxyRescuedOnce: true }));
   await owner.mutation(api.monitors.update, { id, url: "https://other.example/page" });
   const monitor = await t.run((ctx) => ctx.db.get(id));
   expect(monitor?.pageEntries).toBeUndefined();
+  expect(monitor?.wrongPageSince).toBeUndefined();
   expect(monitor?.proxyRescuedOnce).toBeUndefined();
 });

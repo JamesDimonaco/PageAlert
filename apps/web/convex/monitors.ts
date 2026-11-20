@@ -636,6 +636,7 @@ export async function updateMonitorForUser(
   const urlChanged = fields.url !== undefined && fields.url.trim() !== existing.url;
   if (urlChanged) {
     updates.pageEntries = undefined;
+    updates.wrongPageSince = undefined;
     updates.lastSeen = undefined;
     updates.productFingerprint = undefined;
     // A new page is no longer the product's listing, so it leaves the

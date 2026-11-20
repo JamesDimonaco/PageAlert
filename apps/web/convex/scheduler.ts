@@ -31,6 +31,7 @@ import {
   isScraperUnreachable,
   scraperFailure,
   MAX_DEFERRED_CHECKS,
+  WRONG_PAGE_HOLD_MS,
   SCRAPER_UNREACHABLE_RETRY_MS,
   EMPTY_PAGE,
   alertsOnScore,
@@ -432,28 +433,35 @@ export const recordCheckResult = internalMutation({
     // A quick check that finds none of the entries the last one saw, on a
     // page under half its usual size, read the wrong page: a consent wall or
     // a soft block. Forgetting the entries there made each one "new" when
-    // the page came back: twelve false alerts in a fortnight. A page that
-    // kept its size and lost them is believed, and a later reappearance is a
-    // real event worth an alert.
-    const seen = new Set(monitor.candidateKeys);
-    const wrongPage =
-      seen.size > 0 &&
-      args.candidateKeys !== undefined &&
-      !args.candidateKeys.some((key) => seen.has(key)) &&
-      args.totalItems * 2 < (monitor.pageEntries ?? 0);
-    if (wrongPage) {
+    // the page came back: twelve false alerts in a fortnight. So the seen
+    // set is held, and what this read showed is added to it, until the page
+    // is its size again or has stayed small for WRONG_PAGE_HOLD_MS. A page
+    // that kept its size and lost them is believed at once, and a later
+    // reappearance is a real event worth an alert.
+    const seenBefore = monitor.candidateKeys ?? [];
+    const small =
+      args.candidateKeys !== undefined && seenBefore.length > 0 && args.totalItems * 2 < (monitor.pageEntries ?? 0);
+    const held =
+      small &&
+      (monitor.wrongPageSince === undefined
+        ? newMatchKeys(seenBefore, args.candidateKeys!).length === args.candidateKeys!.length
+        : now - monitor.wrongPageSince < WRONG_PAGE_HOLD_MS);
+    if (held) {
+      updates.candidateKeys = [...new Set([...seenBefore, ...args.candidateKeys!])];
       updates.matchCount = monitor.matchCount;
+      if (monitor.wrongPageSince === undefined) updates.wrongPageSince = now;
     } else if (args.candidateKeys) {
       updates.candidateKeys = args.candidateKeys;
       updates.pageEntries = args.totalItems;
+      if (monitor.wrongPageSince !== undefined) updates.wrongPageSince = undefined;
     }
-    if (args.candidatePrices && !wrongPage) {
+    if (args.candidatePrices && !held) {
       updates.candidatePrices = args.candidatePrices;
     }
-    if (args.soldOutKeys) {
+    if (args.soldOutKeys && !held) {
       updates.soldOutKeys = args.soldOutKeys;
     }
-    if (args.soldOutTextHashes) {
+    if (args.soldOutTextHashes && !held) {
       updates.soldOutTextHashes = args.soldOutTextHashes;
     }
 
@@ -477,9 +485,6 @@ export const recordCheckResult = internalMutation({
       if (product) newKeys = newKeys.filter((k) => k !== matchKey(product as Record<string, unknown>));
       updates.matchedKeys = [...new Set(currentKeys.filter(Boolean))];
       updates.passedKeys = updates.matchedKeys;
-      // The AI has read the page as it now is, so the next quick check
-      // learns its size afresh. A page that shrank for good is believed then.
-      updates.pageEntries = undefined;
       // What this read counts as a match is seen by the quick checks too, or
       // the next one finds it new and announces it a second time. Only onto a
       // baseline that exists: with none, the next quick check seeds one silently.
@@ -1127,8 +1132,9 @@ async function runQuickCheck(
   }
 
   // Cheap short-circuit: content identical to the last scan — record the
-  // check happened and stop. No result row, no match notifications.
-  if (contentHash && monitor.contentFingerprint && contentHash === monitor.contentFingerprint) {
+  // check happened and stop. No result row, no match notifications. Not
+  // while a wrong-page hold runs: that has to see each read to end.
+  if (contentHash && monitor.contentFingerprint && contentHash === monitor.contentFingerprint && monitor.wrongPageSince === undefined) {
     await ctx.runMutation(internal.scheduler.recordCheckResult, {
       monitorId: monitor._id,
       hasNewMatches: false,

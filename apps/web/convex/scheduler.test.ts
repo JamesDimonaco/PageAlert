@@ -296,6 +296,7 @@ test("a price alert names the old and new price in the product's currency", asyn
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
+  vi.restoreAllMocks();
 });
 
 type Stock = { inStock: boolean | null; price: number | null; currency: string | null };
@@ -1228,11 +1229,16 @@ describe("price history", () => {
  * consent wall or soft block leaves it: accessible, with one entry and none
  * of the listings. A number is a page of that many entries, none of them the
  * listings. "wall+junk" is a wall whose one entry gets past the keyword
- * filter. "same" is the previous page again, byte for byte.
+ * filter. "small+new" is 5 entries, one of them a job not seen before, and
+ * "small+known" is 5 with one of the two known jobs. "same" is the previous
+ * page again, byte for byte. `wait` moves the clock on.
  */
-async function listingAcross(pages: ("full" | "wall" | "wall+junk" | "same" | "full+new" | number)[], pageEntries: number | null = 11) {
+async function listingAcross(pages: ("full" | "wall" | "wall+junk" | "small+new" | "small+known" | "same" | "full+new" | number)[], pageEntries: number | null = 11) {
   vi.stubEnv("SCRAPER_URL", "https://scraper.test");
   vi.stubEnv("SCRAPER_API_KEY", "key");
+  const realNow = Date.now;
+  let ahead = 0;
+  vi.spyOn(Date, "now").mockImplementation(() => realNow() + ahead);
   const job = (slug: string) => ({ title: `Engineer, ${slug}`, url: `https://jobs.test/${slug}`, price: null, snippet: "London" });
   const known = [job("a"), job("b")];
   let checkNo = 0;
@@ -1242,15 +1248,12 @@ async function listingAcross(pages: ("full" | "wall" | "wall+junk" | "same" | "f
     if (url.endsWith("/api/quick-check")) {
       const page = pages[Math.min(checkNo++, pages.length - 1)]!;
       if (page !== "same") {
-        const candidates = page === "full" ? known : page === "full+new" ? [...known, job("c")] : page === "wall+junk" ? [job("cookies")] : [];
-        last = { contentHash: `${page}-${checkNo}`, candidates, totalEntries: typeof page === "number" ? page : page.startsWith("wall") ? 1 : 11 };
+        const candidates =
+          page === "full" ? known : page === "full+new" ? [...known, job("c")] : page === "wall+junk" ? [job("cookies")] : page === "small+new" ? [job("c")] : page === "small+known" ? [job("a")] : [];
+        const totalEntries = typeof page === "number" ? page : page.startsWith("wall") ? 1 : page.startsWith("small") ? 5 : 11;
+        last = { contentHash: `${page}-${checkNo}`, candidates, totalEntries };
       }
       return Response.json({ accessible: true, ...last });
-    }
-    if (url.endsWith("/api/extract")) {
-      // The AI reads the page as it now is: other entries, none of them the listings.
-      const items = Array.from({ length: last.totalEntries }, (_, i) => ({ title: `Designer, ${i}`, url: `https://jobs.test/d${i}` }));
-      return Response.json({ schema: { items, matchConditions: { mustInclude: ["Engineer"] } }, matches: [], totalItems: items.length, contentHash: last.contentHash });
     }
     if (url.endsWith("/api/score")) {
       const sent = (JSON.parse(String(init?.body)) as { candidates: { title: string }[] }).candidates;
@@ -1272,14 +1275,18 @@ async function listingAcross(pages: ("full" | "wall" | "wall+junk" | "same" | "f
       lastAiExtractAt: Date.now(), createdAt: Date.now(), updatedAt: Date.now(),
     })
   );
-  /** `fullRead` makes this check the AI's periodic re-read of the page. */
-  const check = async ({ fullRead = false } = {}) => {
-    await t.run((ctx) => ctx.db.patch(id, { nextCheckAt: 0, lastAiExtractAt: fullRead ? 0 : Date.now() }));
+  const check = async () => {
+    await t.run((ctx) => ctx.db.patch(id, { nextCheckAt: 0 }));
     await t.action(internal.scheduler.runScheduledChecks, {});
     return t.run((ctx) => ctx.db.get(id));
   };
-  return { check, scoredTitles };
+  const wait = (ms: number) => {
+    ahead += ms;
+  };
+  return { t, id, check, wait, scoredTitles };
 }
+
+const HOUR = 3_600_000;
 
 // Prod, 7 to 19/11/2026: twelve false alerts in two weeks. A careers page of
 // 11 entries read as 1 for a single check and then came back, and its owner
@@ -1336,24 +1343,63 @@ describe("a page that comes back as a fraction of itself, with none of its listi
 
   // With loose conditions the wall's own entry gets past the keyword filter.
   // One stranger on a page a fraction of its size is still the wrong page.
+  // It is judged once and remembered, so a second wall does not pay for it
+  // again, and knowing it must not make the second wall look like the page.
   test("holds when the wall's one entry reads as a candidate", async () => {
-    const { check, scoredTitles } = await listingAcross(["wall+junk", "full"]);
-    const duringWall = await check();
-    expect(duringWall?.candidateKeys).toEqual(["jobs.test/a", "jobs.test/b"]);
-    expect(duringWall?.pageEntries).toBe(11);
+    const { check, scoredTitles } = await listingAcross(["wall+junk", "wall+junk", "full"]);
+    await check();
+    const secondWall = await check();
+    expect(secondWall?.candidateKeys).toEqual(expect.arrayContaining(["jobs.test/a", "jobs.test/b"]));
+    expect(secondWall?.pageEntries).toBe(11);
     expect((await check())?.lastMatchAt).toBeUndefined();
     expect(scoredTitles).toEqual([["Engineer, cookies"]]);
   });
 
-  // A page can shrink for good. Held without end, the dashboard would show
-  // the old match count for ever, so the AI's full read settles it.
-  test("lets the AI's full read settle a page that stays small", async () => {
-    const { check } = await listingAcross([5, 4, 3]);
-    expect((await check())?.matchCount).toBe(2);
-    expect((await check({ fullRead: true }))?.matchCount).toBe(0);
+  // A small page that still shows a known listing is the page itself.
+  test("believes a page that shrank but still shows a listing it knew", async () => {
+    const { check } = await listingAcross(["small+known"]);
     const after = await check();
-    expect(after?.candidateKeys).toEqual([]);
-    expect(after?.pageEntries).toBe(3);
+    expect(after?.candidateKeys).toEqual(["jobs.test/a"]);
+    expect(after?.pageEntries).toBe(5);
+    expect(after?.wrongPageSince).toBeUndefined();
+  });
+
+  // A page can shrink for real and gain a listing in the same change.
+  test("announces a new listing on a held page once, not on every check", async () => {
+    const { check, scoredTitles } = await listingAcross(["small+new", "small+new", "small+new"]);
+    expect((await check())?.lastMatchAt).toBeDefined();
+    await check();
+    await check();
+    expect(scoredTitles).toEqual([["Engineer, c"]]);
+  });
+
+  // A page can shrink for good: every vacancy filled. Held without end, the
+  // dashboard would show the old count for ever and a relisting would never
+  // alert. Prod walls ran one to five hours, so a day settles it. The page
+  // sits unchanged here, as a "no vacancies" page does.
+  test("believes a page that is still small a day later", async () => {
+    const { check, wait } = await listingAcross([5, "same", "same"]);
+    expect((await check())?.matchCount).toBe(2);
+    wait(24 * HOUR - 60_000);
+    expect((await check())?.candidateKeys).toEqual(["jobs.test/a", "jobs.test/b"]);
+    wait(60_000);
+    const settled = await check();
+    expect(settled?.candidateKeys).toEqual([]);
+    expect(settled?.matchCount).toBe(0);
+    expect(settled?.pageEntries).toBe(5);
+  });
+
+  // The wall holds none of the sold-out entries waiting for a restock. Dropped
+  // from that list they would never be looked at again.
+  test("keeps the sold-out entries waiting for a restock", async () => {
+    const { t, id } = await listingAcross([]);
+    await t.run((ctx) => ctx.db.patch(id, { soldOutKeys: ["jobs.test/b"], soldOutTextHashes: ["h1"] }));
+    await t.mutation(internal.scheduler.recordCheckResult, {
+      monitorId: id, hasNewMatches: false, matchCount: 0, totalItems: 1, matches: [], candidateKeys: [], soldOutKeys: [], soldOutTextHashes: [],
+    });
+    const monitor = await t.run((ctx) => ctx.db.get(id));
+    expect(monitor?.soldOutKeys).toEqual(["jobs.test/b"]);
+    expect(monitor?.soldOutTextHashes).toEqual(["h1"]);
   });
 
   test.each([

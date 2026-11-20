@@ -194,6 +194,13 @@ export function isScraperUnreachable(message: string): boolean {
   return message.startsWith(SCRAPER_UNREACHABLE) || /^(error sending request|fetch failed)/i.test(message);
 }
 
+/**
+ * How long a page may stay a fraction of its size before that is believed.
+ * Prod walls ran one to five hours. A page that shrank for good, every
+ * vacancy filled, must not keep its old match count for ever.
+ */
+export const WRONG_PAGE_HOLD_MS = 24 * 60 * 60_000;
+
 /** How long a check waits when it could not reach the scraper. Longer than a redeploy takes. */
 export const SCRAPER_UNREACHABLE_RETRY_MS = 5 * 60_000;
 
