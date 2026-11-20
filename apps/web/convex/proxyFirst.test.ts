@@ -119,12 +119,16 @@ test("a direct read between two rescues starts the count again", async () => {
   expect((await proxyRescue(t, id, EMPTY)).proxyPreferred).not.toBe(true);
 });
 
-// A page that is down is also empty, and the proxy cannot fix that. Two paid
-// attempts on the retry ladder is the whole budget: the 6-hourly recovery
-// lane goes back to free direct fetches.
-test("an empty page is not sent to the proxy on the recovery lane", async () => {
+// A page that is down is also empty, and the proxy cannot fix that. One paid
+// attempt is the whole budget: if the proxy saw an empty page too, the later
+// retries and the 6-hourly recovery lane go back to free direct fetches.
+test.each([
+  ["on the second retry", { retryCount: 2 }],
+  ["on the recovery lane", { status: "error" as const, retryCount: MAX_RETRIES }],
+])("an empty page is not sent to the proxy %s", async (_name, state) => {
   const t = setup();
-  await insert(t, "https://shop.test/empty", { status: "error", retryCount: MAX_RETRIES, lastError: EMPTY });
+  // Free tier: a paid one makes its second retry a forced AI read, not a quick check.
+  await insert(t, "https://shop.test/empty", { ...state, lastError: EMPTY });
   const bodies = await quickCheckBodies(t);
   expect(bodies[0]?.url).toBe("https://shop.test/empty");
   expect(bodies[0]?.useProxy).toBeUndefined();

@@ -32,7 +32,6 @@ import {
   scraperFailure,
   MAX_DEFERRED_CHECKS,
   SCRAPER_UNREACHABLE_RETRY_MS,
-  CANDIDATE_MISS_GRACE_MS,
   EMPTY_PAGE,
   alertsOnScore,
   canonicalUrl,
@@ -252,8 +251,6 @@ export const recordCheckResult = internalMutation({
     }
 
     const now = Date.now();
-    // Any recorded outcome ends a run of checks put off for our own outage.
-    if (monitor.deferredChecks !== undefined) await ctx.db.patch(args.monitorId, { deferredChecks: undefined });
     // Backfills rows older than the field on their next check, pass or fail,
     // so the known-host lookup in monitors.claimFirstScanProxy can see them.
     const hostStamp = monitor.host === undefined ? { host: displayHost(monitor.url) } : {};
@@ -367,6 +364,7 @@ export const recordCheckResult = internalMutation({
     if (nextProxyPreferred !== monitor.proxyPreferred) {
       updates.proxyPreferred = nextProxyPreferred;
     }
+    if (monitor.deferredChecks !== undefined) updates.deferredChecks = undefined;
     if (softRescue && !nextProxyPreferred) {
       updates.proxyRescuedOnce = true;
     } else if (args.usedProxy !== undefined && monitor.proxyRescuedOnce !== undefined) {
@@ -431,35 +429,23 @@ export const recordCheckResult = internalMutation({
     // here because this is the last point that still holds the pre-check
     // monitor doc.
     let newKeys: string[] = [];
-    // An extract that saw no items at all is a render that went wrong, not a
-    // page that emptied. Keeping the old baseline there stops the items coming
-    // back as "12 new matches" the user has already been told about. A page
-    // that genuinely holds items but matches none of them does clear it, and
-    // a later reappearance is a real event worth an alert.
-    // A read with none of the entries the last check saw is more often the
-    // wrong page than every listing leaving at once. Forgetting them on it
-    // made each one "new" when the page came back: twelve false alerts in a
-    // fortnight. A wall can last several checks and look the same each time,
-    // so neither a second miss nor an unchanged page confirms it. Only time
-    // does. Any other read, the AI's full one included, ends the wait.
-    const missedAt = monitor.candidatesMissedAt;
-    const missing =
-      ((monitor.candidateKeys?.length ?? 0) > 0 && args.candidateKeys?.length === 0) ||
-      (args.unchanged === true && missedAt !== undefined);
-    if (missing && now - (missedAt ?? now) < CANDIDATE_MISS_GRACE_MS) {
-      if (missedAt === undefined) updates.candidatesMissedAt = now;
+    // A quick check that finds none of the entries the last one saw, on a
+    // page under half its usual size, read the wrong page: a consent wall or
+    // a soft block. Forgetting the entries there made each one "new" when
+    // the page came back: twelve false alerts in a fortnight. A page that
+    // kept its size and lost them is believed, and a later reappearance is a
+    // real event worth an alert.
+    const wrongPage =
+      (monitor.candidateKeys?.length ?? 0) > 0 &&
+      args.candidateKeys?.length === 0 &&
+      args.totalItems * 2 < (monitor.pageEntries ?? 0);
+    if (wrongPage) {
       updates.matchCount = monitor.matchCount;
-    } else {
-      if (missing) {
-        updates.candidateKeys = [];
-        updates.candidatePrices = [];
-        updates.matchCount = 0;
-      } else if (args.candidateKeys) {
-        updates.candidateKeys = args.candidateKeys;
-      }
-      if (missedAt !== undefined) updates.candidatesMissedAt = undefined;
+    } else if (args.candidateKeys) {
+      updates.candidateKeys = args.candidateKeys;
+      updates.pageEntries = args.totalItems;
     }
-    if (args.candidatePrices && !missing) {
+    if (args.candidatePrices && !wrongPage) {
       updates.candidatePrices = args.candidatePrices;
     }
     if (args.soldOutKeys) {
@@ -469,6 +455,10 @@ export const recordCheckResult = internalMutation({
       updates.soldOutTextHashes = args.soldOutTextHashes;
     }
 
+    // An extract that saw no items at all is a render that went wrong, not a
+    // page that emptied. Keeping the old baseline there stops the items coming
+    // back as "12 new matches" the user has already been told about. A page
+    // that genuinely holds items but matches none of them does clear it.
     if (args.trackMatchKeys && (args.matches.length > 0 || args.totalItems > 0)) {
       const currentKeys = (args.matches as Record<string, unknown>[]).map(matchKey);
       newKeys = newMatchKeys(monitor.matchedKeys, currentKeys);
@@ -608,8 +598,8 @@ export const runScheduledChecks = internalAction({
         // blocks us, so the retry that confirms it goes the same way.
         const lastGone = isPageGoneError(monitor.lastError ?? "");
         // An empty page may be a site that is down, which no proxy fixes, so
-        // it gets the retry ladder's attempts and not the recovery lane's.
-        const lastEmpty = isEmptyPageError(monitor.lastError ?? "") && retryCount < MAX_RETRIES;
+        // it gets one paid attempt and no more.
+        const lastEmpty = isEmptyPageError(monitor.lastError ?? "") && retryCount === 1;
         const wantProxy =
           proxyFirst ||
           (monitor.proxyPreferred === true && !reprobeDirect) ||

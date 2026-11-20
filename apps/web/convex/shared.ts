@@ -194,20 +194,14 @@ export function isScraperUnreachable(message: string): boolean {
   return message.startsWith(SCRAPER_UNREACHABLE) || /error sending request|fetch failed/i.test(message);
 }
 
-/**
- * How long a page must read as empty of the listings we knew before we
- * believe it. Prod blips ran one to two hours. A day also covers three
- * checks on the proxy's 6-hour floor.
- */
-export const CANDIDATE_MISS_GRACE_MS = 24 * 60 * 60_000;
-
 /** How long a check waits when it could not reach the scraper. Longer than a redeploy takes. */
 export const SCRAPER_UNREACHABLE_RETRY_MS = 5 * 60_000;
 
 /**
- * How many times running a check is put off before it counts as a failure.
- * Half an hour covers a redeploy. A page that crashes the scraper gets the
- * same answer for good, and has to reach the retry ladder like any other.
+ * How many checks a monitor has put off before the next one counts as a
+ * failure. Half an hour covers a redeploy. A page that crashes the scraper
+ * gets the same answer for good, and has to climb the retry ladder like any
+ * other, so only a check that works starts the count again.
  */
 export const MAX_DEFERRED_CHECKS = 6;
 

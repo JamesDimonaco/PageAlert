@@ -296,7 +296,6 @@ test("a price alert names the old and new price in the product's currency", asyn
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
-  vi.restoreAllMocks();
 });
 
 type Stock = { inStock: boolean | null; price: number | null; currency: string | null };
@@ -1225,30 +1224,27 @@ describe("price history", () => {
 
 /**
  * A listing monitor that has already told its owner about two jobs, on a page
- * that reads as each of `pages` in turn. "blip" is the page as a consent wall
- * or soft block leaves it: accessible, but with none of the listings on it.
- * "same" is the previous page again, byte for byte. `wait` moves the clock on.
+ * of 11 entries that reads as each of `pages` in turn. "wall" is the page as a
+ * consent wall or soft block leaves it: accessible, with one entry and none
+ * of the listings. A number is a page of that many entries, none of them the
+ * listings. "same" is the previous page again, byte for byte.
  */
-async function listingAcross(pages: ("full" | "blip" | "same" | "full+new")[]) {
+async function listingAcross(pages: ("full" | "wall" | "same" | "full+new" | number)[], pageEntries: number | null = 11) {
   vi.stubEnv("SCRAPER_URL", "https://scraper.test");
   vi.stubEnv("SCRAPER_API_KEY", "key");
-  const realNow = Date.now;
-  let ahead = 0;
-  vi.spyOn(Date, "now").mockImplementation(() => realNow() + ahead);
   const job = (slug: string) => ({ title: `Engineer, ${slug}`, url: `https://jobs.test/${slug}`, price: null, snippet: "London" });
   const known = [job("a"), job("b")];
   let checkNo = 0;
-  let lastHash = "";
+  let last = { contentHash: "", candidates: known, totalEntries: 11 };
   const scoredTitles: string[][] = [];
   vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
     if (url.endsWith("/api/quick-check")) {
       const page = pages[Math.min(checkNo++, pages.length - 1)]!;
-      if (page !== "same") lastHash = `${page}-${checkNo}`;
-      const candidates = page === "blip" || page === "same" ? [] : page === "full+new" ? [...known, job("c")] : known;
-      return Response.json({ accessible: true, contentHash: lastHash, candidates, totalEntries: candidates.length === 0 ? 1 : 11 });
-    }
-    if (url.endsWith("/api/extract")) {
-      return Response.json({ schema: { items: known, matchConditions: { mustInclude: ["Engineer"] } }, matches: known, totalItems: 2, contentHash: lastHash });
+      if (page !== "same") {
+        const candidates = page === "full" ? known : page === "full+new" ? [...known, job("c")] : [];
+        last = { contentHash: `${page}-${checkNo}`, candidates, totalEntries: page === "wall" ? 1 : typeof page === "number" ? page : 11 };
+      }
+      return Response.json({ accessible: true, ...last });
     }
     if (url.endsWith("/api/score")) {
       const sent = (JSON.parse(String(init?.body)) as { candidates: { title: string }[] }).candidates;
@@ -1265,36 +1261,31 @@ async function listingAcross(pages: ("full" | "blip" | "same" | "full+new")[]) {
     ctx.db.insert("monitors", {
       userId: "user_1", name: "Meta", url: "https://jobs.test/search", prompt: "engineering jobs in London", status: "active",
       checkInterval: "1h", schema: { items: [], matchConditions: { mustInclude: ["Engineer"] } }, matchCount: 2,
-      candidateKeys: keys, passedKeys: keys, matchedKeys: keys, checkCount: 5, contentFingerprint: "page-0",
+      candidateKeys: keys, passedKeys: keys, matchedKeys: keys, checkCount: 5, contentFingerprint: "page-0", ...(pageEntries === null ? {} : { pageEntries }),
       lastAiExtractAt: Date.now(), createdAt: Date.now(), updatedAt: Date.now(),
     })
   );
-  /** `fullRead` makes this check the AI's periodic re-read of the page. */
-  const check = async ({ fullRead = false } = {}) => {
-    await t.run((ctx) => ctx.db.patch(id, { nextCheckAt: 0, lastAiExtractAt: fullRead ? 0 : Date.now() }));
+  const check = async () => {
+    await t.run((ctx) => ctx.db.patch(id, { nextCheckAt: 0 }));
     await t.action(internal.scheduler.runScheduledChecks, {});
     return t.run((ctx) => ctx.db.get(id));
   };
-  const wait = (ms: number) => {
-    ahead += ms;
-  };
-  return { check, wait, scoredTitles };
+  return { check, scoredTitles };
 }
 
-const HOUR = 3_600_000;
-
-// Prod, 7 to 19/11/2026: twelve false alerts in two weeks. A careers page read
-// as one entry for a single check and then came back, and its owner was told
-// "6 new matches" about six jobs they had known of for days. Four times. An
-// Instagram monitor sent "12 new matches" four times in two days.
-describe("a page that reads as empty of listings for a while", () => {
+// Prod, 7 to 19/11/2026: twelve false alerts in two weeks. A careers page of
+// 11 entries read as 1 for a single check and then came back, and its owner
+// was told "6 new matches" about six jobs they had known of for days. Four
+// times. An Instagram page went from 16 entries to 2 and sent "12 new
+// matches" four times in two days. Another went from 245 to 1 fifty times.
+describe("a page that comes back as a fraction of itself, with none of its listings", () => {
   test("does not announce its listings again when they come back", async () => {
-    const { check, scoredTitles } = await listingAcross(["blip", "full"]);
+    const { check, scoredTitles } = await listingAcross(["wall", "full"]);
 
-    const duringBlip = await check();
-    expect(duringBlip?.candidateKeys).toEqual(["jobs.test/a", "jobs.test/b"]);
+    const duringWall = await check();
+    expect(duringWall?.candidateKeys).toEqual(["jobs.test/a", "jobs.test/b"]);
     // The dashboard must not say "0 matches" on the strength of a bad read.
-    expect(duringBlip?.matchCount).toBe(2);
+    expect(duringWall?.matchCount).toBe(2);
 
     const after = await check();
     expect(after?.lastMatchAt).toBeUndefined();
@@ -1302,80 +1293,45 @@ describe("a page that reads as empty of listings for a while", () => {
   });
 
   test("still announces a listing that arrived while the page was misread", async () => {
-    const { check, scoredTitles } = await listingAcross(["blip", "full+new"]);
+    const { check, scoredTitles } = await listingAcross(["wall", "full+new"]);
     await check();
     expect((await check())?.lastMatchAt).toBeDefined();
     expect(scoredTitles).toEqual([["Engineer, c"]]);
   });
 
-  // Prod, 17/11/2026: the Instagram page was a wall for two hourly checks, and
-  // the second saw the same bytes as the first. A wall looks the same twice.
-  test("holds through a wall that is still there, unchanged, on the next check", async () => {
-    const { check, wait, scoredTitles } = await listingAcross(["blip", "same", "full"]);
-    await check();
-    wait(HOUR);
-    expect((await check())?.candidateKeys).toEqual(["jobs.test/a", "jobs.test/b"]);
-    wait(HOUR);
-    expect((await check())?.lastMatchAt).toBeUndefined();
+  // Prod, 17/11/2026: the Instagram page was a wall for two hourly checks.
+  // The second wall must be measured against the real page, not the first wall.
+  test("holds for as long as the wall lasts, the same bytes or not", async () => {
+    const { check, scoredTitles } = await listingAcross(["wall", "same", "wall", "wall", "full"]);
+    for (let i = 0; i < 5; i++) await check();
     expect(scoredTitles).toEqual([]);
   });
 
-  test("holds through a wall that reads differently on each check", async () => {
-    const { check, wait, scoredTitles } = await listingAcross(["blip", "blip", "blip", "full"]);
-    for (let i = 0; i < 4; i++) {
-      await check();
-      wait(HOUR);
-    }
-    expect(scoredTitles).toEqual([]);
+  test("learns how many entries the page holds from reading it", async () => {
+    const { check, scoredTitles } = await listingAcross(["full+new", "wall", "full+new"], null);
+    await check();
+    expect((await check())?.candidateKeys).toHaveLength(3);
+    await check();
+    expect(scoredTitles).toEqual([["Engineer, c"]]);
   });
 
-  // Listings do leave and come back, and that return is worth an alert. A
-  // page still without them a day later is the page's real state.
-  test("forgets the listings once the page has been without them for a day", async () => {
-    const { check, wait, scoredTitles } = await listingAcross(["blip", "blip", "blip", "full"]);
-    await check();
-    wait(24 * HOUR - 60_000);
-    expect((await check())?.candidateKeys).toEqual(["jobs.test/a", "jobs.test/b"]);
-    wait(60_000);
-    const dayLater = await check();
-    expect(dayLater?.candidateKeys).toEqual([]);
-    expect(dayLater?.matchCount).toBe(0);
+  // A page that still holds its other entries has not gone wrong: the
+  // listings left it. When one comes back, that is news.
+  test("believes a page that kept its size and lost the listings", async () => {
+    const { check, scoredTitles } = await listingAcross([11, "full"]);
+    const emptied = await check();
+    expect(emptied?.candidateKeys).toEqual([]);
+    expect(emptied?.matchCount).toBe(0);
     expect((await check())?.lastMatchAt).toBeDefined();
     expect(scoredTitles).toEqual([["Engineer, a", "Engineer, b"]]);
   });
 
-  // An emptied page that then sits unchanged never reaches the code that
-  // compares listings. It must count all the same, or the listings would be
-  // remembered for good and their return never announced.
-  test("forgets them too when the empty page has sat unchanged for a day", async () => {
-    const { check, wait } = await listingAcross(["blip", "same", "full"]);
-    await check();
-    wait(24 * HOUR);
-    expect((await check())?.candidateKeys).toEqual([]);
-    expect((await check())?.lastMatchAt).toBeDefined();
-  });
-
-  test("a read that finds the listings again starts the day over", async () => {
-    const { check, wait, scoredTitles } = await listingAcross(["blip", "full", "blip", "full"]);
-    await check();
-    await check();
-    wait(24 * HOUR);
-    expect((await check())?.candidateKeys).toEqual(["jobs.test/a", "jobs.test/b"]);
-    await check();
-    expect(scoredTitles).toEqual([]);
-  });
-
-  // The AI's full read does not compare listings either. If the miss before
-  // it were still on record, the good page it left behind, read unchanged a
-  // day later, would count as "still empty" and wipe what the owner has seen.
-  test("a full read of the page as it should be ends the wait", async () => {
-    const { check, wait, scoredTitles } = await listingAcross(["blip", "full", "same", "full"]);
-    await check();
-    await check({ fullRead: true });
-    wait(24 * HOUR);
-    expect((await check())?.candidateKeys).toEqual(["jobs.test/a", "jobs.test/b"]);
-    await check();
-    expect(scoredTitles).toEqual([]);
+  test.each([
+    [5, "held", ["jobs.test/a", "jobs.test/b"]],
+    [6, "believed", []],
+  ])("under half the entries is a wrong page: %i of 11 is %s", async (entries, _verdict, expected) => {
+    const { check } = await listingAcross([entries]);
+    expect((await check())?.candidateKeys).toEqual(expected);
   });
 });
 
@@ -1487,11 +1443,19 @@ describe("a check that never reached the scraper", () => {
     expect(monitor.deferredChecks).toBe(6);
   });
 
-  test("counts as a failure after that, and the count starts again", async () => {
+  // The count stays, so every answer like it counts from here on, as it
+  // did before checks were put off at all.
+  test("counts as a failure after that, and goes on counting", async () => {
     const { monitor, logs } = await checkAgainst(down, { deferredChecks: 6 });
     expect(monitor.retryCount).toBe(3);
     expect(monitor.status).toBe("error");
-    expect(monitor.deferredChecks).toBeUndefined();
+    expect(monitor.deferredChecks).toBe(6);
     expect(logs).toHaveLength(1);
+  });
+
+  test("a check that works starts the count again", async () => {
+    const { monitor } = await checkAgainst(async () => Response.json({ accessible: true, contentHash: "page-1", candidates: [], totalEntries: 3 }), { deferredChecks: 6 });
+    expect(monitor.retryCount).toBe(0);
+    expect(monitor.deferredChecks).toBeUndefined();
   });
 });

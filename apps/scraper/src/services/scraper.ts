@@ -204,8 +204,9 @@ export async function scrapeUrl(
       }
     });
 
-    // One lookup per host per scrape: a page asks the same few hosts for everything.
-    const privateHosts = new Map<string, Promise<boolean>>();
+    // One lookup per host per scrape: a page asks the same few hosts for
+    // everything. The host of `url` passed the check above a moment ago.
+    const privateHosts = new Map<string, Promise<boolean>>([[new URL(url).hostname, Promise.resolve(false)]]);
     const isPrivateHost = (host: string): Promise<boolean> => {
       let verdict = privateHosts.get(host);
       if (!verdict) privateHosts.set(host, (verdict = resolvesToPrivate(host)));
@@ -222,13 +223,13 @@ export async function scrapeUrl(
         if (!["http:", "https:"].includes(parsedUrl.protocol)) {
           return route.abort();
         }
+        // Block heavy resources that slow things down and aren't needed for content
+        if (BLOCKED_EXTENSIONS.test(parsedUrl.pathname)) {
+          return route.abort();
+        }
         // A public page can redirect to, or load from, an address inside our
         // network. The check before the scrape saw only the first URL.
         if (await isPrivateHost(parsedUrl.hostname)) {
-          return route.abort();
-        }
-        // Block heavy resources that slow things down and aren't needed for content
-        if (BLOCKED_EXTENSIONS.test(parsedUrl.pathname)) {
           return route.abort();
         }
       } catch {
@@ -280,15 +281,17 @@ export async function scrapeUrl(
         ? { blocked: false as const }
         : blockedByStatus(documentStatus) ?? await detectAntiBot(page);
 
-      // The route handler above never sees a redirect's later hops: the
-      // browser follows those itself. So the page we ended on is checked
-      // too, and one inside our network is not read out.
-      if (unblockedHtml === null && (await isPrivateHost(new URL(page.url()).hostname))) {
-        throw new Error("URL resolves to a private/internal IP address");
-      }
-
       const html = await getCleanHtml(page);
       const text = await getTextWithLinks(page);
+
+      // The route handler above never sees a redirect's later hops: the
+      // browser follows those itself. So the page we ended on is checked
+      // too, and one inside our network is not handed back. After the reads,
+      // so a redirect that lands while they run is caught as well.
+      const landed = new URL(page.url());
+      if (landed.protocol.startsWith("http") && (await isPrivateHost(landed.hostname))) {
+        throw new Error("URL resolves to a private/internal IP address");
+      }
 
       // Enforce max response size
       if (html.length > MAX_RESPONSE_SIZE || text.length > MAX_RESPONSE_SIZE) {

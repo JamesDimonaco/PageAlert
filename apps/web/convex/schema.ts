@@ -93,10 +93,10 @@ export default defineSchema({
     // still remembered as seen — otherwise it reads as new every check and
     // buys another scoring call forever.
     candidateKeys: v.optional(v.array(v.string())),
-    // When a check first found none of the entries the one before it had.
-    // That is usually the wrong page (a consent wall, a soft block), so the
-    // seen set is held until the page has been without them for a day.
-    candidatesMissedAt: v.optional(v.number()),
+    // How many entries the page held at the last quick check that was
+    // believed. A read with under half of them and none of candidateKeys is
+    // the wrong page (a consent wall, a soft block), and changes neither.
+    pageEntries: v.optional(v.number()),
     // Entries the AI passed as matches: by the first scan, the last full read,
     // or a quick check since. Unlike matchedKeys, a first scan sets it rather
     // than clearing it. It is what matchCount counts.
