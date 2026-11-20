@@ -8,7 +8,11 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 vi.setConfig({ testTimeout: 30_000 });
 
 // The SSRF guard rejects loopback, which is the only place a test server can live.
-vi.mock("../utils/url-validation.js", () => ({ validateUrlForScraping: async () => {} }));
+// "localhost" stands in for an internal host: the same server under a name the mock calls private.
+vi.mock("../utils/url-validation.js", () => ({
+  validateUrlForScraping: async () => {},
+  resolvesToPrivate: async (host: string) => host === "localhost",
+}));
 
 const { scrapeUrl } = await import("./scraper.js");
 
@@ -18,6 +22,7 @@ const FILLER = "Listing results for your search. ".repeat(10);
 
 let server: Server;
 let base: string;
+let internalHits = 0;
 
 beforeAll(async () => {
   server = createServer((req, res) => {
@@ -42,8 +47,36 @@ beforeAll(async () => {
         + `<form><p>This site is protected by reCAPTCHA.</p></form><script>window.grecaptchaSiteKey = "x";</script>`));
       return;
     }
+    if (path === "/cookie-banner") {
+      res.end(html(`<div>We use cookies. Please enable cookies in your browser for the best experience.</div><p>${FILLER.repeat(20)}</p>`));
+      return;
+    }
+    if (path === "/cookie-wall") {
+      res.end(html(`<p>Please enable cookies to continue.</p>`));
+      return;
+    }
     if (path === "/amazon-captcha") {
       res.end(html(`<form action="/errors/validateCaptcha"><p>Type the characters you see in this image.</p></form>`));
+      return;
+    }
+    if (path === "/redirect-inside") {
+      res.statusCode = 302;
+      res.setHeader("location", `http://localhost:${(server.address() as AddressInfo).port}/internal`);
+      res.end();
+      return;
+    }
+    if (path === "/internal") {
+      res.end(html(`<p>INTERNAL ADMIN TOKEN 12345</p><p>${FILLER}</p>`));
+      return;
+    }
+    if (path === "/loads-inside") {
+      res.end(html(`<p>${FILLER}</p><iframe src="http://localhost:${(server.address() as AddressInfo).port}/internal"></iframe>`
+        + `<script>fetch("http://localhost:${(server.address() as AddressInfo).port}/hit").catch(() => {})</script>`));
+      return;
+    }
+    if (path === "/hit") {
+      internalHits++;
+      res.end("ok");
       return;
     }
     // A WAF that hangs up instead of answering
@@ -154,6 +187,19 @@ describe("scrapeUrl block detection by page content", () => {
     expect(result.blocked).toBeUndefined();
   });
 
+  // A cookie banner says "enable cookies" on a page that is otherwise all
+  // there. Read as a block, it sent a working monitor to the proxy.
+  it("does not flag a full page whose cookie banner asks to enable cookies", async () => {
+    const result = await scrapeUrl(`${base}/cookie-banner`);
+    expect(result.blocked).toBeUndefined();
+  });
+
+  it("flags a page that is nothing but a demand to enable cookies", async () => {
+    const result = await scrapeUrl(`${base}/cookie-wall`);
+    expect(result.blocked).toBe(true);
+    expect(result.blockReason).toBe("Cookies required");
+  }, 60_000);
+
   // Longer timeout: a near-empty page waits out the scraper's 15s render wait
   it("flags Amazon's captcha page", async () => {
     const result = await scrapeUrl(`${base}/amazon-captcha`);
@@ -204,5 +250,21 @@ describe("scrapeUrl browser launch", () => {
     } finally {
       launch.mockRestore();
     }
+  });
+});
+
+// The URL check runs once, on the address the monitor names. A public page
+// that then sends the browser inside our network got it read out in the scrape.
+describe("scrapeUrl and addresses inside our network", () => {
+  it("does not follow a redirect to an internal address", async () => {
+    const outcome = await scrapeUrl(`${base}/redirect-inside`).then((r) => r.text, (e: Error) => `threw: ${e.message}`);
+    expect(outcome).not.toContain("INTERNAL ADMIN TOKEN");
+  });
+
+  it("does not let a page load or call an internal address", async () => {
+    internalHits = 0;
+    const result = await scrapeUrl(`${base}/loads-inside`);
+    expect(result.text).not.toContain("INTERNAL ADMIN TOKEN");
+    expect(internalHits).toBe(0);
   });
 });

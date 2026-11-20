@@ -1,6 +1,6 @@
 import { chromium, type Browser, type Page } from "playwright";
 import { PAGE_NOT_FOUND, type ScrapeResponse } from "@prowl/shared";
-import { validateUrlForScraping } from "../utils/url-validation.js";
+import { resolvesToPrivate, validateUrlForScraping } from "../utils/url-validation.js";
 
 type LaunchedBrowser = { instance: Browser; userAgent: string };
 
@@ -204,6 +204,14 @@ export async function scrapeUrl(
       }
     });
 
+    // One lookup per host per scrape: a page asks the same few hosts for everything.
+    const privateHosts = new Map<string, Promise<boolean>>();
+    const isPrivateHost = (host: string): Promise<boolean> => {
+      let verdict = privateHosts.get(host);
+      if (!verdict) privateHosts.set(host, (verdict = resolvesToPrivate(host)));
+      return verdict;
+    };
+
     // Intercept all requests: block dangerous protocols and heavy resources
     const BLOCKED_EXTENSIONS = /\.(png|jpg|jpeg|gif|webp|svg|ico|woff|woff2|ttf|mp4|webm)$/i;
     await page.route("**/*", async (route) => {
@@ -212,6 +220,11 @@ export async function scrapeUrl(
         const parsedUrl = new URL(requestUrl);
         // Block non-http(s) protocols (file://, data://, etc.) to prevent SSRF via redirects
         if (!["http:", "https:"].includes(parsedUrl.protocol)) {
+          return route.abort();
+        }
+        // A public page can redirect to, or load from, an address inside our
+        // network. The check before the scrape saw only the first URL.
+        if (await isPrivateHost(parsedUrl.hostname)) {
           return route.abort();
         }
         // Block heavy resources that slow things down and aren't needed for content
@@ -266,6 +279,13 @@ export async function scrapeUrl(
       const botCheck = unblockedHtml !== null
         ? { blocked: false as const }
         : blockedByStatus(documentStatus) ?? await detectAntiBot(page);
+
+      // The route handler above never sees a redirect's later hops: the
+      // browser follows those itself. So the page we ended on is checked
+      // too, and one inside our network is not read out.
+      if (unblockedHtml === null && (await isPrivateHost(new URL(page.url()).hostname))) {
+        throw new Error("URL resolves to a private/internal IP address");
+      }
 
       const html = await getCleanHtml(page);
       const text = await getTextWithLinks(page);
@@ -419,7 +439,6 @@ export async function detectAntiBot(page: Page): Promise<{ blocked: boolean; rea
         ["are you a robot", "Bot detection"],
         ["please enable javascript", "JavaScript required"],
         ["checking your browser", "Browser verification"],
-        ["enable cookies", "Cookies required"],
       ];
 
       for (const [marker, reason] of highConfidence) {
@@ -433,6 +452,8 @@ export async function detectAntiBot(page: Page): Promise<{ blocked: boolean; rea
       // content, or "protected by reCAPTCHA" under a form
       if (textLen < 500) {
         const ambiguous: [string, string][] = [
+          // Cookie banners say this on pages that are otherwise all there.
+          ["enable cookies", "Cookies required"],
           ["captcha", "CAPTCHA challenge"],
           ["access denied", "Access denied"],
           ["just a moment", "Cloudflare challenge"],

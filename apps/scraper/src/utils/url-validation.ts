@@ -55,12 +55,39 @@ function isPrivateIP(ip: string): boolean {
 
   // IPv6 checks
   const lower = ip.toLowerCase();
+  // IPv4 carried inside IPv6, dotted ("::ffff:10.0.0.1") or as hex ("::ffff:a00:1").
+  const mapped = lower.match(/^::ffff:(?:(\d+\.\d+\.\d+\.\d+)|([0-9a-f]{1,4}):([0-9a-f]{1,4}))$/);
+  if (mapped) {
+    if (mapped[1]) return isPrivateIP(mapped[1]);
+    const high = parseInt(mapped[2]!, 16);
+    const low = parseInt(mapped[3]!, 16);
+    return isPrivateIP(`${high >> 8}.${high & 255}.${low >> 8}.${low & 255}`);
+  }
   if (lower === "::1") return true;
   if (lower.startsWith("fe80:")) return true; // link-local
   if (lower.startsWith("fc") || lower.startsWith("fd")) return true; // unique local
   if (lower === "::") return true;
 
   return false;
+}
+
+/**
+ * Whether a request to this host would land inside our own network. Asked of
+ * every request the browser makes, because the URL check below covers only
+ * the address the monitor names: a public page can redirect to an internal
+ * one, or load from it. `hostname` is as URL.hostname gives it, with IPv6 in
+ * brackets. A name that does not resolve reaches nothing, so it is not private.
+ */
+export async function resolvesToPrivate(hostname: string): Promise<boolean> {
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  if (BLOCKED_HOSTNAMES.has(hostname.toLowerCase())) return true;
+  if (/^[\d.]+$/.test(host) || host.includes(":")) return isPrivateIP(host);
+  try {
+    const addresses = await lookup(host, { all: true });
+    return addresses.some(({ address }) => isPrivateIP(address));
+  } catch {
+    return false;
+  }
 }
 
 /**
