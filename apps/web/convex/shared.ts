@@ -134,17 +134,52 @@ export function isProxyFirstHost(url: string): boolean {
 /**
  * One classifier for "the site refused us" across scheduler, scan errors, and
  * operator tooling. An empty page does not count: a page can be briefly empty,
- * and a block moves a monitor onto the proxy's 6-hour floor and towards a park.
- * Sites that block with an empty page go on PROXY_FIRST_DOMAINS instead.
+ * and a block moves a monitor towards a park. It gets a proxy retry instead
+ * (isEmptyPageError). PROXY_FIRST_DOMAINS skips even the first direct attempt.
  */
 export function isBlockedError(message: string): boolean {
   return /blocking automated access|anti-bot|CAPTCHA|Cloudflare|Access denied|blocked/i.test(message);
+}
+
+/**
+ * The scraper's error for a page that did not load in time. Its wording says
+ * "blocking", so it counts as a block for the retry, which may use the proxy.
+ * But a slow load is not evidence the site needs the proxy every time.
+ */
+export function isSlowLoadError(message: string): boolean {
+  return message.startsWith("Page took too long to load");
+}
+
+/** Start of a quick check's error for a page that loaded with almost nothing on it. */
+export const EMPTY_PAGE = "Page inaccessible — no meaningful content found";
+
+/**
+ * Some sites answer our browser with an empty page instead of a challenge.
+ * That is not counted as a block (see isBlockedError), but it does earn the
+ * retries one go through the proxy: if the proxy reads a page that direct
+ * could not, the site is treated as needing it from then on.
+ */
+export function isEmptyPageError(message: string): boolean {
+  return message.startsWith(EMPTY_PAGE);
 }
 
 /** The scraper's error for a page the shop answered 404 or 410 for. */
 export function isPageGoneError(message: string): boolean {
   return message.startsWith(PAGE_NOT_FOUND);
 }
+
+/**
+ * A check that failed before our scraper answered it: the connection failed,
+ * or the platform in front of the scraper answered for it while it was
+ * restarting. The scraper's own errors come as JSON with a message, which
+ * replaces this "Scraper error (502)" wording, so they never match.
+ */
+export function isScraperUnreachable(message: string): boolean {
+  return /^(Scraper error|AI extract failed) \((502|503|504)\)|error sending request|fetch failed/i.test(message);
+}
+
+/** How long a check waits when it could not reach the scraper. Longer than a redeploy takes. */
+export const SCRAPER_UNREACHABLE_RETRY_MS = 5 * 60_000;
 
 export type CheckFailureKind = "proxy_provider" | "ai_billing" | "timeout" | "blocked" | "page_gone" | "other";
 

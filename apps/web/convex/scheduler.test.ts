@@ -1221,3 +1221,202 @@ describe("price history", () => {
     expect(await history(t, id)).toEqual(["10000 GBP", "4000 GBP"]);
   });
 });
+
+/**
+ * A listing monitor that has already told its owner about two jobs, on a page
+ * that reads as each of `pages` in turn. "blip" is the page as a consent wall
+ * or soft block leaves it: accessible, but with none of the listings on it.
+ * "same" is the previous page again, byte for byte.
+ */
+async function listingAcross(pages: ("full" | "blip" | "same" | "full+new")[]) {
+  vi.stubEnv("SCRAPER_URL", "https://scraper.test");
+  vi.stubEnv("SCRAPER_API_KEY", "key");
+  const job = (slug: string) => ({ title: `Engineer, ${slug}`, url: `https://jobs.test/${slug}`, price: null, snippet: "London" });
+  const known = [job("a"), job("b")];
+  let checkNo = 0;
+  let lastHash = "";
+  const scoredTitles: string[][] = [];
+  vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+    if (url.endsWith("/api/quick-check")) {
+      const page = pages[Math.min(checkNo++, pages.length - 1)]!;
+      if (page !== "same") lastHash = `${page}-${checkNo}`;
+      const candidates = page === "blip" || page === "same" ? [] : page === "full+new" ? [...known, job("c")] : known;
+      return Response.json({ accessible: true, contentHash: lastHash, candidates, totalEntries: candidates.length === 0 ? 1 : 11 });
+    }
+    if (url.endsWith("/api/score")) {
+      const sent = (JSON.parse(String(init?.body)) as { candidates: { title: string }[] }).candidates;
+      scoredTitles.push(sent.map((c) => c.title));
+      return Response.json({ scored: sent.map((c) => ({ ...c, matchScore: 95, matchReason: "" })) });
+    }
+    return new Response("not mocked", { status: 500 });
+  });
+
+  const t = convexTest(schema, modules);
+  t.registerComponent("betterAuth", betterAuthSchema, betterAuthModules);
+  const keys = ["jobs.test/a", "jobs.test/b"];
+  const id = await t.run((ctx) =>
+    ctx.db.insert("monitors", {
+      userId: "user_1", name: "Meta", url: "https://jobs.test/search", prompt: "engineering jobs in London", status: "active",
+      checkInterval: "1h", schema: { items: [], matchConditions: { mustInclude: ["Engineer"] } }, matchCount: 2,
+      candidateKeys: keys, passedKeys: keys, matchedKeys: keys, checkCount: 5, contentFingerprint: "page-0",
+      lastAiExtractAt: Date.now(), createdAt: Date.now(), updatedAt: Date.now(),
+    })
+  );
+  const check = async () => {
+    await t.run((ctx) => ctx.db.patch(id, { nextCheckAt: 0 }));
+    await t.action(internal.scheduler.runScheduledChecks, {});
+    return t.run((ctx) => ctx.db.get(id));
+  };
+  return { check, scoredTitles };
+}
+
+// Prod, 7 to 19/11/2026: twelve false alerts in two weeks. A careers page read
+// as one entry for a single check and then came back, and its owner was told
+// "6 new matches" about six jobs they had known of for days. Four times. An
+// Instagram monitor sent "12 new matches" four times in two days.
+describe("a page that reads as empty of listings for one check", () => {
+  test("does not announce its listings again when they come back", async () => {
+    const { check, scoredTitles } = await listingAcross(["blip", "full"]);
+
+    const duringBlip = await check();
+    expect(duringBlip?.candidateKeys).toEqual(["jobs.test/a", "jobs.test/b"]);
+    // The dashboard must not say "0 matches" for an hour on the strength of one bad read.
+    expect(duringBlip?.matchCount).toBe(2);
+
+    const after = await check();
+    expect(after?.lastMatchAt).toBeUndefined();
+    expect(scoredTitles).toEqual([]);
+  });
+
+  test("still announces a listing that arrived while the page was misread", async () => {
+    const { check, scoredTitles } = await listingAcross(["blip", "full+new"]);
+    await check();
+    expect((await check())?.lastMatchAt).toBeDefined();
+    expect(scoredTitles).toEqual([["Engineer, c"]]);
+  });
+
+  // Listings do leave and come back, and that return is worth an alert. Two
+  // empty reads running is the page's real state, not a bad read.
+  test("forgets the listings once a second check in a row finds none", async () => {
+    const { check, scoredTitles } = await listingAcross(["blip", "blip", "full"]);
+    await check();
+    const second = await check();
+    expect(second?.candidateKeys).toEqual([]);
+    expect(second?.matchCount).toBe(0);
+    expect((await check())?.lastMatchAt).toBeDefined();
+    expect(scoredTitles).toEqual([["Engineer, a", "Engineer, b"]]);
+  });
+
+  // An emptied page that then sits unchanged never reaches the code that
+  // compares listings. Its second check must count all the same, or the
+  // listings would be remembered for good and their return never announced.
+  test("forgets them too when the second check finds the empty page unchanged", async () => {
+    const { check } = await listingAcross(["blip", "same", "full"]);
+    await check();
+    expect((await check())?.candidateKeys).toEqual([]);
+    expect((await check())?.lastMatchAt).toBeDefined();
+  });
+
+  test("a read that finds the listings again clears the strike", async () => {
+    const { check, scoredTitles } = await listingAcross(["blip", "full", "blip", "full"]);
+    for (let i = 0; i < 4; i++) await check();
+    expect(scoredTitles).toEqual([]);
+  });
+});
+
+// The fortnightly full read announces a new listing by its own list of
+// matches. The quick checks keep a separate list of what they have seen, and
+// the full read never wrote to it, so the next quick check found the same
+// listing "new" and its owner was told about it twice.
+test("a listing the full read announced is not announced again by the next quick check", async () => {
+  vi.stubEnv("SCRAPER_URL", "https://scraper.test");
+  vi.stubEnv("SCRAPER_API_KEY", "key");
+  const job = (slug: string) => ({ title: `Engineer, ${slug}`, url: `https://jobs.test/${slug}`, price: null, snippet: "London" });
+  let checkNo = 0;
+  let scoreCalls = 0;
+  vi.stubGlobal("fetch", async (url: string) => {
+    if (url.endsWith("/api/quick-check")) {
+      return Response.json({ accessible: true, contentHash: `page-${++checkNo}`, candidates: [job("a"), job("new")], totalEntries: 11 });
+    }
+    if (url.endsWith("/api/extract")) {
+      const items = [job("a"), job("new")];
+      return Response.json({ schema: { items, matchConditions: { mustInclude: ["Engineer"] } }, matches: items, totalItems: 2, contentHash: `page-${checkNo}` });
+    }
+    if (url.endsWith("/api/score")) {
+      scoreCalls++;
+      return Response.json({ scored: [{ ...job("new"), matchScore: 95, matchReason: "" }] });
+    }
+    return new Response("not mocked", { status: 500 });
+  });
+  const t = convexTest(schema, modules);
+  t.registerComponent("betterAuth", betterAuthSchema, betterAuthModules);
+  const id = await t.run((ctx) =>
+    ctx.db.insert("monitors", {
+      userId: "user_1", name: "Meta", url: "https://jobs.test/search", prompt: "engineering jobs", status: "active", checkInterval: "1h",
+      schema: { items: [], matchConditions: { mustInclude: ["Engineer"] } }, matchCount: 1,
+      candidateKeys: ["jobs.test/a"], passedKeys: ["jobs.test/a"], matchedKeys: ["jobs.test/a"],
+      // Due its full read.
+      checkCount: 5, contentFingerprint: "page-0", lastAiExtractAt: 0, nextCheckAt: 0, createdAt: Date.now(), updatedAt: Date.now(),
+    })
+  );
+
+  await t.action(internal.scheduler.runScheduledChecks, {});
+  const afterFullRead = await t.run((ctx) => ctx.db.get(id));
+  expect(afterFullRead?.lastMatchAt).toBeDefined();
+  expect(afterFullRead?.candidateKeys).toEqual(expect.arrayContaining(["jobs.test/a", "jobs.test/new"]));
+
+  await t.run((ctx) => ctx.db.patch(id, { nextCheckAt: 0 }));
+  await t.action(internal.scheduler.runScheduledChecks, {});
+  expect(scoreCalls).toBe(0);
+  expect((await t.run((ctx) => ctx.db.get(id)))?.lastMatchAt).toBe(afterFullRead?.lastMatchAt);
+});
+
+/** One due monitor, checked once against a scraper that answers with `reply`. */
+async function checkAgainst(reply: () => Promise<Response>) {
+  vi.stubEnv("SCRAPER_URL", "https://scraper.test");
+  vi.stubEnv("SCRAPER_API_KEY", "key");
+  vi.stubGlobal("fetch", reply);
+  const t = convexTest(schema, modules);
+  t.registerComponent("betterAuth", betterAuthSchema, betterAuthModules);
+  const id = await t.run((ctx) =>
+    ctx.db.insert("monitors", {
+      userId: "user_1", name: "GPU", url: "https://shop.test/gpu", prompt: "in stock", status: "active", checkInterval: "1h",
+      schema: { items: [], matchConditions: {} }, matchCount: 0, checkCount: 5, retryCount: 2,
+      lastAiExtractAt: Date.now(), nextCheckAt: 0, createdAt: Date.now(), updatedAt: Date.now(),
+    })
+  );
+  await t.action(internal.scheduler.runScheduledChecks, {});
+  const monitor = await t.run((ctx) => ctx.db.get(id));
+  const logs = await t.run((ctx) => ctx.db.query("scrapeLogs").collect());
+  return { monitor: monitor!, logs };
+}
+
+// A redeploy or a Railway outage makes every due check fail at once. Counted
+// against the monitors, fifteen minutes of that walked each one up its retry
+// ladder into "error", emailed its owner about our fault, and left it waiting
+// six hours for the next check. This monitor is one failure from that.
+describe("a check that never reached the scraper", () => {
+  test.each([
+    ["the platform answers 502 while the scraper restarts", async () => new Response("<html>502 Bad Gateway</html>", { status: 502 })],
+    ["the platform answers 503", async () => new Response("Service Unavailable", { status: 503 })],
+    ["the connection fails", async () => { throw new TypeError("error sending request for url (https://scraper.test/api/quick-check)"); }],
+  ] as const)("is put off for a few minutes and not held against the monitor: %s", async (_name, reply) => {
+    const { monitor, logs } = await checkAgainst(reply as () => Promise<Response>);
+    expect(monitor.status).toBe("active");
+    expect(monitor.retryCount).toBe(2);
+    expect(monitor.lastError).toBeUndefined();
+    const wait = monitor.nextCheckAt! - Date.now();
+    expect(wait).toBeGreaterThan(4 * 60_000);
+    expect(wait).toBeLessThanOrEqual(5 * 60_000);
+    // Nothing was learned about the owner's page, so their log says nothing.
+    expect(logs).toEqual([]);
+  });
+
+  // The scraper's own 502 carries a reason in JSON: the proxy provider failed.
+  // That check did run, and it failed.
+  test("a failure the scraper itself reports still counts", async () => {
+    const { monitor } = await checkAgainst(async () => Response.json({ error: "check_failed", message: "Fallback provider error: no credits" }, { status: 502 }));
+    expect(monitor.retryCount).toBe(3);
+    expect(monitor.status).toBe("error");
+  });
+});

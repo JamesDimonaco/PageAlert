@@ -26,6 +26,11 @@ import {
   PARK_REASON_NEVER_SUCCEEDED,
   PARK_REASON_PAGE_GONE,
   isPageGoneError,
+  isEmptyPageError,
+  isSlowLoadError,
+  isScraperUnreachable,
+  SCRAPER_UNREACHABLE_RETRY_MS,
+  EMPTY_PAGE,
   alertsOnScore,
   canonicalUrl,
   PROXY_REPROBE_EVERY,
@@ -325,7 +330,11 @@ export const recordCheckResult = internalMutation({
     // site to proxy-preferred would still book itself an un-floored slot.
     const nextProxyPreferred =
       args.usedProxy === true
-        ? isBlockedError(monitor.lastError ?? "") || monitor.proxyPreferred === true || isProxyFirstHost(monitor.url)
+        ? (isBlockedError(monitor.lastError ?? "") && !isSlowLoadError(monitor.lastError ?? "")) ||
+          // Direct came back empty and the proxy did not: this site needs it.
+          isEmptyPageError(monitor.lastError ?? "") ||
+          monitor.proxyPreferred === true ||
+          isProxyFirstHost(monitor.url)
         : args.usedProxy === false
           ? false
           : monitor.proxyPreferred;
@@ -412,10 +421,26 @@ export const recordCheckResult = internalMutation({
     // back as "12 new matches" the user has already been told about. A page
     // that genuinely holds items but matches none of them does clear it, and
     // a later reappearance is a real event worth an alert.
-    if (args.candidateKeys) {
+    // One read with none of the entries the last check saw is more often the
+    // wrong page than every listing leaving at once. Forgetting them on it
+    // made each one "new" when the page came back: twelve false alerts in a
+    // fortnight. So the first such read changes nothing, and the second in a
+    // row, or the same empty page seen again unchanged, is believed.
+    const hadCandidates = (monitor.candidateKeys?.length ?? 0) > 0;
+    const firstMiss = hadCandidates && args.candidateKeys?.length === 0 && monitor.candidatesMissedOnce !== true;
+    if (firstMiss) {
+      updates.candidatesMissedOnce = true;
+      updates.matchCount = monitor.matchCount;
+    } else if (args.unchanged && monitor.candidatesMissedOnce === true) {
+      updates.candidatesMissedOnce = undefined;
+      updates.candidateKeys = [];
+      updates.candidatePrices = [];
+      updates.matchCount = 0;
+    } else if (args.candidateKeys) {
       updates.candidateKeys = args.candidateKeys;
+      if (monitor.candidatesMissedOnce !== undefined) updates.candidatesMissedOnce = undefined;
     }
-    if (args.candidatePrices) {
+    if (args.candidatePrices && !firstMiss) {
       updates.candidatePrices = args.candidatePrices;
     }
     if (args.soldOutKeys) {
@@ -441,6 +466,12 @@ export const recordCheckResult = internalMutation({
       if (product) newKeys = newKeys.filter((k) => k !== matchKey(product as Record<string, unknown>));
       updates.matchedKeys = [...new Set(currentKeys.filter(Boolean))];
       updates.passedKeys = updates.matchedKeys;
+      // What this read counts as a match is seen by the quick checks too, or
+      // the next one finds it new and announces it a second time. Only onto a
+      // baseline that exists: with none, the next quick check seeds one silently.
+      if (monitor.candidateKeys !== undefined) {
+        updates.candidateKeys = [...new Set([...monitor.candidateKeys, ...updates.matchedKeys as string[]])];
+      }
     } else if (!args.trackMatchKeys && args.matches.length > 0 && monitor.matchedKeys !== undefined) {
       // What a quick check alerted on is announced too. Left out, the next
       // full read would find it missing here and announce it again.
@@ -499,6 +530,17 @@ export const recordCheckResult = internalMutation({
   },
 });
 
+/** Put a check off without recording an outcome, for one that never reached the scraper. */
+export const deferCheck = internalMutation({
+  args: { monitorId: v.id("monitors") },
+  handler: async (ctx, { monitorId }) => {
+    const monitor = await ctx.db.get(monitorId);
+    // Paused or parked while the check ran: leave it that way.
+    if (!monitor || monitor.nextCheckAt === undefined || (monitor.status !== "active" && monitor.status !== "error")) return;
+    await ctx.db.patch(monitorId, { nextCheckAt: Date.now() + SCRAPER_UNREACHABLE_RETRY_MS });
+  },
+});
+
 /** The main scheduler action — called by cron */
 export const runScheduledChecks = internalAction({
   args: {},
@@ -539,10 +581,13 @@ export const runScheduledChecks = internalAction({
         // A "gone" answer may have come through the proxy from a shop that
         // blocks us, so the retry that confirms it goes the same way.
         const lastGone = isPageGoneError(monitor.lastError ?? "");
+        // An empty page may be a site that is down, which no proxy fixes, so
+        // it gets the retry ladder's attempts and not the recovery lane's.
+        const lastEmpty = isEmptyPageError(monitor.lastError ?? "") && retryCount < MAX_RETRIES;
         const wantProxy =
           proxyFirst ||
           (monitor.proxyPreferred === true && !reprobeDirect) ||
-          (retryCount >= 1 && (isBlockedError(monitor.lastError ?? "") || lastGone));
+          (retryCount >= 1 && (isBlockedError(monitor.lastError ?? "") || lastGone || lastEmpty));
 
         // A fleet-wide failure is ours, not the sites'. Escalating during a
         // scraper outage bought 113 proxy calls in one hour on 2026-09-05 and
@@ -683,6 +728,14 @@ export const runScheduledChecks = internalAction({
         } catch (e) {
           const msg = e instanceof Error ? e.message : "Unknown error";
           console.error(`[scheduler] Monitor ${monitor._id} failed:`, msg);
+
+          // Our outage, not the site's. It says nothing about the owner's
+          // page, so it costs the monitor no retry and sends no alert. The
+          // health poll (admin.checkScraperHealth) tells us if it lasts.
+          if (isScraperUnreachable(msg)) {
+            await ctx.runMutation(internal.scheduler.deferCheck, { monitorId: monitor._id });
+            return;
+          }
 
           const isTimeout =
             (e instanceof Error && e.name === "TimeoutError") ||
@@ -1044,7 +1097,7 @@ async function runQuickCheck(
   if (!result.accessible) {
     const reason = result.blocked
       ? `Site is blocking automated access: ${result.blockReason ?? "anti-bot protection detected"}. Try a different URL or check if the site requires login.`
-      : "Page inaccessible — no meaningful content found. The page may be down or require JavaScript that couldn't load.";
+      : `${EMPTY_PAGE}. The page may be down or require JavaScript that couldn't load.`;
     throw new Error(reason);
   }
 
