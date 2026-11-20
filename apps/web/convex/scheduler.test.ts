@@ -296,6 +296,7 @@ test("a price alert names the old and new price in the product's currency", asyn
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
+  vi.restoreAllMocks();
 });
 
 type Stock = { inStock: boolean | null; price: number | null; currency: string | null };
@@ -1226,11 +1227,14 @@ describe("price history", () => {
  * A listing monitor that has already told its owner about two jobs, on a page
  * that reads as each of `pages` in turn. "blip" is the page as a consent wall
  * or soft block leaves it: accessible, but with none of the listings on it.
- * "same" is the previous page again, byte for byte.
+ * "same" is the previous page again, byte for byte. `wait` moves the clock on.
  */
 async function listingAcross(pages: ("full" | "blip" | "same" | "full+new")[]) {
   vi.stubEnv("SCRAPER_URL", "https://scraper.test");
   vi.stubEnv("SCRAPER_API_KEY", "key");
+  const realNow = Date.now;
+  let ahead = 0;
+  vi.spyOn(Date, "now").mockImplementation(() => realNow() + ahead);
   const job = (slug: string) => ({ title: `Engineer, ${slug}`, url: `https://jobs.test/${slug}`, price: null, snippet: "London" });
   const known = [job("a"), job("b")];
   let checkNo = 0;
@@ -1242,6 +1246,9 @@ async function listingAcross(pages: ("full" | "blip" | "same" | "full+new")[]) {
       if (page !== "same") lastHash = `${page}-${checkNo}`;
       const candidates = page === "blip" || page === "same" ? [] : page === "full+new" ? [...known, job("c")] : known;
       return Response.json({ accessible: true, contentHash: lastHash, candidates, totalEntries: candidates.length === 0 ? 1 : 11 });
+    }
+    if (url.endsWith("/api/extract")) {
+      return Response.json({ schema: { items: known, matchConditions: { mustInclude: ["Engineer"] } }, matches: known, totalItems: 2, contentHash: lastHash });
     }
     if (url.endsWith("/api/score")) {
       const sent = (JSON.parse(String(init?.body)) as { candidates: { title: string }[] }).candidates;
@@ -1262,25 +1269,31 @@ async function listingAcross(pages: ("full" | "blip" | "same" | "full+new")[]) {
       lastAiExtractAt: Date.now(), createdAt: Date.now(), updatedAt: Date.now(),
     })
   );
-  const check = async () => {
-    await t.run((ctx) => ctx.db.patch(id, { nextCheckAt: 0 }));
+  /** `fullRead` makes this check the AI's periodic re-read of the page. */
+  const check = async ({ fullRead = false } = {}) => {
+    await t.run((ctx) => ctx.db.patch(id, { nextCheckAt: 0, lastAiExtractAt: fullRead ? 0 : Date.now() }));
     await t.action(internal.scheduler.runScheduledChecks, {});
     return t.run((ctx) => ctx.db.get(id));
   };
-  return { check, scoredTitles };
+  const wait = (ms: number) => {
+    ahead += ms;
+  };
+  return { check, wait, scoredTitles };
 }
+
+const HOUR = 3_600_000;
 
 // Prod, 7 to 19/11/2026: twelve false alerts in two weeks. A careers page read
 // as one entry for a single check and then came back, and its owner was told
 // "6 new matches" about six jobs they had known of for days. Four times. An
 // Instagram monitor sent "12 new matches" four times in two days.
-describe("a page that reads as empty of listings for one check", () => {
+describe("a page that reads as empty of listings for a while", () => {
   test("does not announce its listings again when they come back", async () => {
     const { check, scoredTitles } = await listingAcross(["blip", "full"]);
 
     const duringBlip = await check();
     expect(duringBlip?.candidateKeys).toEqual(["jobs.test/a", "jobs.test/b"]);
-    // The dashboard must not say "0 matches" for an hour on the strength of one bad read.
+    // The dashboard must not say "0 matches" on the strength of a bad read.
     expect(duringBlip?.matchCount).toBe(2);
 
     const after = await check();
@@ -1295,31 +1308,73 @@ describe("a page that reads as empty of listings for one check", () => {
     expect(scoredTitles).toEqual([["Engineer, c"]]);
   });
 
-  // Listings do leave and come back, and that return is worth an alert. Two
-  // empty reads running is the page's real state, not a bad read.
-  test("forgets the listings once a second check in a row finds none", async () => {
-    const { check, scoredTitles } = await listingAcross(["blip", "blip", "full"]);
+  // Prod, 17/11/2026: the Instagram page was a wall for two hourly checks, and
+  // the second saw the same bytes as the first. A wall looks the same twice.
+  test("holds through a wall that is still there, unchanged, on the next check", async () => {
+    const { check, wait, scoredTitles } = await listingAcross(["blip", "same", "full"]);
     await check();
-    const second = await check();
-    expect(second?.candidateKeys).toEqual([]);
-    expect(second?.matchCount).toBe(0);
+    wait(HOUR);
+    expect((await check())?.candidateKeys).toEqual(["jobs.test/a", "jobs.test/b"]);
+    wait(HOUR);
+    expect((await check())?.lastMatchAt).toBeUndefined();
+    expect(scoredTitles).toEqual([]);
+  });
+
+  test("holds through a wall that reads differently on each check", async () => {
+    const { check, wait, scoredTitles } = await listingAcross(["blip", "blip", "blip", "full"]);
+    for (let i = 0; i < 4; i++) {
+      await check();
+      wait(HOUR);
+    }
+    expect(scoredTitles).toEqual([]);
+  });
+
+  // Listings do leave and come back, and that return is worth an alert. A
+  // page still without them a day later is the page's real state.
+  test("forgets the listings once the page has been without them for a day", async () => {
+    const { check, wait, scoredTitles } = await listingAcross(["blip", "blip", "blip", "full"]);
+    await check();
+    wait(24 * HOUR - 60_000);
+    expect((await check())?.candidateKeys).toEqual(["jobs.test/a", "jobs.test/b"]);
+    wait(60_000);
+    const dayLater = await check();
+    expect(dayLater?.candidateKeys).toEqual([]);
+    expect(dayLater?.matchCount).toBe(0);
     expect((await check())?.lastMatchAt).toBeDefined();
     expect(scoredTitles).toEqual([["Engineer, a", "Engineer, b"]]);
   });
 
   // An emptied page that then sits unchanged never reaches the code that
-  // compares listings. Its second check must count all the same, or the
-  // listings would be remembered for good and their return never announced.
-  test("forgets them too when the second check finds the empty page unchanged", async () => {
-    const { check } = await listingAcross(["blip", "same", "full"]);
+  // compares listings. It must count all the same, or the listings would be
+  // remembered for good and their return never announced.
+  test("forgets them too when the empty page has sat unchanged for a day", async () => {
+    const { check, wait } = await listingAcross(["blip", "same", "full"]);
     await check();
+    wait(24 * HOUR);
     expect((await check())?.candidateKeys).toEqual([]);
     expect((await check())?.lastMatchAt).toBeDefined();
   });
 
-  test("a read that finds the listings again clears the strike", async () => {
-    const { check, scoredTitles } = await listingAcross(["blip", "full", "blip", "full"]);
-    for (let i = 0; i < 4; i++) await check();
+  test("a read that finds the listings again starts the day over", async () => {
+    const { check, wait, scoredTitles } = await listingAcross(["blip", "full", "blip", "full"]);
+    await check();
+    await check();
+    wait(24 * HOUR);
+    expect((await check())?.candidateKeys).toEqual(["jobs.test/a", "jobs.test/b"]);
+    await check();
+    expect(scoredTitles).toEqual([]);
+  });
+
+  // The AI's full read does not compare listings either. If the miss before
+  // it were still on record, the good page it left behind, read unchanged a
+  // day later, would count as "still empty" and wipe what the owner has seen.
+  test("a full read of the page as it should be ends the wait", async () => {
+    const { check, wait, scoredTitles } = await listingAcross(["blip", "full", "same", "full"]);
+    await check();
+    await check({ fullRead: true });
+    wait(24 * HOUR);
+    expect((await check())?.candidateKeys).toEqual(["jobs.test/a", "jobs.test/b"]);
+    await check();
     expect(scoredTitles).toEqual([]);
   });
 });
@@ -1372,7 +1427,7 @@ test("a listing the full read announced is not announced again by the next quick
 });
 
 /** One due monitor, checked once against a scraper that answers with `reply`. */
-async function checkAgainst(reply: () => Promise<Response>) {
+async function checkAgainst(reply: () => Promise<Response>, extra: Partial<Doc<"monitors">> = {}) {
   vi.stubEnv("SCRAPER_URL", "https://scraper.test");
   vi.stubEnv("SCRAPER_API_KEY", "key");
   vi.stubGlobal("fetch", reply);
@@ -1382,7 +1437,7 @@ async function checkAgainst(reply: () => Promise<Response>) {
     ctx.db.insert("monitors", {
       userId: "user_1", name: "GPU", url: "https://shop.test/gpu", prompt: "in stock", status: "active", checkInterval: "1h",
       schema: { items: [], matchConditions: {} }, matchCount: 0, checkCount: 5, retryCount: 2,
-      lastAiExtractAt: Date.now(), nextCheckAt: 0, createdAt: Date.now(), updatedAt: Date.now(),
+      lastAiExtractAt: Date.now(), nextCheckAt: 0, createdAt: Date.now(), updatedAt: Date.now(), ...extra,
     })
   );
   await t.action(internal.scheduler.runScheduledChecks, {});
@@ -1399,6 +1454,8 @@ describe("a check that never reached the scraper", () => {
   test.each([
     ["the platform answers 502 while the scraper restarts", async () => new Response("<html>502 Bad Gateway</html>", { status: 502 })],
     ["the platform answers 503", async () => new Response("Service Unavailable", { status: 503 })],
+    // Railway's edge answers in JSON with a message of its own.
+    ["the platform answers 502 in JSON", async () => Response.json({ status: "error", code: 502, message: "Application failed to respond" }, { status: 502 })],
     ["the connection fails", async () => { throw new TypeError("error sending request for url (https://scraper.test/api/quick-check)"); }],
   ] as const)("is put off for a few minutes and not held against the monitor: %s", async (_name, reply) => {
     const { monitor, logs } = await checkAgainst(reply as () => Promise<Response>);
@@ -1418,5 +1475,23 @@ describe("a check that never reached the scraper", () => {
     const { monitor } = await checkAgainst(async () => Response.json({ error: "check_failed", message: "Fallback provider error: no credits" }, { status: 502 }));
     expect(monitor.retryCount).toBe(3);
     expect(monitor.status).toBe("error");
+  });
+
+  // One page that crashes the scraper gets this answer every time. Put off
+  // without limit it would be fetched every 5 minutes for good, and its
+  // owner would see a healthy monitor that never checks.
+  const down = async () => new Response("<html>502 Bad Gateway</html>", { status: 502 });
+  test("is put off six times running, about half an hour", async () => {
+    const { monitor } = await checkAgainst(down, { deferredChecks: 5 });
+    expect(monitor.retryCount).toBe(2);
+    expect(monitor.deferredChecks).toBe(6);
+  });
+
+  test("counts as a failure after that, and the count starts again", async () => {
+    const { monitor, logs } = await checkAgainst(down, { deferredChecks: 6 });
+    expect(monitor.retryCount).toBe(3);
+    expect(monitor.status).toBe("error");
+    expect(monitor.deferredChecks).toBeUndefined();
+    expect(logs).toHaveLength(1);
   });
 });

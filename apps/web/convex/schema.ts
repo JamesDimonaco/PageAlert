@@ -93,10 +93,10 @@ export default defineSchema({
     // still remembered as seen — otherwise it reads as new every check and
     // buys another scoring call forever.
     candidateKeys: v.optional(v.array(v.string())),
-    // The last check found none of the entries the one before it had. One such
-    // read is usually the wrong page (a consent wall, a soft block), so the
-    // seen set is held for it. A second in a row is believed.
-    candidatesMissedOnce: v.optional(v.boolean()),
+    // When a check first found none of the entries the one before it had.
+    // That is usually the wrong page (a consent wall, a soft block), so the
+    // seen set is held until the page has been without them for a day.
+    candidatesMissedAt: v.optional(v.number()),
     // Entries the AI passed as matches: by the first scan, the last full read,
     // or a quick check since. Unlike matchedKeys, a first scan sets it rather
     // than clearing it. It is what matchCount counts.
@@ -116,6 +116,12 @@ export default defineSchema({
     // This site only ever answers through the proxy, so skip the direct attempt
     // that would fail anyway. Re-probed periodically — see PROXY_REPROBE_EVERY.
     proxyPreferred: v.optional(v.boolean()),
+    // The proxy read this page once after direct found it empty or slow.
+    // That happens to healthy sites too, so only a second time running sets
+    // proxyPreferred. A direct read clears it.
+    proxyRescuedOnce: v.optional(v.boolean()),
+    // Checks put off in a row because our scraper could not be reached.
+    deferredChecks: v.optional(v.number()),
     // When the first scan claimed its one proxy attempt. See
     // monitors.claimFirstScanProxy.
     firstScanProxyAt: v.optional(v.number()),

@@ -168,18 +168,48 @@ export function isPageGoneError(message: string): boolean {
   return message.startsWith(PAGE_NOT_FOUND);
 }
 
+/** Start of the error for a check that failed before our scraper answered it. */
+export const SCRAPER_UNREACHABLE = "Scraper unreachable";
+
 /**
- * A check that failed before our scraper answered it: the connection failed,
- * or the platform in front of the scraper answered for it while it was
- * restarting. The scraper's own errors come as JSON with a message, which
- * replaces this "Scraper error (502)" wording, so they never match.
+ * The error for a scraper response that is not OK. The scraper's own failures
+ * are JSON with an `error` code and a message for the user. A 502 to 504
+ * without that code came from the platform in front of the scraper, which
+ * answers for it while it restarts, in HTML or in JSON of its own.
  */
-export function isScraperUnreachable(message: string): boolean {
-  return /^(Scraper error|AI extract failed) \((502|503|504)\)|error sending request|fetch failed/i.test(message);
+export function scraperFailure(status: number, body: string, label: string): string {
+  let parsed: { error?: unknown; message?: unknown } | null = null;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    // Not JSON: handled below.
+  }
+  if (status >= 502 && status <= 504 && typeof parsed?.error !== "string") return `${SCRAPER_UNREACHABLE} (${status})`;
+  if (typeof parsed?.message === "string" && parsed.message) return parsed.message;
+  return parsed === null && body ? `${label} (${status}): ${body.slice(0, 200)}` : `${label} (${status})`;
 }
+
+/** A check that never reached our scraper: the platform answered for it, or the connection failed. */
+export function isScraperUnreachable(message: string): boolean {
+  return message.startsWith(SCRAPER_UNREACHABLE) || /error sending request|fetch failed/i.test(message);
+}
+
+/**
+ * How long a page must read as empty of the listings we knew before we
+ * believe it. Prod blips ran one to two hours. A day also covers three
+ * checks on the proxy's 6-hour floor.
+ */
+export const CANDIDATE_MISS_GRACE_MS = 24 * 60 * 60_000;
 
 /** How long a check waits when it could not reach the scraper. Longer than a redeploy takes. */
 export const SCRAPER_UNREACHABLE_RETRY_MS = 5 * 60_000;
+
+/**
+ * How many times running a check is put off before it counts as a failure.
+ * Half an hour covers a redeploy. A page that crashes the scraper gets the
+ * same answer for good, and has to reach the retry ladder like any other.
+ */
+export const MAX_DEFERRED_CHECKS = 6;
 
 export type CheckFailureKind = "proxy_provider" | "ai_billing" | "timeout" | "blocked" | "page_gone" | "other";
 

@@ -81,11 +81,42 @@ test("a page that came back empty is retried through the proxy", async () => {
   expect(bodies[0]?.useProxy).toBe(true);
 });
 
-test("a site the proxy can read after an empty page stays on the proxy", async () => {
+/** The proxy reads a page that direct had just failed on with `error`. Returns the monitor after. */
+async function proxyRescue(t: ReturnType<typeof setup>, id: Doc<"monitors">["_id"], error: string) {
+  await t.run((ctx) => ctx.db.patch(id, { retryCount: 1, lastError: error, nextCheckAt: 0 }));
+  const bodies = await quickCheckBodies(t);
+  expect(bodies[0]?.useProxy).toBe(true);
+  return (await t.run((ctx) => ctx.db.get(id)))!;
+}
+
+const SLOW = "Page took too long to load. The site may be slow or blocking automated access.";
+const BLOCKED = "Site is blocking automated access: HTTP 403. Try a different URL or check if the site requires login.";
+
+// An empty or slow page is weak evidence. Prod, 6 to 20/11/2026: four
+// monitors saw one empty page and never another, and three saw 19 to 32.
+// The proxy's 6-hour floor is for the three, so it takes two in a row.
+test.each([
+  ["an empty", EMPTY],
+  ["a slow", SLOW],
+])("a site the proxy has to rescue from %s page twice running stays on the proxy", async (_name, error) => {
   const t = setup();
-  const id = await insert(t, "https://shop.test/empty", { retryCount: 1, lastError: EMPTY });
-  await quickCheckBodies(t);
-  expect((await t.run((ctx) => ctx.db.get(id)))?.proxyPreferred).toBe(true);
+  const id = await insert(t, "https://shop.test/soft", { checkInterval: "15m" });
+
+  const once = await proxyRescue(t, id, error);
+  expect(once.proxyPreferred).not.toBe(true);
+  // Still on its own interval, not the proxy's 6-hour floor.
+  expect(once.nextCheckAt! - Date.now()).toBeLessThan(16 * 60_000);
+
+  expect((await proxyRescue(t, id, error)).proxyPreferred).toBe(true);
+});
+
+test("a direct read between two rescues starts the count again", async () => {
+  const t = setup();
+  const id = await insert(t, "https://shop.test/soft");
+  await proxyRescue(t, id, EMPTY);
+  await t.run((ctx) => ctx.db.patch(id, { nextCheckAt: 0 }));
+  expect((await quickCheckBodies(t))[0]?.useProxy).toBeUndefined();
+  expect((await proxyRescue(t, id, EMPTY)).proxyPreferred).not.toBe(true);
 });
 
 // A page that is down is also empty, and the proxy cannot fix that. Two paid
@@ -97,23 +128,6 @@ test("an empty page is not sent to the proxy on the recovery lane", async () => 
   const bodies = await quickCheckBodies(t);
   expect(bodies[0]?.url).toBe("https://shop.test/empty");
   expect(bodies[0]?.useProxy).toBeUndefined();
-});
-
-const SLOW = "Page took too long to load. The site may be slow or blocking automated access.";
-const BLOCKED = "Site is blocking automated access: HTTP 403. Try a different URL or check if the site requires login.";
-
-// One slow load, perhaps on a busy scraper, reads as a block because of its
-// wording. The proxy retry then succeeded and marked the site proxy-only: a
-// 15-minute monitor dropped to every 6 hours for about two days, unannounced.
-test("one slow page load does not move a monitor onto the proxy for good", async () => {
-  const t = setup();
-  const id = await insert(t, "https://shop.test/slow", { retryCount: 1, lastError: SLOW, checkInterval: "15m" });
-  const bodies = await quickCheckBodies(t);
-  // The retry itself may still use the proxy: a tarpit is one way to block.
-  expect(bodies[0]?.useProxy).toBe(true);
-  const monitor = await t.run((ctx) => ctx.db.get(id));
-  expect(monitor?.proxyPreferred).not.toBe(true);
-  expect(monitor!.nextCheckAt! - Date.now()).toBeLessThan(16 * 60_000);
 });
 
 test("a real block that the proxy gets past does move it onto the proxy", async () => {

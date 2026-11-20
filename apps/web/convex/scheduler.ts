@@ -29,7 +29,10 @@ import {
   isEmptyPageError,
   isSlowLoadError,
   isScraperUnreachable,
+  scraperFailure,
+  MAX_DEFERRED_CHECKS,
   SCRAPER_UNREACHABLE_RETRY_MS,
+  CANDIDATE_MISS_GRACE_MS,
   EMPTY_PAGE,
   alertsOnScore,
   canonicalUrl,
@@ -249,6 +252,8 @@ export const recordCheckResult = internalMutation({
     }
 
     const now = Date.now();
+    // Any recorded outcome ends a run of checks put off for our own outage.
+    if (monitor.deferredChecks !== undefined) await ctx.db.patch(args.monitorId, { deferredChecks: undefined });
     // Backfills rows older than the field on their next check, pass or fail,
     // so the known-host lookup in monitors.claimFirstScanProxy can see them.
     const hostStamp = monitor.host === undefined ? { host: displayHost(monitor.url) } : {};
@@ -328,11 +333,16 @@ export const recordCheckResult = internalMutation({
     // clears the flag, which is also how the periodic re-probe takes effect.
     // Computed before the reschedule below, or the check that first flips a
     // site to proxy-preferred would still book itself an un-floored slot.
+    const lastError = monitor.lastError ?? "";
+    // The proxy read a page direct found empty or slow. Both happen to sites
+    // that do not need it: one slow load once put a 15-minute monitor on the
+    // 6-hour floor for two days. So this counts only the second time running.
+    const softRescue =
+      args.usedProxy === true && ((isBlockedError(lastError) && isSlowLoadError(lastError)) || isEmptyPageError(lastError));
     const nextProxyPreferred =
       args.usedProxy === true
-        ? (isBlockedError(monitor.lastError ?? "") && !isSlowLoadError(monitor.lastError ?? "")) ||
-          // Direct came back empty and the proxy did not: this site needs it.
-          isEmptyPageError(monitor.lastError ?? "") ||
+        ? (isBlockedError(lastError) && !isSlowLoadError(lastError)) ||
+          (softRescue && monitor.proxyRescuedOnce === true) ||
           monitor.proxyPreferred === true ||
           isProxyFirstHost(monitor.url)
         : args.usedProxy === false
@@ -356,6 +366,11 @@ export const recordCheckResult = internalMutation({
     };
     if (nextProxyPreferred !== monitor.proxyPreferred) {
       updates.proxyPreferred = nextProxyPreferred;
+    }
+    if (softRescue && !nextProxyPreferred) {
+      updates.proxyRescuedOnce = true;
+    } else if (args.usedProxy !== undefined && monitor.proxyRescuedOnce !== undefined) {
+      updates.proxyRescuedOnce = undefined;
     }
     Object.assign(updates, hostStamp);
 
@@ -421,26 +436,30 @@ export const recordCheckResult = internalMutation({
     // back as "12 new matches" the user has already been told about. A page
     // that genuinely holds items but matches none of them does clear it, and
     // a later reappearance is a real event worth an alert.
-    // One read with none of the entries the last check saw is more often the
+    // A read with none of the entries the last check saw is more often the
     // wrong page than every listing leaving at once. Forgetting them on it
     // made each one "new" when the page came back: twelve false alerts in a
-    // fortnight. So the first such read changes nothing, and the second in a
-    // row, or the same empty page seen again unchanged, is believed.
-    const hadCandidates = (monitor.candidateKeys?.length ?? 0) > 0;
-    const firstMiss = hadCandidates && args.candidateKeys?.length === 0 && monitor.candidatesMissedOnce !== true;
-    if (firstMiss) {
-      updates.candidatesMissedOnce = true;
+    // fortnight. A wall can last several checks and look the same each time,
+    // so neither a second miss nor an unchanged page confirms it. Only time
+    // does. Any other read, the AI's full one included, ends the wait.
+    const missedAt = monitor.candidatesMissedAt;
+    const missing =
+      ((monitor.candidateKeys?.length ?? 0) > 0 && args.candidateKeys?.length === 0) ||
+      (args.unchanged === true && missedAt !== undefined);
+    if (missing && now - (missedAt ?? now) < CANDIDATE_MISS_GRACE_MS) {
+      if (missedAt === undefined) updates.candidatesMissedAt = now;
       updates.matchCount = monitor.matchCount;
-    } else if (args.unchanged && monitor.candidatesMissedOnce === true) {
-      updates.candidatesMissedOnce = undefined;
-      updates.candidateKeys = [];
-      updates.candidatePrices = [];
-      updates.matchCount = 0;
-    } else if (args.candidateKeys) {
-      updates.candidateKeys = args.candidateKeys;
-      if (monitor.candidatesMissedOnce !== undefined) updates.candidatesMissedOnce = undefined;
+    } else {
+      if (missing) {
+        updates.candidateKeys = [];
+        updates.candidatePrices = [];
+        updates.matchCount = 0;
+      } else if (args.candidateKeys) {
+        updates.candidateKeys = args.candidateKeys;
+      }
+      if (missedAt !== undefined) updates.candidatesMissedAt = undefined;
     }
-    if (args.candidatePrices && !firstMiss) {
+    if (args.candidatePrices && !missing) {
       updates.candidatePrices = args.candidatePrices;
     }
     if (args.soldOutKeys) {
@@ -530,14 +549,21 @@ export const recordCheckResult = internalMutation({
   },
 });
 
-/** Put a check off without recording an outcome, for one that never reached the scraper. */
+/**
+ * Put a check off without recording an outcome, for one that never reached
+ * the scraper. False once it has been put off MAX_DEFERRED_CHECKS times
+ * running: the caller then records the failure.
+ */
 export const deferCheck = internalMutation({
   args: { monitorId: v.id("monitors") },
   handler: async (ctx, { monitorId }) => {
     const monitor = await ctx.db.get(monitorId);
     // Paused or parked while the check ran: leave it that way.
-    if (!monitor || monitor.nextCheckAt === undefined || (monitor.status !== "active" && monitor.status !== "error")) return;
-    await ctx.db.patch(monitorId, { nextCheckAt: Date.now() + SCRAPER_UNREACHABLE_RETRY_MS });
+    if (!monitor || monitor.nextCheckAt === undefined || (monitor.status !== "active" && monitor.status !== "error")) return true;
+    const deferredChecks = (monitor.deferredChecks ?? 0) + 1;
+    if (deferredChecks > MAX_DEFERRED_CHECKS) return false;
+    await ctx.db.patch(monitorId, { nextCheckAt: Date.now() + SCRAPER_UNREACHABLE_RETRY_MS, deferredChecks });
+    return true;
   },
 });
 
@@ -732,8 +758,7 @@ export const runScheduledChecks = internalAction({
           // Our outage, not the site's. It says nothing about the owner's
           // page, so it costs the monitor no retry and sends no alert. The
           // health poll (admin.checkScraperHealth) tells us if it lasts.
-          if (isScraperUnreachable(msg)) {
-            await ctx.runMutation(internal.scheduler.deferCheck, { monitorId: monitor._id });
+          if (isScraperUnreachable(msg) && (await ctx.runMutation(internal.scheduler.deferCheck, { monitorId: monitor._id }))) {
             return;
           }
 
@@ -1080,16 +1105,7 @@ async function runQuickCheck(
   });
 
   if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    // Try to extract the user-friendly message from the scraper's JSON response
-    let errorMsg = `Scraper error (${res.status})`;
-    try {
-      const parsed = JSON.parse(body);
-      if (parsed.message) errorMsg = parsed.message;
-    } catch {
-      if (body) errorMsg = `${errorMsg}: ${body.slice(0, 200)}`;
-    }
-    throw new Error(errorMsg);
+    throw new Error(scraperFailure(res.status, await res.text().catch(() => ""), "Scraper error"));
   }
 
   const result = await res.json();
@@ -1488,15 +1504,7 @@ async function runFullExtract(
   });
 
   if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    let errorMsg = `AI extract failed (${res.status})`;
-    try {
-      const parsed = JSON.parse(body);
-      if (parsed.message) errorMsg = parsed.message;
-    } catch {
-      if (body) errorMsg = `${errorMsg}: ${body.slice(0, 200)}`;
-    }
-    throw new Error(errorMsg);
+    throw new Error(scraperFailure(res.status, await res.text().catch(() => ""), "AI extract failed"));
   }
 
   const result = await res.json();
