@@ -1390,16 +1390,26 @@ describe("a page that comes back as a fraction of itself, with none of its listi
   });
 
   // The wall holds none of the sold-out entries waiting for a restock. Dropped
-  // from that list they would never be looked at again.
-  test("keeps the sold-out entries waiting for a restock", async () => {
+  // from that list they would never be looked at again. Nor would one first
+  // seen sold out on the held page, which joins the seen set there.
+  test("keeps the sold-out entries waiting for a restock, and adds the held page's", async () => {
     const { t, id } = await listingAcross([]);
     await t.run((ctx) => ctx.db.patch(id, { soldOutKeys: ["jobs.test/b"], soldOutTextHashes: ["h1"] }));
     await t.mutation(internal.scheduler.recordCheckResult, {
-      monitorId: id, hasNewMatches: false, matchCount: 0, totalItems: 1, matches: [], candidateKeys: [], soldOutKeys: [], soldOutTextHashes: [],
+      monitorId: id, hasNewMatches: false, matchCount: 0, totalItems: 1, matches: [],
+      candidateKeys: ["jobs.test/x"], soldOutKeys: ["jobs.test/x"], soldOutTextHashes: ["h2"],
     });
     const monitor = await t.run((ctx) => ctx.db.get(id));
-    expect(monitor?.soldOutKeys).toEqual(["jobs.test/b"]);
-    expect(monitor?.soldOutTextHashes).toEqual(["h1"]);
+    expect(monitor?.soldOutKeys).toEqual(["jobs.test/b", "jobs.test/x"]);
+    expect(monitor?.soldOutTextHashes).toEqual(["h1", "h2"]);
+  });
+
+  // 288 checks a day on a 5-minute monitor: a wall that has not moved is
+  // not compared again, or written down again, until the hold has run out.
+  test("does not record a result for each look at an unchanged wall", async () => {
+    const { t, check } = await listingAcross(["wall", "same", "same"]);
+    for (let i = 0; i < 3; i++) await check();
+    expect(await t.run((ctx) => ctx.db.query("scrapeResults").collect())).toHaveLength(1);
   });
 
   test.each([

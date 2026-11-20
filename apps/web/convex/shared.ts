@@ -156,8 +156,8 @@ export const EMPTY_PAGE = "Page inaccessible — no meaningful content found";
 /**
  * Some sites answer our browser with an empty page instead of a challenge.
  * That is not counted as a block (see isBlockedError), but it does earn the
- * retries one go through the proxy: if the proxy reads a page that direct
- * could not, the site is treated as needing it from then on.
+ * retries one go through the proxy. A site the proxy has to rescue that way
+ * twice running is treated as needing it from then on.
  */
 export function isEmptyPageError(message: string): boolean {
   return message.startsWith(EMPTY_PAGE);

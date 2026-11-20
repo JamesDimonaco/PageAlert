@@ -97,8 +97,7 @@ export default defineSchema({
     // believed. A read with under half of them and none of candidateKeys is
     // the wrong page (a consent wall, a soft block), and replaces neither.
     pageEntries: v.optional(v.number()),
-    // When the run of such reads began. Set, it also makes each check compare
-    // the page even when its bytes have not changed. See WRONG_PAGE_HOLD_MS.
+    // When the run of such reads began. See WRONG_PAGE_HOLD_MS.
     wrongPageSince: v.optional(v.number()),
     // Entries the AI passed as matches: by the first scan, the last full read,
     // or a quick check since. Unlike matchedKeys, a first scan sets it rather

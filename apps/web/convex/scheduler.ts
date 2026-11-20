@@ -458,11 +458,15 @@ export const recordCheckResult = internalMutation({
     if (args.candidatePrices && !held) {
       updates.candidatePrices = args.candidatePrices;
     }
-    if (args.soldOutKeys && !held) {
-      updates.soldOutKeys = args.soldOutKeys;
+    // Held, the entries waiting for a restock are added to like the seen
+    // set: the wrong page has none of them, and they must still be rechecked.
+    if (args.soldOutKeys) {
+      updates.soldOutKeys = held ? [...new Set([...(monitor.soldOutKeys ?? []), ...args.soldOutKeys])] : args.soldOutKeys;
     }
-    if (args.soldOutTextHashes && !held) {
-      updates.soldOutTextHashes = args.soldOutTextHashes;
+    if (args.soldOutTextHashes) {
+      updates.soldOutTextHashes = held
+        ? [...new Set([...(monitor.soldOutTextHashes ?? []), ...args.soldOutTextHashes])]
+        : args.soldOutTextHashes;
     }
 
     // An extract that saw no items at all is a render that went wrong, not a
@@ -1133,8 +1137,10 @@ async function runQuickCheck(
 
   // Cheap short-circuit: content identical to the last scan — record the
   // check happened and stop. No result row, no match notifications. Not
-  // while a wrong-page hold runs: that has to see each read to end.
-  if (contentHash && monitor.contentFingerprint && contentHash === monitor.contentFingerprint && monitor.wrongPageSince === undefined) {
+  // once a wrong-page hold has run out: the read after that ends it, and an
+  // unchanged page would otherwise never get one.
+  const holdRanOut = monitor.wrongPageSince !== undefined && Date.now() - monitor.wrongPageSince >= WRONG_PAGE_HOLD_MS;
+  if (contentHash && monitor.contentFingerprint && contentHash === monitor.contentFingerprint && !holdRanOut) {
     await ctx.runMutation(internal.scheduler.recordCheckResult, {
       monitorId: monitor._id,
       hasNewMatches: false,
