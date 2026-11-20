@@ -1227,9 +1227,10 @@ describe("price history", () => {
  * of 11 entries that reads as each of `pages` in turn. "wall" is the page as a
  * consent wall or soft block leaves it: accessible, with one entry and none
  * of the listings. A number is a page of that many entries, none of them the
- * listings. "same" is the previous page again, byte for byte.
+ * listings. "wall+junk" is a wall whose one entry gets past the keyword
+ * filter. "same" is the previous page again, byte for byte.
  */
-async function listingAcross(pages: ("full" | "wall" | "same" | "full+new" | number)[], pageEntries: number | null = 11) {
+async function listingAcross(pages: ("full" | "wall" | "wall+junk" | "same" | "full+new" | number)[], pageEntries: number | null = 11) {
   vi.stubEnv("SCRAPER_URL", "https://scraper.test");
   vi.stubEnv("SCRAPER_API_KEY", "key");
   const job = (slug: string) => ({ title: `Engineer, ${slug}`, url: `https://jobs.test/${slug}`, price: null, snippet: "London" });
@@ -1241,15 +1242,21 @@ async function listingAcross(pages: ("full" | "wall" | "same" | "full+new" | num
     if (url.endsWith("/api/quick-check")) {
       const page = pages[Math.min(checkNo++, pages.length - 1)]!;
       if (page !== "same") {
-        const candidates = page === "full" ? known : page === "full+new" ? [...known, job("c")] : [];
-        last = { contentHash: `${page}-${checkNo}`, candidates, totalEntries: page === "wall" ? 1 : typeof page === "number" ? page : 11 };
+        const candidates = page === "full" ? known : page === "full+new" ? [...known, job("c")] : page === "wall+junk" ? [job("cookies")] : [];
+        last = { contentHash: `${page}-${checkNo}`, candidates, totalEntries: typeof page === "number" ? page : page.startsWith("wall") ? 1 : 11 };
       }
       return Response.json({ accessible: true, ...last });
+    }
+    if (url.endsWith("/api/extract")) {
+      // The AI reads the page as it now is: other entries, none of them the listings.
+      const items = Array.from({ length: last.totalEntries }, (_, i) => ({ title: `Designer, ${i}`, url: `https://jobs.test/d${i}` }));
+      return Response.json({ schema: { items, matchConditions: { mustInclude: ["Engineer"] } }, matches: [], totalItems: items.length, contentHash: last.contentHash });
     }
     if (url.endsWith("/api/score")) {
       const sent = (JSON.parse(String(init?.body)) as { candidates: { title: string }[] }).candidates;
       scoredTitles.push(sent.map((c) => c.title));
-      return Response.json({ scored: sent.map((c) => ({ ...c, matchScore: 95, matchReason: "" })) });
+      // The scorer knows a cookie notice is not a job.
+      return Response.json({ scored: sent.map((c) => ({ ...c, matchScore: c.title.includes("cookies") ? 5 : 95, matchReason: "" })) });
     }
     return new Response("not mocked", { status: 500 });
   });
@@ -1265,8 +1272,9 @@ async function listingAcross(pages: ("full" | "wall" | "same" | "full+new" | num
       lastAiExtractAt: Date.now(), createdAt: Date.now(), updatedAt: Date.now(),
     })
   );
-  const check = async () => {
-    await t.run((ctx) => ctx.db.patch(id, { nextCheckAt: 0 }));
+  /** `fullRead` makes this check the AI's periodic re-read of the page. */
+  const check = async ({ fullRead = false } = {}) => {
+    await t.run((ctx) => ctx.db.patch(id, { nextCheckAt: 0, lastAiExtractAt: fullRead ? 0 : Date.now() }));
     await t.action(internal.scheduler.runScheduledChecks, {});
     return t.run((ctx) => ctx.db.get(id));
   };
@@ -1324,6 +1332,28 @@ describe("a page that comes back as a fraction of itself, with none of its listi
     expect(emptied?.matchCount).toBe(0);
     expect((await check())?.lastMatchAt).toBeDefined();
     expect(scoredTitles).toEqual([["Engineer, a", "Engineer, b"]]);
+  });
+
+  // With loose conditions the wall's own entry gets past the keyword filter.
+  // One stranger on a page a fraction of its size is still the wrong page.
+  test("holds when the wall's one entry reads as a candidate", async () => {
+    const { check, scoredTitles } = await listingAcross(["wall+junk", "full"]);
+    const duringWall = await check();
+    expect(duringWall?.candidateKeys).toEqual(["jobs.test/a", "jobs.test/b"]);
+    expect(duringWall?.pageEntries).toBe(11);
+    expect((await check())?.lastMatchAt).toBeUndefined();
+    expect(scoredTitles).toEqual([["Engineer, cookies"]]);
+  });
+
+  // A page can shrink for good. Held without end, the dashboard would show
+  // the old match count for ever, so the AI's full read settles it.
+  test("lets the AI's full read settle a page that stays small", async () => {
+    const { check } = await listingAcross([5, 4, 3]);
+    expect((await check())?.matchCount).toBe(2);
+    expect((await check({ fullRead: true }))?.matchCount).toBe(0);
+    const after = await check();
+    expect(after?.candidateKeys).toEqual([]);
+    expect(after?.pageEntries).toBe(3);
   });
 
   test.each([
@@ -1427,11 +1457,15 @@ describe("a check that never reached the scraper", () => {
 
   // The scraper's own 502 carries a reason in JSON: the proxy provider failed.
   // That check did run, and it failed.
-  test("a failure the scraper itself reports still counts", async () => {
-    const { monitor } = await checkAgainst(async () => Response.json({ error: "check_failed", message: "Fallback provider error: no credits" }, { status: 502 }));
-    expect(monitor.retryCount).toBe(3);
-    expect(monitor.status).toBe("error");
-  });
+  // Its message can quote a connection failure of the proxy's, further in.
+  test.each(["Fallback provider error: no credits", "Fallback provider error: fetch failed"])(
+    "a failure the scraper itself reports still counts: %s",
+    async (message) => {
+      const { monitor } = await checkAgainst(async () => Response.json({ error: "check_failed", message }, { status: 502 }));
+      expect(monitor.retryCount).toBe(3);
+      expect(monitor.status).toBe("error");
+    }
+  );
 
   // One page that crashes the scraper gets this answer every time. Put off
   // without limit it would be fetched every 5 minutes for good, and its

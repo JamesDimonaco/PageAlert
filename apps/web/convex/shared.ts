@@ -191,7 +191,7 @@ export function scraperFailure(status: number, body: string, label: string): str
 
 /** A check that never reached our scraper: the platform answered for it, or the connection failed. */
 export function isScraperUnreachable(message: string): boolean {
-  return message.startsWith(SCRAPER_UNREACHABLE) || /error sending request|fetch failed/i.test(message);
+  return message.startsWith(SCRAPER_UNREACHABLE) || /^(error sending request|fetch failed)/i.test(message);
 }
 
 /** How long a check waits when it could not reach the scraper. Longer than a redeploy takes. */

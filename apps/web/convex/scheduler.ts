@@ -435,9 +435,11 @@ export const recordCheckResult = internalMutation({
     // the page came back: twelve false alerts in a fortnight. A page that
     // kept its size and lost them is believed, and a later reappearance is a
     // real event worth an alert.
+    const seen = new Set(monitor.candidateKeys);
     const wrongPage =
-      (monitor.candidateKeys?.length ?? 0) > 0 &&
-      args.candidateKeys?.length === 0 &&
+      seen.size > 0 &&
+      args.candidateKeys !== undefined &&
+      !args.candidateKeys.some((key) => seen.has(key)) &&
       args.totalItems * 2 < (monitor.pageEntries ?? 0);
     if (wrongPage) {
       updates.matchCount = monitor.matchCount;
@@ -475,6 +477,9 @@ export const recordCheckResult = internalMutation({
       if (product) newKeys = newKeys.filter((k) => k !== matchKey(product as Record<string, unknown>));
       updates.matchedKeys = [...new Set(currentKeys.filter(Boolean))];
       updates.passedKeys = updates.matchedKeys;
+      // The AI has read the page as it now is, so the next quick check
+      // learns its size afresh. A page that shrank for good is believed then.
+      updates.pageEntries = undefined;
       // What this read counts as a match is seen by the quick checks too, or
       // the next one finds it new and announces it a second time. Only onto a
       // baseline that exists: with none, the next quick check seeds one silently.

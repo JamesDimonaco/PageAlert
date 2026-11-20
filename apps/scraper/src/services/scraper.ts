@@ -204,9 +204,8 @@ export async function scrapeUrl(
       }
     });
 
-    // One lookup per host per scrape: a page asks the same few hosts for
-    // everything. The host of `url` passed the check above a moment ago.
-    const privateHosts = new Map<string, Promise<boolean>>([[new URL(url).hostname, Promise.resolve(false)]]);
+    // One lookup per host per scrape: a page asks the same few hosts for everything.
+    const privateHosts = new Map<string, Promise<boolean>>();
     const isPrivateHost = (host: string): Promise<boolean> => {
       let verdict = privateHosts.get(host);
       if (!verdict) privateHosts.set(host, (verdict = resolvesToPrivate(host)));

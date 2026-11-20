@@ -55,8 +55,9 @@ function isPrivateIP(ip: string): boolean {
 
   // IPv6 checks
   const lower = ip.toLowerCase();
-  // IPv4 carried inside IPv6, dotted ("::ffff:10.0.0.1") or as hex ("::ffff:a00:1").
-  const mapped = lower.match(/^::ffff:(?:(\d+\.\d+\.\d+\.\d+)|([0-9a-f]{1,4}):([0-9a-f]{1,4}))$/);
+  // IPv4 carried inside IPv6, dotted ("::ffff:10.0.0.1") or as hex
+  // ("::ffff:a00:1"): mapped, the older "compatible" form, and NAT64.
+  const mapped = lower.match(/^(?:::ffff:|::|64:ff9b::)(?:(\d+\.\d+\.\d+\.\d+)|([0-9a-f]{1,4}):([0-9a-f]{1,4}))$/);
   if (mapped) {
     if (mapped[1]) return isPrivateIP(mapped[1]);
     const high = parseInt(mapped[2]!, 16);
@@ -64,7 +65,7 @@ function isPrivateIP(ip: string): boolean {
     return isPrivateIP(`${high >> 8}.${high & 255}.${low >> 8}.${low & 255}`);
   }
   if (lower === "::1") return true;
-  if (lower.startsWith("fe80:")) return true; // link-local
+  if (/^fe[89ab][0-9a-f]:/.test(lower)) return true; // link-local, fe80::/10
   if (lower.startsWith("fc") || lower.startsWith("fd")) return true; // unique local
   if (lower === "::") return true;
 
@@ -76,7 +77,8 @@ function isPrivateIP(ip: string): boolean {
  * every request the browser makes, because the URL check below covers only
  * the address the monitor names: a public page can redirect to an internal
  * one, or load from it. `hostname` is as URL.hostname gives it, with IPv6 in
- * brackets. A name that does not resolve reaches nothing, so it is not private.
+ * brackets. A name we cannot look up is refused: the browser has a resolver
+ * of its own, and may reach what ours could not see.
  */
 export async function resolvesToPrivate(hostname: string): Promise<boolean> {
   const host = hostname.toLowerCase().replace(/^\[|\]$/g, "");
@@ -86,7 +88,7 @@ export async function resolvesToPrivate(hostname: string): Promise<boolean> {
     const addresses = await lookup(host, { all: true });
     return addresses.some(({ address }) => isPrivateIP(address));
   } catch {
-    return false;
+    return true;
   }
 }
 
