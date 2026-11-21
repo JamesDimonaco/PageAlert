@@ -23,6 +23,7 @@ import {
   MAX_PROXY_BLOCKS,
   MAX_NEVER_SUCCEEDED_RETRIES,
   PARK_REASON_PROXY_BLOCKED,
+  parkMessage,
   PARK_REASON_NEVER_SUCCEEDED,
   PARK_REASON_PAGE_GONE,
   isPageGoneError,
@@ -288,7 +289,7 @@ export const recordCheckResult = internalMutation({
       if (parkReason) {
         await ctx.db.patch(args.monitorId, {
           status: "error",
-          lastError: `Checks have stopped. ${parkReason} Use Retry to try again.`,
+          lastError: parkMessage(parkReason),
           retryCount,
           proxyBlockCount,
           nextCheckAt: undefined,

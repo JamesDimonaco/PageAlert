@@ -50,7 +50,7 @@ export function NotificationBell() {
           ) : notifications.length === 0 ? (
             <div className="px-3 py-8 text-center">
               <Bell className="h-5 w-5 text-muted-foreground/40 mx-auto mb-2" />
-              <p className="text-sm text-muted-foreground">No alerts yet. They show here when a monitor finds a match.</p>
+              <p className="text-sm text-muted-foreground">No alerts yet. Matches and monitor problems show here.</p>
             </div>
           ) : (
             notifications.map((notif) => (

@@ -37,6 +37,7 @@ import { MatchChecks } from "@/components/prowl/match-checks";
 import { currencyExponent, getItemKey, isProductMonitor, matchConfidence, MATCH_CONFIDENCE_LABEL, productItem } from "@prowl/shared";
 import { useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
+import { parkReasonOf } from "@/convex/shared";
 import { timeAgo, timeUntil } from "@/lib/time";
 import { formatPrice, toSafeUrl } from "@/lib/format";
 import { cn, errorText } from "@/lib/utils";
@@ -339,11 +340,6 @@ export function OverviewTab({ monitorId, monitor, matches, items, conditions, re
         // nothing else clears it. lastError carries which park it was.
         const isParked = monitor.nextCheckAt === undefined;
         const next = timeUntil(monitor.nextCheckAt) || "soon";
-        // The scheduler wraps the park reason for email and push; the title
-        // already says checks stopped and the Retry button sits beside it.
-        const shownError = isParked
-          ? monitor.lastError.replace(/^Checks have stopped\. /, "").replace(/ Use Retry to try again\.$/, "")
-          : monitor.lastError;
         return (
         <Card className="ring-red-500/30 bg-red-500/5">
           <CardContent>
@@ -353,17 +349,17 @@ export function OverviewTab({ monitorId, monitor, matches, items, conditions, re
                 <p className="text-sm font-semibold text-destructive mb-1">
                   {isParked ? "Checks stopped" : isBlocked ? "This site blocked us" : "We couldn't read this page"}
                 </p>
-                <p className="text-sm text-muted-foreground break-words">{shownError}</p>
+                <p className="text-sm text-muted-foreground break-words">{parkReasonOf(monitor.lastError)}</p>
                 {!isParked && (
                   <p className="text-sm text-muted-foreground mt-2">
                     {isBlocked
-                      ? `This shop blocks automated visits. We'll keep trying, next ${next}.`
+                      ? `This site blocks automated visits. We'll try again ${next}.`
                       : `We'll try again ${next}. If the page opens fine for you, press Retry. If it needs a login, we can't read it yet.`}
                   </p>
                 )}
                 {onRescan && recentRetries.length >= RETRY_LIMIT && (
                   <p className="text-sm text-muted-foreground mt-2">
-                    You&apos;ve used {RETRY_LIMIT} retries this hour. Try again later, or wait for the next automatic check.
+                    You&apos;ve used {RETRY_LIMIT} retries this hour. Try again later{isParked ? "" : ", or wait for the next automatic check"}.
                   </p>
                 )}
               </div>

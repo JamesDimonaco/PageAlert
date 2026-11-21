@@ -8,6 +8,7 @@ import { StatusBadge } from "@/components/prowl/status-badge";
 import { AutoPauseNote } from "@/components/prowl/auto-pause-note";
 import { SpeedUpsell } from "@/components/prowl/speed-upsell";
 import { DeleteDialog } from "@/components/prowl/delete-dialog";
+import { intervalLabel } from "@/components/prowl/interval-selector";
 import { OverviewTab } from "@/components/prowl/monitor-tabs/overview-tab";
 import { ItemsTab } from "@/components/prowl/monitor-tabs/items-tab";
 import { HistoryTab } from "@/components/prowl/monitor-tabs/history-tab";
@@ -41,7 +42,7 @@ import { useMonitor, useMonitorResults, useMonitors } from "@/hooks/use-monitors
 import { useTier } from "@/hooks/use-tier";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
-import { isProxyFirstHost } from "@/convex/shared";
+import { isProxyFirstHost, isProxyFloored } from "@/convex/shared";
 import { applyMatchConditions, getItemKey } from "@prowl/shared";
 import type { Id } from "@/convex/_generated/dataModel";
 import type { ExtractedItem, ExtractionSchema } from "@prowl/shared";
@@ -112,8 +113,8 @@ export default function MonitorDetailPage({
       const result = await consumeScan();
       if (!result.success) {
         trackEvent("scan_budget_exceeded", { limit: result.limit });
-        toast.error("Daily scan limit reached", {
-          description: `${result.limit} scans/day on your plan. Resets at midnight UTC.`,
+        toast.error("No manual rescans left today", {
+          description: `Your plan has ${result.limit} a day. They reset at midnight UTC. Automatic checks keep running.`,
         });
         return;
       }
@@ -196,11 +197,7 @@ export default function MonitorDetailPage({
 
   const m = monitor as MonitorExt;
 
-  // Mirrors effectiveIntervalMs in convex/shared.ts — a blocked site is held
-  // at 6h however often the user asked for it
-  const proxyFloored =
-    monitor.proxyPreferred === true &&
-    ["5m", "15m", "30m", "1h"].includes(monitor.checkInterval);
+  const proxyFloored = isProxyFloored(monitor);
 
   const CHANNEL_NAMES: Record<string, string> = { email: "email", push: "browser", telegram: "Telegram", discord: "Discord", sms: "text" };
   // An unset list means "send on every configured channel" (alertChannels in convex/alerts.ts),
@@ -293,7 +290,7 @@ export default function MonitorDetailPage({
           </div>
           {proxyFloored && (
             <p className="mt-1 text-xs text-muted-foreground">
-              This site only answers through our proxy, so we check it every 6 hours, not every {monitor.checkInterval}.
+              This site only answers through our proxy, so we check it every 6 hours, not {intervalLabel(monitor.checkInterval).toLowerCase()}.
             </p>
           )}
         </div>
