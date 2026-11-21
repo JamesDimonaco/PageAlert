@@ -506,9 +506,7 @@ export function CreateMonitorSheet({
                     <p className="text-lg font-semibold mb-1">Retry {retryAttempt} of 3</p>
                     <div className="text-sm text-muted-foreground text-center max-w-sm space-y-1 mb-1">
                       <p>The site blocked the first attempt.</p>
-                      <p>
-                        We&apos;re trying again automatically with a proxy.
-                      </p>
+                      <p>We&apos;re trying again automatically.</p>
                     </div>
                     <p className="text-xs text-muted-foreground font-mono truncate max-w-sm">
                       {monitor?.url}
