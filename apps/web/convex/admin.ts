@@ -23,6 +23,7 @@ import { authComponent } from "./betterAuth/auth";
 import { deleteAllUserData, deleteAuthIdentity } from "./account";
 import { APP_URL, HELLO_FROM_EMAIL, RESEND_TIMEOUT, textToHtmlParagraphs } from "./emails";
 import { effectiveTier, TIER_RANK, type Tier } from "./tiers";
+import { clampInterval } from "./monitors";
 
 const HOUR = 60 * 60 * 1000;
 
@@ -260,20 +261,31 @@ export const expireGrants = internalMutation({
       if (!r.grantUntil || r.grantUntil > now) continue;
       await ctx.db.patch(r._id, { tier: "free", grantUntil: undefined, grantSource: undefined, updatedAt: now });
       expired++;
-
-      const monitors = await ctx.db
-        .query("monitors")
-        .withIndex("by_userId", (q) => q.eq("userId", r.userId))
-        .collect();
-      for (const m of monitors) {
-        if (FREE_INTERVALS.includes(m.checkInterval)) continue;
-        await ctx.db.patch(m._id, { checkInterval: FREE_SLOWEST_ALLOWED, updatedAt: now });
-        slowed++;
-      }
+      slowed += await slowMonitorsTo(ctx, r.userId, "free", now);
     }
     return { expired, slowed };
   },
 });
+
+/**
+ * Moves each monitor faster than the tier allows onto that tier's fastest
+ * interval. Limits are checked only when a monitor is written, so a downgrade
+ * must do this or the old pace runs on. Returns how many it slowed.
+ */
+async function slowMonitorsTo(ctx: MutationCtx, userId: string, tier: Tier, now: number): Promise<number> {
+  const monitors = await ctx.db
+    .query("monitors")
+    .withIndex("by_userId", (q) => q.eq("userId", userId))
+    .collect();
+  let slowed = 0;
+  for (const m of monitors) {
+    const allowed = clampInterval(m.checkInterval, tier);
+    if (allowed === m.checkInterval) continue;
+    await ctx.db.patch(m._id, { checkInterval: allowed, updatedAt: now });
+    slowed++;
+  }
+  return slowed;
+}
 
 // ---- One-off: clear the retired priceAlerts field ----
 
@@ -304,10 +316,6 @@ export const clearPriceAlerts = internalMutation({
 
 
 const DAY_MS = 24 * HOUR;
-
-// Mirrors TIER_LIMITS.free.allowedIntervals in convex/monitors.ts
-const FREE_INTERVALS = ["1h", "6h", "24h"];
-const FREE_SLOWEST_ALLOWED = "1h" as const;
 
 // Monthly price in USD cents. Keep in step with lib/plans.ts (whole-dollar
 // marketing prices); integer minor units here so MRR never touches a float.
@@ -776,16 +784,46 @@ export const grantTrialByEmail = internalMutation({
   },
 });
 
+/** The user's live admin trial. A bought pass or a subscription is refused: those were paid for. */
+async function requireLiveTrial(ctx: MutationCtx, userId: string, now: number) {
+  const row = await ctx.db
+    .query("userTiers")
+    .withIndex("by_userId", (q) => q.eq("userId", userId))
+    .unique();
+  if (!row?.grantUntil || row.grantUntil <= now || row.grantSource === "pass") {
+    throw new Error("User is not on a trial");
+  }
+  return row;
+}
+
+/** Sets a live trial's plan and end date. Pro and Max differ in pace, so a move to Pro slows monitors too. */
+export const updateTrial = mutation({
+  args: { userId: v.string(), tier: paidTierValidator, grantUntil: v.number() },
+  returns: v.null(),
+  handler: async (ctx, { userId, tier, grantUntil }) => {
+    await requireAdmin(ctx);
+    const now = Date.now();
+    const row = await requireLiveTrial(ctx, userId, now);
+    if (grantUntil <= now || grantUntil > now + 365 * DAY_MS) {
+      throw new Error("Pick an end date between now and 365 days from now");
+    }
+    await ctx.db.patch(row._id, { tier, grantUntil, grantSource: "admin", updatedAt: now });
+    await slowMonitorsTo(ctx, userId, tier, now);
+    return null;
+  },
+});
+
+/** Ends a trial now, as expireGrants would at its end date. */
 export const endTrial = mutation({
   args: { userId: v.string() },
+  returns: v.null(),
   handler: async (ctx, { userId }) => {
     await requireAdmin(ctx);
-    const existing = await ctx.db
-      .query("userTiers")
-      .withIndex("by_userId", (q) => q.eq("userId", userId))
-      .unique();
-    if (!existing?.grantUntil) throw new Error("User is not on a trial");
-    await ctx.db.patch(existing._id, { tier: "free", grantUntil: undefined, updatedAt: Date.now() });
+    const now = Date.now();
+    const row = await requireLiveTrial(ctx, userId, now);
+    await ctx.db.patch(row._id, { tier: "free", grantUntil: undefined, grantSource: undefined, updatedAt: now });
+    await slowMonitorsTo(ctx, userId, "free", now);
+    return null;
   },
 });
 
