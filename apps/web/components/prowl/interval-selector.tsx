@@ -23,6 +23,10 @@ const INTERVALS: { value: CheckInterval; label: string; tier: Tier }[] = [
   { value: "24h", label: "Every 24 hours", tier: "free" },
 ];
 
+export function intervalLabel(value: string): string {
+  return INTERVALS.find((i) => i.value === value)?.label ?? `Every ${value}`;
+}
+
 
 const TIER_LABELS: Record<Tier, string> = { free: "Free", sprint: "Sprint", pro: "Pro", max: "Max" };
 

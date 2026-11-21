@@ -13,7 +13,7 @@ export function ExampleResults() {
           See what PageAlert finds
         </h2>
         <p className="mt-2 text-sm text-muted-foreground">
-          Here&apos;s a real example — AI extracts items, highlights matches, and tracks price changes
+          An example: the AI lists every item, marks the matches and tracks price changes.
         </p>
       </div>
 

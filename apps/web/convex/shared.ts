@@ -95,6 +95,21 @@ export const NEVER_SUCCEEDED_RETRY_DAYS = Math.round(
  * email, Telegram, Discord, push and in-app copies cannot drift apart or
  * describe the wrong park — see the park branches in scheduler.ts.
  */
+const PARK_OPENING = "Checks have stopped. ";
+const PARK_CLOSING = " Use Retry to try again.";
+
+/** What a parked monitor's lastError says, on every channel. */
+export function parkMessage(reason: string): string {
+  return `${PARK_OPENING}${reason}${PARK_CLOSING}`;
+}
+
+/** The reason alone, for a screen with its own "checks stopped" title and Retry button. */
+export function parkReasonOf(lastError: string): string {
+  return lastError.startsWith(PARK_OPENING) && lastError.endsWith(PARK_CLOSING)
+    ? lastError.slice(PARK_OPENING.length, -PARK_CLOSING.length)
+    : lastError;
+}
+
 export const PARK_REASON_PROXY_BLOCKED =
   "This site blocks automated access even through our proxy, so every attempt was turned away.";
 export const PARK_REASON_PAGE_GONE =
@@ -400,6 +415,11 @@ export function effectiveIntervalMs(monitor: {
 }): number {
   const base = intervalToMs(monitor.checkInterval);
   return monitor.proxyPreferred === true ? Math.max(base, PROXY_MIN_INTERVAL_MS) : base;
+}
+
+/** True when the proxy floor, not the interval the user picked, sets the pace. */
+export function isProxyFloored(monitor: { checkInterval: string; proxyPreferred?: boolean }): boolean {
+  return effectiveIntervalMs(monitor) > intervalToMs(monitor.checkInterval);
 }
 
 /**

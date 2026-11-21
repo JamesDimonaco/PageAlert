@@ -175,7 +175,7 @@ export default function ExamplePage() {
             <Zap className="h-8 w-8 text-primary mx-auto mb-3" />
             <h3 className="text-lg font-bold mb-1">This is what your monitors look like</h3>
             <p className="text-sm text-muted-foreground mb-4">
-              Try it yourself — paste any URL and describe what you&apos;re looking for. No account needed.
+              Paste any URL and describe what you want. Free, no credit card.
             </p>
             <Link
               href="/login?mode=signup"

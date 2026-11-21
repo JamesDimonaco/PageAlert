@@ -27,11 +27,11 @@ export const FAQ: FaqEntry[] = [
   },
   {
     q: "How will I be notified when something changes?",
-    a: "Email, browser and phone push, and Telegram, on every plan and every monitor. Discord is coming soon. Alerts say what matched, what the price did, and link straight to the item.",
+    a: "Email, browser and phone push, and Telegram on every plan. Text messages on paid plans. Discord is coming soon. Each alert says what matched, what the price did, and links to the item.",
   },
   {
     q: "Is there a free plan?",
-    a: "Yes — 3 monitors, hourly checks, email notifications, no credit card.",
+    a: "Yes. 3 monitors, hourly checks, and email, push and Telegram alerts. No credit card.",
   },
   {
     q: "What happens when my plan ends?",

@@ -19,7 +19,7 @@ export function StatsCards({ monitors }: { monitors: Doc<"monitors">[] }) {
       bg: "bg-emerald-500/10",
     },
     {
-      label: "Matches",
+      label: "Matching now",
       value: totalMatches,
       icon: Zap,
       color: "text-primary",

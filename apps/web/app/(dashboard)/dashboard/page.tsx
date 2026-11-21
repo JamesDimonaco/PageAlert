@@ -179,8 +179,8 @@ export default function DashboardPage() {
       const result = await consumeScan();
       if (!result.success) {
         trackEvent("scan_budget_exceeded", { limit: result.limit });
-        toast.error("Daily scan limit reached", {
-          description: `${result.limit} scans/day on your plan. Resets at midnight UTC.`,
+        toast.error("No manual rescans left today", {
+          description: `Your plan has ${result.limit} a day. They reset at midnight UTC. Automatic checks keep running.`,
         });
         return;
       }
@@ -399,7 +399,7 @@ export default function DashboardPage() {
         <StatsCards monitors={monitors} />
         {scanBudget && (
           <p className="text-xs text-muted-foreground">
-            {scanBudget.remaining} of {scanBudget.limit} scans left today
+            {scanBudget.remaining} of {scanBudget.limit} manual rescans left today
           </p>
         )}
       </div>
