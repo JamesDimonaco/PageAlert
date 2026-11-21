@@ -173,7 +173,7 @@ describe("admin trial management", () => {
     const ms = await t.run((ctx) => ctx.db.query("monitors").withIndex("by_userId", (q) => q.eq("userId", userId)).collect());
     return ms.map((m) => m.checkInterval);
   }
-  async function setInterval(t: T, id: Awaited<ReturnType<typeof seedMonitor>>, checkInterval: "5m" | "15m") {
+  async function setCheckInterval(t: T, id: Awaited<ReturnType<typeof seedMonitor>>, checkInterval: "5m" | "15m") {
     await t.run((ctx) => ctx.db.patch(id, { checkInterval }));
   }
 
@@ -198,7 +198,7 @@ describe("admin trial management", () => {
     const t = harness();
     const user = await seedUser(t, "trial@example.com");
     await seedTier(t, user, { tier: "max", grantUntil: NOW + 10 * DAY, grantSource: "admin" });
-    await setInterval(t, await seedMonitor(t, user, "Fast"), "5m");
+    await setCheckInterval(t, await seedMonitor(t, user, "Fast"), "5m");
     signInAs("admin@example.com");
 
     await t.mutation(api.admin.updateTrial, { userId: user, tier: "pro", grantUntil: NOW + 10 * DAY });
@@ -216,6 +216,8 @@ describe("admin trial management", () => {
     await expect(t.mutation(api.admin.updateTrial, { userId: user, tier: "pro", grantUntil: NOW - 1 })).rejects.toThrow(/end date/);
     await expect(t.mutation(api.admin.updateTrial, { userId: user, tier: "pro", grantUntil: NOW + 365 * DAY + 1 })).rejects.toThrow(/end date/);
     await expect(t.mutation(api.admin.updateTrial, { userId: user, tier: "pro", grantUntil: NOW + 365 * DAY })).resolves.toBeNull();
+    // NaN passes both range comparisons, and expireGrants skips a falsy grantUntil: the trial would never end.
+    await expect(t.mutation(api.admin.updateTrial, { userId: user, tier: "pro", grantUntil: NaN })).rejects.toThrow(/end date/);
   });
 
   it("refuses a bought pass, a paid subscription and a non-admin caller", async () => {
@@ -240,7 +242,7 @@ describe("admin trial management", () => {
     const t = harness();
     const user = await seedUser(t, "trial@example.com");
     await seedTier(t, user, { tier: "max", grantUntil: NOW + 10 * DAY, grantSource: "admin" });
-    await setInterval(t, await seedMonitor(t, user, "Fast"), "5m");
+    await setCheckInterval(t, await seedMonitor(t, user, "Fast"), "5m");
     signInAs("admin@example.com");
 
     await t.mutation(api.admin.endTrial, { userId: user });

@@ -52,6 +52,10 @@ function ManageTrialForm({ target, onClose, onDone }: { target: TrialTarget; onC
   const [busy, setBusy] = useState<"save" | "end" | null>(null);
 
   const changed = tier !== target.tier || grantUntil !== target.grantUntil;
+  // Mirrors updateTrial's range, so a bad date shows before Save instead of as an error toast.
+  // Read once when the dialog opens; the form remounts on each opening.
+  const [now] = useState(() => Date.now());
+  const inRange = grantUntil > now && grantUntil <= now + 365 * DAY_MS;
 
   async function run(kind: "save" | "end") {
     setBusy(kind);
@@ -104,6 +108,8 @@ function ManageTrialForm({ target, onClose, onDone }: { target: TrialTarget; onC
               id="trial-end"
               type="date"
               value={toDateInput(grantUntil)}
+              min={toDateInput(now + DAY_MS)}
+              max={toDateInput(now + 365 * DAY_MS)}
               onChange={(e) => e.target.value && setGrantUntil(fromDateInput(e.target.value, grantUntil))}
               className="w-40"
             />
@@ -113,6 +119,7 @@ function ManageTrialForm({ target, onClose, onDone }: { target: TrialTarget; onC
               </Button>
             ))}
           </div>
+          {!inRange && <p className="text-xs text-destructive">Pick a date between tomorrow and 365 days from now.</p>}
         </div>
       </div>
 
@@ -123,7 +130,7 @@ function ManageTrialForm({ target, onClose, onDone }: { target: TrialTarget; onC
         </Button>
         <div className="flex gap-2">
           <Button variant="outline" onClick={onClose} disabled={busy !== null}>Cancel</Button>
-          <Button onClick={() => run("save")} disabled={!changed || busy !== null}>
+          <Button onClick={() => run("save")} disabled={!changed || !inRange || busy !== null}>
             {busy === "save" && <Loader2 className="h-4 w-4 animate-spin" />}
             Save
           </Button>

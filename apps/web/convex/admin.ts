@@ -790,7 +790,7 @@ async function requireLiveTrial(ctx: MutationCtx, userId: string, now: number) {
     .query("userTiers")
     .withIndex("by_userId", (q) => q.eq("userId", userId))
     .unique();
-  if (!row?.grantUntil || row.grantUntil <= now || row.grantSource === "pass") {
+  if (!row?.grantUntil || row.grantUntil <= now || isPayingRecord(row)) {
     throw new Error("User is not on a trial");
   }
   return row;
@@ -804,7 +804,7 @@ export const updateTrial = mutation({
     await requireAdmin(ctx);
     const now = Date.now();
     const row = await requireLiveTrial(ctx, userId, now);
-    if (grantUntil <= now || grantUntil > now + 365 * DAY_MS) {
+    if (!Number.isFinite(grantUntil) || grantUntil <= now || grantUntil > now + 365 * DAY_MS) {
       throw new Error("Pick an end date between now and 365 days from now");
     }
     await ctx.db.patch(row._id, { tier, grantUntil, grantSource: "admin", updatedAt: now });
