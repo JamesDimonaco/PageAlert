@@ -159,3 +159,98 @@ describe("grantTrialByEmail", () => {
     vi.useRealTimers();
   });
 });
+
+// Managing a live admin trial from the users table: extend it, switch plan,
+// or end it. A bought pass or a real subscription is never touched.
+describe("admin trial management", () => {
+  async function seedTier(t: T, userId: string, row: Record<string, unknown>) {
+    await t.run((ctx) => ctx.db.insert("userTiers", { userId, tier: "pro", updatedAt: NOW, ...row } as never));
+  }
+  async function tierOf(t: T, userId: string) {
+    return await t.run((ctx) => ctx.db.query("userTiers").withIndex("by_userId", (q) => q.eq("userId", userId)).unique());
+  }
+  async function intervalsOf(t: T, userId: string) {
+    const ms = await t.run((ctx) => ctx.db.query("monitors").withIndex("by_userId", (q) => q.eq("userId", userId)).collect());
+    return ms.map((m) => m.checkInterval);
+  }
+  async function setCheckInterval(t: T, id: Awaited<ReturnType<typeof seedMonitor>>, checkInterval: "5m" | "15m") {
+    await t.run((ctx) => ctx.db.patch(id, { checkInterval }));
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it("extends a trial to the chosen end date", async () => {
+    const t = harness();
+    const user = await seedUser(t, "trial@example.com");
+    await seedTier(t, user, { tier: "pro", grantUntil: NOW + 3 * DAY, grantSource: "admin" });
+    signInAs("admin@example.com");
+
+    await t.mutation(api.admin.updateTrial, { userId: user, tier: "pro", grantUntil: NOW + 17 * DAY });
+
+    expect(await tierOf(t, user)).toMatchObject({ tier: "pro", grantUntil: NOW + 17 * DAY, grantSource: "admin" });
+  });
+
+  it("switches Max to Pro and slows monitors Pro cannot run", async () => {
+    const t = harness();
+    const user = await seedUser(t, "trial@example.com");
+    await seedTier(t, user, { tier: "max", grantUntil: NOW + 10 * DAY, grantSource: "admin" });
+    await setCheckInterval(t, await seedMonitor(t, user, "Fast"), "5m");
+    signInAs("admin@example.com");
+
+    await t.mutation(api.admin.updateTrial, { userId: user, tier: "pro", grantUntil: NOW + 10 * DAY });
+
+    expect(await tierOf(t, user)).toMatchObject({ tier: "pro", grantUntil: NOW + 10 * DAY });
+    expect(await intervalsOf(t, user)).toEqual(["15m"]);
+  });
+
+  it("rejects an end date in the past or more than 365 days out", async () => {
+    const t = harness();
+    const user = await seedUser(t, "trial@example.com");
+    await seedTier(t, user, { tier: "pro", grantUntil: NOW + 3 * DAY, grantSource: "admin" });
+    signInAs("admin@example.com");
+
+    await expect(t.mutation(api.admin.updateTrial, { userId: user, tier: "pro", grantUntil: NOW - 1 })).rejects.toThrow(/end date/);
+    await expect(t.mutation(api.admin.updateTrial, { userId: user, tier: "pro", grantUntil: NOW + 365 * DAY + 1 })).rejects.toThrow(/end date/);
+    await expect(t.mutation(api.admin.updateTrial, { userId: user, tier: "pro", grantUntil: NOW + 365 * DAY })).resolves.toBeNull();
+    // NaN passes both range comparisons, and expireGrants skips a falsy grantUntil: the trial would never end.
+    await expect(t.mutation(api.admin.updateTrial, { userId: user, tier: "pro", grantUntil: NaN })).rejects.toThrow(/end date/);
+  });
+
+  it("refuses a bought pass, a paid subscription and a non-admin caller", async () => {
+    const t = harness();
+    const pass = await seedUser(t, "pass@example.com");
+    const sub = await seedUser(t, "sub@example.com");
+    await seedTier(t, pass, { tier: "pro", grantUntil: NOW + 3 * DAY, grantSource: "pass" });
+    await seedTier(t, sub, { tier: "max", polarSubscriptionId: "sub_1" });
+
+    signInAs("someone@example.com");
+    await expect(t.mutation(api.admin.updateTrial, { userId: pass, tier: "max", grantUntil: NOW + DAY })).rejects.toThrow(/Not authorised/);
+
+    signInAs("admin@example.com");
+    for (const userId of [pass, sub]) {
+      await expect(t.mutation(api.admin.updateTrial, { userId, tier: "max", grantUntil: NOW + DAY })).rejects.toThrow(/not on a trial/);
+      await expect(t.mutation(api.admin.endTrial, { userId })).rejects.toThrow(/not on a trial/);
+    }
+    expect(await tierOf(t, pass)).toMatchObject({ tier: "pro", grantSource: "pass" });
+  });
+
+  it("ending a trial drops to free now and slows monitors to the free pace", async () => {
+    const t = harness();
+    const user = await seedUser(t, "trial@example.com");
+    await seedTier(t, user, { tier: "max", grantUntil: NOW + 10 * DAY, grantSource: "admin" });
+    await setCheckInterval(t, await seedMonitor(t, user, "Fast"), "5m");
+    signInAs("admin@example.com");
+
+    await t.mutation(api.admin.endTrial, { userId: user });
+
+    const row = await tierOf(t, user);
+    expect(row).toMatchObject({ tier: "free" });
+    expect(row?.grantUntil).toBeUndefined();
+    expect(row?.grantSource).toBeUndefined();
+    expect(await intervalsOf(t, user)).toEqual(["1h"]);
+  });
+});

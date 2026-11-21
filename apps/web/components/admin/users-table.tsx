@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { timeAgo } from "@/lib/time";
 import { GrantTrialDialog } from "./grant-trial-dialog";
+import { ManageTrialDialog, type TrialTarget } from "./manage-trial-dialog";
 import { BanUserDialog } from "./ban-user-dialog";
 import { DeleteUserDialog } from "./delete-user-dialog";
 import { startImpersonating } from "./impersonation";
@@ -37,11 +38,11 @@ export function AdminUsersTable({
   onEmailSelected: () => void;
 }) {
   const { data: users, loading, error, refresh } = useOneShotQuery(api.admin.listUsers, {});
-  const endTrial = useMutation(api.admin.endTrial);
   const unbanUser = useMutation(api.admin.unbanUser);
   const [search, setSearch] = useState("");
   const [plan, setPlan] = useState<PlanFilter>("all");
   const [trialTarget, setTrialTarget] = useState<string[] | null>(null);
+  const [manageTarget, setManageTarget] = useState<TrialTarget | null>(null);
   const [banTarget, setBanTarget] = useState<{ userId: string; email: string } | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{ userId: string; email: string } | null>(null);
   const [detailUserId, setDetailUserId] = useState<string | null>(null);
@@ -75,16 +76,6 @@ export function AdminUsersTable({
     if (allFilteredSelected) filtered.forEach((u) => next.delete(u.userId));
     else filtered.forEach((u) => next.add(u.userId));
     onSelectionChange(next);
-  }
-
-  async function handleEndTrial(userId: string, email: string) {
-    try {
-      await endTrial({ userId });
-      toast.success(`Ended trial for ${email}`);
-      refresh();
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to end trial");
-    }
   }
 
   async function handleUnban(userId: string, email: string) {
@@ -224,8 +215,14 @@ export function AdminUsersTable({
                     {timeAgo(u.lastActiveAt ?? undefined)}
                   </td>
                   <td className="p-3 text-right whitespace-nowrap">
-                    {u.grantUntil ? (
-                      <Button size="sm" variant="ghost" onClick={() => handleEndTrial(u.userId, u.email)}>End trial</Button>
+                    {u.grantUntil && !u.isPaying && (u.tier === "pro" || u.tier === "max") ? (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => setManageTarget({ userId: u.userId, email: u.email, tier: u.tier as "pro" | "max", grantUntil: u.grantUntil as number })}
+                      >
+                        Manage trial
+                      </Button>
                     ) : !u.isPaying ? (
                       <Button size="sm" variant="ghost" onClick={() => setTrialTarget([u.userId])}>Grant trial</Button>
                     ) : null}
@@ -274,6 +271,11 @@ export function AdminUsersTable({
         open={trialTarget !== null}
         onOpenChange={(open) => { if (!open) setTrialTarget(null); }}
         userIds={trialTarget ?? []}
+        onDone={refresh}
+      />
+      <ManageTrialDialog
+        target={manageTarget}
+        onOpenChange={(open) => { if (!open) setManageTarget(null); }}
         onDone={refresh}
       />
       <BanUserDialog
