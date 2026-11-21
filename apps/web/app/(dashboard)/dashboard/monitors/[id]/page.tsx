@@ -260,14 +260,7 @@ export default function MonitorDetailPage({
               <span className="truncate">{monitor.url.replace(/^https?:\/\/(www\.)?/, "")}</span>
               <ExternalLink className="h-3 w-3 shrink-0" />
             </a>
-            <span
-              className="inline-flex items-center gap-1"
-              title={
-                proxyFloored
-                  ? `This site only answers through our proxy, so checks run every 6 hours rather than the ${monitor.checkInterval} you picked.`
-                  : undefined
-              }
-            >
+            <span className="inline-flex items-center gap-1">
               <Clock className="h-3 w-3" />
               every {proxyFloored ? "6h" : monitor.checkInterval}
             </span>
@@ -298,6 +291,11 @@ export default function MonitorDetailPage({
               </button>
             )}
           </div>
+          {proxyFloored && (
+            <p className="mt-1 text-xs text-muted-foreground">
+              This site only answers through our proxy, so we check it every 6 hours, not every {monitor.checkInterval}.
+            </p>
+          )}
         </div>
         <div className="shrink-0 flex items-center gap-2">
           <a

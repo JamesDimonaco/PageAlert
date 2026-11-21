@@ -24,7 +24,7 @@ const jetbrainsMono = JetBrains_Mono({
 
 const SITE_URL = "https://pagealert.io";
 const SITE_NAME = "PageAlert";
-const DESCRIPTION = "Monitor any website with AI. Describe what you're looking for in plain English — get notified instantly when it appears. Track prices, stock availability, new listings, and more.";
+const DESCRIPTION = "Monitor any website with AI. Describe what you're looking for in plain English and get an alert when it appears. Track prices, stock availability, new listings, and more.";
 const SHORT_DESCRIPTION = "AI-powered website monitoring. Describe what you want, get notified when it appears.";
 
 export const metadata: Metadata = {

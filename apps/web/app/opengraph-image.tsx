@@ -145,7 +145,7 @@ export default async function Image() {
             lineHeight: 1.5,
           }}
         >
-          Price drops, restocks, new listings — describe what you want and get notified instantly.
+          Price drops, restocks, new listings — describe what you want and get an alert when it appears.
         </span>
 
         {/* Bottom bar with use cases */}

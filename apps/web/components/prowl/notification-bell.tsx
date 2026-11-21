@@ -50,7 +50,7 @@ export function NotificationBell() {
           ) : notifications.length === 0 ? (
             <div className="px-3 py-8 text-center">
               <Bell className="h-5 w-5 text-muted-foreground/40 mx-auto mb-2" />
-              <p className="text-sm text-muted-foreground">No notifications yet</p>
+              <p className="text-sm text-muted-foreground">No alerts yet. They show here when a monitor finds a match.</p>
             </div>
           ) : (
             notifications.map((notif) => (
@@ -70,7 +70,7 @@ export function NotificationBell() {
                     <span className="mt-1.5 h-2 w-2 rounded-full bg-primary shrink-0" />
                   )}
                   <div className={!notif.read ? "" : "ml-4"}>
-                    <p className="text-sm font-medium leading-snug">{notif.title}</p>
+                    <p className="text-sm font-medium leading-snug">{!notif.read && <span className="sr-only">Unread: </span>}{notif.title}</p>
                     <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{notif.message}</p>
                     <p className="text-[10px] text-muted-foreground mt-1">
                       {formatDistanceToNow(notif.sentAt, { addSuffix: true })}

@@ -31,6 +31,7 @@ import type { Doc, Id } from "@/convex/_generated/dataModel";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { timeAgo } from "@/lib/time";
+import { intervalLabel } from "./interval-selector";
 
 const isDev = process.env.NODE_ENV === "development";
 
@@ -101,11 +102,11 @@ export function MonitorCard({ monitor, onTogglePause, onDelete, onRescan, onClon
               </span>
               <span className="flex items-center gap-1.5">
                 <Clock className="h-3.5 w-3.5" />
-                Every {monitor.checkInterval}
+                {intervalLabel(monitor.checkInterval)}
               </span>
               <span className="flex items-center gap-1.5">
                 <Zap className="h-3.5 w-3.5" />
-                {timeAgo(monitor.lastCheckedAt)}
+                {monitor.lastCheckedAt ? `Checked ${timeAgo(monitor.lastCheckedAt)}` : "Not checked yet"}
               </span>
               {(monitor.checkCount ?? 0) > 0 && (
                 <span>{monitor.checkCount} check{(monitor.checkCount ?? 0) !== 1 && "s"}</span>

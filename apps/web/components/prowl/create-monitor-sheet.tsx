@@ -507,8 +507,7 @@ export function CreateMonitorSheet({
                     <div className="text-sm text-muted-foreground text-center max-w-sm space-y-1 mb-1">
                       <p>The site blocked the first attempt.</p>
                       <p>
-                        We&apos;re trying again automatically with a proxy
-                        {retryAttempt >= 2 ? " and a different browser" : ""}.
+                        We&apos;re trying again automatically with a proxy.
                       </p>
                     </div>
                     <p className="text-xs text-muted-foreground font-mono truncate max-w-sm">
@@ -529,13 +528,13 @@ export function CreateMonitorSheet({
                     <div className="w-full max-w-sm space-y-4 py-8">
                       <ScanStep
                         status={scanStage === "scraping" ? "active" : scrapeDone ? "done" : "pending"}
-                        label="Scraping page"
+                        label="Loading the page"
                         detail={scanStage === "scraping" ? `Loading ${hostname}` : scrapeDone ? `Loaded from ${hostname}` : undefined}
                         elapsed={scanStage === "scraping" ? elapsed : undefined}
                       />
                       <ScanStep
                         status={scanStage === "extracting" ? "active" : (scanStage === "saving" || scanStage === "done") ? "done" : "pending"}
-                        label="AI extracting data"
+                        label="Reading the items"
                         detail={scanStage === "extracting" ? "Reading the page and finding items" : undefined}
                         elapsed={scanStage === "extracting" ? elapsed : undefined}
                       />
@@ -547,6 +546,11 @@ export function CreateMonitorSheet({
                       );
                     })()}
 
+                    {scanInFlight && elapsed >= 45 && (
+                      <p className="text-xs text-muted-foreground mb-2">
+                        This scan is slow. It can take a few minutes.
+                      </p>
+                    )}
                     <p className="text-xs text-muted-foreground">
                       You can close this panel — the scan will continue.
                     </p>

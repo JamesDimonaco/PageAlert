@@ -314,16 +314,14 @@ export function OverviewTab({ monitorId, monitor, matches, items, conditions, re
         <Card className="ring-amber-500/30 bg-amber-500/5">
           <CardContent>
             <div className="flex items-start gap-3">
-              <RotateCw className="h-5 w-5 text-warning shrink-0 mt-0.5 animate-spin" />
+              <RotateCw className="h-5 w-5 text-warning shrink-0 mt-0.5" />
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-semibold text-warning mb-1">
                   Retrying automatically ({monitor.retryCount} of 3)
                 </p>
                 <p className="text-sm text-muted-foreground break-words">{monitor.lastError}</p>
                 <p className="text-sm text-muted-foreground mt-2">
-                  Trying different strategies — proxy, mobile browser.
-                  {monitor.retryCount === 1 && " Next: retry with residential proxy."}
-                  {monitor.retryCount === 2 && " Next: retry with mobile browser + skip anti-bot checks."}
+                  The last check failed. We&apos;ll try again {timeUntil(monitor.nextCheckAt) || "soon"}. You don&apos;t need to do anything.
                 </p>
               </div>
             </div>
@@ -340,6 +338,12 @@ export function OverviewTab({ monitorId, monitor, matches, items, conditions, re
         // nextCheckAt is the signal both parks share; within status "error"
         // nothing else clears it. lastError carries which park it was.
         const isParked = monitor.nextCheckAt === undefined;
+        const next = timeUntil(monitor.nextCheckAt) || "soon";
+        // The scheduler wraps the park reason for email and push; the title
+        // already says checks stopped and the Retry button sits beside it.
+        const shownError = isParked
+          ? monitor.lastError.replace(/^Checks have stopped\. /, "").replace(/ Use Retry to try again\.$/, "")
+          : monitor.lastError;
         return (
         <Card className="ring-red-500/30 bg-red-500/5">
           <CardContent>
@@ -347,16 +351,21 @@ export function OverviewTab({ monitorId, monitor, matches, items, conditions, re
               <AlertTriangle className="h-5 w-5 text-destructive shrink-0 mt-0.5" />
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-semibold text-destructive mb-1">
-                  {isParked ? "Checks stopped" : isBlocked ? "This site blocked us" : "Monitor failed"}
+                  {isParked ? "Checks stopped" : isBlocked ? "This site blocked us" : "We couldn't read this page"}
                 </p>
-                <p className="text-sm text-muted-foreground break-words">{monitor.lastError}</p>
-                <p className="text-sm text-muted-foreground mt-2">
-                  {isParked
-                    ? "We've stopped checking this one automatically. Hit Retry to give it another go."
-                    : isBlocked
-                      ? "All retry strategies (proxy, mobile browser) were exhausted. Try a different URL for this site, or check if the page works without login."
-                      : "Try pausing other monitors, checking the URL is accessible, or simplifying your prompt."}
-                </p>
+                <p className="text-sm text-muted-foreground break-words">{shownError}</p>
+                {!isParked && (
+                  <p className="text-sm text-muted-foreground mt-2">
+                    {isBlocked
+                      ? `This shop blocks automated visits. We'll keep trying, next ${next}.`
+                      : `We'll try again ${next}. If the page opens fine for you, press Retry. If it needs a login, we can't read it yet.`}
+                  </p>
+                )}
+                {onRescan && recentRetries.length >= RETRY_LIMIT && (
+                  <p className="text-sm text-muted-foreground mt-2">
+                    You&apos;ve used {RETRY_LIMIT} retries this hour. Try again later, or wait for the next automatic check.
+                  </p>
+                )}
               </div>
               {onRescan && (
                 <Button

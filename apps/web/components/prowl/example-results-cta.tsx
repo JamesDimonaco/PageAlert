@@ -6,7 +6,7 @@ import { buttonVariants } from "@/components/ui/button";
 import { trackEvent } from "@/lib/posthog";
 
 /**
- * Client-side wrapper for the "Explore the full live example" CTA on the
+ * Client-side wrapper for the "See the full example" CTA on the
  * homepage example card. Lives in its own file so the parent
  * <ExampleResults /> stays server-rendered. See PROWL-038 Phase 5.
  */
@@ -22,11 +22,11 @@ export function ExampleResultsCta() {
           className: "w-full gap-2 group",
         })}
       >
-        Explore the full live example
+        See the full example
         <ArrowRight className="h-4 w-4 group-hover:translate-x-0.5 transition-transform" />
       </Link>
       <p className="text-xs text-muted-foreground text-center mt-2">
-        Real scan, real data &mdash; no signup needed
+        A sample monitor. No sign-up needed to look.
       </p>
     </div>
   );
