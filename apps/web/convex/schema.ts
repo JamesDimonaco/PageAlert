@@ -93,6 +93,12 @@ export default defineSchema({
     // still remembered as seen — otherwise it reads as new every check and
     // buys another scoring call forever.
     candidateKeys: v.optional(v.array(v.string())),
+    // How many entries the page held at the last quick check that was
+    // believed. A read with under half of them and none of candidateKeys is
+    // the wrong page (a consent wall, a soft block), and replaces neither.
+    pageEntries: v.optional(v.number()),
+    // When the run of such reads began. See WRONG_PAGE_HOLD_MS.
+    wrongPageSince: v.optional(v.number()),
     // Entries the AI passed as matches: by the first scan, the last full read,
     // or a quick check since. Unlike matchedKeys, a first scan sets it rather
     // than clearing it. It is what matchCount counts.
@@ -112,6 +118,12 @@ export default defineSchema({
     // This site only ever answers through the proxy, so skip the direct attempt
     // that would fail anyway. Re-probed periodically — see PROXY_REPROBE_EVERY.
     proxyPreferred: v.optional(v.boolean()),
+    // The proxy read this page once after direct found it empty or slow.
+    // That happens to healthy sites too, so only a second time running sets
+    // proxyPreferred. A direct read clears it.
+    proxyRescuedOnce: v.optional(v.boolean()),
+    // Checks put off in a row because our scraper could not be reached.
+    deferredChecks: v.optional(v.number()),
     // When the first scan claimed its one proxy attempt. See
     // monitors.claimFirstScanProxy.
     firstScanProxyAt: v.optional(v.number()),

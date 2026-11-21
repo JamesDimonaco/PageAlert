@@ -134,17 +134,83 @@ export function isProxyFirstHost(url: string): boolean {
 /**
  * One classifier for "the site refused us" across scheduler, scan errors, and
  * operator tooling. An empty page does not count: a page can be briefly empty,
- * and a block moves a monitor onto the proxy's 6-hour floor and towards a park.
- * Sites that block with an empty page go on PROXY_FIRST_DOMAINS instead.
+ * and a block moves a monitor towards a park. It gets a proxy retry instead
+ * (isEmptyPageError). PROXY_FIRST_DOMAINS skips even the first direct attempt.
  */
 export function isBlockedError(message: string): boolean {
   return /blocking automated access|anti-bot|CAPTCHA|Cloudflare|Access denied|blocked/i.test(message);
+}
+
+/**
+ * The scraper's error for a page that did not load in time. Its wording says
+ * "blocking", so it counts as a block for the retry, which may use the proxy.
+ * But a slow load is not evidence the site needs the proxy every time.
+ */
+export function isSlowLoadError(message: string): boolean {
+  return message.startsWith("Page took too long to load");
+}
+
+/** Start of a quick check's error for a page that loaded with almost nothing on it. */
+export const EMPTY_PAGE = "Page inaccessible — no meaningful content found";
+
+/**
+ * Some sites answer our browser with an empty page instead of a challenge.
+ * That is not counted as a block (see isBlockedError), but it does earn the
+ * retries one go through the proxy. A site the proxy has to rescue that way
+ * twice running is treated as needing it from then on.
+ */
+export function isEmptyPageError(message: string): boolean {
+  return message.startsWith(EMPTY_PAGE);
 }
 
 /** The scraper's error for a page the shop answered 404 or 410 for. */
 export function isPageGoneError(message: string): boolean {
   return message.startsWith(PAGE_NOT_FOUND);
 }
+
+/** Start of the error for a check that failed before our scraper answered it. */
+export const SCRAPER_UNREACHABLE = "Scraper unreachable";
+
+/**
+ * The error for a scraper response that is not OK. The scraper's own failures
+ * are JSON with an `error` code and a message for the user. A 502 to 504
+ * without that code came from the platform in front of the scraper, which
+ * answers for it while it restarts, in HTML or in JSON of its own.
+ */
+export function scraperFailure(status: number, body: string, label: string): string {
+  let parsed: { error?: unknown; message?: unknown } | null = null;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    // Not JSON: handled below.
+  }
+  if (status >= 502 && status <= 504 && typeof parsed?.error !== "string") return `${SCRAPER_UNREACHABLE} (${status})`;
+  if (typeof parsed?.message === "string" && parsed.message) return parsed.message;
+  return parsed === null && body ? `${label} (${status}): ${body.slice(0, 200)}` : `${label} (${status})`;
+}
+
+/** A check that never reached our scraper: the platform answered for it, or the connection failed. */
+export function isScraperUnreachable(message: string): boolean {
+  return message.startsWith(SCRAPER_UNREACHABLE) || /^(error sending request|fetch failed)/i.test(message);
+}
+
+/**
+ * How long a page may stay a fraction of its size before that is believed.
+ * Prod walls ran one to five hours. A page that shrank for good, every
+ * vacancy filled, must not keep its old match count for ever.
+ */
+export const WRONG_PAGE_HOLD_MS = 24 * 60 * 60_000;
+
+/** How long a check waits when it could not reach the scraper. Longer than a redeploy takes. */
+export const SCRAPER_UNREACHABLE_RETRY_MS = 5 * 60_000;
+
+/**
+ * How many checks a monitor has put off before the next one counts as a
+ * failure. Half an hour covers a redeploy. A page that crashes the scraper
+ * gets the same answer for good, and has to climb the retry ladder like any
+ * other, so only a check that works starts the count again.
+ */
+export const MAX_DEFERRED_CHECKS = 6;
 
 export type CheckFailureKind = "proxy_provider" | "ai_billing" | "timeout" | "blocked" | "page_gone" | "other";
 

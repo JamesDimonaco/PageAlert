@@ -1,6 +1,6 @@
 import { chromium, type Browser, type Page } from "playwright";
 import { PAGE_NOT_FOUND, type ScrapeResponse } from "@prowl/shared";
-import { validateUrlForScraping } from "../utils/url-validation.js";
+import { resolvesToPrivate, validateUrlForScraping } from "../utils/url-validation.js";
 
 type LaunchedBrowser = { instance: Browser; userAgent: string };
 
@@ -191,7 +191,9 @@ export async function scrapeUrl(
   try {
     const b = await getBrowser();
 
-    const context = await b.instance.newContext({ userAgent: b.userAgent, viewport: { width: 1920, height: 1080 } });
+    // Service workers are blocked because their requests never reach the
+    // route handler below, so one could call addresses it would refuse.
+    const context = await b.instance.newContext({ userAgent: b.userAgent, viewport: { width: 1920, height: 1080 }, serviceWorkers: "block" });
 
     const page = await context.newPage();
 
@@ -203,6 +205,14 @@ export async function scrapeUrl(
         documentStatus = response.status();
       }
     });
+
+    // One lookup per host per scrape: a page asks the same few hosts for everything.
+    const privateHosts = new Map<string, Promise<boolean>>();
+    const isPrivateHost = (host: string): Promise<boolean> => {
+      let verdict = privateHosts.get(host);
+      if (!verdict) privateHosts.set(host, (verdict = resolvesToPrivate(host)));
+      return verdict;
+    };
 
     // Intercept all requests: block dangerous protocols and heavy resources
     const BLOCKED_EXTENSIONS = /\.(png|jpg|jpeg|gif|webp|svg|ico|woff|woff2|ttf|mp4|webm)$/i;
@@ -216,6 +226,11 @@ export async function scrapeUrl(
         }
         // Block heavy resources that slow things down and aren't needed for content
         if (BLOCKED_EXTENSIONS.test(parsedUrl.pathname)) {
+          return route.abort();
+        }
+        // A public page can redirect to, or load from, an address inside our
+        // network. The check before the scrape saw only the first URL.
+        if (await isPrivateHost(parsedUrl.hostname)) {
           return route.abort();
         }
       } catch {
@@ -269,6 +284,15 @@ export async function scrapeUrl(
 
       const html = await getCleanHtml(page);
       const text = await getTextWithLinks(page);
+
+      // The route handler above never sees a redirect's later hops: the
+      // browser follows those itself. So the page we ended on is checked
+      // too, and one inside our network is not handed back. After the reads,
+      // so a redirect that lands while they run is caught as well.
+      const landed = new URL(page.url());
+      if (landed.protocol.startsWith("http") && (await isPrivateHost(landed.hostname))) {
+        throw new Error("URL resolves to a private/internal IP address");
+      }
 
       // Enforce max response size
       if (html.length > MAX_RESPONSE_SIZE || text.length > MAX_RESPONSE_SIZE) {
@@ -419,7 +443,6 @@ export async function detectAntiBot(page: Page): Promise<{ blocked: boolean; rea
         ["are you a robot", "Bot detection"],
         ["please enable javascript", "JavaScript required"],
         ["checking your browser", "Browser verification"],
-        ["enable cookies", "Cookies required"],
       ];
 
       for (const [marker, reason] of highConfidence) {
@@ -433,6 +456,8 @@ export async function detectAntiBot(page: Page): Promise<{ blocked: boolean; rea
       // content, or "protected by reCAPTCHA" under a form
       if (textLen < 500) {
         const ambiguous: [string, string][] = [
+          // Cookie banners say this on pages that are otherwise all there.
+          ["enable cookies", "Cookies required"],
           ["captcha", "CAPTCHA challenge"],
           ["access denied", "Access denied"],
           ["just a moment", "Cloudflare challenge"],

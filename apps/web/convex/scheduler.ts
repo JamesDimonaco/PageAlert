@@ -26,6 +26,14 @@ import {
   PARK_REASON_NEVER_SUCCEEDED,
   PARK_REASON_PAGE_GONE,
   isPageGoneError,
+  isEmptyPageError,
+  isSlowLoadError,
+  isScraperUnreachable,
+  scraperFailure,
+  MAX_DEFERRED_CHECKS,
+  WRONG_PAGE_HOLD_MS,
+  SCRAPER_UNREACHABLE_RETRY_MS,
+  EMPTY_PAGE,
   alertsOnScore,
   canonicalUrl,
   PROXY_REPROBE_EVERY,
@@ -323,9 +331,18 @@ export const recordCheckResult = internalMutation({
     // clears the flag, which is also how the periodic re-probe takes effect.
     // Computed before the reschedule below, or the check that first flips a
     // site to proxy-preferred would still book itself an un-floored slot.
+    const lastError = monitor.lastError ?? "";
+    // The proxy read a page direct found empty or slow. Both happen to sites
+    // that do not need it: one slow load once put a 15-minute monitor on the
+    // 6-hour floor for two days. So this counts only the second time running.
+    const softRescue =
+      args.usedProxy === true && ((isBlockedError(lastError) && isSlowLoadError(lastError)) || isEmptyPageError(lastError));
     const nextProxyPreferred =
       args.usedProxy === true
-        ? isBlockedError(monitor.lastError ?? "") || monitor.proxyPreferred === true || isProxyFirstHost(monitor.url)
+        ? (isBlockedError(lastError) && !isSlowLoadError(lastError)) ||
+          (softRescue && monitor.proxyRescuedOnce === true) ||
+          monitor.proxyPreferred === true ||
+          isProxyFirstHost(monitor.url)
         : args.usedProxy === false
           ? false
           : monitor.proxyPreferred;
@@ -347,6 +364,12 @@ export const recordCheckResult = internalMutation({
     };
     if (nextProxyPreferred !== monitor.proxyPreferred) {
       updates.proxyPreferred = nextProxyPreferred;
+    }
+    if (monitor.deferredChecks !== undefined) updates.deferredChecks = undefined;
+    if (softRescue && !nextProxyPreferred) {
+      updates.proxyRescuedOnce = true;
+    } else if (args.usedProxy !== undefined && monitor.proxyRescuedOnce !== undefined) {
+      updates.proxyRescuedOnce = undefined;
     }
     Object.assign(updates, hostStamp);
 
@@ -407,24 +430,49 @@ export const recordCheckResult = internalMutation({
     // here because this is the last point that still holds the pre-check
     // monitor doc.
     let newKeys: string[] = [];
+    // A quick check that finds none of the entries the last one saw, on a
+    // page under half its usual size, read the wrong page: a consent wall or
+    // a soft block. Forgetting the entries there made each one "new" when
+    // the page came back: twelve false alerts in a fortnight. So the seen
+    // set is held, and what this read showed is added to it, until the page
+    // is its size again or has stayed small for WRONG_PAGE_HOLD_MS. A page
+    // that kept its size and lost them is believed at once, and a later
+    // reappearance is a real event worth an alert.
+    const seenBefore = monitor.candidateKeys ?? [];
+    const small =
+      args.candidateKeys !== undefined && seenBefore.length > 0 && args.totalItems * 2 < (monitor.pageEntries ?? 0);
+    const held =
+      small &&
+      (monitor.wrongPageSince === undefined
+        ? newMatchKeys(seenBefore, args.candidateKeys!).length === args.candidateKeys!.length
+        : now - monitor.wrongPageSince < WRONG_PAGE_HOLD_MS);
+    if (held) {
+      updates.candidateKeys = [...new Set([...seenBefore, ...args.candidateKeys!])];
+      updates.matchCount = monitor.matchCount;
+      if (monitor.wrongPageSince === undefined) updates.wrongPageSince = now;
+    } else if (args.candidateKeys) {
+      updates.candidateKeys = args.candidateKeys;
+      updates.pageEntries = args.totalItems;
+      if (monitor.wrongPageSince !== undefined) updates.wrongPageSince = undefined;
+    }
+    if (args.candidatePrices && !held) {
+      updates.candidatePrices = args.candidatePrices;
+    }
+    // Held, the entries waiting for a restock are added to like the seen
+    // set: the wrong page has none of them, and they must still be rechecked.
+    if (args.soldOutKeys) {
+      updates.soldOutKeys = held ? [...new Set([...(monitor.soldOutKeys ?? []), ...args.soldOutKeys])] : args.soldOutKeys;
+    }
+    if (args.soldOutTextHashes) {
+      updates.soldOutTextHashes = held
+        ? [...new Set([...(monitor.soldOutTextHashes ?? []), ...args.soldOutTextHashes])]
+        : args.soldOutTextHashes;
+    }
+
     // An extract that saw no items at all is a render that went wrong, not a
     // page that emptied. Keeping the old baseline there stops the items coming
     // back as "12 new matches" the user has already been told about. A page
-    // that genuinely holds items but matches none of them does clear it, and
-    // a later reappearance is a real event worth an alert.
-    if (args.candidateKeys) {
-      updates.candidateKeys = args.candidateKeys;
-    }
-    if (args.candidatePrices) {
-      updates.candidatePrices = args.candidatePrices;
-    }
-    if (args.soldOutKeys) {
-      updates.soldOutKeys = args.soldOutKeys;
-    }
-    if (args.soldOutTextHashes) {
-      updates.soldOutTextHashes = args.soldOutTextHashes;
-    }
-
+    // that genuinely holds items but matches none of them does clear it.
     if (args.trackMatchKeys && (args.matches.length > 0 || args.totalItems > 0)) {
       const currentKeys = (args.matches as Record<string, unknown>[]).map(matchKey);
       newKeys = newMatchKeys(monitor.matchedKeys, currentKeys);
@@ -441,6 +489,12 @@ export const recordCheckResult = internalMutation({
       if (product) newKeys = newKeys.filter((k) => k !== matchKey(product as Record<string, unknown>));
       updates.matchedKeys = [...new Set(currentKeys.filter(Boolean))];
       updates.passedKeys = updates.matchedKeys;
+      // What this read counts as a match is seen by the quick checks too, or
+      // the next one finds it new and announces it a second time. Only onto a
+      // baseline that exists: with none, the next quick check seeds one silently.
+      if (monitor.candidateKeys !== undefined) {
+        updates.candidateKeys = [...new Set([...monitor.candidateKeys, ...updates.matchedKeys as string[]])];
+      }
     } else if (!args.trackMatchKeys && args.matches.length > 0 && monitor.matchedKeys !== undefined) {
       // What a quick check alerted on is announced too. Left out, the next
       // full read would find it missing here and announce it again.
@@ -499,6 +553,24 @@ export const recordCheckResult = internalMutation({
   },
 });
 
+/**
+ * Put a check off without recording an outcome, for one that never reached
+ * the scraper. False once it has been put off MAX_DEFERRED_CHECKS times
+ * running: the caller then records the failure.
+ */
+export const deferCheck = internalMutation({
+  args: { monitorId: v.id("monitors") },
+  handler: async (ctx, { monitorId }) => {
+    const monitor = await ctx.db.get(monitorId);
+    // Paused or parked while the check ran: leave it that way.
+    if (!monitor || monitor.nextCheckAt === undefined || (monitor.status !== "active" && monitor.status !== "error")) return true;
+    const deferredChecks = (monitor.deferredChecks ?? 0) + 1;
+    if (deferredChecks > MAX_DEFERRED_CHECKS) return false;
+    await ctx.db.patch(monitorId, { nextCheckAt: Date.now() + SCRAPER_UNREACHABLE_RETRY_MS, deferredChecks });
+    return true;
+  },
+});
+
 /** The main scheduler action — called by cron */
 export const runScheduledChecks = internalAction({
   args: {},
@@ -539,10 +611,13 @@ export const runScheduledChecks = internalAction({
         // A "gone" answer may have come through the proxy from a shop that
         // blocks us, so the retry that confirms it goes the same way.
         const lastGone = isPageGoneError(monitor.lastError ?? "");
+        // An empty page may be a site that is down, which no proxy fixes, so
+        // it gets one paid attempt and no more.
+        const lastEmpty = isEmptyPageError(monitor.lastError ?? "") && retryCount === 1;
         const wantProxy =
           proxyFirst ||
           (monitor.proxyPreferred === true && !reprobeDirect) ||
-          (retryCount >= 1 && (isBlockedError(monitor.lastError ?? "") || lastGone));
+          (retryCount >= 1 && (isBlockedError(monitor.lastError ?? "") || lastGone || lastEmpty));
 
         // A fleet-wide failure is ours, not the sites'. Escalating during a
         // scraper outage bought 113 proxy calls in one hour on 2026-09-05 and
@@ -683,6 +758,13 @@ export const runScheduledChecks = internalAction({
         } catch (e) {
           const msg = e instanceof Error ? e.message : "Unknown error";
           console.error(`[scheduler] Monitor ${monitor._id} failed:`, msg);
+
+          // Our outage, not the site's. It says nothing about the owner's
+          // page, so it costs the monitor no retry and sends no alert. The
+          // health poll (admin.checkScraperHealth) tells us if it lasts.
+          if (isScraperUnreachable(msg) && (await ctx.runMutation(internal.scheduler.deferCheck, { monitorId: monitor._id }))) {
+            return;
+          }
 
           const isTimeout =
             (e instanceof Error && e.name === "TimeoutError") ||
@@ -1027,16 +1109,7 @@ async function runQuickCheck(
   });
 
   if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    // Try to extract the user-friendly message from the scraper's JSON response
-    let errorMsg = `Scraper error (${res.status})`;
-    try {
-      const parsed = JSON.parse(body);
-      if (parsed.message) errorMsg = parsed.message;
-    } catch {
-      if (body) errorMsg = `${errorMsg}: ${body.slice(0, 200)}`;
-    }
-    throw new Error(errorMsg);
+    throw new Error(scraperFailure(res.status, await res.text().catch(() => ""), "Scraper error"));
   }
 
   const result = await res.json();
@@ -1044,7 +1117,7 @@ async function runQuickCheck(
   if (!result.accessible) {
     const reason = result.blocked
       ? `Site is blocking automated access: ${result.blockReason ?? "anti-bot protection detected"}. Try a different URL or check if the site requires login.`
-      : "Page inaccessible — no meaningful content found. The page may be down or require JavaScript that couldn't load.";
+      : `${EMPTY_PAGE}. The page may be down or require JavaScript that couldn't load.`;
     throw new Error(reason);
   }
 
@@ -1063,8 +1136,11 @@ async function runQuickCheck(
   }
 
   // Cheap short-circuit: content identical to the last scan — record the
-  // check happened and stop. No result row, no match notifications.
-  if (contentHash && monitor.contentFingerprint && contentHash === monitor.contentFingerprint) {
+  // check happened and stop. No result row, no match notifications. Not
+  // once a wrong-page hold has run out: the read after that ends it, and an
+  // unchanged page would otherwise never get one.
+  const holdRanOut = monitor.wrongPageSince !== undefined && Date.now() - monitor.wrongPageSince >= WRONG_PAGE_HOLD_MS;
+  if (contentHash && monitor.contentFingerprint && contentHash === monitor.contentFingerprint && !holdRanOut) {
     await ctx.runMutation(internal.scheduler.recordCheckResult, {
       monitorId: monitor._id,
       hasNewMatches: false,
@@ -1435,15 +1511,7 @@ async function runFullExtract(
   });
 
   if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    let errorMsg = `AI extract failed (${res.status})`;
-    try {
-      const parsed = JSON.parse(body);
-      if (parsed.message) errorMsg = parsed.message;
-    } catch {
-      if (body) errorMsg = `${errorMsg}: ${body.slice(0, 200)}`;
-    }
-    throw new Error(errorMsg);
+    throw new Error(scraperFailure(res.status, await res.text().catch(() => ""), "AI extract failed"));
   }
 
   const result = await res.json();

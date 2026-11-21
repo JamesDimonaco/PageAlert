@@ -105,3 +105,18 @@ test("changing a monitor's URL forgets the old page's price history", async () =
   await owner.mutation(api.monitors.update, { id, url: "https://example.com/other" });
   expect(await t.run((ctx) => ctx.db.query("priceReads").collect())).toEqual([]);
 });
+
+// Learned on the old page: how many entries it held, and that the proxy once
+// had to rescue it. Kept, the first would call the new page a wrong page and
+// the second would put the new site on the proxy after a single slow load.
+test("changing a monitor's URL forgets what was learned about the old page", async () => {
+  const t = setup();
+  const owner = await seedUser(t, "a@example.com");
+  const id = await owner.mutation(api.monitors.create, MONITOR);
+  await t.run((ctx) => ctx.db.patch(id, { pageEntries: 40, wrongPageSince: Date.now(), proxyRescuedOnce: true }));
+  await owner.mutation(api.monitors.update, { id, url: "https://other.example/page" });
+  const monitor = await t.run((ctx) => ctx.db.get(id));
+  expect(monitor?.pageEntries).toBeUndefined();
+  expect(monitor?.wrongPageSince).toBeUndefined();
+  expect(monitor?.proxyRescuedOnce).toBeUndefined();
+});

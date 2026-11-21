@@ -5,7 +5,7 @@ import schema from "./schema";
 import { api, components, internal } from "./_generated/api";
 import betterAuthSchema from "./betterAuth/schema";
 import type { Doc } from "./_generated/dataModel";
-import { isBlockedError, isProxyFirstHost, PROXY_REPROBE_EVERY } from "./shared";
+import { isBlockedError, isProxyFirstHost, MAX_RETRIES, PROXY_REPROBE_EVERY } from "./shared";
 
 const modules = import.meta.glob("./**/*.*s");
 const betterAuthModules = import.meta.glob("./betterAuth/**/*.*s");
@@ -66,6 +66,79 @@ test("an empty page does not count as a block", () => {
   expect(
     isBlockedError("Page inaccessible — no meaningful content found. The page may be down or require JavaScript that couldn't load.")
   ).toBe(false);
+});
+
+const EMPTY = "Page inaccessible — no meaningful content found. The page may be down or require JavaScript that couldn't load.";
+
+// Prod, 18/11/2026: a Harvey Norman monitor read once, then got an empty page
+// four times running and its owner deleted it. Costco did the same until it
+// was listed by hand. A site that answers our browser with nothing never
+// reads as blocked, so nothing ever tried the proxy.
+test("a page that came back empty is retried through the proxy", async () => {
+  const t = setup();
+  await insert(t, "https://shop.test/empty", { retryCount: 1, lastError: EMPTY });
+  const bodies = await quickCheckBodies(t);
+  expect(bodies[0]?.useProxy).toBe(true);
+});
+
+/** The proxy reads a page that direct had just failed on with `error`. Returns the monitor after. */
+async function proxyRescue(t: ReturnType<typeof setup>, id: Doc<"monitors">["_id"], error: string) {
+  await t.run((ctx) => ctx.db.patch(id, { retryCount: 1, lastError: error, nextCheckAt: 0 }));
+  const bodies = await quickCheckBodies(t);
+  expect(bodies[0]?.useProxy).toBe(true);
+  return (await t.run((ctx) => ctx.db.get(id)))!;
+}
+
+const SLOW = "Page took too long to load. The site may be slow or blocking automated access.";
+const BLOCKED = "Site is blocking automated access: HTTP 403. Try a different URL or check if the site requires login.";
+
+// An empty or slow page is weak evidence. Prod, 6 to 20/11/2026: four
+// monitors saw one empty page and never another, and three saw 19 to 32.
+// The proxy's 6-hour floor is for the three, so it takes two in a row.
+test.each([
+  ["an empty", EMPTY],
+  ["a slow", SLOW],
+])("a site the proxy has to rescue from %s page twice running stays on the proxy", async (_name, error) => {
+  const t = setup();
+  const id = await insert(t, "https://shop.test/soft", { checkInterval: "15m" });
+
+  const once = await proxyRescue(t, id, error);
+  expect(once.proxyPreferred).not.toBe(true);
+  // Still on its own interval, not the proxy's 6-hour floor.
+  expect(once.nextCheckAt! - Date.now()).toBeLessThan(16 * 60_000);
+
+  expect((await proxyRescue(t, id, error)).proxyPreferred).toBe(true);
+});
+
+test("a direct read between two rescues starts the count again", async () => {
+  const t = setup();
+  const id = await insert(t, "https://shop.test/soft");
+  await proxyRescue(t, id, EMPTY);
+  await t.run((ctx) => ctx.db.patch(id, { nextCheckAt: 0 }));
+  expect((await quickCheckBodies(t))[0]?.useProxy).toBeUndefined();
+  expect((await proxyRescue(t, id, EMPTY)).proxyPreferred).not.toBe(true);
+});
+
+// A page that is down is also empty, and the proxy cannot fix that. One paid
+// attempt is the whole budget: if the proxy saw an empty page too, the later
+// retries and the 6-hourly recovery lane go back to free direct fetches.
+test.each([
+  ["on the second retry", { retryCount: 2 }],
+  ["on the recovery lane", { status: "error" as const, retryCount: MAX_RETRIES }],
+])("an empty page is not sent to the proxy %s", async (_name, state) => {
+  const t = setup();
+  // Free tier: a paid one makes its second retry a forced AI read, not a quick check.
+  await insert(t, "https://shop.test/empty", { ...state, lastError: EMPTY });
+  const bodies = await quickCheckBodies(t);
+  expect(bodies[0]?.url).toBe("https://shop.test/empty");
+  expect(bodies[0]?.useProxy).toBeUndefined();
+});
+
+test("a real block that the proxy gets past does move it onto the proxy", async () => {
+  const t = setup();
+  const id = await insert(t, "https://shop.test/blocked", { retryCount: 1, lastError: BLOCKED });
+  await quickCheckBodies(t);
+  expect((await t.run((ctx) => ctx.db.get(id)))?.proxyPreferred).toBe(true);
 });
 
 test("a proxy-first site's first scheduled check goes through the proxy", async () => {

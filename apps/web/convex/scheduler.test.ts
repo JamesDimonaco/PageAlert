@@ -296,6 +296,7 @@ test("a price alert names the old and new price in the product's currency", asyn
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
+  vi.restoreAllMocks();
 });
 
 type Stock = { inStock: boolean | null; price: number | null; currency: string | null };
@@ -1219,5 +1220,332 @@ describe("price history", () => {
     expect(await history(t, id)).toEqual(["10000 GBP"]);
     await read(true, { price: 4000 });
     expect(await history(t, id)).toEqual(["10000 GBP", "4000 GBP"]);
+  });
+});
+
+/**
+ * A listing monitor that has already told its owner about two jobs, on a page
+ * of 11 entries that reads as each of `pages` in turn. "wall" is the page as a
+ * consent wall or soft block leaves it: accessible, with one entry and none
+ * of the listings. A number is a page of that many entries, none of them the
+ * listings. "wall+junk" is a wall whose one entry gets past the keyword
+ * filter. "small+new" is 5 entries, one of them a job not seen before, and
+ * "small+known" is 5 with one of the two known jobs. "same" is the previous
+ * page again, byte for byte. `wait` moves the clock on.
+ */
+async function listingAcross(pages: ("full" | "wall" | "wall+junk" | "small+new" | "small+known" | "same" | "full+new" | number)[], pageEntries: number | null = 11) {
+  vi.stubEnv("SCRAPER_URL", "https://scraper.test");
+  vi.stubEnv("SCRAPER_API_KEY", "key");
+  const realNow = Date.now;
+  let ahead = 0;
+  vi.spyOn(Date, "now").mockImplementation(() => realNow() + ahead);
+  const job = (slug: string) => ({ title: `Engineer, ${slug}`, url: `https://jobs.test/${slug}`, price: null, snippet: "London" });
+  const known = [job("a"), job("b")];
+  let checkNo = 0;
+  let last = { contentHash: "", candidates: known, totalEntries: 11 };
+  const scoredTitles: string[][] = [];
+  vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+    if (url.endsWith("/api/quick-check")) {
+      const page = pages[Math.min(checkNo++, pages.length - 1)]!;
+      if (page !== "same") {
+        const candidates =
+          page === "full" ? known : page === "full+new" ? [...known, job("c")] : page === "wall+junk" ? [job("cookies")] : page === "small+new" ? [job("c")] : page === "small+known" ? [job("a")] : [];
+        const totalEntries = typeof page === "number" ? page : page.startsWith("wall") ? 1 : page.startsWith("small") ? 5 : 11;
+        last = { contentHash: `${page}-${checkNo}`, candidates, totalEntries };
+      }
+      return Response.json({ accessible: true, ...last });
+    }
+    if (url.endsWith("/api/score")) {
+      const sent = (JSON.parse(String(init?.body)) as { candidates: { title: string }[] }).candidates;
+      scoredTitles.push(sent.map((c) => c.title));
+      // The scorer knows a cookie notice is not a job.
+      return Response.json({ scored: sent.map((c) => ({ ...c, matchScore: c.title.includes("cookies") ? 5 : 95, matchReason: "" })) });
+    }
+    return new Response("not mocked", { status: 500 });
+  });
+
+  const t = convexTest(schema, modules);
+  t.registerComponent("betterAuth", betterAuthSchema, betterAuthModules);
+  const keys = ["jobs.test/a", "jobs.test/b"];
+  const id = await t.run((ctx) =>
+    ctx.db.insert("monitors", {
+      userId: "user_1", name: "Meta", url: "https://jobs.test/search", prompt: "engineering jobs in London", status: "active",
+      checkInterval: "1h", schema: { items: [], matchConditions: { mustInclude: ["Engineer"] } }, matchCount: 2,
+      candidateKeys: keys, passedKeys: keys, matchedKeys: keys, checkCount: 5, contentFingerprint: "page-0", ...(pageEntries === null ? {} : { pageEntries }),
+      lastAiExtractAt: Date.now(), createdAt: Date.now(), updatedAt: Date.now(),
+    })
+  );
+  const check = async () => {
+    await t.run((ctx) => ctx.db.patch(id, { nextCheckAt: 0 }));
+    await t.action(internal.scheduler.runScheduledChecks, {});
+    return t.run((ctx) => ctx.db.get(id));
+  };
+  const wait = (ms: number) => {
+    ahead += ms;
+  };
+  return { t, id, check, wait, scoredTitles };
+}
+
+const HOUR = 3_600_000;
+
+// Prod, 7 to 19/11/2026: twelve false alerts in two weeks. A careers page of
+// 11 entries read as 1 for a single check and then came back, and its owner
+// was told "6 new matches" about six jobs they had known of for days. Four
+// times. An Instagram page went from 16 entries to 2 and sent "12 new
+// matches" four times in two days. Another went from 245 to 1 fifty times.
+describe("a page that comes back as a fraction of itself, with none of its listings", () => {
+  test("does not announce its listings again when they come back", async () => {
+    const { check, scoredTitles } = await listingAcross(["wall", "full"]);
+
+    const duringWall = await check();
+    expect(duringWall?.candidateKeys).toEqual(["jobs.test/a", "jobs.test/b"]);
+    // The dashboard must not say "0 matches" on the strength of a bad read.
+    expect(duringWall?.matchCount).toBe(2);
+
+    const after = await check();
+    expect(after?.lastMatchAt).toBeUndefined();
+    expect(scoredTitles).toEqual([]);
+  });
+
+  test("still announces a listing that arrived while the page was misread", async () => {
+    const { check, scoredTitles } = await listingAcross(["wall", "full+new"]);
+    await check();
+    expect((await check())?.lastMatchAt).toBeDefined();
+    expect(scoredTitles).toEqual([["Engineer, c"]]);
+  });
+
+  // Prod, 17/11/2026: the Instagram page was a wall for two hourly checks.
+  // The second wall must be measured against the real page, not the first wall.
+  test("holds for as long as the wall lasts, the same bytes or not", async () => {
+    const { check, scoredTitles } = await listingAcross(["wall", "same", "wall", "wall", "full"]);
+    for (let i = 0; i < 5; i++) await check();
+    expect(scoredTitles).toEqual([]);
+  });
+
+  test("learns how many entries the page holds from reading it", async () => {
+    const { check, scoredTitles } = await listingAcross(["full+new", "wall", "full+new"], null);
+    await check();
+    expect((await check())?.candidateKeys).toHaveLength(3);
+    await check();
+    expect(scoredTitles).toEqual([["Engineer, c"]]);
+  });
+
+  // A page that still holds its other entries has not gone wrong: the
+  // listings left it. When one comes back, that is news.
+  test("believes a page that kept its size and lost the listings", async () => {
+    const { check, scoredTitles } = await listingAcross([11, "full"]);
+    const emptied = await check();
+    expect(emptied?.candidateKeys).toEqual([]);
+    expect(emptied?.matchCount).toBe(0);
+    expect((await check())?.lastMatchAt).toBeDefined();
+    expect(scoredTitles).toEqual([["Engineer, a", "Engineer, b"]]);
+  });
+
+  // With loose conditions the wall's own entry gets past the keyword filter.
+  // One stranger on a page a fraction of its size is still the wrong page.
+  // It is judged once and remembered, so a second wall does not pay for it
+  // again, and knowing it must not make the second wall look like the page.
+  test("holds when the wall's one entry reads as a candidate", async () => {
+    const { check, scoredTitles } = await listingAcross(["wall+junk", "wall+junk", "full"]);
+    await check();
+    const secondWall = await check();
+    expect(secondWall?.candidateKeys).toEqual(expect.arrayContaining(["jobs.test/a", "jobs.test/b"]));
+    expect(secondWall?.pageEntries).toBe(11);
+    expect((await check())?.lastMatchAt).toBeUndefined();
+    expect(scoredTitles).toEqual([["Engineer, cookies"]]);
+  });
+
+  // A small page that still shows a known listing is the page itself.
+  test("believes a page that shrank but still shows a listing it knew", async () => {
+    const { check } = await listingAcross(["small+known"]);
+    const after = await check();
+    expect(after?.candidateKeys).toEqual(["jobs.test/a"]);
+    expect(after?.pageEntries).toBe(5);
+    expect(after?.wrongPageSince).toBeUndefined();
+  });
+
+  // A page can shrink for real and gain a listing in the same change.
+  test("announces a new listing on a held page once, not on every check", async () => {
+    const { check, scoredTitles } = await listingAcross(["small+new", "small+new", "small+new"]);
+    expect((await check())?.lastMatchAt).toBeDefined();
+    await check();
+    await check();
+    expect(scoredTitles).toEqual([["Engineer, c"]]);
+  });
+
+  // A page can shrink for good: every vacancy filled. Held without end, the
+  // dashboard would show the old count for ever and a relisting would never
+  // alert. Prod walls ran one to five hours, so a day settles it. The page
+  // sits unchanged here, as a "no vacancies" page does.
+  test("believes a page that is still small a day later", async () => {
+    const { check, wait } = await listingAcross([5, "same", "same"]);
+    expect((await check())?.matchCount).toBe(2);
+    wait(24 * HOUR - 60_000);
+    expect((await check())?.candidateKeys).toEqual(["jobs.test/a", "jobs.test/b"]);
+    wait(60_000);
+    const settled = await check();
+    expect(settled?.candidateKeys).toEqual([]);
+    expect(settled?.matchCount).toBe(0);
+    expect(settled?.pageEntries).toBe(5);
+  });
+
+  // The wall holds none of the sold-out entries waiting for a restock. Dropped
+  // from that list they would never be looked at again. Nor would one first
+  // seen sold out on the held page, which joins the seen set there.
+  test("keeps the sold-out entries waiting for a restock, and adds the held page's", async () => {
+    const { t, id } = await listingAcross([]);
+    await t.run((ctx) => ctx.db.patch(id, { soldOutKeys: ["jobs.test/b"], soldOutTextHashes: ["h1"] }));
+    await t.mutation(internal.scheduler.recordCheckResult, {
+      monitorId: id, hasNewMatches: false, matchCount: 0, totalItems: 1, matches: [],
+      candidateKeys: ["jobs.test/x"], soldOutKeys: ["jobs.test/x"], soldOutTextHashes: ["h2"],
+    });
+    const monitor = await t.run((ctx) => ctx.db.get(id));
+    expect(monitor?.soldOutKeys).toEqual(["jobs.test/b", "jobs.test/x"]);
+    expect(monitor?.soldOutTextHashes).toEqual(["h1", "h2"]);
+  });
+
+  // 288 checks a day on a 5-minute monitor: a wall that has not moved is
+  // not compared again, or written down again, until the hold has run out.
+  test("does not record a result for each look at an unchanged wall", async () => {
+    const { t, check } = await listingAcross(["wall", "same", "same"]);
+    for (let i = 0; i < 3; i++) await check();
+    expect(await t.run((ctx) => ctx.db.query("scrapeResults").collect())).toHaveLength(1);
+  });
+
+  test.each([
+    [5, "held", ["jobs.test/a", "jobs.test/b"]],
+    [6, "believed", []],
+  ])("under half the entries is a wrong page: %i of 11 is %s", async (entries, _verdict, expected) => {
+    const { check } = await listingAcross([entries]);
+    expect((await check())?.candidateKeys).toEqual(expected);
+  });
+});
+
+// The fortnightly full read announces a new listing by its own list of
+// matches. The quick checks keep a separate list of what they have seen, and
+// the full read never wrote to it, so the next quick check found the same
+// listing "new" and its owner was told about it twice.
+test("a listing the full read announced is not announced again by the next quick check", async () => {
+  vi.stubEnv("SCRAPER_URL", "https://scraper.test");
+  vi.stubEnv("SCRAPER_API_KEY", "key");
+  const job = (slug: string) => ({ title: `Engineer, ${slug}`, url: `https://jobs.test/${slug}`, price: null, snippet: "London" });
+  let checkNo = 0;
+  let scoreCalls = 0;
+  vi.stubGlobal("fetch", async (url: string) => {
+    if (url.endsWith("/api/quick-check")) {
+      return Response.json({ accessible: true, contentHash: `page-${++checkNo}`, candidates: [job("a"), job("new")], totalEntries: 11 });
+    }
+    if (url.endsWith("/api/extract")) {
+      const items = [job("a"), job("new")];
+      return Response.json({ schema: { items, matchConditions: { mustInclude: ["Engineer"] } }, matches: items, totalItems: 2, contentHash: `page-${checkNo}` });
+    }
+    if (url.endsWith("/api/score")) {
+      scoreCalls++;
+      return Response.json({ scored: [{ ...job("new"), matchScore: 95, matchReason: "" }] });
+    }
+    return new Response("not mocked", { status: 500 });
+  });
+  const t = convexTest(schema, modules);
+  t.registerComponent("betterAuth", betterAuthSchema, betterAuthModules);
+  const id = await t.run((ctx) =>
+    ctx.db.insert("monitors", {
+      userId: "user_1", name: "Meta", url: "https://jobs.test/search", prompt: "engineering jobs", status: "active", checkInterval: "1h",
+      schema: { items: [], matchConditions: { mustInclude: ["Engineer"] } }, matchCount: 1,
+      candidateKeys: ["jobs.test/a"], passedKeys: ["jobs.test/a"], matchedKeys: ["jobs.test/a"],
+      // Due its full read.
+      checkCount: 5, contentFingerprint: "page-0", lastAiExtractAt: 0, nextCheckAt: 0, createdAt: Date.now(), updatedAt: Date.now(),
+    })
+  );
+
+  await t.action(internal.scheduler.runScheduledChecks, {});
+  const afterFullRead = await t.run((ctx) => ctx.db.get(id));
+  expect(afterFullRead?.lastMatchAt).toBeDefined();
+  expect(afterFullRead?.candidateKeys).toEqual(expect.arrayContaining(["jobs.test/a", "jobs.test/new"]));
+
+  await t.run((ctx) => ctx.db.patch(id, { nextCheckAt: 0 }));
+  await t.action(internal.scheduler.runScheduledChecks, {});
+  expect(scoreCalls).toBe(0);
+  expect((await t.run((ctx) => ctx.db.get(id)))?.lastMatchAt).toBe(afterFullRead?.lastMatchAt);
+});
+
+/** One due monitor, checked once against a scraper that answers with `reply`. */
+async function checkAgainst(reply: () => Promise<Response>, extra: Partial<Doc<"monitors">> = {}) {
+  vi.stubEnv("SCRAPER_URL", "https://scraper.test");
+  vi.stubEnv("SCRAPER_API_KEY", "key");
+  vi.stubGlobal("fetch", reply);
+  const t = convexTest(schema, modules);
+  t.registerComponent("betterAuth", betterAuthSchema, betterAuthModules);
+  const id = await t.run((ctx) =>
+    ctx.db.insert("monitors", {
+      userId: "user_1", name: "GPU", url: "https://shop.test/gpu", prompt: "in stock", status: "active", checkInterval: "1h",
+      schema: { items: [], matchConditions: {} }, matchCount: 0, checkCount: 5, retryCount: 2,
+      lastAiExtractAt: Date.now(), nextCheckAt: 0, createdAt: Date.now(), updatedAt: Date.now(), ...extra,
+    })
+  );
+  await t.action(internal.scheduler.runScheduledChecks, {});
+  const monitor = await t.run((ctx) => ctx.db.get(id));
+  const logs = await t.run((ctx) => ctx.db.query("scrapeLogs").collect());
+  return { monitor: monitor!, logs };
+}
+
+// A redeploy or a Railway outage makes every due check fail at once. Counted
+// against the monitors, fifteen minutes of that walked each one up its retry
+// ladder into "error", emailed its owner about our fault, and left it waiting
+// six hours for the next check. This monitor is one failure from that.
+describe("a check that never reached the scraper", () => {
+  test.each([
+    ["the platform answers 502 while the scraper restarts", async () => new Response("<html>502 Bad Gateway</html>", { status: 502 })],
+    ["the platform answers 503", async () => new Response("Service Unavailable", { status: 503 })],
+    // Railway's edge answers in JSON with a message of its own.
+    ["the platform answers 502 in JSON", async () => Response.json({ status: "error", code: 502, message: "Application failed to respond" }, { status: 502 })],
+    ["the connection fails", async () => { throw new TypeError("error sending request for url (https://scraper.test/api/quick-check)"); }],
+  ] as const)("is put off for a few minutes and not held against the monitor: %s", async (_name, reply) => {
+    const { monitor, logs } = await checkAgainst(reply as () => Promise<Response>);
+    expect(monitor.status).toBe("active");
+    expect(monitor.retryCount).toBe(2);
+    expect(monitor.lastError).toBeUndefined();
+    const wait = monitor.nextCheckAt! - Date.now();
+    expect(wait).toBeGreaterThan(4 * 60_000);
+    expect(wait).toBeLessThanOrEqual(5 * 60_000);
+    // Nothing was learned about the owner's page, so their log says nothing.
+    expect(logs).toEqual([]);
+  });
+
+  // The scraper's own 502 carries a reason in JSON: the proxy provider failed.
+  // That check did run, and it failed.
+  // Its message can quote a connection failure of the proxy's, further in.
+  test.each(["Fallback provider error: no credits", "Fallback provider error: fetch failed"])(
+    "a failure the scraper itself reports still counts: %s",
+    async (message) => {
+      const { monitor } = await checkAgainst(async () => Response.json({ error: "check_failed", message }, { status: 502 }));
+      expect(monitor.retryCount).toBe(3);
+      expect(monitor.status).toBe("error");
+    }
+  );
+
+  // One page that crashes the scraper gets this answer every time. Put off
+  // without limit it would be fetched every 5 minutes for good, and its
+  // owner would see a healthy monitor that never checks.
+  const down = async () => new Response("<html>502 Bad Gateway</html>", { status: 502 });
+  test("is put off six times running, about half an hour", async () => {
+    const { monitor } = await checkAgainst(down, { deferredChecks: 5 });
+    expect(monitor.retryCount).toBe(2);
+    expect(monitor.deferredChecks).toBe(6);
+  });
+
+  // The count stays, so every answer like it counts from here on, as it
+  // did before checks were put off at all.
+  test("counts as a failure after that, and goes on counting", async () => {
+    const { monitor, logs } = await checkAgainst(down, { deferredChecks: 6 });
+    expect(monitor.retryCount).toBe(3);
+    expect(monitor.status).toBe("error");
+    expect(monitor.deferredChecks).toBe(6);
+    expect(logs).toHaveLength(1);
+  });
+
+  test("a check that works starts the count again", async () => {
+    const { monitor } = await checkAgainst(async () => Response.json({ accessible: true, contentHash: "page-1", candidates: [], totalEntries: 3 }), { deferredChecks: 6 });
+    expect(monitor.retryCount).toBe(0);
+    expect(monitor.deferredChecks).toBeUndefined();
   });
 });

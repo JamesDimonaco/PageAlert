@@ -612,7 +612,10 @@ export async function updateMonitorForUser(
     updates.host = displayHost(fields.url.trim());
     // What the old site needed says nothing about the new one, and left set
     // it would mark the new site as needing the proxy for everyone.
-    if (updates.host !== existing.host) updates.proxyPreferred = undefined;
+    if (updates.host !== existing.host) {
+      updates.proxyPreferred = undefined;
+      updates.proxyRescuedOnce = undefined;
+    }
   }
 
   // Stock was not read while the option was off, and a new URL is a new
@@ -632,6 +635,8 @@ export async function updateMonitorForUser(
   if (next) validateAlertOn(next);
   const urlChanged = fields.url !== undefined && fields.url.trim() !== existing.url;
   if (urlChanged) {
+    updates.pageEntries = undefined;
+    updates.wrongPageSince = undefined;
     updates.lastSeen = undefined;
     updates.productFingerprint = undefined;
     // A new page is no longer the product's listing, so it leaves the
