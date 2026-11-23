@@ -795,7 +795,7 @@ describe("monitorGroups.convertMonitor", () => {
     const group = await t.run((ctx) => ctx.db.get(groupId));
     expect(group).toMatchObject({
       userId,
-      name: "XM5 headphones",
+      name: "Sony WH-1000XM5 Headphones",
       region: "GB",
       alertOn: { backInStock: true },
       checkInterval: "6h",
@@ -833,6 +833,49 @@ describe("monitorGroups.convertMonitor", () => {
 
     expect((await t.run((ctx) => ctx.db.get(keptGroup)))?.alertOn).toEqual({ priceBelow: { amount: 25000, currency: "GBP" } });
     expect((await t.run((ctx) => ctx.db.get(plainGroup)))?.alertOn).toEqual({ priceDrop: true, backInStock: true });
+  });
+
+  // "$" alone could be US, Canadian, Australian or New Zealand dollars.
+  it("settles a dollar target from the page's currency", async () => {
+    const t = harness();
+    const { as, userId } = await signUp(t, "a@example.test");
+    const id = await seedMonitor(t, userId, {
+      prompt: "tell me when it's under $200",
+      lastSeen: { price: 24900, currency: "USD" },
+    });
+    const groupId = await as.mutation(api.monitorGroups.convertMonitor, { monitorId: id });
+    expect((await t.run((ctx) => ctx.db.get(groupId)))?.alertOn).toEqual({ priceBelow: { amount: 20000, currency: "USD" } });
+  });
+
+  // Converting is one way, so the user sees what the alerts become first.
+  it("previews the alerts and the prompt it replaces, changing nothing", async () => {
+    const t = harness();
+    const { as, userId } = await signUp(t, "a@example.test");
+    const id = await seedMonitor(t, userId);
+    expect(await as.query(api.monitorGroups.conversionPreview, { monitorId: id })).toEqual({
+      alertOn: { backInStock: true },
+      oldPrompt: "tell me when it is back in stock",
+    });
+    expect(await t.run((ctx) => ctx.db.query("monitorGroups").collect())).toHaveLength(0);
+  });
+
+  // The store search runs straight after. Converting with none left would
+  // leave a one-shop product and no way back.
+  it("refuses when no store searches are left today", async () => {
+    const t = harness();
+    const { as, userId } = await signUp(t, "a@example.test");
+    const id = await seedMonitor(t, userId);
+    await t.run((ctx) =>
+      ctx.db.insert("userTiers", {
+        userId,
+        tier: "free",
+        productSearchDay: new Date().toISOString().slice(0, 10),
+        productSearchCount: 5,
+        updatedAt: 0,
+      })
+    );
+    await expect(as.mutation(api.monitorGroups.convertMonitor, { monitorId: id })).rejects.toThrow(/searches/);
+    expect((await t.run((ctx) => ctx.db.get(id)))?.groupId).toBeUndefined();
   });
 
   it("is offered only for a product page of the user's own that is not in a product yet", async () => {

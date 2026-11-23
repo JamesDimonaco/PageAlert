@@ -38,6 +38,12 @@ describe("regionForPage", () => {
     expect(regionForPage(undefined, null, "https://www.argos.co.uk/x")).toBe("GB");
   });
 
+  // With no price read yet the currency is unknown, and a country domain says
+  // more about where the shop sells than where the user last searched.
+  it("prefers a country domain over the saved region when the currency is unknown", () => {
+    expect(regionForPage(undefined, "US", "https://www.amazon.co.uk/x")).toBe("GB");
+  });
+
   it("falls back to the first region for the currency, then the US", () => {
     expect(regionForPage("EUR", null, "https://shop.com/x")).toBe("IE");
     expect(regionForPage(undefined, null, "https://shop.com/x")).toBe("US");

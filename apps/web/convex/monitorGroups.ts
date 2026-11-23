@@ -14,6 +14,7 @@ import {
   toMinorUnits,
 } from "@prowl/shared";
 import { activityRow } from "./account";
+import { searchesLeft } from "./productSearch";
 import {
   allowedChannels,
   clampInterval,
@@ -356,54 +357,87 @@ export async function updateCriteriaForUser(
 
 /**
  * The criteria a monitor takes into a product: its own stock and price
- * alerts, else what its prompt asks for, else price drops and restocks.
+ * alerts, else what its prompt asks for, else price drops and restocks. A
+ * target written with a shared symbol ("$200") takes `currency`.
  */
-function criteriaFor(monitor: Doc<"monitors">): AlertOn {
+function criteriaFor(monitor: Doc<"monitors">, currency: string): AlertOn {
   const any = (a: AlertOn | undefined): a is AlertOn =>
     a !== undefined && (a.backInStock === true || a.priceDrop === true || a.priceBelow !== undefined);
   if (any(monitor.alertOn)) return monitor.alertOn;
   const guess = guessAlertOn(monitor.prompt);
-  const target = guess.priceBelow;
-  const amount = target?.currency ? toMinorUnits(target.amount, target.currency) : null;
+  const targetCurrency = guess.priceBelow ? (guess.priceBelow.currency ?? currency) : null;
+  const amount = guess.priceBelow && targetCurrency ? toMinorUnits(guess.priceBelow.amount, targetCurrency) : null;
   const guessed: AlertOn = {
     ...(guess.backInStock ? { backInStock: true } : {}),
     ...(guess.priceDrop ? { priceDrop: true } : {}),
-    ...(target?.currency && amount !== null ? { priceBelow: { amount, currency: target.currency } } : {}),
+    ...(targetCurrency && amount !== null ? { priceBelow: { amount, currency: targetCurrency } } : {}),
   };
   return any(guessed) ? guessed : { priceDrop: true, backInStock: true };
 }
 
 /**
+ * What converting this monitor would make, or a refusal. Shared by the
+ * preview and the conversion so the dialog shows what actually happens.
+ */
+async function planConversion(ctx: QueryCtx, monitorId: Id<"monitors">) {
+  const identity = await ctx.auth.getUserIdentity();
+  if (!identity) throw new ConvexError("Sign in to manage your products.");
+  const userId = identity.subject;
+  const monitor = await ctx.db.get(monitorId);
+  if (!monitor || monitor.userId !== userId) throw new ConvexError("Monitor not found.");
+  if (monitor.groupId !== undefined) throw new ConvexError("This monitor is already part of a product.");
+  if (!convertibleToProduct(monitor)) throw new ConvexError("Only a page showing one product can become a product.");
+
+  // findMore searches by the product's name, so it takes the page's own
+  // product title rather than the label the user gave the monitor.
+  const item = productItem(monitor.schema, monitor.url);
+  const title =
+    (typeof item?.title === "string" ? item.title.trim() : "").slice(0, MAX_NAME_LENGTH) ||
+    monitor.name.trim().slice(0, MAX_NAME_LENGTH);
+  const region = regionForPage(monitor.lastSeen?.currency, (await activityRow(ctx, userId))?.searchRegion ?? null, monitor.url);
+  const regionCurrency = SEARCH_REGIONS.find((r) => r.code === region)!.currency;
+  const alertOn = criteriaFor(monitor, monitor.lastSeen?.currency ?? regionCurrency);
+  requireCriteria(alertOn);
+  return { userId, monitor, title, region, alertOn };
+}
+
+/** The alerts a converted monitor would get, and the prompt they replace. */
+export const conversionPreview = query({
+  args: { monitorId: v.id("monitors") },
+  handler: async (ctx, { monitorId }) => {
+    // A refusal comes back as data: a query that throws breaks the page.
+    try {
+      const { monitor, alertOn } = await planConversion(ctx, monitorId);
+      return { alertOn, oldPrompt: monitor.prompt };
+    } catch (err) {
+      if (err instanceof ConvexError) return { refusal: String(err.data) };
+      throw err;
+    }
+  },
+});
+
+/**
  * Turn a monitor on one shop's product page into a product, with that page
  * as its first watched listing. The monitor keeps its history, interval and
  * channels; the product takes its folder. Its prompt becomes the product
- * prompt every listing shares. "Find more stores" runs this, then findMore.
+ * prompt every listing shares, and like every listing it alerts on stock and
+ * price only. "Find other stores" runs this, then findMore.
  */
 export const convertMonitor = mutation({
   args: { monitorId: v.id("monitors") },
   handler: async (ctx, { monitorId }): Promise<Id<"monitorGroups">> => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new ConvexError("Sign in to manage your products.");
-    const userId = identity.subject;
-    const monitor = await ctx.db.get(monitorId);
-    if (!monitor || monitor.userId !== userId) throw new ConvexError("Monitor not found.");
-    if (monitor.groupId !== undefined) throw new ConvexError("This monitor is already part of a product.");
-    const item = productItem(monitor.schema, monitor.url);
-    if (!item || !convertibleToProduct(monitor)) {
-      throw new ConvexError("Only a page showing one product can become a product.");
+    const { userId, monitor, title, region, alertOn } = await planConversion(ctx, monitorId);
+    // The store search runs next. Converting with none left would leave a
+    // one-shop product, and there is no way back.
+    if ((await searchesLeft(ctx, userId)) === 0) {
+      throw new ConvexError("You've used all your store searches for today. Try again tomorrow.");
     }
 
-    const name = monitor.name.trim().slice(0, MAX_NAME_LENGTH);
-    const title = (typeof item.title === "string" ? item.title.trim() : "").slice(0, MAX_NAME_LENGTH) || name;
-    const alertOn = criteriaFor(monitor);
-    requireCriteria(alertOn);
     const { inStock, price, currency } = monitor.lastSeen ?? {};
-    const region = regionForPage(currency, (await activityRow(ctx, userId))?.searchRegion ?? null, monitor.url);
-
     const now = Date.now();
     const groupId = await ctx.db.insert("monitorGroups", {
       userId,
-      name,
+      name: title,
       region,
       alertOn,
       notificationChannels: monitor.notificationChannels,

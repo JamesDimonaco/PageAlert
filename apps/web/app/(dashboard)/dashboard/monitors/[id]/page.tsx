@@ -6,7 +6,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { StatusBadge } from "@/components/prowl/status-badge";
 import { AutoPauseNote } from "@/components/prowl/auto-pause-note";
-import { FindStoresButton, OutOfStockCallout } from "@/components/prowl/find-stores";
+import { FindStoresButton, OutOfStockCallout, showOutOfStock, useFindStores } from "@/components/prowl/find-stores";
 import { SpeedUpsell } from "@/components/prowl/speed-upsell";
 import { DeleteDialog } from "@/components/prowl/delete-dialog";
 import { OverviewTab } from "@/components/prowl/monitor-tabs/overview-tab";
@@ -74,6 +74,7 @@ export default function MonitorDetailPage({
   const atLimit = monitors.length >= maxMonitors;
   const scanBudget = useQuery(api.tiers.canScan);
   const scores = useQuery(api.monitors.latestScores, { monitorId }) ?? {};
+  const findStores = useFindStores(monitorId, monitor?.url ?? "", "detail");
   const product = useQuery(api.monitorGroups.get, monitor?.groupId ? { id: monitor.groupId } : "skip");
   const consumeScan = useMutation(api.tiers.consumeScan);
   const saveScanResult = useMutation(api.monitors.saveScanResult);
@@ -212,7 +213,7 @@ export default function MonitorDetailPage({
   const channelNames = channels.map((c) => CHANNEL_NAMES[c] ?? c).join(", ");
 
   const canConvert = convertibleToProduct(monitor);
-  const soldOut = monitor.lastSeen?.inStock === false;
+  const soldOut = showOutOfStock(monitor);
 
   return (
     <div className="space-y-6">
@@ -304,7 +305,7 @@ export default function MonitorDetailPage({
           </div>
         </div>
         <div className="shrink-0 flex items-center gap-2">
-          {canConvert && !soldOut && <FindStoresButton monitorId={monitorId} source="detail" />}
+          {canConvert && !soldOut && <FindStoresButton onClick={findStores.open} />}
           <a
             href={monitor.url}
             target="_blank"
@@ -366,7 +367,8 @@ export default function MonitorDetailPage({
         </div>
       </div>
 
-      {canConvert && soldOut && <OutOfStockCallout monitorId={monitorId} url={monitor.url} source="detail" />}
+      {canConvert && soldOut && <OutOfStockCallout url={monitor.url} onFind={findStores.open} />}
+      {canConvert && findStores.dialog}
 
       {/* Tabs */}
       <Tabs

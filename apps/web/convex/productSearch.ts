@@ -57,6 +57,13 @@ export const status = query({
   },
 });
 
+/** Searches the user has left today. Reads the clock, so call it from a mutation. */
+export async function searchesLeft(ctx: MutationCtx, userId: string): Promise<number> {
+  const record = await tierRow(ctx, userId);
+  const used = record?.productSearchDay === today() ? (record.productSearchCount ?? 0) : 0;
+  return Math.max(0, DAILY_SEARCH_LIMITS[effectiveTier(record)] - used);
+}
+
 /**
  * Count one search against today's allowance, or refuse.
  *

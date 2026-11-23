@@ -34,7 +34,7 @@ import type { Doc, Id } from "@/convex/_generated/dataModel";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { timeAgo } from "@/lib/time";
-import { OutOfStockCallout, useFindStores } from "./find-stores";
+import { OutOfStockCallout, showOutOfStock, useFindStores } from "./find-stores";
 import { dropRatio, hasNewMatch, hasRecentPriceDrop, type PriceDrop } from "@/lib/monitor-list";
 import { formatMinorUnits } from "@prowl/shared";
 
@@ -64,7 +64,7 @@ export function MonitorCard({ monitor, onTogglePause, onDelete, onRescan, onClon
           : "hover:border-l-amber-500/50";
 
   const detailHref = `/dashboard/monitors/${monitor._id}`;
-  const findStores = useFindStores(monitor._id, "card");
+  const findStores = useFindStores(monitor._id, monitor.url, "card");
   const newMatch = hasNewMatch(monitor, now);
   const priceDrop = hasRecentPriceDrop(monitor, now) ? monitor.lastPriceDrop : undefined;
 
@@ -142,9 +142,9 @@ export function MonitorCard({ monitor, onTogglePause, onDelete, onRescan, onClon
                 </span>
               )}
             </div>
-            {monitor.canConvertToProduct && monitor.lastSeen?.inStock === false && (
+            {monitor.canConvertToProduct && showOutOfStock(monitor) && (
               <div className="mt-4">
-                <OutOfStockCallout monitorId={monitor._id} url={monitor.url} source="card" />
+                <OutOfStockCallout url={monitor.url} onFind={findStores.open} />
               </div>
             )}
           </div>
@@ -180,7 +180,7 @@ export function MonitorCard({ monitor, onTogglePause, onDelete, onRescan, onClon
                 </DropdownMenuItem>
               )}
               {monitor.canConvertToProduct && (
-                <DropdownMenuItem onClick={() => void findStores.run()} disabled={findStores.busy}>
+                <DropdownMenuItem onClick={findStores.open}>
                   <Store className="mr-2 h-4 w-4" /> Find other stores
                 </DropdownMenuItem>
               )}
@@ -210,6 +210,7 @@ export function MonitorCard({ monitor, onTogglePause, onDelete, onRescan, onClon
           </div>
         </div>
       </CardContent>
+      {monitor.canConvertToProduct && findStores.dialog}
     </Card>
   );
 }
