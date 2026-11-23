@@ -1,9 +1,9 @@
 "use client";
 
-import { use, useState } from "react";
+import { use, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { BackLink } from "@/components/prowl/back-link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { ExternalLink, Loader2, MoreVertical, Pause, Play, Search, Trash2 } from "lucide-react";
 import { toast } from "sonner";
@@ -58,6 +58,18 @@ export default function ProductPage({ params }: { params: Promise<{ id: string }
   const findMore = useAction(api.productSearch.findMore);
   const router = useRouter();
   const [finding, setFinding] = useState(false);
+  // "Find other stores" on a monitor lands here with ?find=1 once it is a
+  // product, so the slow search runs where its progress shows. Cleared from
+  // the URL first, so a reload does not spend another search.
+  const searchParams = useSearchParams();
+  const findRequested = useRef(false);
+  useEffect(() => {
+    if (searchParams.get("find") !== "1" || findRequested.current) return;
+    findRequested.current = true;
+    router.replace(`/dashboard/products/${groupId}`, { scroll: false });
+    void findMoreListings();
+  }, [searchParams]); // eslint-disable-line react-hooks/exhaustive-deps -- runs once per landing
+
   // Marked "New" until the user leaves the page.
   const [newUrls, setNewUrls] = useState<ReadonlySet<string>>(new Set());
   const [showDismissed, setShowDismissed] = useState(false);

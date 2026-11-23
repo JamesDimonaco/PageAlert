@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { SEARCH_REGIONS, guessSearchRegion, isSearchRegion } from "./product-search";
+import { SEARCH_REGIONS, guessSearchRegion, isSearchRegion, regionForPage } from "./product-search";
 
 describe("search regions", () => {
   // A shopper outside the list is searched as if in the US, in the wrong shops and currency.
@@ -16,5 +16,31 @@ describe("search regions", () => {
   it("falls back to the US for a country it cannot search", () => {
     expect(isSearchRegion("ZZ")).toBe(false);
     expect(guessSearchRegion("ZZ", "xx")).toBe("US");
+  });
+});
+
+// Turning a monitor into a product searches other shops in one country. The
+// wrong one fills the product with shops that will not sell to the user.
+describe("regionForPage", () => {
+  it("keeps the saved region when its currency matches the page", () => {
+    expect(regionForPage("EUR", "IE", "https://www.amazon.de/x")).toBe("IE");
+    expect(regionForPage(undefined, "NZ", "https://shop.test/x")).toBe("NZ");
+  });
+
+  it("goes by the page's currency when the saved region prices in another", () => {
+    expect(regionForPage("GBP", "US", "https://shop.test/x")).toBe("GB");
+    expect(regionForPage("AUD", null, "https://shop.test/x")).toBe("AU");
+  });
+
+  it("breaks a shared currency by the domain ending", () => {
+    expect(regionForPage("EUR", "GB", "https://www.fnac.fr/x")).toBe("FR");
+    expect(regionForPage("EUR", null, "https://www.amazon.de/x")).toBe("DE");
+    expect(regionForPage(undefined, null, "https://www.argos.co.uk/x")).toBe("GB");
+  });
+
+  it("falls back to the first region for the currency, then the US", () => {
+    expect(regionForPage("EUR", null, "https://shop.com/x")).toBe("IE");
+    expect(regionForPage(undefined, null, "https://shop.com/x")).toBe("US");
+    expect(regionForPage("JPY", null, "not a url")).toBe("US");
   });
 });

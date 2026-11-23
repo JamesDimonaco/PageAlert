@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { api, components, internal } from "./_generated/api";
 import schema from "./schema";
 import betterAuthSchema from "./betterAuth/schema";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 
 const modules = import.meta.glob("./**/*.*s");
 const betterAuthModules = import.meta.glob("./betterAuth/**/*.*s");
@@ -747,5 +747,113 @@ describe("managing a product", () => {
     expect(group?.alertOn).toEqual({ backInStock: true });
     expect(group?.listings.map((l) => l.state)).toEqual(["watching", "watching", "suggested"]);
     expect((await owner.query(api.monitors.list, {})).map((m) => m.status)).toEqual(["active", "active"]);
+  });
+});
+
+// A monitor on one shop's product page becomes a product, so other shops can
+// be searched and watched beside it. It must keep its history and settings,
+// and only a page that is one product can be turned into one.
+describe("monitorGroups.convertMonitor", () => {
+  const PAGE = "https://www.argos.co.uk/product/123";
+
+  async function seedMonitor(
+    t: ReturnType<typeof harness>,
+    userId: string,
+    fields: Partial<Doc<"monitors">> = {}
+  ): Promise<Id<"monitors">> {
+    return t.run(async (ctx) => {
+      const folderId = await ctx.db.insert("folders", { userId, name: "Audio", createdAt: 0, updatedAt: 0 });
+      return ctx.db.insert("monitors", {
+        userId,
+        name: "XM5 headphones",
+        url: PAGE,
+        prompt: "tell me when it is back in stock",
+        status: "active",
+        checkInterval: "6h",
+        notificationChannels: ["email"],
+        schema: { items: [{ title: "Sony WH-1000XM5 Headphones", url: PAGE }, { title: "Case", url: "https://www.argos.co.uk/product/9" }] },
+        matchCount: 0,
+        lastMatchAt: 5,
+        folderId,
+        lastSeen: { inStock: false, price: 27999, currency: "GBP" },
+        createdAt: 0,
+        updatedAt: 0,
+        ...fields,
+      });
+    });
+  }
+
+  it("turns the monitor into a product's first listing and keeps its history", async () => {
+    const t = harness();
+    const { as, userId } = await signUp(t, "a@example.test");
+    const id = await seedMonitor(t, userId);
+    await t.run((ctx) => ctx.db.insert("priceReads", { monitorId: id, price: 27999, currency: "GBP", readAt: 1 }));
+    const folderId = (await t.run((ctx) => ctx.db.get(id)))!.folderId;
+
+    const groupId = await as.mutation(api.monitorGroups.convertMonitor, { monitorId: id });
+
+    const group = await t.run((ctx) => ctx.db.get(groupId));
+    expect(group).toMatchObject({
+      userId,
+      name: "XM5 headphones",
+      region: "GB",
+      alertOn: { backInStock: true },
+      checkInterval: "6h",
+      notificationChannels: ["email"],
+      folderId,
+      listings: [
+        {
+          site: "argos.co.uk",
+          url: PAGE,
+          title: "Sony WH-1000XM5 Headphones",
+          price: 27999,
+          currency: "GBP",
+          inStock: false,
+          label: "same",
+          state: "watching",
+          monitorId: id,
+        },
+      ],
+    });
+    const monitor = (await t.run((ctx) => ctx.db.get(id)))!;
+    expect(monitor).toMatchObject({ groupId, productTitle: "Sony WH-1000XM5 Headphones", alertOn: { backInStock: true }, lastMatchAt: 5 });
+    expect(monitor.folderId).toBeUndefined();
+    expect(monitor.prompt).toContain("Sony WH-1000XM5 Headphones");
+    expect(await t.run((ctx) => ctx.db.query("priceReads").collect())).toHaveLength(1);
+  });
+
+  it("keeps alert settings it already has, and defaults when the prompt gives none", async () => {
+    const t = harness();
+    const { as, userId } = await signUp(t, "a@example.test");
+    const kept = await seedMonitor(t, userId, { alertOn: { priceBelow: { amount: 25000, currency: "GBP" } } });
+    const plain = await seedMonitor(t, userId, { prompt: "watch this page" });
+
+    const keptGroup = await as.mutation(api.monitorGroups.convertMonitor, { monitorId: kept });
+    const plainGroup = await as.mutation(api.monitorGroups.convertMonitor, { monitorId: plain });
+
+    expect((await t.run((ctx) => ctx.db.get(keptGroup)))?.alertOn).toEqual({ priceBelow: { amount: 25000, currency: "GBP" } });
+    expect((await t.run((ctx) => ctx.db.get(plainGroup)))?.alertOn).toEqual({ priceDrop: true, backInStock: true });
+  });
+
+  it("is offered only for a product page of the user's own that is not in a product yet", async () => {
+    const t = harness();
+    const { as, userId } = await signUp(t, "a@example.test");
+    const listPage = await seedMonitor(t, userId, {
+      schema: { items: [{ title: "A", url: "https://www.argos.co.uk/a" }, { title: "B", url: "https://www.argos.co.uk/b" }] },
+    });
+    const product = await seedMonitor(t, userId);
+    const theirs = await seedMonitor(t, "someone-else");
+
+    const offered = async (monitorId: Id<"monitors">) =>
+      (await as.query(api.monitors.list, {})).find((m) => m._id === monitorId)?.canConvertToProduct;
+    expect(await offered(listPage)).toBe(false);
+    expect(await offered(product)).toBe(true);
+
+    await expect(as.mutation(api.monitorGroups.convertMonitor, { monitorId: listPage })).rejects.toThrow(/one product/);
+    await expect(as.mutation(api.monitorGroups.convertMonitor, { monitorId: theirs })).rejects.toThrow(/not found/);
+    await as.mutation(api.monitorGroups.convertMonitor, { monitorId: product });
+    expect(await offered(product)).toBe(false);
+    await expect(as.mutation(api.monitorGroups.convertMonitor, { monitorId: product })).rejects.toThrow(/already/);
+    expect(await t.run((ctx) => ctx.db.query("monitorGroups").collect())).toHaveLength(1);
   });
 });

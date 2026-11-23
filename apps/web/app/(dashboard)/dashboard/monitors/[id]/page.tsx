@@ -6,6 +6,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { StatusBadge } from "@/components/prowl/status-badge";
 import { AutoPauseNote } from "@/components/prowl/auto-pause-note";
+import { FindStoresButton, OutOfStockCallout } from "@/components/prowl/find-stores";
 import { SpeedUpsell } from "@/components/prowl/speed-upsell";
 import { DeleteDialog } from "@/components/prowl/delete-dialog";
 import { OverviewTab } from "@/components/prowl/monitor-tabs/overview-tab";
@@ -42,7 +43,7 @@ import { useTier } from "@/hooks/use-tier";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { isProxyFirstHost } from "@/convex/shared";
-import { applyMatchConditions, getItemKey } from "@prowl/shared";
+import { applyMatchConditions, convertibleToProduct, getItemKey } from "@prowl/shared";
 import type { Id } from "@/convex/_generated/dataModel";
 import type { ExtractedItem, ExtractionSchema } from "@prowl/shared";
 import { toast } from "sonner";
@@ -210,6 +211,9 @@ export default function MonitorDetailPage({
   const alertsOff = explicitChannels !== undefined && explicitChannels.length === 0;
   const channelNames = channels.map((c) => CHANNEL_NAMES[c] ?? c).join(", ");
 
+  const canConvert = convertibleToProduct(monitor);
+  const soldOut = monitor.lastSeen?.inStock === false;
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -300,6 +304,7 @@ export default function MonitorDetailPage({
           </div>
         </div>
         <div className="shrink-0 flex items-center gap-2">
+          {canConvert && !soldOut && <FindStoresButton monitorId={monitorId} source="detail" />}
           <a
             href={monitor.url}
             target="_blank"
@@ -360,6 +365,8 @@ export default function MonitorDetailPage({
           </DropdownMenu>
         </div>
       </div>
+
+      {canConvert && soldOut && <OutOfStockCallout monitorId={monitorId} url={monitor.url} source="detail" />}
 
       {/* Tabs */}
       <Tabs

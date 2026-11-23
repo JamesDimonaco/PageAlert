@@ -1,7 +1,19 @@
 import { ConvexError, v, type Infer, type ObjectType } from "convex/values";
 import { internalMutation, internalQuery, mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
-import { canonicalUrl, isArticlePage, isComparisonSite, isSearchRegion, SEARCH_REGIONS } from "@prowl/shared";
+import {
+  canonicalUrl,
+  convertibleToProduct,
+  guessAlertOn,
+  isArticlePage,
+  isComparisonSite,
+  isSearchRegion,
+  productItem,
+  regionForPage,
+  SEARCH_REGIONS,
+  toMinorUnits,
+} from "@prowl/shared";
+import { activityRow } from "./account";
 import {
   allowedChannels,
   clampInterval,
@@ -341,6 +353,85 @@ export async function updateCriteriaForUser(
   });
   return { checkInterval, notificationChannels };
 }
+
+/**
+ * The criteria a monitor takes into a product: its own stock and price
+ * alerts, else what its prompt asks for, else price drops and restocks.
+ */
+function criteriaFor(monitor: Doc<"monitors">): AlertOn {
+  const any = (a: AlertOn | undefined): a is AlertOn =>
+    a !== undefined && (a.backInStock === true || a.priceDrop === true || a.priceBelow !== undefined);
+  if (any(monitor.alertOn)) return monitor.alertOn;
+  const guess = guessAlertOn(monitor.prompt);
+  const target = guess.priceBelow;
+  const amount = target?.currency ? toMinorUnits(target.amount, target.currency) : null;
+  const guessed: AlertOn = {
+    ...(guess.backInStock ? { backInStock: true } : {}),
+    ...(guess.priceDrop ? { priceDrop: true } : {}),
+    ...(target?.currency && amount !== null ? { priceBelow: { amount, currency: target.currency } } : {}),
+  };
+  return any(guessed) ? guessed : { priceDrop: true, backInStock: true };
+}
+
+/**
+ * Turn a monitor on one shop's product page into a product, with that page
+ * as its first watched listing. The monitor keeps its history, interval and
+ * channels; the product takes its folder. Its prompt becomes the product
+ * prompt every listing shares. "Find more stores" runs this, then findMore.
+ */
+export const convertMonitor = mutation({
+  args: { monitorId: v.id("monitors") },
+  handler: async (ctx, { monitorId }): Promise<Id<"monitorGroups">> => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new ConvexError("Sign in to manage your products.");
+    const userId = identity.subject;
+    const monitor = await ctx.db.get(monitorId);
+    if (!monitor || monitor.userId !== userId) throw new ConvexError("Monitor not found.");
+    if (monitor.groupId !== undefined) throw new ConvexError("This monitor is already part of a product.");
+    const item = productItem(monitor.schema, monitor.url);
+    if (!item || !convertibleToProduct(monitor)) {
+      throw new ConvexError("Only a page showing one product can become a product.");
+    }
+
+    const name = monitor.name.trim().slice(0, MAX_NAME_LENGTH);
+    const title = (typeof item.title === "string" ? item.title.trim() : "").slice(0, MAX_NAME_LENGTH) || name;
+    const alertOn = criteriaFor(monitor);
+    requireCriteria(alertOn);
+    const { inStock, price, currency } = monitor.lastSeen ?? {};
+    const region = regionForPage(currency, (await activityRow(ctx, userId))?.searchRegion ?? null, monitor.url);
+
+    const now = Date.now();
+    const groupId = await ctx.db.insert("monitorGroups", {
+      userId,
+      name,
+      region,
+      alertOn,
+      notificationChannels: monitor.notificationChannels,
+      checkInterval: monitor.checkInterval,
+      ...(monitor.folderId ? { folderId: monitor.folderId } : {}),
+      listings: [
+        {
+          site: displayHost(monitor.url).slice(0, MAX_SITE_LENGTH),
+          url: monitor.url,
+          title,
+          ...(price !== undefined && currency !== undefined ? { price, currency } : {}),
+          ...(inStock !== undefined ? { inStock } : {}),
+          label: "same",
+          state: "watching",
+          monitorId,
+        },
+      ],
+      createdAt: now,
+      updatedAt: now,
+    });
+    // Through the update path, so new stock or price alerts reset the stored
+    // reading to a baseline rather than firing on it.
+    const prompt = productPrompt(title, alertOn);
+    await updateMonitorForUser(ctx, userId, monitorId, { alertOn, ...(prompt !== monitor.prompt ? { prompt } : {}) });
+    await ctx.db.patch(monitorId, { groupId, productTitle: title, folderId: undefined });
+    return groupId;
+  },
+});
 
 /**
  * Watch a suggested listing. The plan's monitor limit and the creation rate
