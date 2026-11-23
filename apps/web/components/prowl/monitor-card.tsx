@@ -26,11 +26,16 @@ import {
   BellOff,
   Copy,
   FolderInput,
+  Sparkles,
+  TrendingDown,
 } from "lucide-react";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { timeAgo } from "@/lib/time";
+import { hasNewMatch } from "@/lib/monitor-list";
+import { formatMinorUnits } from "@prowl/shared";
+import type { PriceDrop } from "@/convex/priceMoves";
 
 const isDev = process.env.NODE_ENV === "development";
 
@@ -42,9 +47,12 @@ interface MonitorCardProps {
   onClone?: (monitor: Doc<"monitors">) => void;
   onToggleMute?: (id: Id<"monitors">) => void;
   onMoveToFolder?: (monitor: Doc<"monitors">) => void;
+  now: number;
+  /** Set only while the drop is recent. */
+  priceDrop?: PriceDrop;
 }
 
-export function MonitorCard({ monitor, onTogglePause, onDelete, onRescan, onClone, onToggleMute, onMoveToFolder }: MonitorCardProps) {
+export function MonitorCard({ monitor, onTogglePause, onDelete, onRescan, onClone, onToggleMute, onMoveToFolder, now, priceDrop }: MonitorCardProps) {
   const router = useRouter();
 
   const statusBorderColor =
@@ -57,6 +65,7 @@ export function MonitorCard({ monitor, onTogglePause, onDelete, onRescan, onClon
           : "hover:border-l-amber-500/50";
 
   const detailHref = `/dashboard/monitors/${monitor._id}`;
+  const newMatch = hasNewMatch(monitor, now);
 
   return (
     <Card
@@ -72,6 +81,8 @@ export function MonitorCard({ monitor, onTogglePause, onDelete, onRescan, onClon
                 </Link>
               </h2>
               <StatusBadge status={monitor.status} />
+              {newMatch && <NewMatchBadge />}
+              {priceDrop && <PriceDropBadge drop={priceDrop} />}
               {(monitor as any).muted && (
                 <Badge variant="outline" className="gap-1 bg-amber-500/10 text-warning border-amber-500/20">
                   <BellOff className="h-3 w-3" />
@@ -115,6 +126,8 @@ export function MonitorCard({ monitor, onTogglePause, onDelete, onRescan, onClon
                   {monitor.matchCount} match{monitor.matchCount !== 1 && "es"}
                 </span>
               )}
+              {monitor.lastMatchAt !== undefined && <span>Last new match {timeAgo(monitor.lastMatchAt)}</span>}
+              {priceDrop && <PriceDropDetail drop={priceDrop} />}
               {monitor.status === "active" && (monitor.retryCount ?? 0) > 0 && (
                 <span className="flex items-center gap-1 text-warning">
                   <RefreshCw className="h-3 w-3" />
@@ -187,5 +200,37 @@ export function MonitorCard({ monitor, onTogglePause, onDelete, onRescan, onClon
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+export function NewMatchBadge() {
+  return (
+    <Badge variant="outline" className="gap-1 bg-primary/10 text-primary border-primary/20">
+      <Sparkles className="h-3 w-3" />
+      New match
+    </Badge>
+  );
+}
+
+export function PriceDropBadge({ drop }: { drop: PriceDrop }) {
+  const percent = Math.round(((drop.from - drop.to) / drop.from) * 100);
+  return (
+    <Badge variant="outline" className="gap-1 bg-emerald-500/10 text-success border-emerald-500/20">
+      <TrendingDown className="h-3 w-3" />
+      Price down{percent > 0 && ` ${percent}%`}
+    </Badge>
+  );
+}
+
+/** The new price against the one before, and when it changed. */
+export function PriceDropDetail({ drop }: { drop: PriceDrop }) {
+  const to = formatMinorUnits(drop.to, drop.currency);
+  const from = formatMinorUnits(drop.from, drop.currency);
+  if (!to || !from) return null;
+  return (
+    <span>
+      <span className="font-semibold text-success">{to}</span>, was <span className="line-through">{from}</span>{" "}
+      ({timeAgo(drop.changedAt)})
+    </span>
   );
 }
