@@ -36,7 +36,8 @@ function describeAlerts(alertOn: AlertOn): string {
   if (alertOn.priceDrop) parts.push("the price drops");
   if (alertOn.priceBelow) {
     const { amount, currency } = alertOn.priceBelow;
-    parts.push(`the price is ${formatMinorUnits(amount, currency) ?? `${amount} ${currency}`} or less`);
+    const price = formatMinorUnits(amount, currency);
+    parts.push(price ? `the price is ${price} or less` : "the price falls below your target");
   }
   return parts.join(", or ");
 }

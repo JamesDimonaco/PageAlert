@@ -859,7 +859,24 @@ describe("monitorGroups.convertMonitor", () => {
     const { as, userId } = await signUp(t, "a@example.test");
     const id = await seedMonitor(t, userId, { prompt: "tell me when it's under £200", lastSeen: { price: 24900, currency: "USD" } });
     const groupId = await as.mutation(api.monitorGroups.convertMonitor, { monitorId: id });
-    expect((await t.run((ctx) => ctx.db.get(groupId)))?.alertOn).toEqual({ priceDrop: true, backInStock: true });
+    expect((await t.run((ctx) => ctx.db.get(groupId)))?.alertOn).toEqual({ priceDrop: true });
+  });
+
+  // The prompt asked about price, so losing the target must not lose price alerts.
+  it("keeps price alerts when a target is dropped", async () => {
+    const t = harness();
+    const { as, userId } = await signUp(t, "a@example.test");
+    const id = await seedMonitor(t, userId, { prompt: "back in stock and under £200", lastSeen: { price: 24900, currency: "USD" } });
+    const groupId = await as.mutation(api.monitorGroups.convertMonitor, { monitorId: id });
+    expect((await t.run((ctx) => ctx.db.get(groupId)))?.alertOn).toEqual({ backInStock: true, priceDrop: true });
+  });
+
+  // The store search refuses a name under 2 characters, which would leave a one-shop product.
+  it("refuses a product name too short to search", async () => {
+    const t = harness();
+    const { as, userId } = await signUp(t, "a@example.test");
+    const id = await seedMonitor(t, userId, { name: "X", schema: { items: [{ title: "", url: PAGE }] } });
+    await expect(as.mutation(api.monitorGroups.convertMonitor, { monitorId: id })).rejects.toThrow(/name/);
   });
 
   // Converting is one way, so the user sees what the alerts become first.

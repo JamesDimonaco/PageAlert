@@ -359,7 +359,8 @@ export async function updateCriteriaForUser(
  * The criteria a monitor takes into a product: its own stock and price
  * alerts, else what its prompt asks for, else price drops and restocks. A
  * target written with a shared symbol ("$200") takes `currency`; one in a
- * currency the page does not price in is dropped, since it could never fire.
+ * currency the page does not price in could never fire, so it becomes price
+ * drops instead.
  */
 function criteriaFor(monitor: Doc<"monitors">, currency: string): AlertOn {
   if (monitor.alertOn && wantsProductAlerts(monitor.alertOn)) return monitor.alertOn;
@@ -370,8 +371,11 @@ function criteriaFor(monitor: Doc<"monitors">, currency: string): AlertOn {
   const amount = guess.priceBelow && targetCurrency ? toMinorUnits(guess.priceBelow.amount, targetCurrency) : null;
   const guessed: AlertOn = {
     ...(guess.backInStock ? { backInStock: true } : {}),
-    ...(guess.priceDrop ? { priceDrop: true } : {}),
-    ...(targetCurrency && amount !== null ? { priceBelow: { amount, currency: targetCurrency } } : {}),
+    ...(targetCurrency && amount !== null
+      ? { priceBelow: { amount, currency: targetCurrency } }
+      : guess.priceDrop || guess.priceBelow
+        ? { priceDrop: true }
+        : {}),
   };
   return wantsProductAlerts(guessed) ? guessed : { priceDrop: true, backInStock: true };
 }
@@ -395,6 +399,8 @@ async function planConversion(ctx: QueryCtx, monitorId: Id<"monitors">) {
   const title =
     (typeof item?.title === "string" ? item.title.trim() : "").slice(0, MAX_NAME_LENGTH) ||
     monitor.name.trim().slice(0, MAX_NAME_LENGTH);
+  // findListings refuses anything shorter.
+  if (title.length < 2) throw new ConvexError("This product has no name to search for. Give the monitor a name first.");
   const region = regionForPage(monitor.lastSeen?.currency, (await activityRow(ctx, userId))?.searchRegion ?? null, monitor.url);
   const regionCurrency = SEARCH_REGIONS.find((r) => r.code === region)!.currency;
   const alertOn = criteriaFor(monitor, monitor.lastSeen?.currency ?? regionCurrency);
