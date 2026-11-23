@@ -31,7 +31,7 @@ import { createFolderForUser, setMonitorFolder, setProductFolder } from "./folde
 import { addListingsForUser, createProductForUser, setPausedForUser, updateCriteriaForUser } from "./monitorGroups";
 import { findListings } from "./productSearch";
 import { alertOnValidator, checkIntervalValidator } from "./schema";
-import { displayHost, matchKey, previewUserPrefix } from "./shared";
+import { displayHost, matchKey, previewUserPrefix, wantsProductAlerts } from "./shared";
 
 /**
  * What the MCP route calls, one function per tool step. Each takes the raw API
@@ -106,10 +106,6 @@ const NOT_A_PRODUCT_NOTE =
 const COMPARISON_PAGE_ALERTS =
   "This is a price comparison page, so stock and price alerts can't run on it. " +
   "Put the target in the prompt instead, e.g. 'lowest in-stock price under $300'.";
-
-function wantsProductAlerts(alertOn: AlertOn | undefined): boolean {
-  return alertOn?.backInStock === true || alertOn?.priceDrop === true || alertOn?.priceBelow !== undefined;
-}
 
 function isoOrNull(time: number | undefined): string | null {
   return time === undefined ? null : new Date(time).toISOString();

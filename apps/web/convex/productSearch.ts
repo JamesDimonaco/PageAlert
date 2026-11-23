@@ -2,6 +2,7 @@ import { ConvexError, v } from "convex/values";
 import { z } from "zod";
 import { action, internalMutation, query, type ActionCtx, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
+import type { Doc } from "./_generated/dataModel";
 import { activityRow, requireLiveAccount } from "./account";
 import { effectiveTier, type Tier } from "./tiers";
 import { isArticlePage, isComparisonSite, isSearchRegion, isTravellerOnlyShop, type ProductListing } from "@prowl/shared";
@@ -57,11 +58,27 @@ export const status = query({
   },
 });
 
-/** Searches the user has left today. Reads the clock, so call it from a mutation. */
-export async function searchesLeft(ctx: MutationCtx, userId: string): Promise<number> {
-  const record = await tierRow(ctx, userId);
-  const used = record?.productSearchDay === today() ? (record.productSearchCount ?? 0) : 0;
-  return Math.max(0, DAILY_SEARCH_LIMITS[effectiveTier(record)] - used);
+/** Today's counts for a user, and why a search would be refused, or null. */
+function allowance(record: Doc<"userTiers"> | null) {
+  const day = today();
+  const limit = DAILY_SEARCH_LIMITS[effectiveTier(record)];
+  const isToday = record?.productSearchDay === day;
+  const used = isToday ? (record?.productSearchCount ?? 0) : 0;
+  const attempts = isToday ? (record?.productSearchAttempts ?? 0) : 0;
+  const refusal =
+    used >= limit
+      ? `You've used all ${limit} searches for today. Paste a URL instead, or search again tomorrow.`
+      : attempts >= attemptCeiling(limit)
+        ? "Search isn't working for you today. Paste a URL instead, or try again tomorrow."
+        : null;
+  return { day, used, attempts, refusal };
+}
+
+/** Throws whatever reserve would, without counting a search. Reads the clock, so call it from a mutation. */
+export async function requireSearchAllowed(ctx: MutationCtx, userId: string): Promise<void> {
+  await requireLiveAccount(ctx, userId);
+  const { refusal } = allowance(await tierRow(ctx, userId));
+  if (refusal) throw new ConvexError(refusal);
 }
 
 /**
@@ -76,18 +93,9 @@ export const reserve = internalMutation({
   handler: async (ctx, { userId, saveRegion }): Promise<{ day: string }> => {
     await requireLiveAccount(ctx, userId);
 
-    const day = today();
     const record = await tierRow(ctx, userId);
-    const limit = DAILY_SEARCH_LIMITS[effectiveTier(record)];
-    const isToday = record?.productSearchDay === day;
-    const used = isToday ? (record?.productSearchCount ?? 0) : 0;
-    const attempts = isToday ? (record?.productSearchAttempts ?? 0) : 0;
-    if (used >= limit) {
-      throw new ConvexError(`You've used all ${limit} searches for today. Paste a URL instead, or search again tomorrow.`);
-    }
-    if (attempts >= attemptCeiling(limit)) {
-      throw new ConvexError("Search isn't working for you today. Paste a URL instead, or try again tomorrow.");
-    }
+    const { day, used, attempts, refusal } = allowance(record);
+    if (refusal) throw new ConvexError(refusal);
 
     const counts = { productSearchDay: day, productSearchCount: used + 1, productSearchAttempts: attempts + 1 };
     if (record) {

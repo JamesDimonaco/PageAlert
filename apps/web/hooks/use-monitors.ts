@@ -3,10 +3,6 @@
 import { useQuery, useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
-import type { FunctionReturnType } from "convex/server";
-
-/** A monitor as the dashboard list has it: no schema, plus what was worked out from it. */
-export type ListedMonitor = FunctionReturnType<typeof api.monitors.list>[number];
 
 export function useMonitors() {
   const monitors = useQuery(api.monitors.list) ?? [];

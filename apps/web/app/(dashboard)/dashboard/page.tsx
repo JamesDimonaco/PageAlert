@@ -20,7 +20,7 @@ import { EmptyState } from "@/components/prowl/empty-state";
 import { ReviewPrompt } from "@/components/prowl/review-prompt";
 import { OnboardingChecklist } from "@/components/prowl/onboarding-checklist";
 import { UpgradeBanner } from "@/components/prowl/upgrade-banner";
-import { useMonitors, type ListedMonitor } from "@/hooks/use-monitors";
+import { useMonitors } from "@/hooks/use-monitors";
 import { useCreateMonitor } from "@/hooks/use-create-monitor";
 import { useTier } from "@/hooks/use-tier";
 import Link from "next/link";
@@ -259,7 +259,7 @@ export default function DashboardPage() {
     }
   }
 
-  const [deleteTarget, setDeleteTarget] = useState<ListedMonitor | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Doc<"monitors"> | null>(null);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [matchFilter, setMatchFilter] = useState<MatchFilter>("all");
@@ -278,12 +278,12 @@ export default function DashboardPage() {
   const folders = useQuery(api.folders.list);
   const removeFolder = useMutation(api.folders.remove);
 
-  const matchesSearch = (m: ListedMonitor) =>
+  const matchesSearch = (m: Doc<"monitors">) =>
     !search ||
     m.name.toLowerCase().includes(search.toLowerCase()) ||
     m.url.toLowerCase().includes(search.toLowerCase()) ||
     m.prompt.toLowerCase().includes(search.toLowerCase());
-  const matchesStatus = (m: ListedMonitor) =>
+  const matchesStatus = (m: Doc<"monitors">) =>
     statusFilter === "all" || (statusFilter === "muted" ? !!m.muted : m.status === statusFilter);
 
   // A product's monitors sit under one card, placed where its newest monitor
@@ -292,7 +292,7 @@ export default function DashboardPage() {
   const products = useQuery(api.monitorGroups.listMine);
   const productById = new Map((products ?? []).map((p) => [p._id, p]));
   const placed = new Set<Id<"monitorGroups">>();
-  const filtered: ({ monitor: ListedMonitor } | { product: ProductSummary; monitors: ListedMonitor[] })[] = [];
+  const filtered: ({ monitor: Doc<"monitors"> } | { product: ProductSummary; monitors: Doc<"monitors">[] })[] = [];
   for (const m of monitors) {
     const product = m.groupId && productById.get(m.groupId);
     if (!product) {
@@ -304,7 +304,7 @@ export default function DashboardPage() {
     placed.add(product._id);
     const children = monitors.filter((c) => c.groupId === product._id);
     const nameMatches = product.name.toLowerCase().includes(search.toLowerCase());
-    const shown = (c: ListedMonitor) => matchesStatus(c) && (nameMatches || matchesSearch(c));
+    const shown = (c: Doc<"monitors">) => matchesStatus(c) && (nameMatches || matchesSearch(c));
     // "No matches" is about the whole product; the others need one listing
     // that passes every filter at once.
     const passes =

@@ -9,7 +9,7 @@ import { formatMinorUnits } from "@prowl/shared";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import type { AlertOn } from "@/convex/schema";
-import { displayHost } from "@/convex/shared";
+import { displayHost, wantsProductAlerts } from "@/convex/shared";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { trackEvent } from "@/lib/posthog";
@@ -55,6 +55,10 @@ function FindStoresDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const preview = useQuery(api.monitorGroups.conversionPreview, open ? { monitorId } : "skip");
+  // The client compares the count's day with its own UTC date: a query can't read the clock.
+  const searches = useQuery(api.productSearch.status, open ? {} : "skip");
+  const noSearchesLeft =
+    searches != null && searches.day === new Date().toISOString().slice(0, 10) && searches.used >= searches.limit;
   const convert = useMutation(api.monitorGroups.convertMonitor);
   const router = useRouter();
   const [busy, setBusy] = useState(false);
@@ -98,14 +102,18 @@ function FindStoresDialog({
               It stops using your prompt, &ldquo;{preview.oldPrompt}&rdquo;, so anything else it asks for, like a size
               or colour, no longer alerts. Price and match history stay.
             </p>
-            <p className="text-muted-foreground">This uses one of today&apos;s store searches.</p>
+            {noSearchesLeft ? (
+              <p className="text-destructive">You&apos;ve used all your store searches for today. Try again tomorrow.</p>
+            ) : (
+              <p className="text-muted-foreground">This uses one of today&apos;s store searches.</p>
+            )}
           </div>
         )}
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>
             Cancel
           </Button>
-          <Button onClick={() => void confirm()} disabled={busy || !preview || "refusal" in preview} className="gap-1.5">
+          <Button onClick={() => void confirm()} disabled={busy || noSearchesLeft || !preview || "refusal" in preview} className="gap-1.5">
             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Store className="h-4 w-4" />}
             Find other stores
           </Button>
@@ -125,13 +133,12 @@ export function FindStoresButton({ onClick, variant = "outline" }: { onClick: ()
 }
 
 /**
- * Shown on a single-shop product page that has sold out: the moment other
- * shops matter most. Only while the monitor still reads stock, since an old
+ * Whether a monitor's card and page show the out-of-stock callout: its last
+ * read found it sold out. Only while it still reads stock, since an old
  * reading is never updated once stock and price alerts are off.
  */
 export function showOutOfStock(monitor: { alertOn?: AlertOn; lastSeen?: { inStock?: boolean } }): boolean {
-  const reading = monitor.alertOn?.backInStock === true || monitor.alertOn?.priceDrop === true || monitor.alertOn?.priceBelow !== undefined;
-  return reading && monitor.lastSeen?.inStock === false;
+  return wantsProductAlerts(monitor.alertOn) && monitor.lastSeen?.inStock === false;
 }
 
 export function OutOfStockCallout({ url, onFind }: { url: string; onFind: () => void }) {

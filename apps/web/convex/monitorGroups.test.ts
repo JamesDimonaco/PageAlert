@@ -808,14 +808,19 @@ describe("monitorGroups.convertMonitor", () => {
           title: "Sony WH-1000XM5 Headphones",
           price: 27999,
           currency: "GBP",
-          inStock: false,
           label: "same",
           state: "watching",
           monitorId: id,
         },
       ],
     });
+    // Stock was not read while no stock alert was on, so the old "out of
+    // stock" is no reading at all: neither the listing nor the monitor keeps it.
+    expect(group?.listings[0]).not.toHaveProperty("inStock");
     const monitor = (await t.run((ctx) => ctx.db.get(id)))!;
+    expect(monitor.lastSeen?.inStock).toBeUndefined();
+    // The match conditions came from the old prompt, so the next check re-reads.
+    expect(monitor.lastAiExtractAt).toBe(0);
     expect(monitor).toMatchObject({ groupId, productTitle: "Sony WH-1000XM5 Headphones", alertOn: { backInStock: true }, lastMatchAt: 5 });
     expect(monitor.folderId).toBeUndefined();
     expect(monitor.prompt).toContain("Sony WH-1000XM5 Headphones");
@@ -845,6 +850,16 @@ describe("monitorGroups.convertMonitor", () => {
     });
     const groupId = await as.mutation(api.monitorGroups.convertMonitor, { monitorId: id });
     expect((await t.run((ctx) => ctx.db.get(groupId)))?.alertOn).toEqual({ priceBelow: { amount: 20000, currency: "USD" } });
+  });
+
+  // The product read never compares a target with a price in another currency,
+  // so such a target could never fire.
+  it("drops a target in another currency than the page's", async () => {
+    const t = harness();
+    const { as, userId } = await signUp(t, "a@example.test");
+    const id = await seedMonitor(t, userId, { prompt: "tell me when it's under £200", lastSeen: { price: 24900, currency: "USD" } });
+    const groupId = await as.mutation(api.monitorGroups.convertMonitor, { monitorId: id });
+    expect((await t.run((ctx) => ctx.db.get(groupId)))?.alertOn).toEqual({ priceDrop: true, backInStock: true });
   });
 
   // Converting is one way, so the user sees what the alerts become first.
@@ -878,6 +893,25 @@ describe("monitorGroups.convertMonitor", () => {
     expect((await t.run((ctx) => ctx.db.get(id)))?.groupId).toBeUndefined();
   });
 
+  // The same refusals as the search itself, or the search can still refuse after.
+  it("refuses when the search would refuse for too many attempts", async () => {
+    const t = harness();
+    const { as, userId } = await signUp(t, "a@example.test");
+    const id = await seedMonitor(t, userId);
+    await t.run((ctx) =>
+      ctx.db.insert("userTiers", {
+        userId,
+        tier: "free",
+        productSearchDay: new Date().toISOString().slice(0, 10),
+        productSearchCount: 2,
+        // The free ceiling: max(10, 3 × 5 searches).
+        productSearchAttempts: 15,
+        updatedAt: 0,
+      })
+    );
+    await expect(as.mutation(api.monitorGroups.convertMonitor, { monitorId: id })).rejects.toThrow(/isn't working/);
+  });
+
   it("is offered only for a product page of the user's own that is not in a product yet", async () => {
     const t = harness();
     const { as, userId } = await signUp(t, "a@example.test");
@@ -887,15 +921,13 @@ describe("monitorGroups.convertMonitor", () => {
     const product = await seedMonitor(t, userId);
     const theirs = await seedMonitor(t, "someone-else");
 
-    const offered = async (monitorId: Id<"monitors">) =>
-      (await as.query(api.monitors.list, {})).find((m) => m._id === monitorId)?.canConvertToProduct;
-    expect(await offered(listPage)).toBe(false);
-    expect(await offered(product)).toBe(true);
+    expect(await as.query(api.monitorGroups.conversionPreview, { monitorId: listPage })).toEqual({
+      refusal: "Only a page showing one product can become a product.",
+    });
 
     await expect(as.mutation(api.monitorGroups.convertMonitor, { monitorId: listPage })).rejects.toThrow(/one product/);
     await expect(as.mutation(api.monitorGroups.convertMonitor, { monitorId: theirs })).rejects.toThrow(/not found/);
     await as.mutation(api.monitorGroups.convertMonitor, { monitorId: product });
-    expect(await offered(product)).toBe(false);
     await expect(as.mutation(api.monitorGroups.convertMonitor, { monitorId: product })).rejects.toThrow(/already/);
     expect(await t.run((ctx) => ctx.db.query("monitorGroups").collect())).toHaveLength(1);
   });

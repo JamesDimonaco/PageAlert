@@ -78,7 +78,7 @@ export function isProductMonitor(monitor: { schema?: unknown; groupId?: string; 
 }
 
 /**
- * Whether "Find more stores" can turn this monitor into a product: it is on a
+ * Whether "Find other stores" can turn this monitor into a product: it is on a
  * page showing one product, and not in a product already. Anonymous monitors
  * belong to nobody who could manage a product.
  */

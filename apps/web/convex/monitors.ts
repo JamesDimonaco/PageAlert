@@ -3,7 +3,7 @@ import { mutation, query, internalAction, internalMutation, internalQuery, type 
 import type { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { displayHost, effectiveIntervalMs, ERROR_RECOVERY_INTERVAL_MS, intervalToMs, isBlockedError, isProxyFirstHost, matchKey, MAX_RETRIES, soldOutKeysOf, validateMonitorUrl, wantsProductRead, FIRST_PRODUCT_READ_DELAY_MS } from "./shared";
-import { convertibleToProduct, currencyExponent, itemIdentity, RESUME_TOKEN_TTL_MS, stockNotShownNote, type ExtractedItem, type MatchConditions } from "@prowl/shared";
+import { currencyExponent, itemIdentity, RESUME_TOKEN_TTL_MS, stockNotShownNote, type ExtractedItem, type MatchConditions } from "@prowl/shared";
 import { effectiveTier, type Tier } from "./tiers";
 import { drain, isBanned, requireLiveAccount, spent, SWEEP_BUDGET_BYTES, SWEEP_BUDGET_ROWS, type Allowance } from "./account";
 import { reserveFallback, scraperDown } from "./admin";
@@ -148,9 +148,9 @@ export const list = query({
     // credential for an unauthenticated mutation and belongs in the pause email
     // and nowhere else. The detail page uses `get`, which strips the same.
     return monitors.map(({ schema, resumeToken, ...rest }) => {
+      void schema;
       void resumeToken;
-      // Worked out here because the schema it needs never reaches the browser.
-      return { ...rest, canConvertToProduct: convertibleToProduct({ ...rest, schema }) };
+      return rest;
     });
   },
 });

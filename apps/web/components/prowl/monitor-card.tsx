@@ -41,7 +41,7 @@ import { formatMinorUnits } from "@prowl/shared";
 const isDev = process.env.NODE_ENV === "development";
 
 interface MonitorCardProps {
-  monitor: Doc<"monitors"> & { canConvertToProduct?: boolean };
+  monitor: Doc<"monitors">;
   onTogglePause: (id: Id<"monitors">) => void;
   onDelete: (id: Id<"monitors">) => void;
   onRescan?: (id: Id<"monitors">) => void;
@@ -65,6 +65,10 @@ export function MonitorCard({ monitor, onTogglePause, onDelete, onRescan, onClon
 
   const detailHref = `/dashboard/monitors/${monitor._id}`;
   const findStores = useFindStores(monitor._id, monitor.url, "card");
+  // The list leaves out the schema convertibleToProduct reads. A product read
+  // only ever ran on a product page, so lastSeen stands in for it; the
+  // dialog makes the real check.
+  const canFindStores = monitor.groupId === undefined && monitor.isAnonymous !== true && monitor.lastSeen !== undefined;
   const newMatch = hasNewMatch(monitor, now);
   const priceDrop = hasRecentPriceDrop(monitor, now) ? monitor.lastPriceDrop : undefined;
 
@@ -142,7 +146,7 @@ export function MonitorCard({ monitor, onTogglePause, onDelete, onRescan, onClon
                 </span>
               )}
             </div>
-            {monitor.canConvertToProduct && showOutOfStock(monitor) && (
+            {canFindStores && showOutOfStock(monitor) && (
               <div className="mt-4">
                 <OutOfStockCallout url={monitor.url} onFind={findStores.open} />
               </div>
@@ -179,7 +183,7 @@ export function MonitorCard({ monitor, onTogglePause, onDelete, onRescan, onClon
                   )}
                 </DropdownMenuItem>
               )}
-              {monitor.canConvertToProduct && (
+              {canFindStores && (
                 <DropdownMenuItem onClick={findStores.open}>
                   <Store className="mr-2 h-4 w-4" /> Find other stores
                 </DropdownMenuItem>
@@ -210,7 +214,7 @@ export function MonitorCard({ monitor, onTogglePause, onDelete, onRescan, onClon
           </div>
         </div>
       </CardContent>
-      {monitor.canConvertToProduct && findStores.dialog}
+      {canFindStores && findStores.dialog}
     </Card>
   );
 }

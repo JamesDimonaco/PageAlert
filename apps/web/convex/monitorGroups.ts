@@ -14,7 +14,7 @@ import {
   toMinorUnits,
 } from "@prowl/shared";
 import { activityRow } from "./account";
-import { searchesLeft } from "./productSearch";
+import { requireSearchAllowed } from "./productSearch";
 import {
   allowedChannels,
   clampInterval,
@@ -24,7 +24,7 @@ import {
   updateMonitorForUser,
   validateAlertOn,
 } from "./monitors";
-import { displayHost, ERROR_ALERT_COOLDOWN_MS, validateMonitorUrl } from "./shared";
+import { displayHost, ERROR_ALERT_COOLDOWN_MS, validateMonitorUrl, wantsProductAlerts } from "./shared";
 import {
   alertOnValidator,
   type AlertOn,
@@ -358,21 +358,22 @@ export async function updateCriteriaForUser(
 /**
  * The criteria a monitor takes into a product: its own stock and price
  * alerts, else what its prompt asks for, else price drops and restocks. A
- * target written with a shared symbol ("$200") takes `currency`.
+ * target written with a shared symbol ("$200") takes `currency`; one in a
+ * currency the page does not price in is dropped, since it could never fire.
  */
 function criteriaFor(monitor: Doc<"monitors">, currency: string): AlertOn {
-  const any = (a: AlertOn | undefined): a is AlertOn =>
-    a !== undefined && (a.backInStock === true || a.priceDrop === true || a.priceBelow !== undefined);
-  if (any(monitor.alertOn)) return monitor.alertOn;
+  if (monitor.alertOn && wantsProductAlerts(monitor.alertOn)) return monitor.alertOn;
   const guess = guessAlertOn(monitor.prompt);
-  const targetCurrency = guess.priceBelow ? (guess.priceBelow.currency ?? currency) : null;
+  const written = guess.priceBelow ? (guess.priceBelow.currency ?? currency) : null;
+  const pageCurrency = monitor.lastSeen?.currency;
+  const targetCurrency = written && (pageCurrency === undefined || written === pageCurrency) ? written : null;
   const amount = guess.priceBelow && targetCurrency ? toMinorUnits(guess.priceBelow.amount, targetCurrency) : null;
   const guessed: AlertOn = {
     ...(guess.backInStock ? { backInStock: true } : {}),
     ...(guess.priceDrop ? { priceDrop: true } : {}),
     ...(targetCurrency && amount !== null ? { priceBelow: { amount, currency: targetCurrency } } : {}),
   };
-  return any(guessed) ? guessed : { priceDrop: true, backInStock: true };
+  return wantsProductAlerts(guessed) ? guessed : { priceDrop: true, backInStock: true };
 }
 
 /**
@@ -427,13 +428,10 @@ export const convertMonitor = mutation({
   args: { monitorId: v.id("monitors") },
   handler: async (ctx, { monitorId }): Promise<Id<"monitorGroups">> => {
     const { userId, monitor, title, region, alertOn } = await planConversion(ctx, monitorId);
-    // The store search runs next. Converting with none left would leave a
-    // one-shop product, and there is no way back.
-    if ((await searchesLeft(ctx, userId)) === 0) {
-      throw new ConvexError("You've used all your store searches for today. Try again tomorrow.");
-    }
+    // The store search runs next. Converting when it would be refused leaves
+    // a one-shop product, and there is no way back.
+    await requireSearchAllowed(ctx, userId);
 
-    const { inStock, price, currency } = monitor.lastSeen ?? {};
     const now = Date.now();
     const groupId = await ctx.db.insert("monitorGroups", {
       userId,
@@ -443,6 +441,20 @@ export const convertMonitor = mutation({
       notificationChannels: monitor.notificationChannels,
       checkInterval: monitor.checkInterval,
       ...(monitor.folderId ? { folderId: monitor.folderId } : {}),
+      listings: [],
+      createdAt: now,
+      updatedAt: now,
+    });
+    // Through the update path, so new stock or price alerts reset the stored
+    // reading to a baseline rather than firing on it.
+    const prompt = productPrompt(title, alertOn);
+    await updateMonitorForUser(ctx, userId, monitorId, { alertOn, ...(prompt !== monitor.prompt ? { prompt } : {}) });
+    // The schema's match conditions came from the old prompt. Zero makes the
+    // drift refresh due, so the next check re-reads under the new one.
+    await ctx.db.patch(monitorId, { groupId, productTitle: title, folderId: undefined, lastAiExtractAt: 0 });
+    // The listing takes the reading the update kept, not the one it reset.
+    const { inStock, price, currency } = (await ctx.db.get(monitorId))?.lastSeen ?? {};
+    await ctx.db.patch(groupId, {
       listings: [
         {
           site: displayHost(monitor.url).slice(0, MAX_SITE_LENGTH),
@@ -455,14 +467,7 @@ export const convertMonitor = mutation({
           monitorId,
         },
       ],
-      createdAt: now,
-      updatedAt: now,
     });
-    // Through the update path, so new stock or price alerts reset the stored
-    // reading to a baseline rather than firing on it.
-    const prompt = productPrompt(title, alertOn);
-    await updateMonitorForUser(ctx, userId, monitorId, { alertOn, ...(prompt !== monitor.prompt ? { prompt } : {}) });
-    await ctx.db.patch(monitorId, { groupId, productTitle: title, folderId: undefined });
     return groupId;
   },
 });
