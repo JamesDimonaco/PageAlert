@@ -30,6 +30,7 @@ import { api } from "@/convex/_generated/api";
 import { toast } from "sonner";
 import { trackMonitorDeleted, trackMonitorPaused, trackMonitorResumed, trackEvent, setUserProperties, captureException } from "@/lib/posthog";
 import { errorText } from "@/lib/utils";
+import { MATCH_FILTERS, SORTS, passesMatchFilter, sortEntries, type MatchFilter, type SortKey } from "@/lib/monitor-list";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
 import {
   Select,
@@ -261,6 +262,15 @@ export default function DashboardPage() {
   const [deleteTarget, setDeleteTarget] = useState<Doc<"monitors"> | null>(null);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [matchFilter, setMatchFilter] = useState<MatchFilter>("all");
+  const [sort, setSort] = useState<SortKey>("newest");
+  // The "new match" and "price down" windows. Ticks so a tab left open
+  // drops old badges.
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(id);
+  }, []);
   const [moveTarget, setMoveTarget] = useState<FolderTarget | null>(null);
   const [renameTarget, setRenameTarget] = useState<Doc<"folders"> | null>(null);
   const [deleteFolderTarget, setDeleteFolderTarget] = useState<Doc<"folders"> | null>(null);
@@ -287,24 +297,40 @@ export default function DashboardPage() {
     const product = m.groupId && productById.get(m.groupId);
     if (!product) {
       if (m.groupId && products === undefined) continue;
-      if (matchesSearch(m) && matchesStatus(m)) filtered.push({ monitor: m });
+      if (matchesSearch(m) && matchesStatus(m) && passesMatchFilter([m], matchFilter, now)) filtered.push({ monitor: m });
       continue;
     }
     if (placed.has(product._id)) continue;
     placed.add(product._id);
     const children = monitors.filter((c) => c.groupId === product._id);
     const nameMatches = product.name.toLowerCase().includes(search.toLowerCase());
-    if (children.some((c) => matchesStatus(c) && (nameMatches || matchesSearch(c)))) {
+    const shown = (c: Doc<"monitors">) => matchesStatus(c) && (nameMatches || matchesSearch(c));
+    // "No matches" is about the whole product; the others need one listing
+    // that passes every filter at once.
+    const passes =
+      matchFilter === "none"
+        ? children.some(shown) && passesMatchFilter(children, "none", now)
+        : children.some((c) => shown(c) && passesMatchFilter([c], matchFilter, now));
+    if (passes) {
       filtered.push({ product, monitors: children });
     }
   }
 
   type Item = (typeof filtered)[number];
+  const sorted = sortEntries(
+    filtered.map((item) =>
+      "product" in item
+        ? { item, name: item.product.name, monitors: item.monitors }
+        : { item, name: item.monitor.name, monitors: [item.monitor] }
+    ),
+    sort
+  ).map(({ item }) => item);
   const renderItem = (item: Item) => "product" in item ? (
             <ProductCard
               key={item.product._id}
               product={item.product}
               monitors={item.monitors}
+              now={now}
               onMoveToFolder={() =>
                 setMoveTarget({ productId: item.product._id, name: item.product.name, folderId: item.product.folderId })
               }
@@ -313,6 +339,7 @@ export default function DashboardPage() {
             <MonitorCard
               key={item.monitor._id}
               monitor={item.monitor}
+              now={now}
               onTogglePause={async (id) => {
                 const m = monitors.find((x) => x._id === id);
                 try {
@@ -355,13 +382,13 @@ export default function DashboardPage() {
   const folderIds = new Set((folders ?? []).map((f) => f._id));
   // Filed items wait for the folder list rather than showing unfiled and
   // then jumping into their folder.
-  const unfiled = filtered.filter((item) => {
+  const unfiled = sorted.filter((item) => {
     const id = folderOf(item);
     return !id || (folders !== undefined && !folderIds.has(id));
   });
-  const filtering = search !== "" || statusFilter !== "all";
+  const filtering = search !== "" || statusFilter !== "all" || matchFilter !== "all";
   const sections = (folders ?? [])
-    .map((folder) => ({ folder, items: filtered.filter((item) => folderOf(item) === folder._id) }))
+    .map((folder) => ({ folder, items: sorted.filter((item) => folderOf(item) === folder._id) }))
     .filter(({ items }) => items.length > 0 || !filtering);
 
   return (
@@ -433,6 +460,32 @@ export default function DashboardPage() {
             </SelectContent>
           </Select>
         </div>
+        <div>
+          <label htmlFor="monitor-matches" className="text-xs text-muted-foreground mb-1 block">Show</label>
+          <Select items={MATCH_FILTERS} value={matchFilter} onValueChange={(v) => v && setMatchFilter(v)}>
+            <SelectTrigger id="monitor-matches" className="w-full sm:w-[180px]">
+              <SelectValue placeholder="Show" />
+            </SelectTrigger>
+            <SelectContent>
+              {MATCH_FILTERS.map(({ value, label }) => (
+                <SelectItem key={value} value={value}>{label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div>
+          <label htmlFor="monitor-sort" className="text-xs text-muted-foreground mb-1 block">Sort</label>
+          <Select items={SORTS} value={sort} onValueChange={(v) => v && setSort(v)}>
+            <SelectTrigger id="monitor-sort" className="w-full sm:w-[150px]">
+              <SelectValue placeholder="Sort" />
+            </SelectTrigger>
+            <SelectContent>
+              {SORTS.map(({ value, label }) => (
+                <SelectItem key={value} value={value}>{label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
       </div>
 
       <div className="space-y-4">
@@ -472,7 +525,7 @@ export default function DashboardPage() {
               </div>
             </div>
           ) : (
-            <EmptyState title="No monitors found.">Try a different search or status.</EmptyState>
+            <EmptyState title="No monitors found.">Try a different search or filter.</EmptyState>
           )
         ) : (
           <>
