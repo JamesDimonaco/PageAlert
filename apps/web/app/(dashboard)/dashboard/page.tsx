@@ -304,7 +304,14 @@ export default function DashboardPage() {
     placed.add(product._id);
     const children = monitors.filter((c) => c.groupId === product._id);
     const nameMatches = product.name.toLowerCase().includes(search.toLowerCase());
-    if (children.some((c) => matchesStatus(c) && (nameMatches || matchesSearch(c)) && passesMatchFilter([c], matchFilter, now))) {
+    const shown = (c: Doc<"monitors">) => matchesStatus(c) && (nameMatches || matchesSearch(c));
+    // "No matches" is about the whole product; the others need one listing
+    // that passes every filter at once.
+    const passes =
+      matchFilter === "none"
+        ? children.some(shown) && passesMatchFilter(children, "none", now)
+        : children.some((c) => shown(c) && passesMatchFilter([c], matchFilter, now));
+    if (passes) {
       filtered.push({ product, monitors: children });
     }
   }
