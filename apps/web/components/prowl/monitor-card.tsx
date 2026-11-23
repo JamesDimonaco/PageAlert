@@ -33,9 +33,8 @@ import type { Doc, Id } from "@/convex/_generated/dataModel";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { timeAgo } from "@/lib/time";
-import { hasNewMatch } from "@/lib/monitor-list";
+import { dropRatio, hasNewMatch, hasRecentPriceDrop, type PriceDrop } from "@/lib/monitor-list";
 import { formatMinorUnits } from "@prowl/shared";
-import type { PriceDrop } from "@/convex/priceMoves";
 
 const isDev = process.env.NODE_ENV === "development";
 
@@ -48,11 +47,9 @@ interface MonitorCardProps {
   onToggleMute?: (id: Id<"monitors">) => void;
   onMoveToFolder?: (monitor: Doc<"monitors">) => void;
   now: number;
-  /** Set only while the drop is recent. */
-  priceDrop?: PriceDrop;
 }
 
-export function MonitorCard({ monitor, onTogglePause, onDelete, onRescan, onClone, onToggleMute, onMoveToFolder, now, priceDrop }: MonitorCardProps) {
+export function MonitorCard({ monitor, onTogglePause, onDelete, onRescan, onClone, onToggleMute, onMoveToFolder, now }: MonitorCardProps) {
   const router = useRouter();
 
   const statusBorderColor =
@@ -66,6 +63,7 @@ export function MonitorCard({ monitor, onTogglePause, onDelete, onRescan, onClon
 
   const detailHref = `/dashboard/monitors/${monitor._id}`;
   const newMatch = hasNewMatch(monitor, now);
+  const priceDrop = hasRecentPriceDrop(monitor, now) ? monitor.lastPriceDrop : undefined;
 
   return (
     <Card
@@ -213,7 +211,7 @@ export function NewMatchBadge() {
 }
 
 export function PriceDropBadge({ drop }: { drop: PriceDrop }) {
-  const percent = Math.round(((drop.from - drop.to) / drop.from) * 100);
+  const percent = Math.round(dropRatio(drop) * 100);
   return (
     <Badge variant="outline" className="gap-1 bg-emerald-500/10 text-success border-emerald-500/20">
       <TrendingDown className="h-3 w-3" />
@@ -230,7 +228,7 @@ export function PriceDropDetail({ drop }: { drop: PriceDrop }) {
   return (
     <span>
       <span className="font-semibold text-success">{to}</span>, was <span className="line-through">{from}</span>{" "}
-      ({timeAgo(drop.changedAt)})
+      ({timeAgo(drop.at)})
     </span>
   );
 }

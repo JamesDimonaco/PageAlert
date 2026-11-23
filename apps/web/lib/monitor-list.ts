@@ -1,8 +1,9 @@
-// Sorting and filters for the dashboard list. lastMatchAt moves only when a
-// new item matches; matchCount is how many match on the page now. priceDropAt
-// is when the latest price change, a fall, landed (see convex/priceMoves.ts).
+// Sorting and filters for the dashboard list. lastMatchAt moves when a check
+// finds a new item, and on the first scan if it matched. matchCount is how
+// many match on the page now. lastPriceDrop is set by recordProductRead.
 
-type MatchFields = { matchCount: number; lastMatchAt?: number; priceDropAt?: number };
+export type PriceDrop = { from: number; to: number; currency: string; at: number };
+type MatchFields = { matchCount: number; lastMatchAt?: number; lastPriceDrop?: PriceDrop };
 
 export const NEW_MATCH_WINDOW_MS = 24 * 60 * 60 * 1000;
 export const PRICE_DROP_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
@@ -28,8 +29,12 @@ export function hasNewMatch(m: MatchFields, now: number): boolean {
   return m.lastMatchAt !== undefined && now - m.lastMatchAt <= NEW_MATCH_WINDOW_MS;
 }
 
-export function hasRecentPriceDrop(m: { priceDropAt?: number }, now: number): boolean {
-  return m.priceDropAt !== undefined && now - m.priceDropAt <= PRICE_DROP_WINDOW_MS;
+export function hasRecentPriceDrop(m: { lastPriceDrop?: PriceDrop }, now: number): boolean {
+  return m.lastPriceDrop !== undefined && now - m.lastPriceDrop.at <= PRICE_DROP_WINDOW_MS;
+}
+
+export function dropRatio(d: { from: number; to: number }): number {
+  return (d.from - d.to) / d.from;
 }
 
 /** A product holds several monitors; it passes when any of them does. */

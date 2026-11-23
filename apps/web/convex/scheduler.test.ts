@@ -1549,3 +1549,50 @@ describe("a check that never reached the scraper", () => {
     expect(monitor.deferredChecks).toBeUndefined();
   });
 });
+
+// The dashboard shows a cheaper price even when no alert fired. It must only
+// ever show a price the misread hold accepted, measured against a real
+// baseline, or the badge cries wolf.
+describe("lastPriceDrop records the latest accepted fall", () => {
+  afterEach(() => vi.useRealTimers());
+  const drop = async (t: Awaited<ReturnType<typeof seedProductMonitor>>["t"], id: Doc<"monitors">["_id"]) =>
+    (await t.run((ctx) => ctx.db.get(id)))?.lastPriceDrop;
+
+  test("a fall below the baseline is recorded with no alert set", async () => {
+    vi.useFakeTimers({ now: 5_000 });
+    const { t, id, read } = await seedProductMonitor({ price: 10000, currency: "GBP" }, { backInStock: true });
+    expect(await read(true, { price: 8000 })).toEqual([]);
+    expect(await drop(t, id)).toEqual({ from: 10000, to: 8000, currency: "GBP", at: 5_000 });
+  });
+
+  test("a rise clears it, and an unchanged price keeps it", async () => {
+    const { t, id, read } = await seedProductMonitor({ price: 10000, currency: "GBP" });
+    await read(true, { price: 8000 });
+    await read(true, { price: 8000 });
+    expect((await drop(t, id))?.to).toBe(8000);
+    await read(true, { price: 9000 });
+    expect(await drop(t, id)).toBeUndefined();
+  });
+
+  test("a held misread is not a drop", async () => {
+    const { t, id, read } = await seedProductMonitor({ price: 10000, currency: "GBP" });
+    await read(true, { price: 999 });
+    expect(await drop(t, id)).toBeUndefined();
+  });
+
+  // Editing alert settings clears the baseline price. The next read has
+  // nothing to be held against, so it must not count as a fall either.
+  test("a read with no baseline is not a drop", async () => {
+    const { t, id, read } = await seedProductMonitor({ currency: "GBP" });
+    await read(true, { price: 999 });
+    expect(await drop(t, id)).toBeUndefined();
+  });
+
+  test("a currency switch clears it", async () => {
+    const { t, id, read } = await seedProductMonitor({ price: 10000, currency: "GBP" });
+    await read(true, { price: 8000 });
+    await read(true, { price: 7000, currency: "USD" });
+    await read(true, { price: 7000, currency: "USD" });
+    expect(await drop(t, id)).toBeUndefined();
+  });
+});

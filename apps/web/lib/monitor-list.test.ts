@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { NEW_MATCH_WINDOW_MS, PRICE_DROP_WINDOW_MS, hasNewMatch, hasRecentPriceDrop, passesMatchFilter, sortEntries } from "./monitor-list";
+import { NEW_MATCH_WINDOW_MS, PRICE_DROP_WINDOW_MS, dropRatio, hasNewMatch, hasRecentPriceDrop, passesMatchFilter, sortEntries } from "./monitor-list";
 
 const NOW = 1_800_000_000_000;
 const HOUR = 60 * 60 * 1000;
@@ -49,15 +49,22 @@ describe("passesMatchFilter", () => {
 describe("hasRecentPriceDrop", () => {
   it("shows a drop for 7 days", () => {
     expect(PRICE_DROP_WINDOW_MS).toBe(7 * 24 * HOUR);
-    expect(hasRecentPriceDrop({ priceDropAt: NOW - PRICE_DROP_WINDOW_MS }, NOW)).toBe(true);
-    expect(hasRecentPriceDrop({ priceDropAt: NOW - PRICE_DROP_WINDOW_MS - 1 }, NOW)).toBe(false);
+    const at = (at: number) => ({ lastPriceDrop: { from: 100, to: 80, currency: "GBP", at } });
+    expect(hasRecentPriceDrop(at(NOW - PRICE_DROP_WINDOW_MS), NOW)).toBe(true);
+    expect(hasRecentPriceDrop(at(NOW - PRICE_DROP_WINDOW_MS - 1), NOW)).toBe(false);
     expect(hasRecentPriceDrop({}, NOW)).toBe(false);
   });
 
   it("the price-drop filter keeps a product when any listing dropped", () => {
-    const dropped = { ...m(0), priceDropAt: NOW - HOUR };
+    const dropped = { ...m(0), lastPriceDrop: { from: 100, to: 80, currency: "GBP", at: NOW - HOUR } };
     expect(passesMatchFilter([m(0), dropped], "price-drop", NOW)).toBe(true);
     expect(passesMatchFilter([m(3, NOW - HOUR)], "price-drop", NOW)).toBe(false);
+  });
+});
+
+describe("dropRatio", () => {
+  it("is the fall as a share of the old price", () => {
+    expect(dropRatio({ from: 10000, to: 8800 })).toBeCloseTo(0.12);
   });
 });
 

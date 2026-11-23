@@ -166,6 +166,10 @@ export default defineSchema({
       // makes it the new baseline. See recordProductRead.
       pendingCurrency: v.optional(v.string()),
     })),
+    // The last accepted price change, while it was a fall against a known
+    // baseline. Cleared by a rise or a currency switch. The dashboard shows it
+    // whether or not an alert fired. See recordProductRead.
+    lastPriceDrop: v.optional(v.object({ from: v.number(), to: v.number(), currency: v.string(), at: v.number() })),
     // Hash of the product's own text at the last read, or of the whole page
     // when its title could not be found — see productExcerpt
     productFingerprint: v.optional(v.string()),

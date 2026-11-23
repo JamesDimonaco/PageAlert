@@ -1652,6 +1652,8 @@ export const recordProductRead = internalMutation({
     const previous = monitor.lastSeen ?? {};
     const on = monitor.alertOn ?? {};
     const alerts: ProductAlert[] = [];
+    // Undefined leaves it as it is; null clears it.
+    let lastPriceDrop: Doc<"monitors">["lastPriceDrop"] | null | undefined;
 
     if (on.backInStock === true && previous.inStock === false && args.inStock === true) {
       alerts.push({ kind: "stock" });
@@ -1685,6 +1687,7 @@ export const recordProductRead = internalMutation({
         // Two reads in a row agree, so the site has switched currency. The
         // new price is the baseline, with no alert: the two can't be compared.
         priceFields = { price: args.price, currency: args.currency };
+        lastPriceDrop = null;
       } else {
         // One such read is usually a misread or a geo-priced page. Taken as
         // the baseline, it would make the next read in the usual currency
@@ -1705,6 +1708,11 @@ export const recordProductRead = internalMutation({
         priceFields = { price: oldPrice, currency, ...(previous.pendingPrice === undefined ? { pendingPrice: newPrice } : {}) };
       } else {
         priceFields = { price: newPrice, currency };
+        if (oldPrice !== undefined && newPrice < oldPrice) {
+          lastPriceDrop = { from: oldPrice, to: newPrice, currency, at: Date.now() };
+        } else if (oldPrice !== undefined && newPrice > oldPrice) {
+          lastPriceDrop = null;
+        }
         const price = { kind: "price" as const, oldPrice, newPrice, currency };
         const target = on.priceBelow;
         if (on.priceDrop === true && oldPrice !== undefined && newPrice < oldPrice) {
@@ -1744,6 +1752,7 @@ export const recordProductRead = internalMutation({
           ? monitor.productFingerprint
           : args.productFingerprint,
       lastSeen: { ...(inStock !== undefined ? { inStock } : {}), ...priceFields },
+      ...(lastPriceDrop !== undefined ? { lastPriceDrop: lastPriceDrop ?? undefined } : {}),
     });
 
     for (const alert of alerts) {

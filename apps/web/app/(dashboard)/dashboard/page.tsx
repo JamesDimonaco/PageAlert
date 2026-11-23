@@ -30,8 +30,7 @@ import { api } from "@/convex/_generated/api";
 import { toast } from "sonner";
 import { trackMonitorDeleted, trackMonitorPaused, trackMonitorResumed, trackEvent, setUserProperties, captureException } from "@/lib/posthog";
 import { errorText } from "@/lib/utils";
-import { MATCH_FILTERS, SORTS, hasRecentPriceDrop, passesMatchFilter, sortEntries, type MatchFilter, type SortKey } from "@/lib/monitor-list";
-import type { PriceDrop } from "@/convex/priceMoves";
+import { MATCH_FILTERS, SORTS, passesMatchFilter, sortEntries, type MatchFilter, type SortKey } from "@/lib/monitor-list";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
 import {
   Select,
@@ -265,13 +264,13 @@ export default function DashboardPage() {
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [matchFilter, setMatchFilter] = useState<MatchFilter>("all");
   const [sort, setSort] = useState<SortKey>("newest");
-  // "New match" is judged against when the page opened, which is close enough.
-  const [now] = useState(Date.now);
-  const priceDropList = useQuery(api.priceMoves.listMine);
-  const priceDrops = new Map<string, PriceDrop>(
-    (priceDropList ?? []).filter((d) => hasRecentPriceDrop({ priceDropAt: d.changedAt }, now)).map((d) => [d.monitorId, d])
-  );
-  const withDrop = (m: Doc<"monitors">) => ({ ...m, priceDropAt: priceDrops.get(m._id)?.changedAt });
+  // The "new match" and "price down" windows. Ticks so a tab left open
+  // drops old badges.
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(id);
+  }, []);
   const [moveTarget, setMoveTarget] = useState<FolderTarget | null>(null);
   const [renameTarget, setRenameTarget] = useState<Doc<"folders"> | null>(null);
   const [deleteFolderTarget, setDeleteFolderTarget] = useState<Doc<"folders"> | null>(null);
@@ -298,17 +297,14 @@ export default function DashboardPage() {
     const product = m.groupId && productById.get(m.groupId);
     if (!product) {
       if (m.groupId && products === undefined) continue;
-      if (matchesSearch(m) && matchesStatus(m) && passesMatchFilter([withDrop(m)], matchFilter, now)) filtered.push({ monitor: m });
+      if (matchesSearch(m) && matchesStatus(m) && passesMatchFilter([m], matchFilter, now)) filtered.push({ monitor: m });
       continue;
     }
     if (placed.has(product._id)) continue;
     placed.add(product._id);
     const children = monitors.filter((c) => c.groupId === product._id);
     const nameMatches = product.name.toLowerCase().includes(search.toLowerCase());
-    if (
-      children.some((c) => matchesStatus(c) && (nameMatches || matchesSearch(c))) &&
-      passesMatchFilter(children.map(withDrop), matchFilter, now)
-    ) {
+    if (children.some((c) => matchesStatus(c) && (nameMatches || matchesSearch(c)) && passesMatchFilter([c], matchFilter, now))) {
       filtered.push({ product, monitors: children });
     }
   }
@@ -328,7 +324,6 @@ export default function DashboardPage() {
               product={item.product}
               monitors={item.monitors}
               now={now}
-              priceDrops={priceDrops}
               onMoveToFolder={() =>
                 setMoveTarget({ productId: item.product._id, name: item.product.name, folderId: item.product.folderId })
               }
@@ -338,7 +333,6 @@ export default function DashboardPage() {
               key={item.monitor._id}
               monitor={item.monitor}
               now={now}
-              priceDrop={priceDrops.get(item.monitor._id)}
               onTogglePause={async (id) => {
                 const m = monitors.find((x) => x._id === id);
                 try {

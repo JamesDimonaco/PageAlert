@@ -10,26 +10,25 @@ import { StatusBadge } from "./status-badge";
 import type { Doc } from "@/convex/_generated/dataModel";
 import type { ProductSummary } from "@/convex/monitorGroups";
 import { timeAgo } from "@/lib/time";
-import { hasNewMatch } from "@/lib/monitor-list";
+import { dropRatio, hasNewMatch, hasRecentPriceDrop } from "@/lib/monitor-list";
 import { NewMatchBadge, PriceDropBadge, PriceDropDetail } from "./monitor-card";
-import type { PriceDrop } from "@/convex/priceMoves";
 
 interface ProductCardProps {
   product: ProductSummary;
   monitors: Doc<"monitors">[];
   onMoveToFolder?: () => void;
   now: number;
-  /** Recent drops by monitor id. */
-  priceDrops: Map<string, PriceDrop>;
 }
 
-export function ProductCard({ product, monitors, onMoveToFolder, now, priceDrops }: ProductCardProps) {
+export function ProductCard({ product, monitors, onMoveToFolder, now }: ProductCardProps) {
   const [open, setOpen] = useState(false);
   const detailHref = `/dashboard/products/${product._id}`;
   const { cheapest } = product;
   const cheapestPrice = cheapest && formatMinorUnits(cheapest.price, cheapest.currency);
-  const drops = monitors.flatMap((m) => priceDrops.get(m._id) ?? []);
-  const biggestDrop = drops.sort((a, b) => (b.from - b.to) / b.from - (a.from - a.to) / a.from)[0];
+  const recentDrop = (m: Doc<"monitors">) => (hasRecentPriceDrop(m, now) ? m.lastPriceDrop : undefined);
+  const biggestDrop = monitors
+    .flatMap((m) => recentDrop(m) ?? [])
+    .sort((a, b) => dropRatio(b) - dropRatio(a))[0];
 
   return (
     <Card className="group relative border-l-2 border-l-transparent transition-colors hover:bg-muted/40 hover:border-l-primary/50 focus-within:border-l-primary/50">
@@ -103,16 +102,18 @@ export function ProductCard({ product, monitors, onMoveToFolder, now, priceDrops
 
         {open && (
           <ul className="relative z-10 mt-4 divide-y divide-border/30 border-t border-border/30">
-            {monitors.map((m) => (
+            {monitors.map((m) => {
+              const drop = recentDrop(m);
+              return (
               <li key={m._id}>
                 <Link
                   href={`/dashboard/monitors/${m._id}`}
                   className="flex items-center gap-3 py-2.5 text-sm hover:text-primary"
                 >
                   <span className="flex-1 min-w-0 truncate">{new URL(m.url).hostname}</span>
-                  {priceDrops.get(m._id) ? (
+                  {drop ? (
                     <span className="text-xs text-muted-foreground">
-                      <PriceDropDetail drop={priceDrops.get(m._id)!} />
+                      <PriceDropDetail drop={drop} />
                     </span>
                   ) : m.lastSeen?.price !== undefined && m.lastSeen.currency && (
                     <span className="text-xs text-muted-foreground">
@@ -123,7 +124,8 @@ export function ProductCard({ product, monitors, onMoveToFolder, now, priceDrops
                   <StatusBadge status={m.status} />
                 </Link>
               </li>
-            ))}
+              );
+            })}
           </ul>
         )}
       </CardContent>
