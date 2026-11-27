@@ -77,6 +77,15 @@ export function isProductMonitor(monitor: { schema?: unknown; groupId?: string; 
   return monitor.groupId !== undefined || productItem(monitor.schema, monitor.url) !== null;
 }
 
+/**
+ * Whether "Find other stores" can turn this monitor into a product: it is on a
+ * page showing one product, and not in a product already. Anonymous monitors
+ * belong to nobody who could manage a product.
+ */
+export function convertibleToProduct(monitor: { schema?: unknown; groupId?: string; url: string; isAnonymous?: boolean }): boolean {
+  return monitor.groupId === undefined && monitor.isAnonymous !== true && !isArticlePage(monitor.url) && productItem(monitor.schema, monitor.url) !== null;
+}
+
 /** Text kept before the title, for "Sold out" badges that sit above it. */
 const EXCERPT_BEFORE = 200;
 /**

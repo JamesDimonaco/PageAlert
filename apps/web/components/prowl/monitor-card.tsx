@@ -28,11 +28,13 @@ import {
   FolderInput,
   Sparkles,
   TrendingDown,
+  Store,
 } from "lucide-react";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { timeAgo } from "@/lib/time";
+import { OutOfStockCallout, showOutOfStock, useFindStores } from "./find-stores";
 import { dropRatio, hasNewMatch, hasRecentPriceDrop, type PriceDrop } from "@/lib/monitor-list";
 import { formatMinorUnits } from "@prowl/shared";
 
@@ -62,6 +64,11 @@ export function MonitorCard({ monitor, onTogglePause, onDelete, onRescan, onClon
           : "hover:border-l-amber-500/50";
 
   const detailHref = `/dashboard/monitors/${monitor._id}`;
+  const findStores = useFindStores(monitor._id, monitor.url, "card");
+  // The list leaves out the schema convertibleToProduct reads. A product read
+  // only ever ran on a product page, so lastSeen stands in for it; the
+  // dialog makes the real check.
+  const canFindStores = monitor.groupId === undefined && monitor.isAnonymous !== true && monitor.lastSeen !== undefined;
   const newMatch = hasNewMatch(monitor, now);
   const priceDrop = hasRecentPriceDrop(monitor, now) ? monitor.lastPriceDrop : undefined;
 
@@ -139,6 +146,11 @@ export function MonitorCard({ monitor, onTogglePause, onDelete, onRescan, onClon
                 </span>
               )}
             </div>
+            {canFindStores && showOutOfStock(monitor) && (
+              <div className="mt-4">
+                <OutOfStockCallout url={monitor.url} onFind={findStores.open} />
+              </div>
+            )}
           </div>
 
           <div className="relative z-10">
@@ -171,6 +183,11 @@ export function MonitorCard({ monitor, onTogglePause, onDelete, onRescan, onClon
                   )}
                 </DropdownMenuItem>
               )}
+              {canFindStores && (
+                <DropdownMenuItem onClick={findStores.open}>
+                  <Store className="mr-2 h-4 w-4" /> Find other stores
+                </DropdownMenuItem>
+              )}
               {onClone && (
                 <DropdownMenuItem onClick={() => onClone(monitor)}>
                   <Copy className="mr-2 h-4 w-4" /> Clone
@@ -197,6 +214,7 @@ export function MonitorCard({ monitor, onTogglePause, onDelete, onRescan, onClon
           </div>
         </div>
       </CardContent>
+      {canFindStores && findStores.dialog}
     </Card>
   );
 }

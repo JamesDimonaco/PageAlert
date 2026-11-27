@@ -4,11 +4,14 @@ import type { Doc } from "./_generated/dataModel";
 
 export { MATCH_SCORE_THRESHOLD, alertsOnScore, matchConfidence, MATCH_CONFIDENCE_LABEL, canonicalUrl } from "@prowl/shared";
 
+/** Whether any stock or price alert is on. */
+export function wantsProductAlerts(alertOn: Doc<"monitors">["alertOn"]): boolean {
+  return alertOn?.backInStock === true || alertOn?.priceDrop === true || alertOn?.priceBelow !== undefined;
+}
+
 /** A product monitor whose owner wants a stock or price alert. */
 export function wantsProductRead(monitor: Pick<Doc<"monitors">, "alertOn" | "schema" | "groupId" | "url">): boolean {
-  const on = monitor.alertOn;
-  const wanted = on?.backInStock === true || on?.priceDrop === true || on?.priceBelow !== undefined;
-  return wanted && isProductMonitor(monitor);
+  return wantsProductAlerts(monitor.alertOn) && isProductMonitor(monitor);
 }
 
 /** After a product's first full read, how soon its first price and stock read runs. */

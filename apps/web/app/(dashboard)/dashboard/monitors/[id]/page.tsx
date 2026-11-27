@@ -6,6 +6,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { StatusBadge } from "@/components/prowl/status-badge";
 import { AutoPauseNote } from "@/components/prowl/auto-pause-note";
+import { FindStoresButton, OutOfStockCallout, showOutOfStock, useFindStores } from "@/components/prowl/find-stores";
 import { SpeedUpsell } from "@/components/prowl/speed-upsell";
 import { DeleteDialog } from "@/components/prowl/delete-dialog";
 import { OverviewTab } from "@/components/prowl/monitor-tabs/overview-tab";
@@ -42,7 +43,7 @@ import { useTier } from "@/hooks/use-tier";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { isProxyFirstHost } from "@/convex/shared";
-import { applyMatchConditions, getItemKey } from "@prowl/shared";
+import { applyMatchConditions, convertibleToProduct, getItemKey } from "@prowl/shared";
 import type { Id } from "@/convex/_generated/dataModel";
 import type { ExtractedItem, ExtractionSchema } from "@prowl/shared";
 import { toast } from "sonner";
@@ -73,6 +74,7 @@ export default function MonitorDetailPage({
   const atLimit = monitors.length >= maxMonitors;
   const scanBudget = useQuery(api.tiers.canScan);
   const scores = useQuery(api.monitors.latestScores, { monitorId }) ?? {};
+  const findStores = useFindStores(monitorId, monitor?.url ?? "", "detail");
   const product = useQuery(api.monitorGroups.get, monitor?.groupId ? { id: monitor.groupId } : "skip");
   const consumeScan = useMutation(api.tiers.consumeScan);
   const saveScanResult = useMutation(api.monitors.saveScanResult);
@@ -210,6 +212,9 @@ export default function MonitorDetailPage({
   const alertsOff = explicitChannels !== undefined && explicitChannels.length === 0;
   const channelNames = channels.map((c) => CHANNEL_NAMES[c] ?? c).join(", ");
 
+  const canConvert = convertibleToProduct(monitor);
+  const soldOut = showOutOfStock(monitor);
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -300,6 +305,7 @@ export default function MonitorDetailPage({
           </div>
         </div>
         <div className="shrink-0 flex items-center gap-2">
+          {canConvert && !soldOut && <FindStoresButton onClick={findStores.open} />}
           <a
             href={monitor.url}
             target="_blank"
@@ -360,6 +366,9 @@ export default function MonitorDetailPage({
           </DropdownMenu>
         </div>
       </div>
+
+      {canConvert && soldOut && <OutOfStockCallout url={monitor.url} onFind={findStores.open} />}
+      {canConvert && findStores.dialog}
 
       {/* Tabs */}
       <Tabs

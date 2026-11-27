@@ -1,7 +1,20 @@
 import { ConvexError, v, type Infer, type ObjectType } from "convex/values";
 import { internalMutation, internalQuery, mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
-import { canonicalUrl, isArticlePage, isComparisonSite, isSearchRegion, SEARCH_REGIONS } from "@prowl/shared";
+import {
+  canonicalUrl,
+  convertibleToProduct,
+  guessAlertOn,
+  isArticlePage,
+  isComparisonSite,
+  isSearchRegion,
+  productItem,
+  regionForPage,
+  SEARCH_REGIONS,
+  toMinorUnits,
+} from "@prowl/shared";
+import { activityRow } from "./account";
+import { requireSearchAllowed } from "./productSearch";
 import {
   allowedChannels,
   clampInterval,
@@ -11,7 +24,7 @@ import {
   updateMonitorForUser,
   validateAlertOn,
 } from "./monitors";
-import { displayHost, ERROR_ALERT_COOLDOWN_MS, validateMonitorUrl } from "./shared";
+import { displayHost, ERROR_ALERT_COOLDOWN_MS, validateMonitorUrl, wantsProductAlerts } from "./shared";
 import {
   alertOnValidator,
   type AlertOn,
@@ -341,6 +354,129 @@ export async function updateCriteriaForUser(
   });
   return { checkInterval, notificationChannels };
 }
+
+/**
+ * The criteria a monitor takes into a product: its own stock and price
+ * alerts, else what its prompt asks for, else price drops and restocks. A
+ * target written with a shared symbol ("$200") takes `currency`; one in a
+ * currency the page does not price in could never fire, so it becomes price
+ * drops instead.
+ */
+function criteriaFor(monitor: Doc<"monitors">, currency: string): AlertOn {
+  if (monitor.alertOn && wantsProductAlerts(monitor.alertOn)) return monitor.alertOn;
+  const guess = guessAlertOn(monitor.prompt);
+  const written = guess.priceBelow ? (guess.priceBelow.currency ?? currency) : null;
+  const pageCurrency = monitor.lastSeen?.currency;
+  const targetCurrency = written && (pageCurrency === undefined || written === pageCurrency) ? written : null;
+  const amount = guess.priceBelow && targetCurrency ? toMinorUnits(guess.priceBelow.amount, targetCurrency) : null;
+  const guessed: AlertOn = {
+    ...(guess.backInStock ? { backInStock: true } : {}),
+    ...(targetCurrency && amount !== null
+      ? { priceBelow: { amount, currency: targetCurrency } }
+      : guess.priceDrop || guess.priceBelow
+        ? { priceDrop: true }
+        : {}),
+  };
+  return wantsProductAlerts(guessed) ? guessed : { priceDrop: true, backInStock: true };
+}
+
+/**
+ * What converting this monitor would make, or a refusal. Shared by the
+ * preview and the conversion so the dialog shows what actually happens.
+ */
+async function planConversion(ctx: QueryCtx, monitorId: Id<"monitors">) {
+  const identity = await ctx.auth.getUserIdentity();
+  if (!identity) throw new ConvexError("Sign in to manage your products.");
+  const userId = identity.subject;
+  const monitor = await ctx.db.get(monitorId);
+  if (!monitor || monitor.userId !== userId) throw new ConvexError("Monitor not found.");
+  if (monitor.groupId !== undefined) throw new ConvexError("This monitor is already part of a product.");
+  if (!convertibleToProduct(monitor)) throw new ConvexError("Only a page showing one product can become a product.");
+
+  // findMore searches by the product's name, so it takes the page's own
+  // product title rather than the label the user gave the monitor.
+  const item = productItem(monitor.schema, monitor.url);
+  const title =
+    (typeof item?.title === "string" ? item.title.trim() : "").slice(0, MAX_NAME_LENGTH) ||
+    monitor.name.trim().slice(0, MAX_NAME_LENGTH);
+  // findListings refuses anything shorter.
+  if (title.length < 2) throw new ConvexError("This product has no name to search for. Give the monitor a name first.");
+  const region = regionForPage(monitor.lastSeen?.currency, (await activityRow(ctx, userId))?.searchRegion ?? null, monitor.url);
+  const regionCurrency = SEARCH_REGIONS.find((r) => r.code === region)!.currency;
+  const alertOn = criteriaFor(monitor, monitor.lastSeen?.currency ?? regionCurrency);
+  requireCriteria(alertOn);
+  return { userId, monitor, title, region, alertOn };
+}
+
+/** The alerts a converted monitor would get, and the prompt they replace. */
+export const conversionPreview = query({
+  args: { monitorId: v.id("monitors") },
+  handler: async (ctx, { monitorId }) => {
+    // A refusal comes back as data: a query that throws breaks the page.
+    try {
+      const { monitor, alertOn } = await planConversion(ctx, monitorId);
+      return { alertOn, oldPrompt: monitor.prompt };
+    } catch (err) {
+      if (err instanceof ConvexError) return { refusal: String(err.data) };
+      throw err;
+    }
+  },
+});
+
+/**
+ * Turn a monitor on one shop's product page into a product, with that page
+ * as its first watched listing. The monitor keeps its history, interval and
+ * channels; the product takes its folder. Its prompt becomes the product
+ * prompt every listing shares, and like every listing it alerts on stock and
+ * price only. "Find other stores" runs this, then findMore.
+ */
+export const convertMonitor = mutation({
+  args: { monitorId: v.id("monitors") },
+  handler: async (ctx, { monitorId }): Promise<Id<"monitorGroups">> => {
+    const { userId, monitor, title, region, alertOn } = await planConversion(ctx, monitorId);
+    // The store search runs next. Converting when it would be refused leaves
+    // a one-shop product, and there is no way back.
+    await requireSearchAllowed(ctx, userId);
+
+    const now = Date.now();
+    const groupId = await ctx.db.insert("monitorGroups", {
+      userId,
+      name: title,
+      region,
+      alertOn,
+      notificationChannels: monitor.notificationChannels,
+      checkInterval: monitor.checkInterval,
+      ...(monitor.folderId ? { folderId: monitor.folderId } : {}),
+      listings: [],
+      createdAt: now,
+      updatedAt: now,
+    });
+    // Through the update path, so new stock or price alerts reset the stored
+    // reading to a baseline rather than firing on it.
+    const prompt = productPrompt(title, alertOn);
+    await updateMonitorForUser(ctx, userId, monitorId, { alertOn, ...(prompt !== monitor.prompt ? { prompt } : {}) });
+    // The schema's match conditions came from the old prompt. Zero makes the
+    // drift refresh due, so the next check re-reads under the new one.
+    await ctx.db.patch(monitorId, { groupId, productTitle: title, folderId: undefined, lastAiExtractAt: 0 });
+    // The listing takes the reading the update kept, not the one it reset.
+    const { inStock, price, currency } = (await ctx.db.get(monitorId))?.lastSeen ?? {};
+    await ctx.db.patch(groupId, {
+      listings: [
+        {
+          site: displayHost(monitor.url).slice(0, MAX_SITE_LENGTH),
+          url: monitor.url,
+          title,
+          ...(price !== undefined && currency !== undefined ? { price, currency } : {}),
+          ...(inStock !== undefined ? { inStock } : {}),
+          label: "same",
+          state: "watching",
+          monitorId,
+        },
+      ],
+    });
+    return groupId;
+  },
+});
 
 /**
  * Watch a suggested listing. The plan's monitor limit and the creation rate

@@ -31,6 +31,29 @@ export function guessSearchRegion(country: string | null, language: string): Sea
   return "US";
 }
 
+/**
+ * Where to search for other shops selling the product on this page. With the
+ * page's currency known, the saved region wins if it prices in it; otherwise
+ * the currency decides, and the domain ending ("fr", "uk") breaks a tie
+ * between countries sharing one. With no currency, a country domain beats
+ * the saved region.
+ */
+export function regionForPage(currency: string | undefined, saved: string | null, pageUrl: string): SearchRegion {
+  const savedRegion = saved !== null && isSearchRegion(saved) ? SEARCH_REGIONS.find((r) => r.code === saved) : undefined;
+  let ending = "";
+  try {
+    ending = new URL(pageUrl).hostname.split(".").pop()?.toUpperCase() ?? "";
+  } catch {
+    // Not a URL: no ending to go by.
+  }
+  const byEnding = (regions: readonly (typeof SEARCH_REGIONS)[number][]) =>
+    regions.find((r) => r.code === (ending === "UK" ? "GB" : ending))?.code;
+  if (currency === undefined) return byEnding(SEARCH_REGIONS) ?? savedRegion?.code ?? "US";
+  if (savedRegion?.currency === currency) return savedRegion.code;
+  const candidates = SEARCH_REGIONS.filter((r) => r.currency === currency);
+  return byEnding(candidates) ?? candidates[0]?.code ?? savedRegion?.code ?? "US";
+}
+
 export type ListingLabel = "same" | "similar" | "accessory";
 
 /** One product page a search found. */

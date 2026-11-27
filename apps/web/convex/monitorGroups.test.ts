@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { api, components, internal } from "./_generated/api";
 import schema from "./schema";
 import betterAuthSchema from "./betterAuth/schema";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 
 const modules = import.meta.glob("./**/*.*s");
 const betterAuthModules = import.meta.glob("./betterAuth/**/*.*s");
@@ -747,5 +747,205 @@ describe("managing a product", () => {
     expect(group?.alertOn).toEqual({ backInStock: true });
     expect(group?.listings.map((l) => l.state)).toEqual(["watching", "watching", "suggested"]);
     expect((await owner.query(api.monitors.list, {})).map((m) => m.status)).toEqual(["active", "active"]);
+  });
+});
+
+// A monitor on one shop's product page becomes a product, so other shops can
+// be searched and watched beside it. It must keep its history and settings,
+// and only a page that is one product can be turned into one.
+describe("monitorGroups.convertMonitor", () => {
+  const PAGE = "https://www.argos.co.uk/product/123";
+
+  async function seedMonitor(
+    t: ReturnType<typeof harness>,
+    userId: string,
+    fields: Partial<Doc<"monitors">> = {}
+  ): Promise<Id<"monitors">> {
+    return t.run(async (ctx) => {
+      const folderId = await ctx.db.insert("folders", { userId, name: "Audio", createdAt: 0, updatedAt: 0 });
+      return ctx.db.insert("monitors", {
+        userId,
+        name: "XM5 headphones",
+        url: PAGE,
+        prompt: "tell me when it is back in stock",
+        status: "active",
+        checkInterval: "6h",
+        notificationChannels: ["email"],
+        schema: { items: [{ title: "Sony WH-1000XM5 Headphones", url: PAGE }, { title: "Case", url: "https://www.argos.co.uk/product/9" }] },
+        matchCount: 0,
+        lastMatchAt: 5,
+        folderId,
+        lastSeen: { inStock: false, price: 27999, currency: "GBP" },
+        createdAt: 0,
+        updatedAt: 0,
+        ...fields,
+      });
+    });
+  }
+
+  it("turns the monitor into a product's first listing and keeps its history", async () => {
+    const t = harness();
+    const { as, userId } = await signUp(t, "a@example.test");
+    const id = await seedMonitor(t, userId);
+    await t.run((ctx) => ctx.db.insert("priceReads", { monitorId: id, price: 27999, currency: "GBP", readAt: 1 }));
+    const folderId = (await t.run((ctx) => ctx.db.get(id)))!.folderId;
+
+    const groupId = await as.mutation(api.monitorGroups.convertMonitor, { monitorId: id });
+
+    const group = await t.run((ctx) => ctx.db.get(groupId));
+    expect(group).toMatchObject({
+      userId,
+      name: "Sony WH-1000XM5 Headphones",
+      region: "GB",
+      alertOn: { backInStock: true },
+      checkInterval: "6h",
+      notificationChannels: ["email"],
+      folderId,
+      listings: [
+        {
+          site: "argos.co.uk",
+          url: PAGE,
+          title: "Sony WH-1000XM5 Headphones",
+          price: 27999,
+          currency: "GBP",
+          label: "same",
+          state: "watching",
+          monitorId: id,
+        },
+      ],
+    });
+    // Stock was not read while no stock alert was on, so the old "out of
+    // stock" is no reading at all: neither the listing nor the monitor keeps it.
+    expect(group?.listings[0]).not.toHaveProperty("inStock");
+    const monitor = (await t.run((ctx) => ctx.db.get(id)))!;
+    expect(monitor.lastSeen?.inStock).toBeUndefined();
+    // The match conditions came from the old prompt, so the next check re-reads.
+    expect(monitor.lastAiExtractAt).toBe(0);
+    expect(monitor).toMatchObject({ groupId, productTitle: "Sony WH-1000XM5 Headphones", alertOn: { backInStock: true }, lastMatchAt: 5 });
+    expect(monitor.folderId).toBeUndefined();
+    expect(monitor.prompt).toContain("Sony WH-1000XM5 Headphones");
+    expect(await t.run((ctx) => ctx.db.query("priceReads").collect())).toHaveLength(1);
+  });
+
+  it("keeps alert settings it already has, and defaults when the prompt gives none", async () => {
+    const t = harness();
+    const { as, userId } = await signUp(t, "a@example.test");
+    const kept = await seedMonitor(t, userId, { alertOn: { priceBelow: { amount: 25000, currency: "GBP" } } });
+    const plain = await seedMonitor(t, userId, { prompt: "watch this page" });
+
+    const keptGroup = await as.mutation(api.monitorGroups.convertMonitor, { monitorId: kept });
+    const plainGroup = await as.mutation(api.monitorGroups.convertMonitor, { monitorId: plain });
+
+    expect((await t.run((ctx) => ctx.db.get(keptGroup)))?.alertOn).toEqual({ priceBelow: { amount: 25000, currency: "GBP" } });
+    expect((await t.run((ctx) => ctx.db.get(plainGroup)))?.alertOn).toEqual({ priceDrop: true, backInStock: true });
+  });
+
+  // "$" alone could be US, Canadian, Australian or New Zealand dollars.
+  it("settles a dollar target from the page's currency", async () => {
+    const t = harness();
+    const { as, userId } = await signUp(t, "a@example.test");
+    const id = await seedMonitor(t, userId, {
+      prompt: "tell me when it's under $200",
+      lastSeen: { price: 24900, currency: "USD" },
+    });
+    const groupId = await as.mutation(api.monitorGroups.convertMonitor, { monitorId: id });
+    expect((await t.run((ctx) => ctx.db.get(groupId)))?.alertOn).toEqual({ priceBelow: { amount: 20000, currency: "USD" } });
+  });
+
+  // The product read never compares a target with a price in another currency,
+  // so such a target could never fire.
+  it("drops a target in another currency than the page's", async () => {
+    const t = harness();
+    const { as, userId } = await signUp(t, "a@example.test");
+    const id = await seedMonitor(t, userId, { prompt: "tell me when it's under £200", lastSeen: { price: 24900, currency: "USD" } });
+    const groupId = await as.mutation(api.monitorGroups.convertMonitor, { monitorId: id });
+    expect((await t.run((ctx) => ctx.db.get(groupId)))?.alertOn).toEqual({ priceDrop: true });
+  });
+
+  // The prompt asked about price, so losing the target must not lose price alerts.
+  it("keeps price alerts when a target is dropped", async () => {
+    const t = harness();
+    const { as, userId } = await signUp(t, "a@example.test");
+    const id = await seedMonitor(t, userId, { prompt: "back in stock and under £200", lastSeen: { price: 24900, currency: "USD" } });
+    const groupId = await as.mutation(api.monitorGroups.convertMonitor, { monitorId: id });
+    expect((await t.run((ctx) => ctx.db.get(groupId)))?.alertOn).toEqual({ backInStock: true, priceDrop: true });
+  });
+
+  // The store search refuses a name under 2 characters, which would leave a one-shop product.
+  it("refuses a product name too short to search", async () => {
+    const t = harness();
+    const { as, userId } = await signUp(t, "a@example.test");
+    const id = await seedMonitor(t, userId, { name: "X", schema: { items: [{ title: "", url: PAGE }] } });
+    await expect(as.mutation(api.monitorGroups.convertMonitor, { monitorId: id })).rejects.toThrow(/name/);
+  });
+
+  // Converting is one way, so the user sees what the alerts become first.
+  it("previews the alerts and the prompt it replaces, changing nothing", async () => {
+    const t = harness();
+    const { as, userId } = await signUp(t, "a@example.test");
+    const id = await seedMonitor(t, userId);
+    expect(await as.query(api.monitorGroups.conversionPreview, { monitorId: id })).toEqual({
+      alertOn: { backInStock: true },
+      oldPrompt: "tell me when it is back in stock",
+    });
+    expect(await t.run((ctx) => ctx.db.query("monitorGroups").collect())).toHaveLength(0);
+  });
+
+  // The store search runs straight after. Converting with none left would
+  // leave a one-shop product and no way back.
+  it("refuses when no store searches are left today", async () => {
+    const t = harness();
+    const { as, userId } = await signUp(t, "a@example.test");
+    const id = await seedMonitor(t, userId);
+    await t.run((ctx) =>
+      ctx.db.insert("userTiers", {
+        userId,
+        tier: "free",
+        productSearchDay: new Date().toISOString().slice(0, 10),
+        productSearchCount: 5,
+        updatedAt: 0,
+      })
+    );
+    await expect(as.mutation(api.monitorGroups.convertMonitor, { monitorId: id })).rejects.toThrow(/searches/);
+    expect((await t.run((ctx) => ctx.db.get(id)))?.groupId).toBeUndefined();
+  });
+
+  // The same refusals as the search itself, or the search can still refuse after.
+  it("refuses when the search would refuse for too many attempts", async () => {
+    const t = harness();
+    const { as, userId } = await signUp(t, "a@example.test");
+    const id = await seedMonitor(t, userId);
+    await t.run((ctx) =>
+      ctx.db.insert("userTiers", {
+        userId,
+        tier: "free",
+        productSearchDay: new Date().toISOString().slice(0, 10),
+        productSearchCount: 2,
+        // The free ceiling: max(10, 3 × 5 searches).
+        productSearchAttempts: 15,
+        updatedAt: 0,
+      })
+    );
+    await expect(as.mutation(api.monitorGroups.convertMonitor, { monitorId: id })).rejects.toThrow(/isn't working/);
+  });
+
+  it("is offered only for a product page of the user's own that is not in a product yet", async () => {
+    const t = harness();
+    const { as, userId } = await signUp(t, "a@example.test");
+    const listPage = await seedMonitor(t, userId, {
+      schema: { items: [{ title: "A", url: "https://www.argos.co.uk/a" }, { title: "B", url: "https://www.argos.co.uk/b" }] },
+    });
+    const product = await seedMonitor(t, userId);
+    const theirs = await seedMonitor(t, "someone-else");
+
+    expect(await as.query(api.monitorGroups.conversionPreview, { monitorId: listPage })).toEqual({
+      refusal: "Only a page showing one product can become a product.",
+    });
+
+    await expect(as.mutation(api.monitorGroups.convertMonitor, { monitorId: listPage })).rejects.toThrow(/one product/);
+    await expect(as.mutation(api.monitorGroups.convertMonitor, { monitorId: theirs })).rejects.toThrow(/not found/);
+    await as.mutation(api.monitorGroups.convertMonitor, { monitorId: product });
+    await expect(as.mutation(api.monitorGroups.convertMonitor, { monitorId: product })).rejects.toThrow(/already/);
+    expect(await t.run((ctx) => ctx.db.query("monitorGroups").collect())).toHaveLength(1);
   });
 });
